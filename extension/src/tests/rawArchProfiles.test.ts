@@ -1,6 +1,6 @@
 const { expect } = require("chai");
 
-const sharedHandlers = require("../src/shared/sharedHandlers");
+const sharedHandlers = require("../shared/sharedHandlers");
 
 describe("raw architecture profiles", () => {
   it("offers RISC-V raw profiles in the blob architecture picker", () => {

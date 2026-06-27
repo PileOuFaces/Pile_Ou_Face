@@ -25,7 +25,7 @@ describe("fileManager", () => {
     fs.writeFileSync(path.join(baseDir, "sample.disasm.asm"), "mov eax, eax");
     fs.writeFileSync(path.join(baseDir, "sample.symbols.json"), "[]");
 
-    const fileManager = proxyquire("../src/shared/fileManager", {
+    const fileManager = proxyquire("../shared/fileManager", {
       "./staticCache": {
         getCacheDir: () => path.join(baseDir, "static_cache"),
         readMeta: () => null,
@@ -42,7 +42,7 @@ describe("fileManager", () => {
   });
 
   it("surfaces stale cache entries from the SQLite-backed index", () => {
-    const fileManager = proxyquire("../src/shared/fileManager", {
+    const fileManager = proxyquire("../shared/fileManager", {
       "./staticCache": {
         getCacheDir: () => path.join(tempRoot, ".pile-ou-face", "static_cache"),
         readMeta: () => null,
@@ -69,7 +69,7 @@ describe("fileManager", () => {
     fs.writeFileSync(path.join(okDir, "info.json"), "{}");
     const pruneSpy = sinon.spy(() => 1);
 
-    const fileManager = proxyquire("../src/shared/fileManager", {
+    const fileManager = proxyquire("../shared/fileManager", {
       "./staticCache": {
         getCacheDir: () => path.join(tempRoot, ".pile-ou-face", "static_cache"),
         readMeta: () => null,
@@ -122,7 +122,7 @@ describe("fileManager", () => {
     fs.writeFileSync(path.join(pfdbDir, "ghost.1234567890abcdef.pfdb"), "sqlite");
     fs.writeFileSync(path.join(pfdbDir, "ghost.1234567890abcdef.pfdb-journal"), "journal");
 
-    const fileManager = proxyquire("../src/shared/fileManager", {
+    const fileManager = proxyquire("../shared/fileManager", {
       "./staticCache": {
         getCacheDir: () => path.join(pofDir, "static_cache"),
         readMeta: () => null,
@@ -148,7 +148,7 @@ describe("fileManager", () => {
     function makeCleanupEnv() {
       const baseDir = path.join(tempRoot, ".pile-ou-face");
       fs.mkdirSync(baseDir, { recursive: true });
-      const fileManager = proxyquire("../src/shared/fileManager", {
+      const fileManager = proxyquire("../shared/fileManager", {
         "./staticCache": {
           getCacheDir: () => path.join(baseDir, "static_cache"),
           readMeta: () => null,
@@ -295,7 +295,7 @@ describe("fileManager", () => {
     fs.writeFileSync(otherPfdb, "sqlite");
 
     const pruneSpy = sinon.spy(() => 0);
-    const fileManager = proxyquire("../src/shared/fileManager", {
+    const fileManager = proxyquire("../shared/fileManager", {
       "./staticCache": {
         getCacheDir: () => cacheDir,
         readMeta: () => null,

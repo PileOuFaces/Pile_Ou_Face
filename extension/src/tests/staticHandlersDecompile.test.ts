@@ -20,7 +20,7 @@ describe('hubLoadDecompile parallel', () => {
       },
     };
     if (overrides.fs) proxyStubs.fs = overrides.fs;
-    const staticHandlers = proxyquire('../src/static/staticHandlers', proxyStubs);
+    const staticHandlers = proxyquire('../static/staticHandlers', proxyStubs);
     return staticHandlers({
       root: '/workspace',
       panel: { webview: { postMessage: (m) => posted.push(m) } },

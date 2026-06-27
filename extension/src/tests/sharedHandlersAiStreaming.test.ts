@@ -13,7 +13,7 @@ describe('sharedHandlers AI provider streaming', () => {
     proc.stdin = new PassThrough();
 
     let spawnedArgs = [];
-    const sharedHandlers = proxyquire('../src/shared/sharedHandlers', {
+    const sharedHandlers = proxyquire('../shared/sharedHandlers', {
       vscode: {
         window: {},
         Uri: { file: (value) => ({ fsPath: value }) },
@@ -94,7 +94,7 @@ describe('sharedHandlers AI provider streaming', () => {
       return true;
     };
 
-    const sharedHandlers = proxyquire('../src/shared/sharedHandlers', {
+    const sharedHandlers = proxyquire('../shared/sharedHandlers', {
       vscode: {
         window: {},
         Uri: { file: (value) => ({ fsPath: value }) },

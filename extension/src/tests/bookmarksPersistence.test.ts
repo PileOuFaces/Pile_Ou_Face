@@ -3,7 +3,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
-const sharedHandlers = require("../src/shared/sharedHandlers");
+const sharedHandlers = require("../shared/sharedHandlers");
 
 function makePanelSink() {
   const messages = [];

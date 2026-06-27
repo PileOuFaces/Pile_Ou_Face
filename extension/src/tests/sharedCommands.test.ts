@@ -35,7 +35,7 @@ describe("shared commands", () => {
   });
 
   function loadRegisterSharedCommands({ existsSync = () => true } = {}) {
-    return proxyquire("../src/shared/commands", {
+    return proxyquire("../shared/commands", {
       vscode: vscodeStub,
       "./recentBinaries": recentBinariesStub,
       fs: { existsSync },

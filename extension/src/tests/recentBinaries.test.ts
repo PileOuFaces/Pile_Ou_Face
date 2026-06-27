@@ -7,7 +7,7 @@ const {
   forgetRecentBinary,
   clearRecentBinaries,
   describeRecentBinaryMeta,
-} = require("../src/shared/recentBinaries");
+} = require("../shared/recentBinaries");
 
 function makeContext(initialEntries = []) {
   const state = new Map([

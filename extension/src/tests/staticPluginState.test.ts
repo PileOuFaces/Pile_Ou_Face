@@ -42,7 +42,7 @@ describe("staticHandlers plugin discovery", () => {
       );
     });
 
-    const staticHandlers = proxyquire("../src/static/staticHandlers", {
+    const staticHandlers = proxyquire("../static/staticHandlers", {
       child_process: { execFile },
       "../shared/utils": {
         detectPythonExecutable: () => "/usr/bin/python3",
@@ -162,7 +162,7 @@ describe("staticHandlers plugin discovery", () => {
       );
     });
 
-    const staticHandlers = proxyquire("../src/static/staticHandlers", {
+    const staticHandlers = proxyquire("../static/staticHandlers", {
       child_process: { execFile },
       "../shared/utils": {
         detectPythonExecutable: () => "/usr/bin/python3",
@@ -221,7 +221,7 @@ describe("staticHandlers plugin discovery", () => {
       callback(new Error(`unexpected args: ${args.join(" ")}`));
     });
 
-    const staticHandlers = proxyquire("../src/static/staticHandlers", {
+    const staticHandlers = proxyquire("../static/staticHandlers", {
       child_process: { execFile },
       "../shared/utils": {
         detectPythonExecutable: () => "/usr/bin/python3",
@@ -311,7 +311,7 @@ describe("staticHandlers plugin discovery", () => {
       callback(new Error(`unexpected args: ${args.join(" ")}`));
     });
 
-    const staticHandlers = proxyquire("../src/static/staticHandlers", {
+    const staticHandlers = proxyquire("../static/staticHandlers", {
       child_process: { execFile },
       "../shared/utils": {
         detectPythonExecutable: () => "/usr/bin/python3",
@@ -392,7 +392,7 @@ describe("staticHandlers plugin discovery", () => {
       );
     });
 
-    const staticHandlers = proxyquire("../src/static/staticHandlers", {
+    const staticHandlers = proxyquire("../static/staticHandlers", {
       vscode: {
         window: { showOpenDialog },
       },
@@ -459,7 +459,7 @@ describe("staticHandlers plugin discovery", () => {
       );
     });
 
-    const staticHandlers = proxyquire("../src/static/staticHandlers", {
+    const staticHandlers = proxyquire("../static/staticHandlers", {
       child_process: { execFile },
       "../shared/utils": {
         detectPythonExecutable: () => "/usr/bin/python3",
@@ -557,7 +557,7 @@ describe("staticHandlers plugin discovery", () => {
       callback(new Error(`unexpected args: ${args.join(" ")}`));
     });
 
-    const staticHandlers = proxyquire("../src/static/staticHandlers", {
+    const staticHandlers = proxyquire("../static/staticHandlers", {
       child_process: { execFile },
       "../shared/utils": {
         detectPythonExecutable: () => "/usr/bin/python3",
@@ -696,7 +696,7 @@ describe("staticHandlers plugin discovery", () => {
       callback(new Error(`unexpected args: ${args.join(" ")}`));
     });
 
-    const staticHandlers = proxyquire("../src/static/staticHandlers", {
+    const staticHandlers = proxyquire("../static/staticHandlers", {
       child_process: { execFile },
       "../shared/utils": {
         detectPythonExecutable: () => "/usr/bin/python3",
@@ -823,7 +823,7 @@ describe("staticHandlers plugin discovery", () => {
       callback(new Error(`unexpected args: ${args.join(" ")}`));
     });
 
-    const staticHandlers = proxyquire("../src/static/staticHandlers", {
+    const staticHandlers = proxyquire("../static/staticHandlers", {
       child_process: { execFile },
       "../shared/utils": {
         detectPythonExecutable: () => "/usr/bin/python3",
@@ -900,7 +900,7 @@ describe("staticHandlers plugin discovery", () => {
       );
     });
 
-    const staticHandlers = proxyquire("../src/static/staticHandlers", {
+    const staticHandlers = proxyquire("../static/staticHandlers", {
       child_process: { execFile },
       "../shared/utils": {
         detectPythonExecutable: () => "/usr/bin/python3",
@@ -954,7 +954,7 @@ describe("staticHandlers plugin discovery", () => {
       );
     });
 
-    const staticHandlers = proxyquire("../src/static/staticHandlers", {
+    const staticHandlers = proxyquire("../static/staticHandlers", {
       vscode: {
         Uri: { file: (value) => ({ fsPath: value }) },
         window: {
@@ -1031,7 +1031,7 @@ describe("staticHandlers plugin discovery", () => {
       );
     });
 
-    const staticHandlers = proxyquire("../src/static/staticHandlers", {
+    const staticHandlers = proxyquire("../static/staticHandlers", {
       vscode: {
         Uri: { file: (value) => ({ fsPath: value }) },
         window: { showOpenDialog },

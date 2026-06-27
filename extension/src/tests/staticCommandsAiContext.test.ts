@@ -16,7 +16,7 @@ describe('static commands AI disassembly context', () => {
   }
 
   it('extracts the active instruction and enclosing function', () => {
-    const { getDisasmSelectionContext } = require('../src/static/commands');
+    const { getDisasmSelectionContext } = require('../static/commands');
     const document = createDocument([
       'main:',
       '  0x401000:  55                   push     rbp',
@@ -64,7 +64,7 @@ describe('static commands AI disassembly context', () => {
         showWarningMessage: sinon.stub(),
       },
     };
-    const { registerStaticCommands } = proxyquire('../src/static/commands', {
+    const { registerStaticCommands } = proxyquire('../static/commands', {
       vscode: vscodeStub,
       child_process: {},
       '../shared/paths': {

@@ -5,7 +5,7 @@ const {
   buildTraceSourceEnrichment,
   parseSourceCModel,
   resolveSourceFunction
-} = require('../src/dynamic/sourceCEnrichment');
+} = require('../dynamic/sourceCEnrichment');
 
 const SOURCE_MOCK = `
 void sink(char *input, int n) {

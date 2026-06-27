@@ -4,7 +4,7 @@ describe("payloadToHex", () => {
   let extension;
 
   beforeEach(() => {
-    extension = require("../src/extension");
+    extension = require("../extension");
   });
 
   it("converts hex string to hex", () => {
@@ -34,7 +34,7 @@ describe("parseStdinExpression", () => {
   let extension;
 
   beforeEach(() => {
-    extension = require("../src/extension");
+    extension = require("../extension");
   });
 
   it("returns literal when no expression", () => {

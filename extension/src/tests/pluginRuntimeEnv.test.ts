@@ -62,7 +62,7 @@ describe('buildPluginRuntimeEnv — MODE selection', () => {
       },
     };
 
-    const staticHandlers = proxyquire('../src/static/staticHandlers', proxyStubs);
+    const staticHandlers = proxyquire('../static/staticHandlers', proxyStubs);
     const handlers = staticHandlers({
       root: '/workspace',
       panel: {

@@ -56,7 +56,7 @@ describe("sharedHandlers", () => {
   });
 
   it("offers recent cleanup when a selected file no longer exists", async () => {
-    const sharedHandlers = proxyquire("../src/shared/sharedHandlers", {
+    const sharedHandlers = proxyquire("../shared/sharedHandlers", {
       vscode: vscodeStub,
       "./fileManager": fileManagerStub,
     });
@@ -81,7 +81,7 @@ describe("sharedHandlers", () => {
   });
 
   it("allows reconfiguring a stored raw profile when reopening a blob", async () => {
-    const sharedHandlers = proxyquire("../src/shared/sharedHandlers", {
+    const sharedHandlers = proxyquire("../shared/sharedHandlers", {
       vscode: vscodeStub,
       "./fileManager": fileManagerStub,
     });
@@ -127,7 +127,7 @@ describe("sharedHandlers", () => {
   });
 
   it("supports forcing raw blob reconfiguration directly from the current session", async () => {
-    const sharedHandlers = proxyquire("../src/shared/sharedHandlers", {
+    const sharedHandlers = proxyquire("../shared/sharedHandlers", {
       vscode: vscodeStub,
       "./fileManager": fileManagerStub,
     });
@@ -175,7 +175,7 @@ describe("sharedHandlers", () => {
   });
 
   it("exports an AI conversation in the selected format", async () => {
-    const sharedHandlers = proxyquire("../src/shared/sharedHandlers", {
+    const sharedHandlers = proxyquire("../shared/sharedHandlers", {
       vscode: vscodeStub,
       "./fileManager": fileManagerStub,
     });

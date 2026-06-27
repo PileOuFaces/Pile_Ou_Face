@@ -10,7 +10,7 @@ describe("staticHandlers ROP architecture forwarding", () => {
     execFile = sinon.stub().callsFake((_python, _args, _opts, cb) => {
       cb(null, "[]", "");
     });
-    staticHandlers = proxyquire("../src/static/staticHandlers", {
+    staticHandlers = proxyquire("../static/staticHandlers", {
       child_process: { execFile },
       "../shared/utils": {
         detectPythonExecutable: () => "/usr/bin/python3",

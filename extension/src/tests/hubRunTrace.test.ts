@@ -100,7 +100,7 @@ describe('hub runTrace isolation', () => {
     openVisualizerWebview = sinon.spy();
     ensureStaticAsm = sinon.stub().returns({ ok: true });
 
-    ({ createHub } = proxyquire('../src/static/hub', {
+    ({ createHub } = proxyquire('../static/hub', {
       '../shared/webview': {
         getHubContent: () => '<!doctype html>'
       },

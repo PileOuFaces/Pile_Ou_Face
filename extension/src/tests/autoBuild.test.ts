@@ -18,7 +18,7 @@ describe("autoBuildAtActivation", () => {
 
     // We'll stub execSync and inject it via proxyquire
     const execSpy = sinon.stub();
-    extension = proxyquire("../src/extension", {
+    extension = proxyquire("../extension", {
       vscode: fakeVscode,
       child_process: { execSync: execSpy },
     });

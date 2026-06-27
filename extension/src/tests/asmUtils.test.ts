@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 const { expect } = require("chai");
 
-const asmUtils = require("../src/static/hub/asmUtils");
+const asmUtils = require("../static/hub/asmUtils");
 
 function line(addr, text) {
   return { addr, text };

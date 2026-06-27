@@ -4,7 +4,7 @@ const {
   DEFAULT_LOCAL_AUTH_URL,
   DEFAULT_REMOTE_AUTH_URL,
   resolveAuthServerUrl,
-} = require("../src/shared/authConfig");
+} = require("../shared/authConfig");
 
 describe("auth config helpers", () => {
   it("prefers a saved auth URL when it is explicitly set", () => {

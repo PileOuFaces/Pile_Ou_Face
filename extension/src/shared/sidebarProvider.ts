@@ -10,6 +10,7 @@ const path = require('path');
 const fs = require('fs');
 const cp = require('child_process');
 const { getSymbolsScript, getStringsScript, getSectionsScript } = require('./paths');
+const { getExtensionPath } = require('./utils');
 
 class SidebarSymbolsProvider {
   constructor(rootPath, pythonExe) {
@@ -43,7 +44,7 @@ class SidebarSymbolsProvider {
     try {
       const out = cp.execSync(
         `"${this.pythonExe}" "${getSymbolsScript(this.rootPath)}" --binary "${absPath}"`,
-        { encoding: 'utf8', cwd: this.rootPath, maxBuffer: 1024 * 1024, env: { ...process.env, PYTHONPATH: this.rootPath } }
+        { encoding: 'utf8', cwd: this.rootPath, maxBuffer: 1024 * 1024, env: { ...process.env, PYTHONPATH: getExtensionPath() || this.rootPath } }
       );
       this.symbols = JSON.parse(out);
     } catch (_) {
@@ -110,7 +111,7 @@ class SidebarStringsProvider {
     try {
       const out = cp.execSync(
         `"${this.pythonExe}" "${getStringsScript(this.rootPath)}" --binary "${absPath}"`,
-        { encoding: 'utf8', cwd: this.rootPath, maxBuffer: 1024 * 1024, env: { ...process.env, PYTHONPATH: this.rootPath } }
+        { encoding: 'utf8', cwd: this.rootPath, maxBuffer: 1024 * 1024, env: { ...process.env, PYTHONPATH: getExtensionPath() || this.rootPath } }
       );
       this.strings = JSON.parse(out).slice(0, 100);
     } catch (_) {
@@ -178,7 +179,7 @@ class SidebarSectionsProvider {
     try {
       const out = cp.execSync(
         `"${this.pythonExe}" "${getSectionsScript(this.rootPath)}" --binary "${absPath}"`,
-        { encoding: 'utf8', cwd: this.rootPath, maxBuffer: 1024 * 1024, env: { ...process.env, PYTHONPATH: this.rootPath } }
+        { encoding: 'utf8', cwd: this.rootPath, maxBuffer: 1024 * 1024, env: { ...process.env, PYTHONPATH: getExtensionPath() || this.rootPath } }
       );
       const data = JSON.parse(out);
       this.sections = Array.isArray(data) ? data : (data.sections || data);

@@ -33,7 +33,7 @@ describe("auth service loopback fallback", () => {
   }
 
   it("retries loopback auth on ::1 when localhost resolves to the wrong server", async () => {
-    const { AuthService } = proxyquire("../src/shared/authService", {
+    const { AuthService } = proxyquire("../shared/authService", {
       vscode: {},
     });
     AuthService._instance = null;
@@ -86,7 +86,7 @@ function makeAuthService({
   refreshThrows401 = false,
 } = {}) {
   // Reset du singleton avant chaque usage
-  const mod = require("../src/shared/authService");
+  const mod = require("../shared/authService");
   mod.AuthService._instance = null;
 
   const store = {};
@@ -132,7 +132,7 @@ describe("AuthService.refreshKeysIfStale()", () => {
 
   afterEach(() => {
     sinon.restore();
-    const mod = require("../src/shared/authService");
+    const mod = require("../shared/authService");
     mod.AuthService._instance = null;
   });
 

@@ -75,7 +75,7 @@ describe('hub detection plugin commands', () => {
     const repoRoot = options.repoRoot || '/repo';
     const storageRoot = options.storageRoot || path.join(repoRoot, '.state');
     vscode.workspace.workspaceFolders = [{ uri: { fsPath: repoRoot } }];
-    ({ createHub } = proxyquire('../src/static/hub', {
+    ({ createHub } = proxyquire('../static/hub', {
       child_process: { execFile },
       '../shared/webview': {
         getHubContent: () => '<!doctype html>',

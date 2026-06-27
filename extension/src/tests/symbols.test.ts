@@ -7,7 +7,7 @@ const {
   normalizeStartSymbolForBinary,
   preferredMainSymbol,
   symbolLookupCandidates,
-} = require('../src/shared/symbols');
+} = require('../shared/symbols');
 
 describe('shared symbol helpers', () => {
   it('prefers plain C symbols for ELF even when the host is macOS', () => {

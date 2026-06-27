@@ -4,7 +4,7 @@ const {
   emptyPluginUiState,
   flattenPluginCapabilities,
   summarizePluginRuntimeState,
-} = require("../src/static/pluginState");
+} = require("../static/pluginState");
 
 describe("plugin state helpers", () => {
   it("flattens plugin capabilities across manifest sections", () => {

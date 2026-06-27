@@ -2,7 +2,7 @@ const { expect } = require('chai');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
-const { loadPluginWebviews } = require('../src/shared/webview');
+const { loadPluginWebviews } = require('../shared/webview');
 
 describe('loadPluginWebviews', () => {
   let tmpDir;

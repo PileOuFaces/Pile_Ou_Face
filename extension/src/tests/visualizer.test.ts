@@ -1,7 +1,7 @@
 const { expect } = require('chai');
 const sinon = require('sinon');
 const proxyquire = require('proxyquire').noCallThru();
-const { buildFunctionModel, findPayloadSlots, slotLooksLikePayload } = require('../src/dynamic/pedagogy');
+const { buildFunctionModel, findPayloadSlots, slotLooksLikePayload } = require('../dynamic/pedagogy');
 
 describe('dynamic visualizer', () => {
   let vscode;
@@ -30,7 +30,7 @@ describe('dynamic visualizer', () => {
 
     vscode.window.createWebviewPanel = sinon.stub().returns(panel);
 
-    ({ createVisualizer } = proxyquire('../src/dynamic/visualizer', {
+    ({ createVisualizer } = proxyquire('../dynamic/visualizer', {
       '../shared/webview': {
         getWebviewContent: () => '<!doctype html>'
       }

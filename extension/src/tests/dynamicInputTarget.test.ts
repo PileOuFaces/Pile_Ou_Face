@@ -5,7 +5,7 @@ const {
   detectPayloadTargetFromSourceText,
   payloadTargetLabel,
   resolvePayloadTarget,
-} = require('../src/shared/dynamicInputTarget');
+} = require('../shared/dynamicInputTarget');
 
 describe('dynamic input target helpers', () => {
   it('detects stdin for rootme1-style fgets programs', () => {

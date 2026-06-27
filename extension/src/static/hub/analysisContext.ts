@@ -247,7 +247,7 @@ function createAnalysisContext({
           args,
           root,
           logChannel,
-          { PYTHONPATH: root },
+          { PYTHONPATH: getExtensionPath() || root },
           { onStderrData: progressHandler.hook, cancelToken: token }
         );
         progressHandler.finish();
@@ -305,7 +305,7 @@ function createAnalysisContext({
           args,
         );
       } else {
-        await runCommand(pythonExe, args, root, logChannel, { PYTHONPATH: root });
+        await runCommand(pythonExe, args, root, logChannel, { PYTHONPATH: getExtensionPath() || root });
       }
     }
     return {

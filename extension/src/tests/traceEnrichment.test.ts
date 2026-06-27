@@ -5,7 +5,7 @@ const {
   detectDangerousLocalBufferHints,
   formatAddress,
   lookupRuntimeAddress
-} = require('../src/dynamic/traceEnrichment');
+} = require('../dynamic/traceEnrichment');
 
 describe('dynamic trace enrichment', () => {
   it('resolves an exact symbol address', () => {

@@ -2,7 +2,7 @@ const { expect } = require("chai");
 const sinon = require("sinon");
 const fs = require("fs");
 
-const { resolveProjectRoot } = require("../src/shared/utils");
+const { resolveProjectRoot } = require("../shared/utils");
 
 describe("project root resolution", () => {
   afterEach(() => {

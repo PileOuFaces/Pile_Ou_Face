@@ -12,7 +12,7 @@ describe('staticHandlers Ollama streaming', () => {
     proc.stderr = new PassThrough();
     let spawnedArgs = [];
 
-    const staticHandlers = proxyquire('../src/static/staticHandlers', {
+    const staticHandlers = proxyquire('../static/staticHandlers', {
       vscode: { workspace: { getConfiguration: () => ({ inspect: () => ({}) }) } },
       child_process: { spawn: (_python, args) => {
         spawnedArgs = args;
@@ -85,7 +85,7 @@ describe('staticHandlers Ollama streaming', () => {
 
   it('persists the selected Ollama model in extension global state', async () => {
     const updates = [];
-    const staticHandlers = proxyquire('../src/static/staticHandlers', {
+    const staticHandlers = proxyquire('../static/staticHandlers', {
       vscode: { workspace: { getConfiguration: () => ({ inspect: () => ({}) }) } },
       '../shared/utils': {
         detectPythonExecutable: () => '/usr/bin/python3',
@@ -127,7 +127,7 @@ describe('staticHandlers Ollama streaming', () => {
       return true;
     };
 
-    const staticHandlers = proxyquire('../src/static/staticHandlers', {
+    const staticHandlers = proxyquire('../static/staticHandlers', {
       vscode: { workspace: { getConfiguration: () => ({ inspect: () => ({}) }) } },
       child_process: { spawn: () => proc },
       '../shared/utils': {
@@ -142,7 +142,7 @@ describe('staticHandlers Ollama streaming', () => {
       '../shared/authService': { AuthService: class {} },
       '../shared/authConfig': { resolveAuthServerUrl: () => 'http://localhost' },
     });
-    const sharedHandlers = require('../src/shared/sharedHandlers');
+    const sharedHandlers = require('../shared/sharedHandlers');
     const config = {
       root: '/repo',
       panel: { webview: { postMessage: (message) => posted.push(message) } },

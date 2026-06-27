@@ -13,7 +13,7 @@ describe("loadTraceFromWorkspace", () => {
     vscode.workspace = { workspaceFolders: undefined };
     vscode.window.showErrorMessage = showErrorStub;
 
-    extension = require("../src/extension");
+    extension = require("../extension");
   });
 
   afterEach(() => {

@@ -1052,7 +1052,7 @@ function createHub(config) {
             '--input', absoluteAsm,
             '--output', isolatedJsonPath
           ];
-          await runCommand(pythonExe, staticArgs, root, logChannel, { PYTHONPATH: root });
+          await runCommand(pythonExe, staticArgs, root, logChannel, { PYTHONPATH: getExtensionPath() || root });
           if (!fs.existsSync(isolatedJsonPath)) {
             throw new Error(`Trace statique introuvable: ${path.basename(isolatedJsonPath)}`);
           }
@@ -1174,7 +1174,7 @@ function createHub(config) {
           if (stopSymbol) pythonArgs.push('--stop-symbol', stopSymbol);
           if (useInterp) pythonArgs.push('--start-interp');
 
-          await runCommand(pythonExe, pythonArgs, root, logChannel, { PYTHONPATH: root });
+          await runCommand(pythonExe, pythonArgs, root, logChannel, { PYTHONPATH: getExtensionPath() || root });
           if (!fs.existsSync(isolatedJsonPath)) {
             throw new Error(`Trace dynamique introuvable: ${path.basename(isolatedJsonPath)}`);
           }

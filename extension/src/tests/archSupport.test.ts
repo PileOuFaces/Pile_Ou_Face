@@ -4,7 +4,7 @@ const os = require("os");
 const path = require("path");
 const fs = require("fs");
 
-const archSupport = require("../src/static/hub/archSupport");
+const archSupport = require("../static/hub/archSupport");
 
 // ── Fixture helpers ──────────────────────────────────────────────────────────
 

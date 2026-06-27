@@ -66,7 +66,7 @@ function runCacheIndex(root, args, { parseJson = true } = {}) {
       [scriptPath, '--db', getCacheIndexDbPath(root), ...args],
       {
         cwd: root,
-        env: { ...process.env, PYTHONPATH: root },
+        env: { ...process.env, PYTHONPATH: getExtensionPath() || root },
         encoding: 'utf8',
         timeout: 10000,
       }

@@ -31,7 +31,7 @@ describe('static analysis cancellation', () => {
     const spawn = sinon.stub().returns(child);
     const output = { appendLine: sinon.spy(), append: sinon.spy() };
     const token = makeCancellationToken();
-    const { runCommand } = proxyquire('../src/shared/utils', {
+    const { runCommand } = proxyquire('../shared/utils', {
       vscode: { window: { createOutputChannel: () => output } },
       child_process: { spawn },
     });
@@ -70,7 +70,7 @@ describe('static analysis cancellation', () => {
       },
     };
     const runCommand = sinon.stub().resolves();
-    const { createAnalysisContext } = require('../src/static/hub/analysisContext');
+    const { createAnalysisContext } = require('../static/hub/analysisContext');
     const ctx = createAnalysisContext({
       root,
       pythonExe: 'python3',

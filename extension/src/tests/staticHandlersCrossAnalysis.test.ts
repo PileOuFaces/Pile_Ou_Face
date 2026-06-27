@@ -6,7 +6,7 @@ describe('hubLoadCrossAnalysis plugin disable', () => {
   afterEach(() => sinon.restore());
 
   function makeHandlers(execFile) {
-    const staticHandlers = proxyquire('../src/static/staticHandlers', {
+    const staticHandlers = proxyquire('../static/staticHandlers', {
       child_process: { execFile },
       '../shared/utils': {
         detectPythonExecutable: () => '/usr/bin/python3',

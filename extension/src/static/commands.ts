@@ -11,6 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const cp = require('child_process');
 const { getDisasmScript, getXrefsScript } = require('../shared/paths');
+const { getExtensionPath } = require('../shared/utils');
 
 /**
  * @brief Enregistre les commandes statiques et retourne les subscriptions.
@@ -269,7 +270,7 @@ function registerStaticCommands(context, deps, providers) {
         ],
         root,
         logChannel,
-        { PYTHONPATH: root }
+        { PYTHONPATH: getExtensionPath() || root }
       );
     }
     if (fs.existsSync(disasmPath)) {
@@ -313,7 +314,7 @@ function registerStaticCommands(context, deps, providers) {
       ],
       root,
       logChannel,
-      { PYTHONPATH: root }
+      { PYTHONPATH: getExtensionPath() || root }
     );
     if (fs.existsSync(disasmPath)) {
       const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(disasmPath));

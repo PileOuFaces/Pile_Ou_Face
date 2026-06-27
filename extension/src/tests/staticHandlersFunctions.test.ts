@@ -21,7 +21,7 @@ describe("staticHandlers functions radar", () => {
       cb(new Error(`unexpected script: ${script}`));
     };
 
-    const staticHandlers = proxyquire("../src/static/staticHandlers", {
+    const staticHandlers = proxyquire("../static/staticHandlers", {
       vscode: {},
       child_process: { execFile },
       "../shared/utils": {
