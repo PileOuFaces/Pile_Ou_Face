@@ -5,13 +5,17 @@
       "name": "Run Extension",
       "type": "pwa-extensionHost",
       "request": "launch",
-      "args": ["--extensionDevelopmentPath=${workspaceFolder}"]
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}"],
+      "preLaunchTask": "build",
+      "outFiles": ["${workspaceFolder}/out/**/*.js"]
     },
     {
       "name": "Run Extension (workspace = project root)",
       "type": "pwa-extensionHost",
       "request": "launch",
-      "args": ["--extensionDevelopmentPath=${workspaceFolder}/extension"]
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}/extension"],
+      "preLaunchTask": "build",
+      "outFiles": ["${workspaceFolder}/extension/out/**/*.js"]
     }
   ]
 }
