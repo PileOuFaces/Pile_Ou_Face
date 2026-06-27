@@ -1,0 +1,37 @@
+repos:
+  # ── Linting et formatage Python ────────────────────────────────────────────
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.17
+    hooks:
+      - id: ruff-check
+        name: ruff (lint Python)
+        files: ^backends/static/
+        args: [--fix, --config=backends/pyproject.toml]
+      - id: ruff-format
+        name: ruff (format Python)
+        files: ^backends/static/
+        args: [--config=backends/pyproject.toml]
+
+  # ── Type checking ──────────────────────────────────────────────────────────
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.15.0
+    hooks:
+      - id: mypy
+        name: mypy (type check Python)
+        files: ^backends/static/(?!tests/).*\.py$
+        args: [--config-file, backends/pyproject.toml]
+        additional_dependencies:
+          - lief
+          - capstone
+
+  # ── Checks généraux ────────────────────────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=500]

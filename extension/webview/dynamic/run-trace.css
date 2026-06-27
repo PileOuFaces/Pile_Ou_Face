@@ -1,0 +1,158 @@
+/* Minimal form styling for the Run Trace webview. */
+/* Prioritize legibility and quick scanning over heavy visuals. */
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--vscode-font-family, system-ui, -apple-system, "Segoe UI", sans-serif);
+  background: var(--vscode-editor-background, #1e1e1e);
+  color: var(--vscode-editor-foreground, #d4d4d4);
+}
+
+.page {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.header-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mode-select {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.85rem;
+  min-width: 180px;
+}
+
+.title {
+  font-size: 1.2rem;
+  font-weight: 600;
+}
+
+.subtitle {
+  opacity: 0.7;
+  font-size: 0.85rem;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.group {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.group-title {
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  opacity: 0.7;
+  letter-spacing: 0.04em;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.85rem;
+}
+
+input,
+select,
+textarea {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  color: inherit;
+  padding: 8px 10px;
+  font-size: 0.85rem;
+}
+
+textarea {
+  resize: vertical;
+  min-height: 64px;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.field-hint {
+  font-size: 0.7rem;
+  opacity: 0.6;
+  margin-top: 2px;
+}
+
+.toggle {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+button {
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, #ffffff);
+  border: none;
+  border-radius: 6px;
+  padding: 8px 14px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+button:hover {
+  background: var(--vscode-button-hoverBackground, #1177bb);
+}
+
+@media (max-width: 600px) {
+  .header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .mode-select {
+    width: 100%;
+  }
+}
+
+/* Return address */
+.role-ret {
+  background: rgba(255, 70, 70, 0.25);
+  border: 1px solid rgba(255, 70, 70, 0.6);
+}
+
+/* Buffer */
+.role-buffer {
+  background: rgba(255, 200, 60, 0.25);
+  border: 1px solid rgba(255, 200, 60, 0.6);
+}
+
+/* Default / locals / padding / unknown */
+.role-default {
+  background: rgba(60, 140, 255, 0.15);
+  border: 1px solid rgba(60, 140, 255, 0.4);
+}

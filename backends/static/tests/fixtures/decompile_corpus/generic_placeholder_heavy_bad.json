@@ -1,0 +1,9 @@
+{
+  "tool": "generic",
+  "arch": "x86_64",
+  "quality": "bad",
+  "score_min": -80,
+  "score_max": -1,
+  "description": "Heavily placeholder-polluted output — local_XX variables everywhere, no readable logic",
+  "code": "void sub_401000(void) {\n  local_10 = 0;\n  local_18 = 0;\n  local_20 = 0;\n  local_28 = 0;\n  local_30 = 0;\n  local_38 = 0;\n  local_40 = 0;\n  local_48 = 0;\n  local_50 = 0;\n  local_58 = 0;\n  local_60 = 0;\n  local_68 = 0;\n  local_70 = 0;\n  local_78 = 0;\n  local_80 = 0;\n  local_88 = 0;\n  local_90 = 0;\n  local_98 = 0;\n  local_a0 = 0;\n  local_a8 = 0;\n  return;\n}\n"
+}

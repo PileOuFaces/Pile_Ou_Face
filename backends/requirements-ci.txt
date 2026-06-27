@@ -1,0 +1,9 @@
+# Dépendances minimales pour la CI — tests unitaires Python uniquement
+# flare-capa et unicorn sont exclus : trop lourds/fragiles sur macOS CI runners
+# et non requis pour les tests statiques (ils sont importés conditionnellement)
+capstone
+coverage>=7.6
+cryptography>=42.0.0
+lief
+pytest>=8.0
+ruff>=0.12

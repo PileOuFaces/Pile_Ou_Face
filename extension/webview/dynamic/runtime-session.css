@@ -1,0 +1,201 @@
+/* ==========================================================================
+   Runtime Session — sidebar nav items et panel runtime hub
+   ========================================================================== */
+
+.runtime-nav-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 0;
+}
+
+.runtime-nav-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 6px 4px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted, #858585);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  transition: background 120ms ease, color 120ms ease;
+  position: relative;
+}
+
+.runtime-nav-item:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text, #d4d4d4);
+}
+
+.runtime-nav-item.active {
+  background: rgba(109, 166, 255, 0.14);
+  color: #a8c8ff;
+}
+
+/* panel-runtime : délègue layout au .runtime-workspace interne */
+
+#panel-runtime {
+  overflow: hidden;
+  padding: 0;
+  gap: 0;
+}
+
+.runtime-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.runtime-panel-kicker {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted, #858585);
+}
+
+.runtime-panel-session-label {
+  font-size: 12px;
+  color: var(--text, #d4d4d4);
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.runtime-panel-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.runtime-panel-nav .btn {
+  padding: 3px 9px;
+  font-size: 0.8rem;
+}
+
+.runtime-step-chip {
+  font-size: 11px;
+  color: var(--text-muted, #858585);
+  min-width: 48px;
+  text-align: center;
+  font-family: var(--font-mono, monospace);
+}
+
+.runtime-crash-badge {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 83, 96, 0.72);
+  background: rgba(255, 65, 82, 0.2);
+  color: #ffd9dd;
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.runtime-panel-instr {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(133, 184, 255, 0.07);
+  border: 1px solid rgba(133, 184, 255, 0.14);
+  font-family: var(--font-mono, monospace);
+  font-size: 0.82rem;
+  color: #85b8ff;
+  min-height: 30px;
+}
+
+.runtime-panel-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+}
+
+.runtime-panel-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.025);
+  min-height: 0;
+}
+
+.runtime-section-title {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted, #858585);
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.runtime-stack-list,
+.runtime-regs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow: auto;
+  max-height: 280px;
+}
+
+.runtime-stack-slot,
+.runtime-reg-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  font-size: 0.76rem;
+  font-family: var(--font-mono, monospace);
+}
+
+.runtime-slot-name,
+.runtime-reg-name {
+  color: var(--text, #d4d4d4);
+  flex-shrink: 0;
+}
+
+.runtime-slot-value,
+.runtime-reg-value {
+  color: #d4f0a2;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+  min-width: 0;
+  text-align: right;
+}
+
+.runtime-panel-empty {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted, #858585);
+  font-size: 0.85rem;
+}
+
+.runtime-panel-empty[hidden],
+.runtime-panel-body[hidden] {
+  display: none !important;
+}

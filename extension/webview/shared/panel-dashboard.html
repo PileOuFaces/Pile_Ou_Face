@@ -1,0 +1,171 @@
+      <!-- Dashboard -->
+      <section id="panel-dashboard" class="panel active">
+        <div class="static-panel active dashboard-workspace">
+          <header class="dashboard-hero">
+            <div>
+              <p class="dashboard-kicker">Reverse workspace</p>
+              <h1 class="dashboard-hero-title">Workspace d'analyse</h1>
+              <p class="dashboard-hero-desc">Choisis un fichier de travail puis lance le bon flux d'analyse.</p>
+            </div>
+            <div class="dashboard-status-strip" aria-label="Modules disponibles">
+              <span>Static</span>
+              <span>Dynamic</span>
+              <span>MCP</span>
+            </div>
+          </header>
+
+          <div class="dashboard-grid">
+            <section class="dashboard-command-panel modern-card" aria-label="Entrées rapides">
+              <div class="dashboard-section-head">
+                <div>
+                  <p class="dashboard-kicker">Accès rapide</p>
+                  <h2>Flux de travail</h2>
+                  <p class="dashboard-section-desc">Choisis le mode adapté à ce que tu veux comprendre ou modifier.</p>
+                </div>
+              </div>
+              <div class="quick-actions">
+                <button class="action-card action-card-primary" data-action="static-open">
+                  <span class="action-step" aria-hidden="true">01</span>
+                  <span class="action-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/>
+                      <path d="M14 3v5h5"/>
+                      <path d="M8 13h8M8 17h5"/>
+                    </svg>
+                  </span>
+                  <span class="action-copy">
+                    <span class="action-label">Analyse statique</span>
+                    <span class="action-hint">Désassemblage, symboles, CFG, xrefs</span>
+                  </span>
+                </button>
+                <button class="action-card" data-action="dynamic-run">
+                  <span class="action-step" aria-hidden="true">02</span>
+                  <span class="action-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                      <path d="M8 5v14l11-7z"/>
+                      <path d="M4 6v12"/>
+                    </svg>
+                  </span>
+                  <span class="action-copy">
+                    <span class="action-label">Trace dynamique</span>
+                    <span class="action-hint">Unicorn + injection</span>
+                  </span>
+                </button>
+                <button class="action-card" data-action="outils-open">
+                  <span class="action-step" aria-hidden="true">03</span>
+                  <span class="action-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                      <path d="M14.7 6.3a4 4 0 0 0-5 5L4 17v3h3l5.7-5.7a4 4 0 0 0 5-5l-2.5 2.5-3-3z"/>
+                    </svg>
+                  </span>
+                  <span class="action-copy">
+                    <span class="action-label">Outils</span>
+                    <span class="action-hint">Calculette, payload, fichiers</span>
+                  </span>
+                </button>
+              </div>
+            </section>
+
+            <section class="dashboard-ollama modern-card" aria-label="Assistant IA">
+              <!-- En-tête : titre + statut | modèle + refresh -->
+              <div class="ollama-head">
+                <div class="ollama-head-left">
+                  <span class="ollama-head-title">Assistant IA</span>
+                  <p id="ollamaPromptStatus" class="dashboard-mcp-status" data-ollama-status="true"></p>
+                  <p class="ollama-conversation-usage" data-ollama-conversation-usage="true">0 token consommé</p>
+                  <p class="ollama-context-budget" data-ollama-context-budget="true">Contexte · ~0 token · 0 message</p>
+                  <details class="ollama-generation-settings">
+                    <summary>Réglages du modèle</summary>
+                    <div class="ollama-generation-settings-grid">
+                      <label>
+                        <span>Portée</span>
+                        <select class="select-modern" data-ai-generation-scope="true">
+                          <option value="global">Globale</option>
+                          <option value="conversation">Conversation</option>
+                        </select>
+                      </label>
+                      <label><span>Température</span><input class="input-inner" type="number" min="0" max="2" step="0.1" data-ai-generation-key="temperature" /></label>
+                      <label><span>Top P</span><input class="input-inner" type="number" min="0.01" max="1" step="0.05" data-ai-generation-key="top_p" /></label>
+                      <label><span>Tokens max.</span><input class="input-inner" type="number" min="1" max="131072" step="128" data-ai-generation-key="max_tokens" /></label>
+                    </div>
+                  </details>
+                </div>
+                <div class="ollama-head-right">
+                  <button
+                    type="button"
+                    class="btn btn-secondary btn-sm"
+                    data-ollama-export="true"
+                    title="Exporter la conversation active en Markdown ou JSON"
+                  >Exporter</button>
+                  <button
+                    type="button"
+                    class="btn btn-primary btn-sm ollama-new-conversation-btn"
+                    data-ollama-new-conversation="true"
+                    title="Créer une nouvelle conversation"
+                  >＋ Nouvelle conversation</button>
+                  <label class="ollama-model-control">
+                    <span>Modèle</span>
+                    <select id="ollamaModelSelect" class="select-modern" data-ollama-model-select="true"></select>
+                  </label>
+                  <button id="btnOllamaRefreshModels" type="button" class="btn btn-secondary btn-sm" title="Rafraîchir les modèles" aria-label="Rafraîchir les modèles">↺</button>
+                </div>
+              </div>
+
+              <!-- Corps : chat + historique -->
+              <div class="dashboard-chat-layout">
+                <div class="dashboard-chat-main">
+                  <div id="ollamaChatHistory" class="ollama-chat-history" data-ollama-chat-history="true" aria-live="polite"></div>
+
+                  <div class="ollama-composer">
+                    <div class="ollama-prompt-templates" aria-label="Templates rapides">
+                      <button type="button" class="ollama-template-chip" data-template="Analyse ce fichier et donne-moi un rapport complet.">Rapport</button>
+                      <button type="button" class="ollama-template-chip" data-template="Désassemble le point d'entrée et explique le code.">Désassemble</button>
+                      <button type="button" class="ollama-template-chip" data-template="Cherche des vulnérabilités dans ce binaire.">Vulnérabilités</button>
+                      <button type="button" class="ollama-template-chip" data-template="Liste les chaînes de caractères intéressantes.">Strings</button>
+                      <button type="button" class="ollama-template-chip" data-template="Liste les imports et les appels système.">Imports</button>
+                    </div>
+                    <textarea
+                      id="ollamaPromptInput"
+                      class="input-inner ollama-chat-input"
+                      rows="3"
+                      spellcheck="false"
+                      placeholder="Message…"
+                    ></textarea>
+                    <div class="ollama-composer-actions">
+                      <button type="button" class="btn btn-danger btn-sm" data-ollama-cancel="true" hidden>Arrêter</button>
+                      <button id="btnOllamaRunPrompt" type="button" class="btn btn-primary btn-sm">Envoyer</button>
+                    </div>
+                  </div>
+                </div>
+
+                <aside class="ollama-history-panel">
+                  <div class="ollama-history-head">
+                    <span class="ollama-history-label">Historique</span>
+                    <button id="btnOllamaClearHistory" type="button" class="btn btn-secondary btn-sm">Vider</button>
+                  </div>
+                  <div class="ollama-history-controls">
+                    <input
+                      id="ollamaHistorySearch"
+                      class="input-inner ollama-history-search"
+                      type="search"
+                      placeholder="Rechercher…"
+                      aria-label="Rechercher une conversation"
+                    />
+                    <select
+                      id="ollamaHistorySort"
+                      class="select-modern ollama-history-sort"
+                      aria-label="Trier les conversations"
+                    >
+                      <option value="updated_desc">Plus récentes</option>
+                      <option value="updated_asc">Plus anciennes</option>
+                      <option value="title_asc">Titre A–Z</option>
+                      <option value="model_asc">Modèle A–Z</option>
+                    </select>
+                  </div>
+                  <div id="ollamaConversationHistoryList" class="ollama-history-list"></div>
+                </aside>
+              </div>
+            </section>
+          </div>
+        </div>
+      </section>

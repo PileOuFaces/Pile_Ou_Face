@@ -1,0 +1,9 @@
+{
+  "tool": "ghidra",
+  "arch": "x86_64",
+  "quality": "low",
+  "score_min": 0,
+  "score_max": 14,
+  "description": "Ghidra output with 2 WARNINGs, a goto, minimal readable content — on the edge of usability",
+  "code": "int do_jump(int x) {\n  goto lbl;\n  // WARNING: Could not recover jumptable at 0x401050\n  // WARNING: Bad instruction - Truncating control flow\nlbl:\n  if (x > 0) {\n    return x;\n  }\n  return 0;\n}\n"
+}

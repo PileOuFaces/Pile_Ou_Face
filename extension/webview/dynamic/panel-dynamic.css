@@ -1,0 +1,832 @@
+/* Dynamic panel styles (hub panel + standalone visualizer).
+   This file intentionally contains only dynamic-specific UI styles. */
+
+/* ========================================================================== */
+/* Hub dynamic panel (webview/hub.html + dynamic/panel-dynamic.html fragment) */
+/* ========================================================================== */
+
+#panel-dynamic {
+  overflow-y: auto;
+  padding: 10px 14px;
+}
+
+#panel-dynamic .panel-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+#panel-dynamic .panel-hero-icon {
+  font-size: 20px;
+  color: var(--accent-blue-soft, #88d8ff);
+}
+
+#panel-dynamic .panel-hero-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-active, #ffffff);
+}
+
+#panel-dynamic .panel-hero-desc {
+  font-size: 11px;
+  color: var(--text-dim, #5a5a5a);
+}
+
+#panel-dynamic .form {
+  display: flex;
+  flex-direction: column;
+}
+
+#panel-dynamic .form-section {
+  margin-bottom: 6px;
+}
+
+#panel-dynamic .form-section h3 {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted, #858585);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+#panel-dynamic .dynamic-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+#panel-dynamic .dynamic-header-row > div {
+  min-width: 0;
+  flex: 1;
+}
+
+#panel-dynamic .dynamic-meta-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(160px, 220px));
+}
+
+#panel-dynamic .dynamic-meta-value {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  font-weight: 600;
+}
+
+#panel-dynamic .dynamic-binary-details {
+  margin-top: 6px;
+}
+
+#panel-dynamic .dynamic-binary-details summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 0;
+  font-size: 11px;
+  color: var(--text-muted, #858585);
+  cursor: pointer;
+  user-select: none;
+}
+
+#panel-dynamic .dynamic-binary-details summary::before {
+  content: '›';
+  display: inline-block;
+  font-size: 12px;
+  transition: transform 0.15s;
+}
+
+#panel-dynamic .dynamic-binary-details[open] summary::before {
+  transform: rotate(90deg);
+}
+
+#panel-dynamic .dynamic-source-field {
+  margin-top: 10px;
+}
+
+#panel-dynamic .dynamic-source-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+#panel-dynamic .form-field {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+#panel-dynamic .dynamic-payload-input-field {
+  flex: 1 1 360px;
+  min-width: 0;
+}
+
+#panel-dynamic .dynamic-payload-target-field {
+  flex: 0 0 180px;
+  min-width: 160px;
+}
+
+#panel-dynamic .dynamic-payload-target-field .select-modern {
+  width: 100%;
+  min-height: 30px;
+}
+
+#panel-dynamic .dynamic-payload-common-row,
+#panel-dynamic .dynamic-payload-tabs {
+  max-width: 980px;
+}
+
+#panel-dynamic .dynamic-payload-common-row {
+  margin: 0 0 8px;
+}
+
+#panel-dynamic .dynamic-payload-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 10px;
+}
+
+#panel-dynamic .dynamic-payload-tab {
+  border: 1px solid var(--vscode-button-border, rgba(255, 255, 255, 0.12));
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-primary, #d4d4d4);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+#panel-dynamic .dynamic-payload-tab.active {
+  border-color: rgba(136, 216, 255, 0.55);
+  background: rgba(136, 216, 255, 0.12);
+  color: var(--text-active, #ffffff);
+}
+
+#panel-dynamic .dynamic-builder-levels {
+  display: inline-flex;
+  gap: 4px;
+  margin: 0 0 6px;
+  padding: 3px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+#panel-dynamic .dynamic-builder-level {
+  border: 0;
+  background: transparent;
+  color: var(--text-muted, #9a9a9a);
+  border-radius: 6px;
+  padding: 4px 9px;
+  cursor: pointer;
+  font: inherit;
+}
+
+#panel-dynamic .dynamic-builder-level.is-active {
+  background: rgba(136, 216, 255, 0.14);
+  color: var(--text-active, #ffffff);
+}
+
+#panel-dynamic .dynamic-payload-mode {
+  display: none;
+}
+
+#panel-dynamic .dynamic-payload-mode.active {
+  display: block;
+}
+
+#panel-dynamic .dynamic-payload-page {
+  max-width: 980px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+#panel-dynamic .dynamic-payload-mode[data-payload-panel="payload_builder"] .dynamic-payload-page {
+  max-width: 720px;
+}
+
+#panel-dynamic .dynamic-payload-mode[data-payload-panel="file"] .dynamic-payload-page,
+#panel-dynamic .dynamic-payload-mode[data-payload-panel="pwntools_script"] .dynamic-payload-page {
+  max-width: 1040px;
+}
+
+#panel-dynamic .dynamic-payload-page .hint {
+  padding: 2px 0;
+}
+
+#panel-dynamic .dynamic-code-input {
+  width: 100%;
+  min-height: 80px;
+  box-sizing: border-box;
+  font-family: var(--font-mono, monospace);
+  resize: vertical;
+}
+
+#panel-dynamic .dynamic-payload-mode[data-payload-panel="payload_builder"] .dynamic-code-input {
+  min-height: 72px;
+}
+
+#panel-dynamic .dynamic-payload-mode[data-payload-panel="file"] .dynamic-code-input {
+  min-height: 150px;
+}
+
+#panel-dynamic .dynamic-payload-mode[data-payload-panel="pwntools_script"] .dynamic-code-input {
+  min-height: 220px;
+}
+
+#panel-dynamic .dynamic-file-grid,
+#panel-dynamic .dynamic-helper-grid,
+#panel-dynamic .dynamic-helper-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+  align-items: end;
+}
+
+#panel-dynamic .dynamic-file-grid {
+  grid-template-columns: minmax(160px, 220px) minmax(260px, 1fr);
+}
+
+#panel-dynamic .dynamic-helper-grid {
+  grid-template-columns: minmax(220px, 1.35fr) repeat(3, minmax(120px, 0.65fr));
+}
+
+#panel-dynamic .dynamic-helper-fields {
+  display: none;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+#panel-dynamic .dynamic-helper-fields.active {
+  display: grid;
+}
+
+#panel-dynamic .dynamic-file-path-row {
+  display: none;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+#panel-dynamic .dynamic-file-path-row.active {
+  display: flex;
+}
+
+#panel-dynamic .dynamic-payload-mode[data-payload-panel="file"] [data-file-source-panel="inline"] {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+#panel-dynamic .dynamic-payload-preview {
+  max-width: 980px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+#panel-dynamic .dynamic-payload-preview.is-hidden {
+  display: none;
+}
+
+#panel-dynamic .dynamic-payload-preview-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+#panel-dynamic .dynamic-payload-preview-toolbar .is-hidden {
+  display: none;
+}
+
+#panel-dynamic .dynamic-preview-card {
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+#panel-dynamic .dynamic-preview-card-title {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted, #858585);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+#panel-dynamic .dynamic-preview-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+#panel-dynamic .dynamic-preview-card-header .dynamic-preview-summary-grid {
+  flex: 1;
+  min-width: 0;
+}
+
+#panel-dynamic .dynamic-preview-card-header:hover {
+  opacity: 0.85;
+}
+
+#panel-dynamic .dynamic-preview-chevron {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 14px;
+  color: var(--text-muted, #858585);
+  transition: transform 0.15s;
+}
+
+#panel-dynamic .dynamic-preview-toggle-label {
+  flex-shrink: 0;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(136, 216, 255, 0.1);
+  border: 1px solid rgba(136, 216, 255, 0.22);
+  color: var(--text-primary, #d4d4d4);
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+#panel-dynamic .dynamic-preview-card.is-open .dynamic-preview-chevron {
+  transform: rotate(90deg);
+}
+
+#panel-dynamic .dynamic-preview-card-body {
+  display: none;
+  margin-top: 8px;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#panel-dynamic .dynamic-preview-card.is-open .dynamic-preview-card-body {
+  display: flex;
+}
+
+#panel-dynamic .dynamic-preview-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(120px, 1fr));
+  gap: 6px;
+}
+
+#panel-dynamic .dynamic-preview-summary-grid > div,
+#panel-dynamic .dynamic-preview-grid > div,
+#panel-dynamic .dynamic-preview-warnings-wrap {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+#panel-dynamic .dynamic-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+#panel-dynamic .dynamic-preview-block {
+  display: block;
+  min-height: 48px;
+  max-height: 180px;
+  overflow: auto;
+  margin: 0;
+  padding: 7px 9px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  word-break: break-all;
+  white-space: pre-wrap;
+  font-family: var(--font-mono, monospace);
+  color: var(--text-primary, #d4d4d4);
+}
+
+#panel-dynamic .dynamic-preview-warnings {
+  margin: 0;
+  padding-left: 16px;
+  color: var(--text-muted, #b9b9b9);
+}
+
+#panel-dynamic .dynamic-preview-warnings li + li {
+  margin-top: 4px;
+}
+
+#panel-dynamic .dynamic-preview-snippet {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding-top: 8px;
+}
+
+#panel-dynamic .dynamic-preview-snippet summary {
+  cursor: pointer;
+  color: var(--text-primary, #d4d4d4);
+  user-select: none;
+}
+
+#panel-dynamic .dynamic-preview-snippet[open] summary {
+  margin-bottom: 8px;
+}
+
+#panel-dynamic #payloadPreviewWarnings.warning {
+  color: var(--vscode-editorWarning-foreground, #cca700);
+}
+
+#panel-dynamic #payloadPreviewWarnings.error {
+  color: var(--vscode-errorForeground, #f48771);
+}
+
+#panel-dynamic #payloadPreviewStatus[data-state="ready"] {
+  color: var(--accent-blue-soft, #88d8ff);
+}
+
+#panel-dynamic #payloadPreviewStatus[data-state="stale"] {
+  color: var(--text-muted, #858585);
+}
+
+#panel-dynamic #payloadPreviewStatus[data-state="error"] {
+  color: var(--vscode-errorForeground, #f48771);
+}
+
+#panel-dynamic .dynamic-helper-output {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+#panel-dynamic .form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#panel-dynamic .form-actions .btn {
+  margin-left: auto;
+}
+
+#panel-dynamic .dynamic-history-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#panel-dynamic .dynamic-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+  max-height: 280px;
+  overflow: auto;
+}
+
+#panel-dynamic .dynamic-history-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+#panel-dynamic .dynamic-history-item.active {
+  border-color: rgba(136, 216, 255, 0.45);
+  background: rgba(136, 216, 255, 0.08);
+}
+
+#panel-dynamic .dynamic-history-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+#panel-dynamic .dynamic-history-title {
+  font-weight: 600;
+  color: var(--text-active, #ffffff);
+  word-break: break-word;
+}
+
+#panel-dynamic .dynamic-history-meta,
+#panel-dynamic .dynamic-history-subline {
+  font-size: 12px;
+  color: var(--text-muted, #858585);
+  word-break: break-word;
+}
+
+#panel-dynamic .dynamic-history-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+@media (max-width: 920px) {
+  #panel-dynamic .dynamic-source-row {
+    grid-template-columns: 1fr;
+  }
+
+  #panel-dynamic .dynamic-history-toolbar,
+  #panel-dynamic .dynamic-history-item {
+    grid-template-columns: 1fr;
+  }
+
+  #panel-dynamic .dynamic-history-actions {
+    justify-content: flex-start;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   Dynamic hub — hiérarchie visuelle & progressive disclosure
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* 1. Hero compact : single-line breadcrumb au lieu d'un bloc de titre */
+#panel-dynamic .panel-hero {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  padding: 0;
+}
+#panel-dynamic .panel-hero-icon {
+  font-size: 12px;
+}
+#panel-dynamic .panel-hero-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+#panel-dynamic .panel-hero-desc {
+  display: none;
+}
+
+/* 2. Tabs payload : segmented-control (sélecteur de mode, pas boutons disparates) */
+#panel-dynamic .dynamic-payload-tabs {
+  flex-wrap: nowrap;
+  gap: 0;
+  padding: 3px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  max-width: 640px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+#panel-dynamic .dynamic-payload-tabs::-webkit-scrollbar { display: none; }
+
+#panel-dynamic .dynamic-payload-tab {
+  flex: 1;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: 5px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  text-align: center;
+  white-space: nowrap;
+  min-width: 0;
+  transition: background var(--transition), color var(--transition);
+}
+#panel-dynamic .dynamic-payload-tab:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+}
+#panel-dynamic .dynamic-payload-tab.active {
+  background: rgba(79, 193, 255, 0.13);
+  border-color: rgba(79, 193, 255, 0.24);
+  color: var(--accent-blue-soft);
+  font-weight: 600;
+  border: 1px solid rgba(79, 193, 255, 0.24);
+}
+
+/* 3. Run zone : sticky bas du panel, bouton action principale */
+#panel-dynamic .dynamic-run-zone {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  align-items: stretch;
+  padding: 12px 0 6px;
+  background: linear-gradient(to top, var(--bg, #1e1e1e) 72%, transparent);
+  margin-top: 4px;
+}
+#panel-dynamic .dynamic-run-zone #dynamicTraceStatus {
+  text-align: center;
+  font-size: 11px;
+  margin: 0;
+  order: -1;
+}
+#panel-dynamic .dynamic-run-zone #runBtn {
+  width: 100%;
+  justify-content: center;
+  padding: 10px 18px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, #1180cc, #0e639c);
+  border-color: #1180cc;
+  box-shadow: 0 2px 8px rgba(14, 99, 156, 0.35);
+  transition: background var(--transition), box-shadow var(--transition), transform 0.08s ease;
+  margin-left: 0;
+}
+#panel-dynamic .dynamic-run-zone #runBtn:hover:not(:disabled) {
+  background: linear-gradient(180deg, #1390e0, #1177bb);
+  box-shadow: 0 4px 14px rgba(14, 99, 156, 0.5);
+  transform: translateY(-1px);
+}
+#panel-dynamic .dynamic-run-zone #runBtn:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 1px 4px rgba(14, 99, 156, 0.3);
+}
+#panel-dynamic .dynamic-run-zone #runBtn:disabled {
+  background: linear-gradient(180deg, #1180cc, #0e639c);
+  box-shadow: none;
+  opacity: 0.45;
+}
+
+/* 4. Historique : visually secondary — réduit le bruit avant la run */
+#panel-dynamic .dynamic-section-secondary {
+  background: rgba(255, 255, 255, 0.012);
+  border-color: rgba(255, 255, 255, 0.05);
+}
+#panel-dynamic .dynamic-section-secondary .dynamic-header-row h3 {
+  color: var(--text-dim);
+  font-size: 10px;
+}
+#panel-dynamic .dynamic-section-secondary .dynamic-header-row .hint {
+  font-size: 10px;
+}
+#panel-dynamic .dynamic-section-secondary .dynamic-history-list {
+  max-height: 200px;
+}
+
+/* 5. Cible (target selector) : compact et secondaire */
+#panel-dynamic .dynamic-payload-target-field label {
+  font-size: 10px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+#panel-dynamic .dynamic-payload-target-field .select-modern {
+  font-size: 11px;
+  padding: 2px 5px;
+}
+
+/* 6. Runtime states — driven by data-runtime-state on #dynamicTraceStatus.
+   Attribute is set by setDynamicTraceStatus() in outils.js based on message text.
+   Values: idle | launching | opening | done | error */
+#panel-dynamic #dynamicTraceStatus {
+  transition: color var(--transition), opacity var(--transition);
+}
+/* idle: let .hint class apply its default color — no override needed */
+#panel-dynamic #dynamicTraceStatus[data-runtime-state="launching"] {
+  color: var(--accent-blue-soft);
+  animation: pof-runtime-pulse 1.4s ease-in-out infinite;
+}
+#panel-dynamic #dynamicTraceStatus[data-runtime-state="done"] {
+  color: #4ec99a;
+}
+#panel-dynamic #dynamicTraceStatus[data-runtime-state="opening"] {
+  color: var(--accent-blue-soft);
+  opacity: 0.75;
+}
+#panel-dynamic #dynamicTraceStatus[data-runtime-state="error"] {
+  color: var(--accent-red, #f44747);
+}
+
+@keyframes pof-runtime-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.6; }
+}
+
+/* Runtime state styling is driven by #dynamicTraceStatus[data-runtime-state].
+   Scoped to #panel-dynamic to avoid leaking into other panels.
+   :has() checks that the status span is a descendant of .dynamic-run-zone
+   before targeting the sibling #runBtn. */
+
+/* Run button glow while launching */
+#panel-dynamic .dynamic-run-zone:has(#dynamicTraceStatus[data-runtime-state="launching"]) #runBtn {
+  box-shadow: 0 0 0 2px rgba(79, 193, 255, 0.18), 0 2px 10px rgba(14, 99, 156, 0.4);
+  pointer-events: none;
+}
+/* Run button success tint when done */
+#panel-dynamic .dynamic-run-zone:has(#dynamicTraceStatus[data-runtime-state="done"]) #runBtn {
+  border-color: rgba(78, 201, 154, 0.3);
+  box-shadow: 0 2px 8px rgba(78, 201, 154, 0.15);
+}
+/* Run button error tint — subtle, message text is the primary error signal */
+#panel-dynamic .dynamic-run-zone:has(#dynamicTraceStatus[data-runtime-state="error"]) #runBtn {
+  border-color: rgba(244, 135, 113, 0.25);
+  box-shadow: 0 2px 6px rgba(244, 135, 113, 0.12);
+}
+#panel-dynamic .dynamic-pwntools-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+#panel-dynamic .dynamic-pwntools-captures {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+#panel-dynamic .dynamic-pwntools-capture {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+#panel-dynamic .dynamic-pwntools-capture.is-selected {
+  border-color: rgba(77, 163, 255, 0.7);
+  box-shadow: 0 0 0 1px rgba(77, 163, 255, 0.2) inset;
+}
+
+#panel-dynamic .dynamic-pwntools-capture-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+#panel-dynamic .dynamic-pwntools-capture-meta {
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.82rem;
+  margin-bottom: 6px;
+}
+
+#panel-dynamic .dynamic-pwntools-capture-preview {
+  margin: 0 0 6px 0;
+  padding: 7px;
+  border-radius: 6px;
+  max-height: 120px;
+  overflow: auto;
+  background: rgba(0, 0, 0, 0.22);
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+#panel-dynamic .dynamic-pwntools-capture-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+@media (max-width: 680px) {
+  #panel-dynamic {
+    padding: 12px;
+  }
+
+  #panel-dynamic .dynamic-header-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  #panel-dynamic .dynamic-meta-row {
+    grid-template-columns: 1fr;
+  }
+
+  #panel-dynamic .dynamic-file-grid,
+  #panel-dynamic .dynamic-helper-grid,
+  #panel-dynamic .dynamic-helper-fields,
+  #panel-dynamic .dynamic-preview-grid,
+  #panel-dynamic .dynamic-preview-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  #panel-dynamic .form-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  #panel-dynamic .form-actions .btn {
+    margin-left: 0;
+  }
+}

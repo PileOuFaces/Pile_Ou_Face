@@ -1,0 +1,158 @@
+import js from '@eslint/js';
+import prettier from 'eslint-config-prettier';
+import tseslint from 'typescript-eslint';
+
+export default [
+  {
+    ignores: ['node_modules/', 'out/', '.c8_output/', 'coverage/', '*.vsix', 'webview/media/app/'],
+  },
+  js.configs.recommended,
+  prettier,
+  {
+    files: ['src/**/*.ts', 'test/**/*.ts'],
+    languageOptions: {
+      parser: tseslint.parser,
+    },
+    plugins: {
+      '@typescript-eslint': tseslint.plugin,
+    },
+    rules: {
+      'no-undef': 'off',
+      'no-unused-vars': 'off',
+      '@typescript-eslint/no-unused-vars': 'off',
+      '@typescript-eslint/no-explicit-any': 'off',
+      '@typescript-eslint/no-require-imports': 'off',
+    },
+  },
+  {
+    files: ['src/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 2020,
+      sourceType: 'commonjs',
+      globals: {
+        require: 'readonly',
+        module: 'readonly',
+        process: 'readonly',
+        console: 'readonly',
+        Buffer: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+        setInterval: 'readonly',
+        clearInterval: 'readonly',
+        URL: 'readonly',
+        URLSearchParams: 'readonly',
+        __dirname: 'readonly',
+        __filename: 'readonly',
+      },
+    },
+    rules: {
+      'no-console': 'warn',
+      'no-unused-vars': 'off',
+      'prefer-const': 'error',
+    },
+  },
+  {
+    files: ['test/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 2020,
+      sourceType: 'commonjs',
+      globals: {
+        require: 'readonly',
+        module: 'readonly',
+        process: 'readonly',
+        console: 'readonly',
+        Buffer: 'readonly',
+        __dirname: 'readonly',
+        __filename: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+        setImmediate: 'readonly',
+        describe: 'readonly',
+        it: 'readonly',
+        before: 'readonly',
+        after: 'readonly',
+        beforeEach: 'readonly',
+        afterEach: 'readonly',
+      },
+    },
+    rules: {
+      'no-unused-vars': 'off',
+    },
+  },
+  {
+    files: ['webview/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 2020,
+      sourceType: 'module',
+      globals: {
+        window: 'readonly',
+        document: 'readonly',
+        navigator: 'readonly',
+        location: 'readonly',
+        FormData: 'readonly',
+        acquireVsCodeApi: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+        setInterval: 'readonly',
+        clearInterval: 'readonly',
+        requestAnimationFrame: 'readonly',
+        cancelAnimationFrame: 'readonly',
+        console: 'readonly',
+        HTMLElement: 'readonly',
+        localStorage: 'readonly',
+        sessionStorage: 'readonly',
+        URL: 'readonly',
+        URLSearchParams: 'readonly',
+        fetch: 'readonly',
+        Event: 'readonly',
+        MessageEvent: 'readonly',
+        CustomEvent: 'readonly',
+        MutationObserver: 'readonly',
+        ResizeObserver: 'readonly',
+        IntersectionObserver: 'readonly',
+      },
+    },
+    rules: {
+      'no-unused-vars': 'off',
+    },
+  },
+  {
+    // UMD bundles that reference `module` and `define` for CommonJS/AMD detection.
+    files: ['webview/shared/cfgHelpers.js', 'webview/shared/elk.bundled.js'],
+    languageOptions: {
+      globals: {
+        module: 'readonly',
+        define: 'readonly',
+        exports: 'readonly',
+      },
+    },
+    rules: {
+      'no-undef': 'off',
+    },
+  },
+  {
+    // hub.js, shared/, static/ and dynamic/panel.js are plain browser scripts sharing globals via window scope.
+    // ESLint cannot resolve cross-file references in script mode, so no-undef is disabled.
+    files: [
+      'webview/hub.js',
+      'webview/shared/*.js',
+      'webview/static/*.js',
+      'webview/dynamic/panel.js',
+      'webview/dynamic/dynamicPresetController.js',
+      'webview/dynamic/dynamicVisualizerController.js',
+      'webview/dynamic/runTraceController.js',
+      'webview/dynamic/payloadHistoryController.js',
+      'webview/dynamic/dynamicPayload.js',
+    ],
+    languageOptions: {
+      ecmaVersion: 2020,
+      sourceType: 'script',
+    },
+    rules: {
+      'no-undef': 'off',
+      'no-unused-vars': 'off',
+      'no-control-regex': 'off',
+      'no-empty': 'off',
+    },
+  },
+];

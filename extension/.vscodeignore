@@ -1,0 +1,14 @@
+.vscode/
+.vscode-test/
+test/
+out-test/
+.nyc_output/
+coverage/
+dist/
+node_modules/
+.gitignore
+.eslintrc*
+eslint.config.*
+tsconfig*.json
+*.vsix
+**/*.map

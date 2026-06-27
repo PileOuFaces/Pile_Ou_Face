@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; img-src {{cspSource}}; script-src {{cspSource}}; style-src {{cspSource}} 'unsafe-inline';">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Run Trace</title>
+  <link rel="stylesheet" href="{{styleUri}}">
+</head>
+<body>
+  <main class="run-trace-page">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Dynamic</p>
+        <h1>Run Trace</h1>
+        <p class="hero-copy">Le binaire et les paramètres TRACE sont préremplis. Tu peux encore tout ajuster avant de lancer la trace.</p>
+      </div>
+      <button id="changeBinaryBtn" type="button" class="btn btn-secondary">Changer le binaire</button>
+    </header>
+
+    <form id="runTraceForm" class="run-trace-layout">
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="panel-kicker">BINARY</p>
+            <h2>Récap binaire</h2>
+          </div>
+        </div>
+
+        <label class="field">
+          <span>Chemin binaire</span>
+          <input id="binaryPath" name="binaryPath" type="text" spellcheck="false" />
+        </label>
+
+        <div class="binary-meta">
+          <div class="meta-card">
+            <span class="meta-label">Architecture</span>
+            <span id="archBitsBadge" class="meta-value">—</span>
+          </div>
+          <div class="meta-card">
+            <span class="meta-label">PIE</span>
+            <span id="pieBadge" class="meta-value">—</span>
+          </div>
+        </div>
+
+        <p id="sourceHint" class="hint"></p>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="panel-kicker">TRACE</p>
+            <h2>Profil MVP</h2>
+          </div>
+          <p class="hint">Valeurs initiales issues du binaire courant, des symboles disponibles et de la dernière trace si elle existe pour ce binaire.</p>
+        </div>
+
+        <div class="trace-grid">
+          <label class="field">
+            <span>buffer_offset</span>
+            <input id="bufferOffset" name="bufferOffset" type="text" spellcheck="false" />
+          </label>
+          <label class="field">
+            <span>buffer_size</span>
+            <input id="bufferSize" name="bufferSize" type="text" spellcheck="false" />
+          </label>
+          <label class="field">
+            <span>max_steps</span>
+            <input id="maxSteps" name="maxSteps" type="number" min="1" step="1" />
+          </label>
+          <label class="field">
+            <span>start_symbol</span>
+            <input id="startSymbol" name="startSymbol" type="text" spellcheck="false" />
+          </label>
+          <label class="field">
+            <span>stop_symbol</span>
+            <input id="stopSymbol" name="stopSymbol" type="text" spellcheck="false" placeholder="optionnel" />
+          </label>
+        </div>
+      </section>
+
+      <div class="actions">
+        <button id="runTraceBtn" type="submit" class="btn btn-primary">Run Trace</button>
+        <p id="statusLine" class="status">Prêt.</p>
+      </div>
+    </form>
+  </main>
+
+  <script src="{{scriptUri}}"></script>
+</body>
+</html>

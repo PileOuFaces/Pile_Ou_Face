@@ -1,0 +1,5 @@
+# Dépendances Python pour le container Ghidra
+# unicorn / angr / flare-capa : inutiles ici, Ghidra est une JVM
+pyghidra
+lief
+capstone

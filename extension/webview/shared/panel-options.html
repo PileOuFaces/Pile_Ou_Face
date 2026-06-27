@@ -1,0 +1,433 @@
+      <!-- Options -->
+      <section id="panel-options" class="panel settings-panel">
+        <div class="settings-shell">
+          <div class="settings-layout">
+
+            <!-- Compte / Auth -->
+            <article class="settings-section settings-section-wide modern-card">
+              <div class="settings-section-head">
+                <div>
+                  <p class="settings-kicker">Plugins premium</p>
+                  <h3 class="settings-section-title">Compte</h3>
+                </div>
+              </div>
+              <div class="settings-group">
+                <div class="pof-account" data-pof-account-root>
+
+                  <!-- Serveur auth -->
+                  <div class="pof-server-row">
+                    <div class="pof-server-copy">
+                      <label class="pof-server-label" for="settingAuthServerUrl">URL du serveur auth</label>
+                      <p class="pof-server-hint">Adresse du serveur d'authentification Pile ou Face. En dev local, l'extension bascule automatiquement sur <code>http://localhost:8000</code> si le repo auth voisin est détecté.</p>
+                    </div>
+                    <input id="settingAuthServerUrl" class="input-inner settings-mono pof-server-input" type="text" placeholder="Auto — localhost:8000 en dev, auth.pileouface.io sinon" data-key="authServerUrl" />
+                  </div>
+
+                  <!-- État déconnecté -->
+                  <div class="pof-account-gate" data-pof-account-logged-out>
+                    <div class="pof-account-gate-copy">
+                      <p class="pof-account-gate-title">Connexion</p>
+                      <p class="pof-account-gate-hint">Connecte-toi pour déverrouiller tes plugins premium.</p>
+                    </div>
+                    <form class="pof-login-form" autocomplete="on" data-pof-login-form>
+                      <div class="pof-login-fields">
+                        <div class="pof-login-field">
+                          <label class="pof-login-label" for="pofLoginEmail">Email</label>
+                          <input id="pofLoginEmail" class="input-inner pof-login-input" type="email" autocomplete="email" placeholder="vous@exemple.com" data-pof-login-email />
+                        </div>
+                        <div class="pof-login-field">
+                          <label class="pof-login-label" for="pofLoginPassword">Mot de passe</label>
+                          <input id="pofLoginPassword" class="input-inner pof-login-input" type="password" autocomplete="current-password" data-pof-login-password />
+                        </div>
+                      </div>
+                      <div class="pof-login-actions">
+                        <button type="submit" class="btn btn-primary">Se connecter</button>
+                        <p class="pof-login-error" data-pof-login-error style="display:none"></p>
+                      </div>
+                    </form>
+                  </div>
+
+                  <!-- État connecté -->
+                  <div class="pof-account-info" data-pof-account-logged-in style="display:none">
+                    <div class="pof-account-header">
+                      <div class="pof-account-identity">
+                        <span class="pof-account-avatar" aria-hidden="true"></span>
+                        <span class="pof-account-email-text" data-pof-account-email></span>
+                      </div>
+                      <button class="btn btn-secondary btn-sm" data-pof-logout-btn>Se déconnecter</button>
+                    </div>
+                    <div class="pof-plugins-block">
+                      <p class="pof-plugins-label">Plugins actifs</p>
+                      <ul class="pof-plugin-list" data-pof-plugin-list></ul>
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+            </article>
+
+            <article class="settings-section settings-section-wide modern-card">
+              <div class="settings-section-head">
+                <div>
+                  <p class="settings-kicker">Toolchain</p>
+                  <h3 class="settings-section-title">Outils externes</h3>
+                </div>
+              </div>
+              <div class="settings-group">
+                <div class="settings-field">
+                  <div class="settings-field-copy">
+                    <label for="settingPythonPath">Chemin Python</label>
+                    <p class="settings-field-hint">Utilisé pour exécuter les backends et scripts Python.</p>
+                  </div>
+                  <div class="settings-control">
+                    <div class="settings-path-row">
+                      <input id="settingPythonPath" class="input-inner settings-input settings-mono" type="text" placeholder="Auto-détection" data-key="pythonPath" />
+                      <button type="button" class="btn btn-secondary btn-sm" data-browse="settingPythonPath">Parcourir</button>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            </article>
+
+            <article class="settings-section settings-section-wide modern-card">
+              <div class="settings-section-head">
+                <div>
+                  <p class="settings-kicker">Décompilation</p>
+                  <h3 class="settings-section-title">Décompilateurs</h3>
+                </div>
+              </div>
+              <div class="settings-group">
+
+                <div class="settings-field">
+                  <div class="settings-field-copy">
+                    <label for="settingDecompilerProvider">Provider</label>
+                    <p class="settings-field-hint">Auto essaie le local puis Docker. Docker force l'image container.</p>
+                  </div>
+                  <div class="settings-control">
+                    <select id="settingDecompilerProvider" class="select-modern settings-select" data-key="decompilerProvider">
+                      <option value="auto">auto (local → Docker)</option>
+                      <option value="local">local uniquement</option>
+                      <option value="docker">docker uniquement</option>
+                    </select>
+                  </div>
+                </div>
+
+                <!-- Tableau de statut des décompilateurs -->
+                <div class="settings-field settings-field-block">
+                  <div class="settings-field-copy">
+                    <div class="decompiler-label-row">
+                      <label>Décompilateurs disponibles</label>
+                      <div class="decompiler-inline-actions">
+                        <button type="button" id="btnDecompilerRefresh" class="btn btn-secondary btn-sm" title="Actualiser la liste">
+                          ↻ Actualiser
+                        </button>
+                        <button type="button" id="btnDecompilerAdd" class="btn btn-primary btn-sm" title="Ajouter un nouveau décompilateur (Docker ou local)">
+                          ＋ Ajouter
+                        </button>
+                        <button type="button" id="btnDecompilerTest" class="btn btn-secondary btn-sm" title="Tester le décompilateur sélectionné sur un binaire">
+                          ▶ Tester
+                        </button>
+                        <button type="button" id="btnDecompilerOpenConfig" class="btn btn-secondary btn-sm" title="Ouvrir decompilers.json">
+                          ⚙ JSON
+                        </button>
+                      </div>
+                    </div>
+                    <p class="settings-field-hint">Vue d’ensemble des backends disponibles, de leur mode d’exécution, et du chemin local à renseigner quand l’outil peut tourner hors Docker.</p>
+                  </div>
+                  <div class="settings-control settings-control-full">
+                    <div id="decompilerStatusSummary" class="decompiler-status-summary" aria-live="polite"></div>
+                    <div id="decompilerStatusList" class="decompiler-status-list">
+                      <div class="decompiler-status-loading">
+                        <span class="decompiler-status-dot decompiler-status-dot--pending"></span>
+                        En attente d’actualisation…
+                      </div>
+                    </div>
+                    <!-- Boutons cachés conservés pour compatibilité JS existant -->
+                    <button type="button" id="btnDecompilerEdit" style="display:none" aria-hidden="true"></button>
+                    <button type="button" id="btnDecompilerRemove" style="display:none" aria-hidden="true"></button>
+                  </div>
+                </div>
+
+              </div>
+            </article>
+
+            <article class="settings-section settings-section-wide modern-card">
+              <div class="settings-section-head">
+                <div>
+                  <p class="settings-kicker">Plugins</p>
+                  <h3 class="settings-section-title">Bundles externes</h3>
+                </div>
+              </div>
+              <div class="settings-group">
+                <div class="settings-field settings-field-block">
+                  <div class="settings-field-copy">
+                    <label>État du runtime plugin</label>
+                    <p class="settings-field-hint">Détection locale, état d'activation, commandes exposées et statut futur de licence.</p>
+                  </div>
+                  <div class="settings-control settings-control-full">
+                    <div id="pluginStateSummary" class="plugin-state-summary" aria-live="polite">
+                      <div class="plugin-state-loading">Actualisation du runtime plugin…</div>
+                    </div>
+                    <div class="plugin-manager-actions">
+                      <div class="plugin-manager-actions-primary">
+                        <button type="button" id="btnPluginAdd" class="btn btn-primary btn-sm">＋ Installer…</button>
+                      </div>
+                      <div class="plugin-manager-actions-secondary">
+                        <button type="button" id="btnPluginRefresh" class="btn btn-secondary btn-sm">↻ Actualiser</button>
+                        <button type="button" id="btnOpenUserPluginDir" class="btn btn-secondary btn-sm">Dossier plugins</button>
+                      </div>
+                    </div>
+                    <div class="plugin-install-paths-shell">
+                      <h4 class="plugin-state-title">Plugins détectés</h4>
+                      <div id="pluginStateList" class="plugin-state-list">
+                        <div class="plugin-state-loading">Aucun état plugin reçu pour le moment.</div>
+                      </div>
+                    </div>
+                    <p id="pluginStateHint" class="settings-field-hint">
+                      Les plugins installés via cette interface vont dans <code>~/.pile-ou-face/plugins/</code> et sont disponibles dans tous tes projets. Le dossier <code>.pile-ou-face/plugins/</code> reste réservé aux tests et au développement local.<br>
+                      Les <strong>plugins premium</strong> (<code>pofplug</code>) se déverrouillent automatiquement après connexion dans l'onglet <strong>Compte</strong>. Aucun fichier de licence requis.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </article>
+
+            <!-- AI Providers section -->
+            <article class="settings-section settings-section-wide modern-card" id="aiProvidersSection">
+              <div class="settings-section-head">
+                <div>
+                  <p class="settings-kicker">Intelligence artificielle</p>
+                  <h3 class="settings-section-title">Modèles et providers</h3>
+                </div>
+              </div>
+              <div class="settings-group ai-settings-layout">
+                <div class="ai-settings-intro">
+                  <div>
+                    <strong>Connecte un service local ou cloud</strong>
+                    <p class="settings-field-hint">Les clés restent sur cette machine dans <code>~/.pile-ou-face/.env</code>.</p>
+                  </div>
+                  <div class="ai-default-control">
+                    <label for="aiDefaultProvider">Provider automatique</label>
+                    <select id="aiDefaultProvider" class="select-modern settings-select"></select>
+                    <span>Utilisé lorsqu’aucun modèle n’est choisi explicitement.</span>
+                  </div>
+                </div>
+                <div class="ai-generation-defaults">
+                  <div class="ai-generation-defaults-copy">
+                    <strong>Paramètres de génération globaux</strong>
+                    <span>Valeurs utilisées par défaut dans toutes les conversations.</span>
+                  </div>
+                  <label>
+                    <span>Température</span>
+                    <input class="input-inner settings-input" type="number" min="0" max="2" step="0.1" data-key="aiTemperature" data-type="float" />
+                  </label>
+                  <label>
+                    <span>Top P</span>
+                    <input class="input-inner settings-input" type="number" min="0.01" max="1" step="0.05" data-key="aiTopP" data-type="float" />
+                  </label>
+                  <label>
+                    <span>Tokens max.</span>
+                    <input class="input-inner settings-input" type="number" min="1" max="131072" step="128" data-key="aiMaxTokens" data-type="int" />
+                  </label>
+                </div>
+                <div class="ai-pricing-settings">
+                  <div class="ai-pricing-head">
+                    <div>
+                      <strong>Tarifs des modèles cloud</strong>
+                      <span>Prix en USD par million de tokens. Utilise un modèle exact ou un motif comme <code>openai@gpt-*</code>.</span>
+                    </div>
+                    <button id="btnAiPricingAdd" type="button" class="btn btn-secondary btn-sm">＋ Ajouter un tarif</button>
+                  </div>
+                  <div class="ai-pricing-columns" aria-hidden="true">
+                    <span>Modèle ou motif</span>
+                    <span>Entrée / 1M</span>
+                    <span>Sortie / 1M</span>
+                    <span>Date d’effet</span>
+                    <span></span>
+                  </div>
+                  <div id="aiPricingRulesList" class="ai-pricing-list"></div>
+                  <p class="settings-field-hint">Les tarifs ne sont jamais mis à jour automatiquement. Vérifie-les auprès du provider avant de prendre une décision de coût.</p>
+                </div>
+                <div id="aiProvidersState" class="ai-providers-grid">
+                  <p class="loading-text">Chargement…</p>
+                </div>
+              </div>
+            </article>
+
+            <article class="settings-section modern-card">
+              <div class="settings-section-head">
+                <div>
+                  <p class="settings-kicker">Analyse</p>
+                  <h3 class="settings-section-title">Valeurs par défaut</h3>
+                </div>
+              </div>
+              <div class="settings-group">
+
+                <div class="settings-field">
+                  <div class="settings-field-copy">
+                    <label for="settingBindiffThreshold">Seuil Binary Diff</label>
+                    <p class="settings-field-hint">Définit la similarité minimale avant d'afficher un match.</p>
+                  </div>
+                  <div class="settings-control">
+                    <select id="settingBindiffThreshold" class="select-modern settings-select" data-key="bindiffThreshold" data-type="float">
+                      <option value="0.40">40 %</option>
+                      <option value="0.60">60 %</option>
+                      <option value="0.75">75 %</option>
+                      <option value="0.90">90 %</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="settings-field">
+                  <div class="settings-field-copy">
+                    <label for="settingStringsEncoding">Encodage des strings</label>
+                    <p class="settings-field-hint">Format utilisé par défaut pour l'extraction des chaînes.</p>
+                  </div>
+                  <div class="settings-control">
+                    <select id="settingStringsEncoding" class="select-modern settings-select" data-key="stringsEncoding">
+                      <option value="auto">Auto (ASCII + wide)</option>
+                      <option value="utf-8">UTF-8 / ASCII</option>
+                      <option value="utf-16-le">UTF-16 LE</option>
+                      <option value="utf-16-be">UTF-16 BE</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="settings-field">
+                  <div class="settings-field-copy">
+                    <label for="settingStringsMinLen">Longueur mini des strings</label>
+                    <p class="settings-field-hint">Permet de réduire le bruit dans les binaires très verbeux.</p>
+                  </div>
+                  <div class="settings-control">
+                    <select id="settingStringsMinLen" class="select-modern settings-select" data-key="stringsMinLen" data-type="int">
+                      <option value="4">4 car.</option>
+                      <option value="6">6 car.</option>
+                      <option value="8">8 car.</option>
+                      <option value="10">10 car.</option>
+                      <option value="20">20 car.</option>
+                      <option value="50">50 car.</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="settings-field">
+                  <div class="settings-field-copy">
+                    <label for="settingAsmSyntax">Syntaxe ASM</label>
+                    <p class="settings-field-hint">Préférence utilisée pour le désassemblage dans le hub.</p>
+                  </div>
+                  <div class="settings-control">
+                    <select id="settingAsmSyntax" class="select-modern settings-select" data-key="asmSyntax">
+                      <option value="intel">Intel</option>
+                      <option value="att">AT&amp;T</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            </article>
+
+            <article class="settings-section modern-card">
+              <div class="settings-section-head">
+                <div>
+                  <p class="settings-kicker">Interface</p>
+                  <h3 class="settings-section-title">Confort de lecture</h3>
+                </div>
+              </div>
+              <div class="settings-group">
+                <div class="settings-field">
+                  <div class="settings-field-copy">
+                    <label for="settingLang">Langue</label>
+                    <p class="settings-field-hint">Prépare la future localisation de l'interface.</p>
+                  </div>
+                  <div class="settings-control">
+                    <select id="settingLang" class="select-modern settings-select" data-key="lang">
+                      <option value="fr">Français</option>
+                      <option value="en">English</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="settings-field">
+                  <div class="settings-field-copy">
+                    <label for="settingDefaultPanel">Panneau par défaut</label>
+                    <p class="settings-field-hint">Vue affichée à l'ouverture du hub.</p>
+                  </div>
+                  <div class="settings-control">
+                    <select id="settingDefaultPanel" class="select-modern settings-select" data-key="defaultPanel">
+                      <option value="dashboard">Dashboard</option>
+                      <option value="static">Analyse statique</option>
+                      <option value="dynamic">Trace dynamique</option>
+                      <option value="outils">Outils</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="settings-field">
+                  <div class="settings-field-copy">
+                    <label for="settingCodeFontSize">Taille police code</label>
+                    <p class="settings-field-hint">Ajuste la lisibilité des vues désassemblage, hex et pseudo-C.</p>
+                  </div>
+                  <div class="settings-control">
+                    <select id="settingCodeFontSize" class="select-modern settings-select" data-key="codeFontSize" data-type="int">
+                      <option value="12">12 px</option>
+                      <option value="13">13 px</option>
+                      <option value="14">14 px</option>
+                      <option value="16">16 px</option>
+                      <option value="18">18 px</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            </article>
+
+            <article class="settings-section settings-section-wide modern-card">
+              <div class="settings-section-head">
+                <div>
+                  <p class="settings-kicker">Interface statique</p>
+                  <h3 class="settings-section-title">Mode de navigation</h3>
+                </div>
+              </div>
+              <div class="settings-group">
+                <div class="settings-field">
+                  <div class="settings-field-copy">
+                    <label for="settingInterfaceMode">Complexité de l'interface</label>
+                    <p class="settings-field-hint">Simple masque les outils spécialisés. Avancée permet de cocher les features affichées dans Static.</p>
+                  </div>
+                  <div class="settings-control">
+                    <input id="settingInterfaceMode" type="hidden" data-key="interfaceMode" value="advanced" />
+                    <div class="settings-segmented" role="group" aria-label="Complexité de l'interface static">
+                      <button type="button" class="settings-mode-button" data-interface-mode="simple">Simple</button>
+                      <button type="button" class="settings-mode-button" data-interface-mode="advanced">Avancée</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div id="staticFeatureSettings" class="settings-feature-picker">
+                  <div class="settings-feature-picker-head">
+                    <div>
+                      <h4 class="settings-feature-title">Features affichées dans Static</h4>
+                      <p class="settings-field-hint">Décoche une vue pour la retirer de la navigation statique.</p>
+                    </div>
+                    <div class="settings-feature-actions">
+                      <button id="btnStaticFeaturesAll" type="button" class="btn btn-secondary btn-sm">Tout cocher</button>
+                      <button id="btnStaticFeaturesEssential" type="button" class="btn btn-secondary btn-sm">Essentiel</button>
+                    </div>
+                  </div>
+                  <div id="staticFeatureChecklist" class="settings-feature-grid"></div>
+                </div>
+              </div>
+            </article>
+          </div>
+
+          <div class="settings-actions modern-card">
+            <div class="settings-actions-copy">
+              <p class="settings-kicker">Maintenance</p>
+              <h3 class="settings-actions-title">Remettre les réglages à zéro</h3>
+              <p class="settings-field-hint">
+                Réapplique les valeurs par défaut du hub sans toucher à tes fichiers de travail.
+              </p>
+            </div>
+            <button id="btnResetSettings" type="button" class="btn btn-secondary">Réinitialiser les valeurs par défaut</button>
+          </div>
+        </div>
+      </section>

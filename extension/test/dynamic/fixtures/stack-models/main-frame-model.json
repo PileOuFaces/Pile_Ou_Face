@@ -1,0 +1,14 @@
+{
+  "name": "main",
+  "locals": [
+    {
+      "id": "main:rbp:buffer:-64:64:frame",
+      "offset": -64,
+      "name": "buffer",
+      "role": "buffer",
+      "size": 64,
+      "source": "static",
+      "confidence": 0.9
+    }
+  ]
+}

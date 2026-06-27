@@ -1,0 +1,300 @@
+{
+  "name": "stack-visualizer",
+  "displayName": "Pile ou Face",
+  "description": "Visualiser graphiquement la pile à partir d'un output.json généré par ton simulateur C.",
+  "version": "0.0.1",
+  "publisher": "your-name",
+  "type": "commonjs",
+  "license": "AGPL-3.0-only",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./src/extension.ts",
+  "activationEvents": [
+    "*"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "pileOuFace.open",
+        "title": "Pile ou Face",
+        "icon": {
+          "light": "media/icon-light.svg",
+          "dark": "media/icon-dark.svg"
+        }
+      },
+      {
+        "command": "pileOuFace.sidebarRefresh",
+        "title": "Charger un binaire"
+      },
+      {
+        "command": "pileOuFace.calculator",
+        "title": "Calculette"
+      },
+      {
+        "command": "pileOuFace.xrefsTo",
+        "title": "Références vers cette adresse"
+      },
+      {
+        "command": "pileOuFace.xrefsFrom",
+        "title": "Références depuis cette adresse"
+      },
+      {
+        "command": "pileOuFace.askAiAboutDisasm",
+        "title": "Demander à l’IA d’expliquer cette instruction",
+        "category": "Pile ou Face"
+      },
+      {
+        "command": "pileOuFace.goToSymbolInDisasm",
+        "title": "Aller au symbole"
+      },
+      {
+        "command": "pileOuFace.exportDisasm",
+        "title": "Exporter le désassemblage"
+      },
+      {
+        "command": "pileOuFace.disasmSection",
+        "title": "Désassembler la section"
+      },
+      {
+        "command": "pileOuFace.goToAddress",
+        "title": "Aller à l'adresse"
+      },
+      {
+        "command": "pileOuFace.decompilerAdd",
+        "title": "Pile ou Face: Ajouter un décompilateur",
+        "category": "Pile ou Face"
+      },
+      {
+        "command": "pileOuFace.decompilerEdit",
+        "title": "Pile ou Face: Modifier un décompilateur custom",
+        "category": "Pile ou Face"
+      },
+      {
+        "command": "pileOuFace.decompilerRemove",
+        "title": "Pile ou Face: Supprimer un décompilateur custom",
+        "category": "Pile ou Face"
+      },
+      {
+        "command": "pileOuFace.decompilerList",
+        "title": "Pile ou Face: Lister les décompilateurs",
+        "category": "Pile ou Face"
+      },
+      {
+        "command": "pileOuFace.decompilerTest",
+        "title": "Pile ou Face: Tester un décompilateur",
+        "category": "Pile ou Face"
+      },
+      {
+        "command": "pileOuFace.decompilerOpenConfig",
+        "title": "Pile ou Face: Ouvrir la config des décompilateurs",
+        "category": "Pile ou Face"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "pileOuFace.open",
+          "group": "navigation",
+          "when": "true"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "pileOuFace.askAiAboutDisasm",
+          "group": "pileOuFace@1",
+          "when": "resourceExtname == .asm"
+        },
+        {
+          "command": "pileOuFace.xrefsTo",
+          "group": "pileOuFace@2",
+          "when": "resourceExtname == .asm"
+        },
+        {
+          "command": "pileOuFace.xrefsFrom",
+          "group": "pileOuFace@3",
+          "when": "resourceExtname == .asm"
+        },
+        {
+          "command": "pileOuFace.exportDisasm",
+          "group": "pileOuFace@4",
+          "when": "resourceExtname == .asm"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "pileOuFace.open",
+          "when": "true"
+        },
+        {
+          "command": "pileOuFace.sidebarRefresh",
+          "when": "true"
+        },
+        {
+          "command": "pileOuFace.calculator",
+          "when": "true"
+        },
+        {
+          "command": "pileOuFace.exportDisasm",
+          "when": "editorTextFocus"
+        },
+        {
+          "command": "pileOuFace.xrefsTo",
+          "when": "resourceExtname == .asm"
+        },
+        {
+          "command": "pileOuFace.xrefsFrom",
+          "when": "resourceExtname == .asm"
+        },
+        {
+          "command": "pileOuFace.decompilerAdd",
+          "when": "true"
+        },
+        {
+          "command": "pileOuFace.decompilerEdit",
+          "when": "true"
+        },
+        {
+          "command": "pileOuFace.decompilerRemove",
+          "when": "true"
+        },
+        {
+          "command": "pileOuFace.decompilerList",
+          "when": "true"
+        },
+        {
+          "command": "pileOuFace.decompilerTest",
+          "when": "true"
+        },
+        {
+          "command": "pileOuFace.decompilerOpenConfig",
+          "when": "true"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "pileOuFace",
+          "title": "Pile ou Face",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "pileOuFace": [
+        {
+          "id": "pileOuFace.launch",
+          "name": "Pile ou Face"
+        },
+        {
+          "id": "pileOuFace.symbols",
+          "name": "Symboles"
+        },
+        {
+          "id": "pileOuFace.strings",
+          "name": "Strings"
+        },
+        {
+          "id": "pileOuFace.sections",
+          "name": "Sections"
+        },
+        {
+          "id": "pileOuFace.calculator",
+          "name": "Calculatrice"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "pileOuFace.launch",
+        "contents": "Outil d'analyse binaire CTF.\n\n[Ouvrir l'interface](command:pileOuFace.open)\n\n[Charger un binaire](command:pileOuFace.sidebarRefresh)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "pileOuFace.open",
+        "key": "alt+shift+p",
+        "mac": "alt+shift+p"
+      },
+      {
+        "command": "pileOuFace.calculator",
+        "key": "ctrl+alt+c",
+        "mac": "cmd+alt+c"
+      },
+      {
+        "command": "pileOuFace.goToAddress",
+        "key": "ctrl+alt+g",
+        "mac": "cmd+alt+g"
+      }
+    ],
+    "languages": [
+      {
+        "id": "asm",
+        "aliases": [
+          "Assembly",
+          "asm"
+        ],
+        "extensions": [
+          ".asm"
+        ],
+        "configuration": "./syntaxes/asm-language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "asm",
+        "scopeName": "source.asm",
+        "path": "./syntaxes/asm.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "Pile ou Face",
+      "properties": {
+        "pileOuFace.authServerUrl": {
+          "type": "string",
+          "default": "https://auth.pileouface.io",
+          "description": "URL du serveur d'authentification Pile Ou Face"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "build:watch": "tsc -p tsconfig.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "tsx node_modules/.bin/_mocha 'test/**/*.test.ts' --ignore 'test/hubPayloadCore.test.ts' --require test/setup.ts --exit",
+    "test:watch": "tsx node_modules/.bin/_mocha 'test/**/*.test.ts' --watch --ignore 'test/hubPayloadCore.test.ts' --require test/setup.ts",
+    "test:coverage": "c8 tsx node_modules/.bin/_mocha 'test/**/*.test.ts' --ignore 'test/hubPayloadCore.test.ts' --require test/setup.ts --exit",
+    "nexus:analyze": "npx gitnexus analyze ..",
+    "nexus:status": "npx gitnexus status",
+    "nexus:wiki": "npx gitnexus wiki .."
+  },
+  "ts-node": {
+    "transpileOnly": true,
+    "esm": false
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^25.9.1",
+    "@types/vscode": "^1.120.0",
+    "c8": "^10.1.3",
+    "chai": "^4.3.10",
+    "eslint": "^9.39.2",
+    "eslint-config-prettier": "^10.1.8",
+    "mocha": "^10.2.0",
+    "prettier": "^3.8.1",
+    "proxyquire": "^2.1.3",
+    "sinon": "^17.0.1",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.60.1"
+  }
+}

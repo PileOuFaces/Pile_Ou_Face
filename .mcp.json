@@ -1,0 +1,23 @@
+{
+  "mcpServers": {
+    "pile-ou-face": {
+      "command": "python3",
+      "args": [
+        "backends/mcp/server.py",
+        "--transport",
+        "stdio"
+      ],
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      }
+    },
+    "gitnexus": {
+      "command": "npx",
+      "args": [
+        "gitnexus",
+        "mcp"
+      ],
+      "env": {}
+    }
+  }
+}

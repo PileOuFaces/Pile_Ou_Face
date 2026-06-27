@@ -1,0 +1,38 @@
+{
+  "snapshots": [
+    {
+      "step": 1,
+      "func": "main",
+      "rip": "0x401000"
+    },
+    {
+      "step": 2,
+      "func": "challenge",
+      "rip": "0x401ec8"
+    }
+  ],
+  "meta": {
+    "arch_bits": 64,
+    "binary": "examples/pwncollege/latent-leakage-hard",
+    "functions": [
+      {
+        "name": "main",
+        "addr": "0x401000",
+        "size": "0x80",
+        "type": "T"
+      },
+      {
+        "name": "challenge",
+        "addr": "0x401ec8",
+        "size": "0x180",
+        "type": "T"
+      },
+      {
+        "name": "win",
+        "addr": "0x401bb5",
+        "size": "0x90",
+        "type": "T"
+      }
+    ]
+  }
+}

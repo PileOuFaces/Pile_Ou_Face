@@ -1,0 +1,11 @@
+{
+  "mode": "payload_builder",
+  "targetMode": "stdin",
+  "target": "stdin",
+  "payloadBytesHex": "41414141",
+  "previewHex": "41 41 41 41",
+  "previewAscii": "AAAA",
+  "payloadExpr": "A*4",
+  "size": 4,
+  "warnings": []
+}

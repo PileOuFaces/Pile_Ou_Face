@@ -1,0 +1,22 @@
+export {
+  buildControlSeeds,
+  buildReliableStaticSeeds,
+  buildMainAbiArgumentSeeds,
+  buildTrustedModelSeeds,
+  normalizeStaticSeeds,
+  normalizeStaticSeed,
+  buildSyntheticSeeds,
+  seedFromObservation,
+  shouldCreateNamedSeed,
+  shouldCreateReliableSeed,
+  isCoveredByExistingSeed,
+  isCoveredByStableSeedLayout,
+  normalizeSeed,
+  seedIdentity,
+  chooseBetterSeed,
+  mergeSeedLists,
+  addSeed,
+  buildRuntimeEvidence,
+  buildRuntimeObservations,
+  compareObservationsForSeeding
+} from './stackWorkspaceCore.js';

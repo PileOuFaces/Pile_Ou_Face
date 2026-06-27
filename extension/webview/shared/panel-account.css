@@ -1,0 +1,66 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+.account-panel {
+  padding: 16px;
+  font-family: var(--vscode-font-family);
+  color: var(--vscode-foreground);
+}
+
+.account-section { margin-bottom: 24px; }
+.hidden { display: none !important; }
+
+h2 { font-size: 1.1em; margin-bottom: 12px; }
+h3 { font-size: 0.95em; margin: 12px 0 6px; }
+
+.field { display: flex; flex-direction: column; margin-bottom: 10px; }
+.field label { font-size: 0.85em; margin-bottom: 4px; opacity: 0.8; }
+
+input[type="email"],
+input[type="password"] {
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, #555);
+  padding: 6px 8px;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+.btn-primary,
+.btn-secondary {
+  padding: 7px 14px;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 0.9em;
+  margin-top: 4px;
+}
+
+.btn-primary {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+.btn-primary:hover { background: var(--vscode-button-hoverBackground); }
+
+.btn-secondary {
+  background: var(--vscode-button-secondaryBackground, #444);
+  color: var(--vscode-button-secondaryForeground, #fff);
+}
+
+.error {
+  color: var(--vscode-errorForeground, #f48771);
+  font-size: 0.85em;
+  margin-top: 6px;
+}
+
+.account-email-display { opacity: 0.8; font-size: 0.9em; margin-bottom: 8px; }
+
+.plugin-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.plugin-list li {
+  padding: 4px 0;
+  font-size: 0.85em;
+  opacity: 0.9;
+}
+.plugin-list li::before { content: "✓ "; color: var(--vscode-terminal-ansiGreen, #89d185); }

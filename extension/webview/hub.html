@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<!-- Reverse Workspace — Hub principal -->
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; img-src {{cspSource}}; script-src {{cspSource}}; style-src {{cspSource}} 'unsafe-inline';">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reverse Workspace</title>
+  <link rel="stylesheet" href="{{baseCssUri}}">
+  <link rel="stylesheet" href="{{dashboardCssUri}}">
+  <link rel="stylesheet" href="{{staticBinaryBarCssUri}}">
+  <link rel="stylesheet" href="{{staticDisasmCssUri}}">
+  <link rel="stylesheet" href="{{staticCfgCssUri}}">
+  <link rel="stylesheet" href="{{staticDecompileCssUri}}">
+  <link rel="stylesheet" href="{{staticSearchCssUri}}">
+  <link rel="stylesheet" href="{{staticAnalysisCssUri}}">
+  <link rel="stylesheet" href="{{staticToolsCssUri}}">
+  <link rel="stylesheet" href="{{dynamicCssUri}}">
+  <link rel="stylesheet" href="{{dynamicRuntimeSessionCssUri}}">
+  <link rel="stylesheet" href="{{outilsCssUri}}">
+  <link rel="stylesheet" href="{{optionsCssUri}}">
+  <link rel="stylesheet" href="{{graphicalStackHubCssUri}}">
+  <link rel="stylesheet" href="{{dynamicRuntimeLayoutCssUri}}">
+  <style>{{pluginStyles}}</style>
+</head>
+<body>
+  <div class="hub">
+
+    <!-- Top bar -->
+    <header class="top-bar">
+      <div class="top-bar-brand">
+        <span class="top-bar-brand-title">Fichier de travail</span>
+      </div>
+      <div class="top-bar-binary">
+        <button id="topBarBinaryButton" type="button" class="top-bar-binary-button" title="Choisir ou changer le fichier de travail">
+          <span class="top-bar-binary-copy">
+            <span id="topBarBinaryLabel" class="top-bar-binary-label">Fichier de travail</span>
+            <span id="topBarBinaryName" class="top-bar-binary-name empty">Choisir un fichier…</span>
+            <span id="topBarBinaryPath" class="top-bar-binary-path">Le fichier choisi sera repris dans l'analyse statique et la trace dynamique.</span>
+          </span>
+          <span id="topBarChipFormat" class="top-bar-chip" style="display:none"></span>
+          <span id="topBarChipArch" class="top-bar-chip" style="display:none"></span>
+          <span class="top-bar-binary-caret" aria-hidden="true">▾</span>
+        </button>
+        <div id="topBarBinaryMenu" class="top-bar-binary-menu" hidden>
+          <div class="top-bar-binary-menu-section">
+            <div class="top-bar-binary-menu-row">
+              <div class="top-bar-binary-menu-title">Fichier actuel</div>
+              <div class="top-bar-binary-menu-row-actions">
+                <span id="topBarCurrentBinaryStatus" class="top-bar-current-status">Aucun</span>
+                <button id="btnTopBarSelectBinary" type="button" class="top-bar-menu-link">Choisir…</button>
+              </div>
+            </div>
+            <div id="topBarCurrentBinaryCard" class="top-bar-current-binary-card">
+              <strong id="topBarCurrentBinaryName" class="top-bar-current-binary-name">Aucun fichier sélectionné</strong>
+              <span id="topBarCurrentBinaryPath" class="top-bar-current-binary-path">Choisis un fichier pour démarrer.</span>
+            </div>
+            <div id="topBarRawProfileCard" class="top-bar-raw-profile-card" hidden>
+              <div class="top-bar-raw-profile-head">
+                <div class="top-bar-binary-menu-title">Profil blob brut</div>
+                <span id="topBarRawProfileStatus" class="top-bar-raw-profile-status">Actif</span>
+              </div>
+              <div id="topBarRawProfileMeta" class="top-bar-raw-profile-meta"></div>
+              <div class="top-bar-raw-profile-actions">
+                <button id="btnTopBarReconfigureRaw" type="button" class="top-bar-menu-item">
+                  Reconfigurer ce blob brut
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="top-bar-binary-menu-section">
+            <div class="top-bar-binary-menu-row">
+              <div class="top-bar-binary-menu-title">Récents</div>
+              <button id="btnClearRecentBinaries" type="button" class="top-bar-menu-link">Effacer</button>
+            </div>
+            <div id="topBarRecentList" class="top-bar-recent-list"></div>
+          </div>
+        </div>
+      </div>
+      <div class="top-bar-spacer"></div>
+      <span id="topBarMode" class="top-bar-mode other">—</span>
+    </header>
+
+    <!-- Icon nav (44px) -->
+    <nav class="icon-nav">
+      <button class="icon-nav-item active" data-panel="dashboard" data-tooltip="Dashboard">📋</button>
+      <button class="icon-nav-item" data-panel="static" data-tooltip="Analyse statique">📄</button>
+      <button class="icon-nav-item" data-panel="dynamic" data-tooltip="Trace dynamique">▶</button>
+      <div id="runtimeNavSlot" class="runtime-nav-slot"></div>
+      <div class="icon-nav-spacer"></div>
+      <button class="icon-nav-item" data-panel="outils" data-tooltip="Outils">🔧</button>
+      <button class="icon-nav-item" data-panel="options" data-tooltip="Options">⚙</button>
+    </nav>
+
+    <!-- Content area -->
+    <main class="content">
+
+      {{panelDashboard}}
+
+      {{panelStatic}}
+
+      {{panelDynamic}}
+
+      {{panelOutils}}
+
+      {{panelOptions}}
+
+      <section id="panel-runtime" class="panel">
+        <div class="runtime-workspace">
+
+          <!-- Status bar -->
+          <header class="header">
+            <div id="status" class="status">En attente d'une trace…</div>
+          </header>
+
+          <!-- Step controls (same IDs as graphical-stack.html) -->
+          <section class="controls">
+            <button id="btnPrev" class="btn">&larr;</button>
+            <input id="stepRange" type="range" min="1" max="1" value="1" />
+            <button id="btnNext" class="btn">&rarr;</button>
+            <div class="step-label">
+              Étape: <span id="stepLabel">1</span>
+            </div>
+            <label class="toggle" for="showAllTrace">
+              <input id="showAllTrace" type="checkbox" />
+              Toute la trace
+            </label>
+            <span id="focusLabel" class="focus-chip">Focus: main</span>
+            <button id="traceDebugToggle" type="button" class="btn trace-debug-toggle" hidden>Debug JSON</button>
+            <button id="traceDebugCopy" type="button" class="btn trace-debug-copy" hidden>Copy JSON</button>
+            <select id="layoutPreset" class="layout-preset-select" title="Appliquer un preset de layout" hidden>
+              <option value="">Layout…</option>
+              <option value="debutant">Débutant</option>
+              <option value="debug">Debug</option>
+              <option value="exploit">Exploit</option>
+              <option value="minimal">Minimal</option>
+            </select>
+            <div class="panel-visibility-group" role="group" aria-label="Visibilité des panneaux optionnels">
+              <button id="toggleExplainPanel" type="button" class="panel-visibility-toggle"
+                data-panel-toggle="explain" data-runtime-toggle="explain" data-storage-key="pof-panel-visible-explain"
+                aria-controls="explainPanel" aria-pressed="true">
+                <span class="panel-visibility-check" aria-hidden="true">✓</span>
+                <span class="panel-visibility-label">Explications</span>
+              </button>
+              <button id="toggleDumpPanel" type="button" class="panel-visibility-toggle"
+                data-panel-toggle="dump" data-runtime-toggle="dump" data-storage-key="pof-panel-visible-dump"
+                aria-controls="dumpPanel" aria-pressed="true">
+                <span class="panel-visibility-check" aria-hidden="true">✓</span>
+                <span class="panel-visibility-label">Dump SP</span>
+              </button>
+              <button id="toggleRegistersPanel" type="button" class="panel-visibility-toggle"
+                data-panel-toggle="registers" data-runtime-toggle="registers" data-storage-key="pof-panel-visible-registers"
+                aria-controls="registersPanel" aria-pressed="true">
+                <span class="panel-visibility-check" aria-hidden="true">✓</span>
+                <span class="panel-visibility-label">Registres</span>
+              </button>
+              <button id="toggleStackPanel" type="button" class="panel-visibility-toggle"
+                data-panel-toggle="stack" data-runtime-toggle="stack" data-storage-key="pof-panel-visible-stack"
+                aria-controls="stackPanel" aria-pressed="true">
+                <span class="panel-visibility-check" aria-hidden="true">✓</span>
+                <span class="panel-visibility-label">Pile</span>
+              </button>
+            </div>
+          </section>
+
+          <section id="traceDebugInspector" class="trace-debug-inspector" hidden>
+            <div id="traceDebugBody" class="trace-debug-body" hidden></div>
+          </section>
+
+          <!-- Visual panels (same structure as graphical-stack.html) -->
+          <section class="visuals">
+            <div class="left-col">
+              <section id="explainPanel" class="runtime-panel explain-panel" data-runtime-panel="explain">
+                <div class="panel-header">
+                  <h2 class="panel-title">Explications</h2>
+                  <div id="explainSubtitle" class="panel-subtitle">Lecture pedagogique</div>
+                </div>
+                <div id="explainBody" class="explain-body"></div>
+              </section>
+              <section id="dumpPanel" class="runtime-panel dump-panel" data-runtime-panel="dump">
+                <div class="panel-header">
+                  <h2 class="panel-title">Dump autour de SP</h2>
+                </div>
+                <div class="panel-body-fill">
+                  <pre id="memoryDump" class="memory-pre"></pre>
+                </div>
+              </section>
+              <section id="registersPanel" class="runtime-panel registers-container" data-runtime-panel="registers">
+                <div class="panel-header">
+                  <h2 class="panel-title">Registres</h2>
+                </div>
+                <div class="panel-body-fill">
+                  <div id="registers" class="registers"></div>
+                </div>
+              </section>
+            </div>
+            <section id="disasmPanel" class="runtime-panel disasm-panel">
+              <div class="panel-header">
+                <h2 class="panel-title">ASM</h2>
+                <div id="disasmSubtitle" class="panel-subtitle">Fonction active</div>
+                <button type="button" class="panel-focus-btn" data-focus-panel="asm" aria-label="Mode focus ASM" aria-pressed="false" title="Mode focus (Échap pour quitter)">⤢</button>
+              </div>
+              <div id="disasmList" class="disasm-list"></div>
+            </section>
+            <section id="stackPanel" class="runtime-panel stack-panel" data-runtime-panel="stack">
+              <div class="panel-header">
+                <h2 class="panel-title">Pile</h2>
+                <div class="stack-panel-tools">
+                  <div id="stackLegend" class="legend"></div>
+                  <div class="stack-mode-toggle" role="group" aria-label="Mode d'affichage de la pile">
+                    <button id="stackModeFrame" type="button" class="stack-mode-btn">Simple</button>
+                    <button id="stackModeAdvanced" type="button" class="stack-mode-btn">Avance</button>
+                  </div>
+                </div>
+                <button type="button" class="panel-focus-btn" data-focus-panel="stack" aria-label="Mode focus Pile" aria-pressed="false" title="Mode focus (Échap pour quitter)">⤢</button>
+              </div>
+              <div id="stackSummary" class="stack-summary" hidden></div>
+              <div id="stackWorkspace" class="stack-workspace">
+                <section class="stack-browser-panel" aria-label="Navigateur de pile">
+                  <div class="stack-browser-header">
+                    <div class="stack-browser-heading">
+                      <div id="stackWorkspaceTitle" class="stack-browser-title">.text</div>
+                      <div id="stackWorkspaceSubtitle" class="stack-browser-subtitle">Fonctions de la trace</div>
+                    </div>
+                    <button id="stackWorkspaceBack" type="button" class="stack-browser-back" hidden>Retour</button>
+                  </div>
+                  <div id="stackFunctions" class="stack-functions-list"></div>
+                  <div id="stack" class="stack stack-frame-list" hidden></div>
+                  <div id="stackDetail" class="stack-detail-drawer" hidden></div>
+                </section>
+              </div>
+            </section>
+          </section>
+
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- Exploit notes FAB + widget -->
+  <button id="exploitNotesFab" type="button" class="exploit-notes-fab" title="Ouvrir Notes exploit">Notes</button>
+  <section id="exploitNotesWidget" class="exploit-notes-widget" aria-label="Notes exploit flottantes">
+    <header id="exploitNotesWidgetHeader" class="exploit-notes-widget-header">
+      <strong>Notes exploit</strong>
+      <div class="exploit-notes-widget-actions">
+        <button id="exploitNotesWidgetCollapse" type="button" class="btn btn-sm" title="Réduire">−</button>
+        <button id="exploitNotesWidgetClose" type="button" class="btn btn-sm" title="Fermer">✕</button>
+      </div>
+    </header>
+    <div class="exploit-notes-widget-body">
+      <textarea
+        id="exploitNotes"
+        class="input-inner"
+        rows="7"
+        spellcheck="false"
+        placeholder="Ex: cmp=0x4011c7&#10;padding=76&#10;suffix=DCBA&#10;buffer_offset=-0x70&#10;target=win"
+      ></textarea>
+      <div class="exploit-notes-widget-footer">
+        <button id="btnAutoFromNotesWidget" type="button" class="btn btn-primary btn-sm">Auto depuis Notes</button>
+      </div>
+    </div>
+  </section>
+
+  <button id="ollamaChatFab" type="button" class="ollama-chat-fab" title="Parler à l'IA">IA</button>
+  <section id="ollamaChatWidget" class="ollama-chat-widget" aria-label="Assistant IA flottant">
+    <button
+      id="ollamaChatWidgetResizeHandle"
+      type="button"
+      class="ollama-chat-widget-resize-handle"
+      title="Redimensionner la fenêtre"
+      aria-label="Redimensionner la fenêtre Assistant IA"
+    ></button>
+    <header class="ollama-chat-widget-header">
+      <strong>Assistant IA</strong>
+      <div class="ollama-chat-widget-actions">
+        <button type="button" class="btn btn-sm" data-ollama-export="true" title="Exporter la conversation">Exporter</button>
+        <button id="btnOllamaOpenDashboard" type="button" class="btn btn-sm">Dashboard</button>
+        <button id="btnOllamaChatWidgetClose" type="button" class="btn btn-sm" title="Fermer">✕</button>
+      </div>
+    </header>
+    <div class="ollama-chat-widget-body">
+      <div class="ollama-chat-widget-model-row">
+        <select id="ollamaQuickModelSelect" class="select-modern" data-ollama-model-select="true"></select>
+        <button id="btnOllamaQuickRefresh" type="button" class="btn btn-secondary btn-sm">Rafraîchir</button>
+      </div>
+      <p class="hint" data-ollama-status="true">Assistant prêt.</p>
+      <p class="ollama-conversation-usage" data-ollama-conversation-usage="true">0 token consommé</p>
+      <p class="ollama-context-budget" data-ollama-context-budget="true">Contexte · ~0 token · 0 message</p>
+      <details class="ollama-generation-settings ollama-generation-settings-compact">
+        <summary>Réglages du modèle</summary>
+        <div class="ollama-generation-settings-grid">
+          <label>
+            <span>Portée</span>
+            <select class="select-modern" data-ai-generation-scope="true">
+              <option value="global">Globale</option>
+              <option value="conversation">Conversation</option>
+            </select>
+          </label>
+          <label><span>Température</span><input class="input-inner" type="number" min="0" max="2" step="0.1" data-ai-generation-key="temperature" /></label>
+          <label><span>Top P</span><input class="input-inner" type="number" min="0.01" max="1" step="0.05" data-ai-generation-key="top_p" /></label>
+          <label><span>Tokens max.</span><input class="input-inner" type="number" min="1" max="131072" step="128" data-ai-generation-key="max_tokens" /></label>
+        </div>
+      </details>
+      <div class="ollama-chat-history ollama-chat-history-compact" data-ollama-chat-history="true" aria-live="polite"></div>
+      <textarea
+        id="ollamaQuickPromptInput"
+        class="input-inner ollama-chat-input ollama-chat-input-compact"
+        rows="3"
+        spellcheck="false"
+        placeholder="Pose ta question sans quitter l'outil courant…"
+      ></textarea>
+      <div class="form-actions">
+        <button type="button" class="btn btn-danger btn-sm" data-ollama-cancel="true" hidden>Arrêter</button>
+        <button id="btnOllamaQuickSend" type="button" class="btn btn-primary btn-sm">Envoyer</button>
+        <button type="button" class="btn btn-secondary btn-sm" data-ollama-new-conversation="true">＋ Nouvelle conversation</button>
+      </div>
+    </div>
+  </section>
+
+  <script src="{{elkUri}}"></script>
+  <script src="{{cfgHelpersUri}}"></script>
+  <!-- shared helpers -->
+  <script src="{{exploitHelperUri}}"></script>
+  <script src="{{payloadPreviewUri}}"></script>
+  <script src="{{sharedConversionUtilsUri}}"></script>
+  <!-- VS Code API bridge — must be first so window.POFHubMessageBus is set before state.js -->
+  <script src="{{sharedMessageBusUri}}"></script>
+  <!-- shared modules -->
+  <script src="{{sharedStateUri}}"></script>
+  <script src="{{sharedBinaryUri}}"></script>
+  <script src="{{sharedNavUri}}"></script>
+  <script src="{{sharedMarkdownRendererUri}}"></script>
+  <script src="{{sharedChatMessageActionsUri}}"></script>
+  <script src="{{sharedChatExportUri}}"></script>
+  <script src="{{sharedChatHistoryUri}}"></script>
+  <script src="{{sharedChatContextBudgetUri}}"></script>
+  <script src="{{sharedAiGenerationSettingsUri}}"></script>
+  <script src="{{sharedAiPricingUri}}"></script>
+  <script src="{{sharedAiContextActionsUri}}"></script>
+  <script src="{{sharedOutilsUri}}"></script>
+  <!-- shared controllers -->
+  <script src="{{sharedHubStateUri}}"></script>
+  <script src="{{sharedMessageRouterUri}}"></script>
+  <script src="{{sharedStatusControllerUri}}"></script>
+  <script src="{{sharedToastControllerUri}}"></script>
+  <script src="{{sharedArchBadgeControllerUri}}"></script>
+  <script src="{{sharedBinarySourceControllerUri}}"></script>
+  <script src="{{sharedExploitNotesControllerUri}}"></script>
+  <script src="{{sharedHubIndexUri}}"></script>
+  <script src="{{sharedConversionControllerUri}}"></script>
+  <!-- static controllers -->
+  <script src="{{staticPayloadCoreUri}}"></script>
+  <script src="{{staticPayloadTabsControllerUri}}"></script>
+  <script src="{{staticPayloadBuilderControllerUri}}"></script>
+  <script src="{{staticPayloadStateControllerUri}}"></script>
+  <script src="{{staticPayloadPreviewControllerUri}}"></script>
+  <script src="{{staticFilePayloadControllerUri}}"></script>
+  <script src="{{staticExploitHelperControllerUri}}"></script>
+  <script src="{{staticPwntoolsScriptControllerUri}}"></script>
+  <script src="{{staticToolsWidgetsControllerUri}}"></script>
+  <!-- dynamic controllers -->
+  <script src="{{dynamicPayloadHistoryControllerUri}}"></script>
+  <script src="{{dynamicVisualizerControllerUri}}"></script>
+  <script src="{{dynamicPresetControllerUri}}"></script>
+  <script src="{{dynamicRunTraceControllerUri}}"></script>
+  <script src="{{dynamicRuntimeFallbackRendererUri}}"></script>
+  <script src="{{dynamicRuntimeSessionControllerUri}}"></script>
+  <!-- static modules -->
+  <script src="{{staticPayloadUri}}"></script>
+  <script src="{{staticSearchUri}}"></script>
+  <script src="{{staticToolsUri}}"></script>
+  <script src="{{staticDiffUri}}"></script>
+  <!-- dynamic modules -->
+  <script src="{{dynamicPanelUri}}"></script>
+  <script src="{{dynamicPayloadUri}}"></script>
+  <!-- shared (après static/dynamic car dépend de leurs handlers) -->
+  <script src="{{sharedMessagesUri}}"></script>
+  <script src="{{sharedSettingsUri}}"></script>
+  <script src="{{sharedAnnotationsUri}}"></script>
+  <script src="{{sharedAccountUri}}"></script>
+  <script src="{{scriptUri}}"></script>
+  {{pluginScripts}}
+  <script src="{{dynamicRuntimeWorkspaceLayoutControllerUri}}"></script>
+  <script type="module" src="{{runtimeModuleUri}}"></script>
+</body>
+</html>

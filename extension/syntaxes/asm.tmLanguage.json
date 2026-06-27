@@ -1,0 +1,40 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Assembly",
+  "scopeName": "source.asm",
+  "fileTypes": ["asm"],
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#label" },
+    { "include": "#mnemonic" },
+    { "include": "#register" },
+    { "include": "#hex_number" },
+    { "include": "#dec_number" }
+  ],
+  "repository": {
+    "comment": {
+      "name": "comment.line.semicolon.asm",
+      "match": ";.*$"
+    },
+    "label": {
+      "name": "entity.name.function.asm",
+      "match": "^[a-zA-Z_][a-zA-Z0-9_@.]*:"
+    },
+    "mnemonic": {
+      "name": "keyword.control.asm",
+      "match": "\\b(mov|movzx|movsx|push|pop|call|ret|retn|jmp|je|jne|jz|jnz|jg|jge|jl|jle|ja|jae|jb|jbe|add|sub|mul|div|and|or|xor|not|lea|cmp|test|nop|int|syscall|leave|enter|imul|idiv|inc|dec|shl|shr|sar|rol|ror|neg|cbw|cwde|cdqe|cdq|rep|repe|repne|movsb|movsw|movsd|stosb|stosw|stosd|lodsb|lodsw|lodsd|scasb|scasw|scasd|xchg|bswap|cmove|cmovne|cmovg|cmovl|setg|setl|sete|setne|fld|fst|fstp|fadd|fsub|fmul|fdiv|vmovdqu|vmovdqa|vpxor|vpcmpeqb|vpand|vpor|bl|blr|b|br|cbz|cbnz|tbz|tbnz|adr|adrp|ldr|ldrb|ldrh|ldrsw|ldur|ldp|str|stur|stp)\\b"
+    },
+    "register": {
+      "name": "variable.language.register.asm",
+      "match": "\\b(rax|rbx|rcx|rdx|rsi|rdi|rsp|rbp|r8|r9|r10|r11|r12|r13|r14|r15|eax|ebx|ecx|edx|esi|edi|esp|ebp|ax|bx|cx|dx|si|di|sp|bp|al|bl|cl|dl|ah|bh|ch|dh|xmm[0-9]+|ymm[0-9]+|zmm[0-9]+|cs|ds|es|fs|gs|ss|rip|eip|eflags|rflags|x[0-9]+|w[0-9]+|sp|wsp|xzr|wzr|x29|x30|lr|fp)\\b"
+    },
+    "hex_number": {
+      "name": "constant.numeric.hex.asm",
+      "match": "\\b0x[0-9a-fA-F]+\\b"
+    },
+    "dec_number": {
+      "name": "constant.numeric.decimal.asm",
+      "match": "(?<![a-zA-Z0-9_])\\d+(?![a-zA-Z0-9_])"
+    }
+  }
+}

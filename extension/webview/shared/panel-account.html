@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Compte</title>
+  <link rel="stylesheet" href="{{panelAccountCssUri}}">
+</head>
+<body class="account-panel">
+
+  <div class="account-section" data-pof-account-root>
+  <div class="account-section" data-pof-account-logged-out>
+    <h2>Connexion</h2>
+    <form autocomplete="on" data-pof-login-form>
+      <div class="field">
+        <label>Email</label>
+        <input type="email" autocomplete="email" required placeholder="vous@exemple.com" data-pof-login-email>
+      </div>
+      <div class="field">
+        <label>Mot de passe</label>
+        <input type="password" autocomplete="current-password" required data-pof-login-password>
+      </div>
+      <button type="submit" class="btn-primary">Se connecter</button>
+      <p class="error hidden" data-pof-login-error></p>
+    </form>
+  </div>
+
+  <div class="account-section hidden" data-pof-account-logged-in>
+    <h2>Mon compte</h2>
+    <p class="account-email-display" data-pof-account-email></p>
+    <h3>Plugins actifs</h3>
+    <ul class="plugin-list" data-pof-plugin-list></ul>
+    <button data-pof-logout-btn class="btn-secondary">Se déconnecter</button>
+  </div>
+  </div>
+
+  <script src="{{accountJsUri}}"></script>
+</body>
+</html>

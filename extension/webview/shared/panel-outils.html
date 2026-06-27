@@ -1,0 +1,448 @@
+      <!-- Outils + Fichiers générés (fusionnés) -->
+      <section id="panel-outils" class="panel">
+        <div class="static-panel active outils-shell">
+          <!-- Barre d'onglets Outils -->
+          <div class="outils-tab-bar modern-card" id="outilsTabBar">
+            <button class="outils-tab active" data-tab="outils">Outils</button>
+            <button class="outils-tab" data-tab="compilateur">Compilateur</button>
+            <button class="outils-tab" data-tab="fichiers">Fichiers générés</button>
+          </div>
+
+          <!-- Onglet : Outils (calculette, payload, exploit) -->
+          <div class="outils-panel active" id="outilsPanelOutils">
+            <div class="tools-grid">
+            <div class="tool-card modern-card">
+              <div class="tool-card-head">
+                <p class="outils-kicker">Calcul</p>
+                <h3>Calculette d'offset</h3>
+                <p class="tool-desc">Hex ↔ décimal • Base + offset → adresse</p>
+              </div>
+              <div class="offset-calc">
+                <div class="calc-row">
+                  <label>Hex</label>
+                  <div class="input-wrap" style="width:140px"><input id="offsetHex" type="text" placeholder="0x14" class="input-inner" spellcheck="false" /></div>
+                  <span class="calc-arrow">↔</span>
+                  <label>Décimal</label>
+                  <div class="input-wrap" style="width:100px"><input id="offsetDec" type="text" placeholder="20" class="input-inner" spellcheck="false" /></div>
+                </div>
+                <div class="calc-row">
+                  <label>Base + offset</label>
+                  <div class="input-wrap" style="flex:1;min-width:140px"><input id="offsetBase" type="text" placeholder="0x100000000" class="input-inner" spellcheck="false" /></div>
+                  <span>+</span>
+                  <div class="input-wrap" style="width:100px"><input id="offsetDelta" type="text" placeholder="-0x14" class="input-inner" spellcheck="false" /></div>
+                  <span>=</span>
+                  <div class="input-wrap" style="width:140px"><input id="offsetResult" type="text" readonly placeholder="Adresse" class="input-inner" title="Clic pour copier" /></div>
+                </div>
+              </div>
+            </div>
+            <div class="tool-card modern-card">
+              <div class="tool-card-head">
+                <p class="outils-kicker">Payload</p>
+                <h3>Conversion payload</h3>
+                <p class="tool-desc">Hex (43434343) ou expression (A*64+BBBB)</p>
+              </div>
+              <div class="payload-row">
+                <div class="input-wrap" style="flex:1;max-width:380px">
+                  <span class="search-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg></span>
+                  <input id="payloadInput" type="text" placeholder="A*64+BBBB ou 43434343" class="input-inner" spellcheck="false" />
+                </div>
+                <button id="btnPayloadToHex" class="btn btn-primary">→ Hex</button>
+              </div>
+              <div class="payload-result-row">
+                <span class="block-label">Résultat</span>
+                <code id="payloadHexResult" class="payload-result" title="Clic pour copier">—</code>
+                <span id="payloadByteCount" class="payload-byte-count"></span>
+              </div>
+            </div>
+            <div class="tool-card tool-card-wide modern-card">
+              <div class="tool-card-head">
+                <p class="outils-kicker">Pwn / Reverse</p>
+                <h3>Conversion Hex / Dec / ASCII / endian</h3>
+                <p class="tool-desc">Adresses, dwords/qwords, bytes échappés et snippets pwntools.</p>
+              </div>
+              <div class="pwn-converter">
+                <div class="pwn-converter-input-row">
+                  <div class="input-wrap pwn-converter-input-wrap">
+                    <input id="pwnConverterInput" type="text" placeholder="0x401176, 41424344, \x41\x42\x43\x44, ABCD" class="input-inner" spellcheck="false" />
+                  </div>
+                  <span id="pwnConverterStatus" class="pwn-converter-status" aria-live="polite"></span>
+                </div>
+                <div class="pwn-converter-toolbar">
+                  <span id="pwnConverterMeta" class="pwn-converter-meta"></span>
+                  <div class="pwn-converter-byte-toggle" role="group" aria-label="Affichage des bytes">
+                    <span class="block-label">Bytes</span>
+                    <button type="button" class="btn btn-secondary btn-sm active" data-byte-display="spaced" aria-pressed="true">Séparé</button>
+                    <button type="button" class="btn btn-secondary btn-sm" data-byte-display="compact" aria-pressed="false">Compact</button>
+                  </div>
+                </div>
+                <ul id="pwnConverterWarnings" class="pwn-converter-warnings" hidden></ul>
+                <div class="pwn-converter-grid">
+                  <div class="pwn-converter-output">
+                    <span class="block-label">Hex</span>
+                    <code id="pwnConverterHex">—</code>
+                    <button type="button" class="btn btn-secondary btn-sm" data-copy-conversion="pwnConverterHex" data-copy-label="hex">Copy</button>
+                  </div>
+                  <div class="pwn-converter-output">
+                    <span class="block-label">Decimal</span>
+                    <code id="pwnConverterDecimal">—</code>
+                    <button type="button" class="btn btn-secondary btn-sm" data-copy-conversion="pwnConverterDecimal" data-copy-label="decimal">Copy</button>
+                  </div>
+                  <div class="pwn-converter-output">
+                    <span class="block-label">ASCII / raw bytes</span>
+                    <code id="pwnConverterAscii">—</code>
+                    <button type="button" class="btn btn-secondary btn-sm" data-copy-conversion="pwnConverterAscii" data-copy-label="ASCII / raw bytes">Copy</button>
+                  </div>
+                  <div class="pwn-converter-output">
+                    <span class="block-label">Bytes</span>
+                    <code id="pwnConverterEscaped">—</code>
+                    <button type="button" class="btn btn-secondary btn-sm" data-copy-conversion="pwnConverterEscaped" data-copy-label="\x..">Copy</button>
+                  </div>
+                  <div class="pwn-converter-output">
+                    <span class="block-label">Little-endian 32-bit</span>
+                    <code id="pwnConverterLittle32">—</code>
+                    <button type="button" class="btn btn-secondary btn-sm" data-copy-conversion="pwnConverterLittle32" data-copy-label="little-endian 32-bit">Copy</button>
+                  </div>
+                  <div class="pwn-converter-output">
+                    <span class="block-label">Little-endian 64-bit</span>
+                    <code id="pwnConverterLittle64">—</code>
+                    <button type="button" class="btn btn-secondary btn-sm" data-copy-conversion="pwnConverterLittle64" data-copy-label="little-endian 64-bit">Copy</button>
+                  </div>
+                  <div class="pwn-converter-output">
+                    <span class="block-label">Big-endian 32-bit</span>
+                    <code id="pwnConverterBig32">—</code>
+                    <button type="button" class="btn btn-secondary btn-sm" data-copy-conversion="pwnConverterBig32" data-copy-label="big-endian 32-bit">Copy</button>
+                  </div>
+                  <div class="pwn-converter-output">
+                    <span class="block-label">Big-endian 64-bit</span>
+                    <code id="pwnConverterBig64">—</code>
+                    <button type="button" class="btn btn-secondary btn-sm" data-copy-conversion="pwnConverterBig64" data-copy-label="big-endian 64-bit">Copy</button>
+                  </div>
+                  <div class="pwn-converter-output">
+                    <span class="block-label">p32(...)</span>
+                    <code id="pwnConverterP32">—</code>
+                    <button type="button" class="btn btn-secondary btn-sm" data-copy-conversion="pwnConverterP32" data-copy-label="p32">Copy</button>
+                  </div>
+                  <div class="pwn-converter-output">
+                    <span class="block-label">p64(...)</span>
+                    <code id="pwnConverterP64">—</code>
+                    <button type="button" class="btn btn-secondary btn-sm" data-copy-conversion="pwnConverterP64" data-copy-label="p64">Copy</button>
+                  </div>
+                  <div class="pwn-converter-output">
+                    <span class="block-label">u32(...)</span>
+                    <code id="pwnConverterU32">—</code>
+                    <button type="button" class="btn btn-secondary btn-sm" data-copy-conversion="pwnConverterU32" data-copy-label="u32">Copy</button>
+                  </div>
+                  <div class="pwn-converter-output">
+                    <span class="block-label">u64(...)</span>
+                    <code id="pwnConverterU64">—</code>
+                    <button type="button" class="btn btn-secondary btn-sm" data-copy-conversion="pwnConverterU64" data-copy-label="u64">Copy</button>
+                  </div>
+                  <div class="pwn-converter-output">
+                    <span class="block-label">Unsigned 32</span>
+                    <code id="pwnConverterUnsigned32">—</code>
+                    <button type="button" class="btn btn-secondary btn-sm" data-copy-conversion="pwnConverterUnsigned32" data-copy-label="unsigned 32">Copy</button>
+                  </div>
+                  <div class="pwn-converter-output">
+                    <span class="block-label">Signed 32</span>
+                    <code id="pwnConverterSigned32">—</code>
+                    <button type="button" class="btn btn-secondary btn-sm" data-copy-conversion="pwnConverterSigned32" data-copy-label="signed 32">Copy</button>
+                  </div>
+                  <div class="pwn-converter-output">
+                    <span class="block-label">Unsigned 64</span>
+                    <code id="pwnConverterUnsigned64">—</code>
+                    <button type="button" class="btn btn-secondary btn-sm" data-copy-conversion="pwnConverterUnsigned64" data-copy-label="unsigned 64">Copy</button>
+                  </div>
+                  <div class="pwn-converter-output">
+                    <span class="block-label">Signed 64</span>
+                    <code id="pwnConverterSigned64">—</code>
+                    <button type="button" class="btn btn-secondary btn-sm" data-copy-conversion="pwnConverterSigned64" data-copy-label="signed 64">Copy</button>
+                  </div>
+                  <div class="pwn-converter-output pwn-converter-output-wide">
+                    <span class="block-label">Hexdump</span>
+                    <code id="pwnConverterHexdump">—</code>
+                    <button type="button" class="btn btn-secondary btn-sm" data-copy-conversion="pwnConverterHexdump" data-copy-label="hexdump">Copy</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="tool-card tool-card-wide modern-card">
+              <div class="tool-card-head">
+                <p class="outils-kicker">Préparation</p>
+                <h3>Assistant Exploit</h3>
+                <p class="tool-desc">Pré-remplit Dynamic à partir de quelques infos utiles.</p>
+              </div>
+              <div class="exploit-assistant-grid">
+                <div class="form-field">
+                  <label>Fonction de départ</label>
+                  <div class="input-wrap"><input id="exploitStartSymbol" type="text" value="main" class="input-inner" /></div>
+                </div>
+                <div class="form-field">
+                  <label>Fonction cible</label>
+                  <div class="input-wrap"><input id="exploitTargetSymbol" type="text" value="win" class="input-inner" /></div>
+                </div>
+                <div class="form-field">
+                  <label>Taille buffer</label>
+                  <div class="input-wrap"><input id="exploitBufferSize" type="text" value="64" class="input-inner" /></div>
+                </div>
+                <div class="form-field">
+                  <label>Suffixe payload</label>
+                  <div class="input-wrap"><input id="exploitPayloadSuffix" type="text" value="CCCC" class="input-inner" /></div>
+                </div>
+                <div class="form-field">
+                  <label>Cible injection</label>
+                  <select id="exploitPayloadTarget" class="select-modern">
+                    <option value="argv1" selected>argv[1]</option>
+                    <option value="both">stdin + argv[1]</option>
+                    <option value="stdin">stdin</option>
+                  </select>
+                </div>
+                <div class="form-field">
+                  <label>Max steps</label>
+                  <select id="exploitMaxSteps" class="select-modern">
+                    <option value="200">200</option>
+                    <option value="400" selected>400</option>
+                    <option value="800">800</option>
+                    <option value="1000">1 000</option>
+                    <option value="2000">2 000</option>
+                  </select>
+                </div>
+                <div class="form-field">
+                  <label>Adresse CMP (auto)</label>
+                  <div class="input-wrap"><input id="exploitCmpAddr" type="text" value="0x4011c7" placeholder="0x4011c7" class="input-inner" /></div>
+                </div>
+                <div class="form-field exploit-notes-field">
+                  <label>Notes exploit</label>
+                  <p class="hint-sm" style="margin:6px 0 10px">Ouvrez la box flottante pour éditer vos notes.</p>
+                  <button id="btnOpenExploitNotes" type="button" class="btn btn-secondary btn-sm">Ouvrir la box Notes</button>
+                </div>
+              </div>
+              <div class="form-actions">
+                <button id="btnPrepareDynamic" type="button" class="btn btn-primary">Préparer Dynamic</button>
+                <button id="btnAutoFromCmp" type="button" class="btn btn-secondary">Auto depuis CMP</button>
+                <button id="btnAutoFromNotes" type="button" class="btn btn-secondary">Auto depuis Notes</button>
+              </div>
+              <p id="exploitAutoHint" class="hint">Auto: lit le CMP, calcule le padding (A*N) et convertit la valeur comparée.</p>
+            </div>
+
+            </div>
+          </div><!-- /outilsPanelOutils -->
+
+          <!-- Onglet : Compilateur -->
+          <div class="outils-panel" id="outilsPanelCompilateur">
+            <div class="compiler-card modern-card">
+            <div class="tool-card-head">
+              <p class="outils-kicker">Compilation</p>
+              <h3>Compilateur</h3>
+              <p class="tool-desc">Source → ELF · PE · Mach-O — C, C++, Rust, Go.</p>
+            </div>
+
+            <!-- Source + Sortie -->
+            <div class="compiler-section">
+              <div class="form-row">
+                <div class="form-field" style="flex:2">
+                  <label>Source</label>
+                  <div style="display:flex;gap:4px;align-items:center">
+                    <div class="input-wrap" style="flex:1">
+                      <input id="gccSourcePath" type="text" class="input-inner"
+                             placeholder="Sélectionner un fichier source…" spellcheck="false" />
+                    </div>
+                    <button id="btnBrowseCompilerSrc" type="button" class="btn btn-secondary btn-sm"
+                            title="Parcourir…" style="flex-shrink:0">…</button>
+                  </div>
+                </div>
+                <div class="form-field" style="flex:2">
+                  <label>Binaire de sortie</label>
+                  <div style="display:flex;gap:4px;align-items:center">
+                    <div class="input-wrap" style="flex:1">
+                      <input id="gccOutputPath" type="text" class="input-inner"
+                             placeholder="Chemin de sortie (auto si vide)" spellcheck="false" />
+                    </div>
+                    <button id="btnBrowseCompilerOut" type="button" class="btn btn-secondary btn-sm"
+                            title="Parcourir…" style="flex-shrink:0">…</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Langage + Cible + Optim + Debug -->
+            <div class="compiler-section">
+              <div class="compiler-section-label">Options</div>
+              <div class="form-row">
+                <div class="form-field">
+                  <label>Langage</label>
+                  <select id="compilerLang" class="select-modern">
+                    <option value="c" selected>C</option>
+                    <option value="cpp">C++</option>
+                    <option value="rust">Rust</option>
+                    <option value="go">Go</option>
+                  </select>
+                </div>
+                <div class="form-field">
+                  <label>Cible</label>
+                  <select id="compilerTarget" class="select-modern">
+                    <option value="elf-x64" selected>ELF x86-64</option>
+                    <option value="elf-x86">ELF x86</option>
+                    <option value="elf-arm64">ELF ARM64</option>
+                    <option value="elf-arm">ELF ARMv7</option>
+                    <option value="pe-x64">PE x64 (Windows)</option>
+                    <option value="pe-x86">PE x86 (Windows)</option>
+                    <option value="macho-arm64">Mach-O ARM64 (macOS)</option>
+                    <option value="macho-x64">Mach-O x86-64 (macOS)</option>
+                  </select>
+                </div>
+                <div class="form-field" id="compiler-optim-field">
+                  <label>Optimisation</label>
+                  <select id="gccOptim" class="select-modern">
+                    <option value="-O0" selected>-O0 (aucune)</option>
+                    <option value="-O1">-O1</option>
+                    <option value="-O2">-O2</option>
+                    <option value="-O3">-O3 (max)</option>
+                    <option value="-Os">-Os (taille)</option>
+                  </select>
+                </div>
+                <div class="form-field" id="compiler-debug-field">
+                  <label>Debug</label>
+                  <select id="gccDebug" class="select-modern">
+                    <option value="-g" selected>-g</option>
+                    <option value="-ggdb">-ggdb</option>
+                    <option value="">Aucun</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div id="compiler-target-hint" style="display:none;margin-top:6px;padding:8px 12px;border-radius:3px;font-size:12px;line-height:1.6"></div>
+
+            <!-- Options C/C++ uniquement -->
+            <div id="compiler-gcc-only">
+              <div id="compiler-mem-prot" class="compiler-section">
+                <div class="compiler-section-label">Protections mémoire</div>
+                <div class="form-row">
+                  <div class="form-field">
+                    <label>PIE</label>
+                    <select id="gccPie" class="select-modern">
+                      <option value="no" selected>No PIE</option>
+                      <option value="yes">PIE</option>
+                    </select>
+                  </div>
+                  <div class="form-field">
+                    <label>Canary</label>
+                    <select id="gccCanary" class="select-modern">
+                      <option value="off" selected>Off</option>
+                      <option value="basic">Basic</option>
+                      <option value="strong">Strong</option>
+                      <option value="all">All</option>
+                    </select>
+                  </div>
+                  <div class="form-field">
+                    <label>RELRO</label>
+                    <select id="gccRelro" class="select-modern">
+                      <option value="off" selected>Off</option>
+                      <option value="partial">Partiel</option>
+                      <option value="full">Complet</option>
+                    </select>
+                  </div>
+                  <div class="form-field">
+                    <label title="Linux seulement">execstack</label>
+                    <label class="toggle-switch" style="margin-top:4px">
+                      <input id="gccExecstack" type="checkbox" checked />
+                      <span class="toggle-slider"></span>
+                      <span>On</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div class="compiler-section">
+                <div class="compiler-section-label">Avancé</div>
+                <div class="form-row" style="align-items:center;gap:20px">
+                  <label class="toggle-switch">
+                    <input id="gccStatic" type="checkbox" />
+                    <span class="toggle-slider"></span>
+                    <span>Linking statique (-static)</span>
+                  </label>
+                  <label class="toggle-switch">
+                    <input id="gccStrip" type="checkbox" />
+                    <span class="toggle-slider"></span>
+                    <span>Strip symboles (-s)</span>
+                  </label>
+                  <div class="form-field" style="flex:1">
+                    <label>Flags custom</label>
+                    <div class="input-wrap">
+                      <input id="gccExtraFlags" type="text" class="input-inner"
+                             placeholder="-Wall -Wextra" spellcheck="false" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="compiler-section compiler-cmd-section">
+                <div class="compiler-section-label">Commande générée</div>
+                <code id="compilerCmdPreview" class="compiler-cmd-preview"
+                      title="Clic pour copier">gcc …</code>
+              </div>
+            </div><!-- /compiler-gcc-only -->
+
+            <div class="form-actions" style="margin-top:12px;display:flex;gap:8px;align-items:center">
+              <button id="btnCompileGcc" type="button" class="btn btn-primary">Compiler</button>
+              <button id="btnRefreshCompilers" type="button" class="btn btn-secondary btn-sm" title="Rafraîchir la disponibilité des compilateurs">⟳ Rafraîchir</button>
+            </div>
+
+            <div id="compile-result" class="compiler-section" style="margin-top:12px;min-height:24px"></div>
+            </div>
+          </div><!-- /outilsPanelCompilateur -->
+
+          <!-- Onglet : Fichiers générés -->
+          <div class="outils-panel" id="outilsPanelFichiers">
+            <div class="files-summary modern-card" id="filesSummary">
+              <div class="files-summary-head">
+                <div>
+                  <div class="section-label">Espace de travail généré</div>
+                  <p class="hint">Vue d’ensemble des artifacts et caches produits par l’analyse statique.</p>
+                </div>
+              </div>
+              <div class="files-summary-grid" id="filesSummaryGrid">
+                <div class="files-summary-card">
+                  <span class="files-summary-label">Entrées suivies</span>
+                  <strong>—</strong>
+                </div>
+              </div>
+            </div>
+            <div class="files-actions modern-card">
+              <label class="toggle-switch" title="Réutiliser le cache">
+                <input type="checkbox" id="useCache" checked />
+                <span class="toggle-slider"></span>
+                <span>Utiliser le cache</span>
+              </label>
+              <div class="files-actions-btns">
+                <button id="btnRefreshFiles" class="btn btn-primary">Actualiser</button>
+                <button id="btnPurgeStale" class="btn btn-sm" title="Supprimer le cache des binaires inexistants">Purge obsolète</button>
+                <button id="btnCleanup" class="btn btn-secondary">Tout nettoyer</button>
+              </div>
+            </div>
+            <div class="files-content">
+              <section class="files-panel modern-card">
+                <div class="files-panel-head">
+                  <div class="files-panel-heading">
+                    <h4 class="section-label">Artifacts de session</h4>
+                    <span id="filesArtifactsCount" class="files-panel-count">0</span>
+                    <p class="hint">Fichiers produits pour la navigation, les traces et les exports intermédiaires.</p>
+                  </div>
+                </div>
+                <div id="filesArtifacts" class="files-stack"></div>
+              </section>
+              <section class="files-panel modern-card">
+                <div class="files-panel-head">
+                  <div class="files-panel-heading">
+                    <h4 class="section-label">Caches persistants</h4>
+                    <span id="filesCacheCount" class="files-panel-count">0</span>
+                    <p class="hint">Entrées réutilisables pour accélérer les vues statiques et garder l’état utile entre sessions.</p>
+                  </div>
+                </div>
+                <div id="filesCache" class="files-stack"></div>
+              </section>
+            </div>
+          </div><!-- /outilsPanelFichiers -->
+
+        </div>
+      </section>

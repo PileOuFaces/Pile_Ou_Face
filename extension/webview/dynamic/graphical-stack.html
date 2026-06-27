@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<!-- Webview HTML layout for the Pile ou Face UI. -->
+<!-- Keeps structure minimal; JS fills dynamic content. -->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+
+  <!-- CSP pour le webview -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; img-src {{cspSource}}; script-src {{cspSource}} 'unsafe-inline'; style-src {{cspSource}} 'unsafe-inline'; connect-src {{cspSource}};">
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pile ou Face</title>
+
+  <link rel="stylesheet" href="{{styleUri}}">
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <div class="title">Pile ou Face</div>
+      <div id="status" class="status">En attente de données...</div>
+    </header>
+
+    <!-- Step controls -->
+    <section class="controls">
+      <button id="btnPrev" class="btn">&larr;</button>
+      <input id="stepRange" type="range" min="1" max="1" value="1" />
+      <button id="btnNext" class="btn">&rarr;</button>
+      <div class="step-label">
+        Étape: <span id="stepLabel">1</span>
+      </div>
+      <label class="toggle" for="showAllTrace">
+        <input id="showAllTrace" type="checkbox" />
+        Toute la trace
+      </label>
+      <span id="focusLabel" class="focus-chip">Focus: main</span>
+      <button id="traceDebugToggle" type="button" class="btn trace-debug-toggle" hidden>Debug JSON</button>
+      <button id="traceDebugCopy" type="button" class="btn trace-debug-copy" hidden>Copy JSON</button>
+      <select id="layoutPreset" class="layout-preset-select" title="Appliquer un preset de layout">
+        <option value="">Layout…</option>
+        <option value="debutant">Débutant</option>
+        <option value="debug">Debug</option>
+        <option value="exploit">Exploit</option>
+        <option value="minimal">Minimal</option>
+      </select>
+      <div class="panel-visibility-group" role="group" aria-label="Visibilité des panneaux optionnels">
+        <button
+          id="toggleExplainPanel"
+          type="button"
+          class="panel-visibility-toggle"
+          data-panel-toggle="explain"
+          data-storage-key="pof-panel-visible-explain"
+          aria-controls="explainPanel"
+          aria-pressed="true"
+        >
+          <span class="panel-visibility-check" aria-hidden="true">✓</span>
+          <span class="panel-visibility-label">Explications</span>
+        </button>
+        <button
+          id="toggleDumpPanel"
+          type="button"
+          class="panel-visibility-toggle"
+          data-panel-toggle="dump"
+          data-storage-key="pof-panel-visible-dump"
+          aria-controls="dumpPanel"
+          aria-pressed="true"
+        >
+          <span class="panel-visibility-check" aria-hidden="true">✓</span>
+          <span class="panel-visibility-label">Dump SP</span>
+        </button>
+        <button
+          id="toggleRegistersPanel"
+          type="button"
+          class="panel-visibility-toggle"
+          data-panel-toggle="registers"
+          data-storage-key="pof-panel-visible-registers"
+          aria-controls="registersPanel"
+          aria-pressed="true"
+        >
+          <span class="panel-visibility-check" aria-hidden="true">✓</span>
+          <span class="panel-visibility-label">Registres</span>
+        </button>
+        <button
+          id="toggleStackPanel"
+          type="button"
+          class="panel-visibility-toggle"
+          data-panel-toggle="stack"
+          data-storage-key="pof-panel-visible-stack"
+          aria-controls="stackPanel"
+          aria-pressed="true"
+        >
+          <span class="panel-visibility-check" aria-hidden="true">✓</span>
+          <span class="panel-visibility-label">Pile</span>
+        </button>
+      </div>
+    </section>
+
+    <section id="traceDebugInspector" class="trace-debug-inspector" hidden>
+      <div id="traceDebugBody" class="trace-debug-body" hidden></div>
+    </section>
+
+    <!-- AST risks (Python only) -->
+    <!-- <section class="risks-panel">
+      <h2 class="panel-title">Zones à risque (AST)</h2>
+      <div id="risks" class="risks"></div>
+    </section> -->
+
+    <!-- Visual panels: left tools, disassembly, stack -->
+    <section class="visuals">
+      <div class="left-col">
+        <section id="explainPanel" class="panel explain-panel">
+          <div class="panel-header">
+            <h2 class="panel-title">Explications</h2>
+            <div id="explainSubtitle" class="panel-subtitle">Lecture pedagogique</div>
+          </div>
+          <div id="explainBody" class="explain-body"></div>
+        </section>
+        <section id="dumpPanel" class="panel dump-panel">
+          <div class="panel-header">
+            <h2 class="panel-title">Dump autour de SP</h2>
+          </div>
+          <div class="panel-body-fill">
+            <pre id="memoryDump" class="memory-pre"></pre>
+          </div>
+        </section>
+        <section id="registersPanel" class="panel registers-container">
+          <div class="panel-header">
+            <h2 class="panel-title">Registres</h2>
+          </div>
+          <div class="panel-body-fill">
+            <div id="registers" class="registers"></div>
+          </div>
+        </section>
+      </div>
+      <section id="disasmPanel" class="panel disasm-panel">
+        <div class="panel-header">
+          <h2 class="panel-title">ASM</h2>
+          <div id="disasmSubtitle" class="panel-subtitle">Fonction active</div>
+          <button type="button" class="panel-focus-btn" data-focus-panel="asm" aria-label="Mode focus ASM" aria-pressed="false" title="Mode focus (Échap pour quitter)">⤢</button>
+        </div>
+        <div id="disasmList" class="disasm-list"></div>
+      </section>
+      <section id="stackPanel" class="panel stack-container">
+        <div class="panel-header">
+          <h2 class="panel-title">Pile</h2>
+          <div class="stack-panel-tools">
+            <div id="stackLegend" class="legend"></div>
+            <div class="stack-mode-toggle" role="group" aria-label="Mode d'affichage de la pile">
+              <button id="stackModeFrame" type="button" class="stack-mode-btn">Simple</button>
+              <button id="stackModeAdvanced" type="button" class="stack-mode-btn">Avance</button>
+            </div>
+          </div>
+          <button type="button" class="panel-focus-btn" data-focus-panel="stack" aria-label="Mode focus Pile" aria-pressed="false" title="Mode focus (Échap pour quitter)">⤢</button>
+        </div>
+        <div id="stackSummary" class="stack-summary" hidden></div>
+        <div id="stackWorkspace" class="stack-workspace">
+          <section class="stack-browser-panel" aria-label="Navigateur de pile">
+            <div class="stack-browser-header">
+              <div class="stack-browser-heading">
+              <div id="stackWorkspaceTitle" class="stack-browser-title">.text</div>
+                <div id="stackWorkspaceSubtitle" class="stack-browser-subtitle">Fonctions de la trace</div>
+              </div>
+              <button id="stackWorkspaceBack" type="button" class="stack-browser-back" hidden>Retour</button>
+            </div>
+            <div id="stackFunctions" class="stack-functions-list"></div>
+            <div id="stack" class="stack stack-frame-list" hidden></div>
+            <div id="stackDetail" class="stack-detail-drawer" hidden></div>
+          </section>
+        </div>
+      </section>
+    </section>
+  </div>
+
+  <script>
+    (function () {
+      var panelConfig = {
+        explain:   { panelId: 'explainPanel',   storageKey: 'pof-panel-visible-explain' },
+        dump:      { panelId: 'dumpPanel',       storageKey: 'pof-panel-visible-dump' },
+        registers: { panelId: 'registersPanel',  storageKey: 'pof-panel-visible-registers' },
+        stack:     { panelId: 'stackPanel',      storageKey: 'pof-panel-visible-stack' }
+      };
+
+      var RESIZE_KEY = 'pof-col-widths-v2';
+      var MIN_LEFT = 260, MIN_ASM = 480, MIN_STACK = 360;
+      var states = {};
+      var currentFocus = null;
+
+      function readVisible(key) {
+        try { var s = localStorage.getItem(key); return s === null ? true : s === 'true'; } catch (_) { return true; }
+      }
+
+      function writeVisible(key, v) {
+        try { localStorage.setItem(key, v ? 'true' : 'false'); } catch (_) {}
+      }
+
+      function updateLayout() {
+        var visuals = document.querySelector('.visuals');
+        var leftCol = document.querySelector('.left-col');
+        if (!visuals || !leftCol) return;
+        var lc = (states.explain ? 1 : 0) + (states.dump ? 1 : 0) + (states.registers ? 1 : 0);
+        leftCol.hidden = lc === 0;
+        leftCol.dataset.visibleCount = String(lc);
+        leftCol.dataset.hasExplain = states.explain ? 'true' : 'false';
+        visuals.dataset.leftCount = String(lc);
+        visuals.classList.toggle('layout-no-left', lc === 0);
+        visuals.classList.toggle('layout-compact-left', lc > 0 && lc < 3);
+        visuals.classList.toggle('layout-slim-left', lc === 1 || (lc === 2 && !states.explain));
+        visuals.classList.toggle('layout-single-left', lc === 1);
+        visuals.classList.toggle('layout-dual-left', lc === 2);
+        visuals.classList.toggle('layout-no-right', !states.stack);
+        var hasDump = states.dump && lc > 0;
+        var explainOnly = states.explain && !states.dump && !states.registers;
+        visuals.classList.toggle('layout-has-dump', hasDump);
+        visuals.classList.toggle('layout-explain-only', explainOnly);
+        // Reset any manual resize override when layout structure changes
+        visuals.style.gridTemplateColumns = '';
+      }
+
+      function applyVisibility(name, visible, persist) {
+        var cfg = panelConfig[name];
+        if (!cfg) return;
+        var panel = document.getElementById(cfg.panelId);
+        var toggle = document.querySelector('[data-panel-toggle="' + name + '"]');
+        if (!panel || !toggle) return;
+        states[name] = visible;
+        panel.hidden = !visible;
+        toggle.setAttribute('aria-pressed', String(visible));
+        toggle.classList.toggle('is-active', visible);
+        if (persist) writeVisible(cfg.storageKey, visible);
+        updateLayout();
+      }
+
+      // --- Toggles ---
+
+      function initToggles() {
+        Object.keys(panelConfig).forEach(function (name) {
+          states[name] = readVisible(panelConfig[name].storageKey);
+          applyVisibility(name, states[name], false);
+        });
+        document.querySelectorAll('[data-panel-toggle]').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            applyVisibility(btn.dataset.panelToggle, !states[btn.dataset.panelToggle], true);
+          });
+        });
+      }
+
+      // --- Focus mode ---
+
+      function setFocus(name) {
+        var visuals = document.querySelector('.visuals');
+        if (!visuals) return;
+        currentFocus = name;
+        visuals.dataset.panelFocus = name;
+        document.querySelectorAll('.panel-focus-btn').forEach(function (b) {
+          var active = b.dataset.focusPanel === name;
+          b.classList.toggle('is-active', active);
+          b.setAttribute('aria-pressed', active ? 'true' : 'false');
+        });
+      }
+
+      function clearFocus() {
+        var visuals = document.querySelector('.visuals');
+        if (!visuals) return;
+        currentFocus = null;
+        delete visuals.dataset.panelFocus;
+        document.querySelectorAll('.panel-focus-btn').forEach(function (b) {
+          b.classList.remove('is-active');
+          b.setAttribute('aria-pressed', 'false');
+        });
+      }
+
+      function initFocus() {
+        document.querySelectorAll('.panel-focus-btn').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            if (currentFocus === btn.dataset.focusPanel) { clearFocus(); } else { setFocus(btn.dataset.focusPanel); }
+          });
+        });
+        document.addEventListener('keydown', function (e) {
+          if (e.key === 'Escape' && currentFocus) clearFocus();
+        });
+      }
+
+      // --- Resize handles ---
+
+      function initResize() {
+        var visuals = document.querySelector('.visuals');
+        var leftCol = document.querySelector('.left-col');
+        var disasmEl = document.getElementById('disasmPanel');
+        if (!visuals || !leftCol || !disasmEl) return;
+
+        function makeHandle(parent, type) {
+          var h = document.createElement('div');
+          h.className = 'col-resize-handle';
+          h.dataset.resizeType = type;
+          h.setAttribute('aria-hidden', 'true');
+          parent.appendChild(h);
+          return h;
+        }
+
+        function startDrag(handle, e) {
+          e.preventDefault();
+          var isLeft = handle.dataset.resizeType === 'left';
+          var startX = e.clientX;
+          var rLeft = leftCol.getBoundingClientRect();
+          var rAsm = disasmEl.getBoundingClientRect();
+          var stackEl = document.getElementById('stackPanel');
+          var rStack = stackEl ? stackEl.getBoundingClientRect() : { width: MIN_STACK };
+          var iW = { left: rLeft.width, asm: rAsm.width, stack: rStack.width };
+
+          handle.classList.add('is-dragging');
+          document.body.style.cursor = 'col-resize';
+          document.body.style.userSelect = 'none';
+
+          function onMove(ev) {
+            var d = ev.clientX - startX;
+            var left = iW.left, stack = iW.stack;
+            var effectiveMinLeft = states.dump ? 420 : MIN_LEFT;
+            var hasLeft = !leftCol.hidden;
+            var hasStack = states.stack;
+            if (isLeft) {
+              if (!hasLeft) return;
+              left = Math.max(effectiveMinLeft, iW.left + d);
+            } else {
+              if (!hasStack) return;
+              stack = Math.max(MIN_STACK, iW.stack - d);
+            }
+            if (hasLeft && hasStack) {
+              visuals.style.gridTemplateColumns = left + 'px minmax(0, 1fr) ' + stack + 'px';
+            } else if (hasLeft) {
+              visuals.style.gridTemplateColumns = left + 'px minmax(0, 1fr)';
+            } else if (hasStack) {
+              visuals.style.gridTemplateColumns = 'minmax(0, 1fr) ' + stack + 'px';
+            }
+          }
+
+          function onUp() {
+            handle.classList.remove('is-dragging');
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+            try { localStorage.setItem(RESIZE_KEY, visuals.style.gridTemplateColumns); } catch (_) {}
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+          }
+
+          document.addEventListener('mousemove', onMove);
+          document.addEventListener('mouseup', onUp);
+        }
+
+        var leftHandle = makeHandle(leftCol, 'left');
+        var asmHandle = makeHandle(disasmEl, 'asm');
+        leftHandle.addEventListener('mousedown', function (e) { startDrag(leftHandle, e); });
+        asmHandle.addEventListener('mousedown', function (e) { startDrag(asmHandle, e); });
+      }
+
+      function restoreResize() {
+        var visuals = document.querySelector('.visuals');
+        if (!visuals) return;
+        // Only restore when both left-col and stack are visible (3-col layout)
+        var hasLeft = states.explain || states.dump || states.registers;
+        if (!hasLeft || !states.stack) return;
+        try {
+          var stored = localStorage.getItem(RESIZE_KEY);
+          if (!stored) return;
+          // Parse "NNNpx minmax(0, 1fr) MMMpx" and clamp to minimums
+          var parts = stored.split(' ');
+          var leftPx = parseInt(parts[0], 10);
+          var stackPx = parseInt(parts[parts.length - 1], 10);
+          if (!isFinite(leftPx) || !isFinite(stackPx)) return;
+          leftPx = Math.max(MIN_LEFT, leftPx);
+          stackPx = Math.max(MIN_STACK, stackPx);
+          visuals.style.gridTemplateColumns = leftPx + 'px minmax(0, 1fr) ' + stackPx + 'px';
+        } catch (_) {}
+      }
+
+      // --- Presets ---
+
+      var PRESETS = {
+        debutant: { explain: true,  dump: false, registers: false, stack: true  },
+        debug:    { explain: false, dump: true,  registers: true,  stack: false },
+        exploit:  { explain: false, dump: true,  registers: false, stack: true  },
+        minimal:  { explain: false, dump: false, registers: false, stack: false }
+      };
+
+      function initPresets() {
+        var sel = document.getElementById('layoutPreset');
+        if (!sel) return;
+        sel.addEventListener('change', function () {
+          var preset = PRESETS[sel.value];
+          if (preset) {
+            Object.keys(preset).forEach(function (k) { applyVisibility(k, preset[k], true); });
+          }
+          sel.value = '';
+        });
+      }
+
+      // --- Boot ---
+
+      function init() {
+        initToggles();
+        initFocus();
+        initResize();
+        initPresets();
+        restoreResize();
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+      } else {
+        init();
+      }
+    })();
+  </script>
+  <script type="module" src="{{scriptUri}}"></script>
+</body>
+</html>

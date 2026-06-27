@@ -1,0 +1,9 @@
+{
+  "tool": "ghidra",
+  "arch": "x86_64",
+  "quality": "medium",
+  "score_min": 15,
+  "score_max": 49,
+  "description": "Ghidra output with WARNINGs, a goto, and low-level patterns — partially readable",
+  "code": "void FUN_00101139(void)\n{\n  long lVar1;\n  long in_FS_OFFSET;\n\n  lVar1 = *(long *)(in_FS_OFFSET + 0x28);\n  // WARNING: Subroutine does not return\n  __stack_chk_fail();\n  goto LAB_00101159;\nLAB_00101159:\n  if (lVar1 != *(long *)(in_FS_OFFSET + 0x28)) {\n    // WARNING: Subroutine does not return\n    __stack_chk_fail();\n  }\n  return;\n}\n"
+}

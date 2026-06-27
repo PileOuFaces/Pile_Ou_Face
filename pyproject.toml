@@ -1,0 +1,56 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = [
+    ".git",
+    ".gitnexus",
+    ".pile-ou-face",
+    "backends/.venv",
+    "backends/capa-rules",
+    "backends/dynamic",
+    "docker",
+    "extension/node_modules",
+    "graphify-out",
+]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+# Dette historique tolérée au démarrage de Ruff. Les nouvelles erreurs critiques
+# (syntaxe, noms indéfinis, imports invalides) restent bloquantes.
+ignore = ["E401", "E402", "E731", "E741", "F401", "F541", "F841"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+pythonpath = ["."]
+testpaths = [
+    "backends/static/tests",
+    "backends/plugins/tests",
+]
+
+[tool.coverage.run]
+branch = true
+source = [
+    "backends/static",
+    "backends/plugins",
+]
+omit = [
+    "backends/static/tests/*",
+    "backends/plugins/tests/*",
+]
+
+[tool.coverage.report]
+fail_under = 63
+precision = 1
+show_missing = true
+skip_empty = true
+
+[tool.coverage.html]
+directory = "htmlcov"
+
+[tool.coverage.xml]
+output = "coverage.xml"

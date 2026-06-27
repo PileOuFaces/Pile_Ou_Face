@@ -1,0 +1,267 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+    paths:
+      - 'backends/**'
+      - 'extension/**'
+      - 'pyproject.toml'
+      - 'Makefile'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    branches: [main, develops]
+    paths:
+      - 'backends/**'
+      - 'extension/**'
+      - 'pyproject.toml'
+      - 'Makefile'
+      - '.github/workflows/ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  # ══════════════════════════════════════════════════════════════
+  # 🔍 Tests Rapides — feature branches (push uniquement, hors main/develops)
+  # ══════════════════════════════════════════════════════════════
+  quick-test:
+    name: Quick Test
+    if: |
+      github.event_name == 'push' &&
+      github.ref != 'refs/heads/main' &&
+      github.ref != 'refs/heads/develops'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install -r backends/requirements-ci.txt
+          cd extension && npm ci
+
+      - name: Run tests
+        run: |
+          python3 -m ruff check .
+          python3 -m ruff format --check .
+          python3 -m coverage run -m pytest
+          python3 -m coverage report
+          cd extension && npm run test:coverage
+
+  # ══════════════════════════════════════════════════════════════
+  # 🧪 Tests Complets Multi-OS — PRs uniquement
+  # ══════════════════════════════════════════════════════════════
+  full-test:
+    name: ${{ matrix.os }} / Node ${{ matrix.node }}
+    if: github.event_name == 'pull_request'
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: [18.x, 20.x]
+        exclude:
+          - os: macos-latest
+            node: 18.x
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: 'npm'
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install build tools (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+
+      - name: Install build tools (macOS)
+        if: runner.os == 'macOS'
+        run: xcode-select --install 2>/dev/null || true
+
+      - name: Install dependencies
+        run: |
+          pip install -r backends/requirements-ci.txt
+          cd extension && npm ci
+
+      - name: Run Ruff
+        run: |
+          python3 -m ruff check .
+          python3 -m ruff format --check .
+
+      - name: Run Python tests with coverage
+        run: |
+          python3 -m coverage run -m pytest
+          python3 -m coverage report
+          python3 -m coverage xml
+
+      - name: Run JavaScript tests with coverage
+        working-directory: ./extension
+        run: npm run test:coverage
+
+  # ══════════════════════════════════════════════════════════════
+  # 🧬 Corpus réel ARM64 — PRs uniquement, ubuntu seulement
+  # ══════════════════════════════════════════════════════════════
+  real-corpus-arm64:
+    name: Real Corpus ARM64
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install ARM64 corpus toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            gcc-aarch64-linux-gnu \
+            binutils-aarch64-linux-gnu
+
+      - name: Install Python dependencies
+        run: pip install -r backends/requirements-ci.txt
+
+      - name: Run real binary corpus with ARM64
+        run: make test-real-corpus
+
+      - name: Upload corpus metrics
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-binary-corpus-metrics
+          path: .pile-ou-face/test-artifacts/real_binary_corpus_metrics.json
+          if-no-files-found: error
+
+  # ══════════════════════════════════════════════════════════════
+  # 🔐 Security Scan — PRs uniquement, ubuntu seulement
+  # Séparé de full-test pour ne pas bloquer les tests si l'audit échoue
+  # ══════════════════════════════════════════════════════════════
+  security-scan:
+    name: Security Scan
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install -r backends/requirements-ci.txt pip-audit
+          cd extension && npm ci
+
+      - name: npm audit
+        working-directory: ./extension
+        run: npm audit --audit-level=moderate
+        continue-on-error: true
+
+      - name: pip-audit (Python deps)
+        run: pip-audit --desc
+        continue-on-error: true
+
+      - name: Check outdated npm packages
+        working-directory: ./extension
+        run: npm outdated || true
+        continue-on-error: true
+
+  # ══════════════════════════════════════════════════════════════
+  # ✅ Status Check — required check pour les PRs et les pushs
+  # ══════════════════════════════════════════════════════════════
+  ci-success:
+    name: CI Success
+    if: always()
+    needs: [quick-test, full-test, real-corpus-arm64, security-scan]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        shell: bash
+        run: |
+          QUICK="${{ needs.quick-test.result }}"
+          FULL="${{ needs.full-test.result }}"
+          REAL_CORPUS="${{ needs.real-corpus-arm64.result }}"
+          SECURITY="${{ needs.security-scan.result }}"
+
+          echo "Event      : ${{ github.event_name }}"
+          echo "Quick test : $QUICK"
+          echo "Full test  : $FULL"
+          echo "Corpus ARM : $REAL_CORPUS"
+          echo "Security   : $SECURITY"
+
+          fail_if_bad() {
+            if [[ "$1" == "failure" || "$1" == "cancelled" ]]; then
+              echo "❌ $2 failed" && exit 1
+            fi
+          }
+
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            # Sur un push de feature branch : quick-test doit passer
+            # Sur main/develops : quick-test est skippé → on vérifie qu'il n'a pas échoué
+            fail_if_bad "$QUICK" "Quick test"
+            echo "✅ Push checks passed (quick=$QUICK)"
+            exit 0
+          fi
+
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            # full-test et security doivent réussir ou être explicitement skippés
+            fail_if_bad "$FULL" "Full test"
+            fail_if_bad "$REAL_CORPUS" "Real Corpus ARM64"
+            fail_if_bad "$SECURITY" "Security scan"
+            # Au moins full-test doit avoir tourné (pas juste skippé)
+            if [[ "$FULL" == "skipped" ]]; then
+              echo "❌ Full test was skipped on a PR — check workflow conditions"
+              exit 1
+            fi
+            if [[ "$REAL_CORPUS" == "skipped" ]]; then
+              echo "❌ Real Corpus ARM64 was skipped on a PR — check workflow conditions"
+              exit 1
+            fi
+            echo "✅ PR checks passed (full=$FULL, real-corpus-arm64=$REAL_CORPUS, security=$SECURITY)"
+            exit 0
+          fi
+
+          echo "❌ Unexpected event: ${{ github.event_name }}" && exit 1

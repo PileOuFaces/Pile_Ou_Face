@@ -1,0 +1,9 @@
+{
+  "tool": "retdec",
+  "arch": "arm64",
+  "quality": "high",
+  "score_min": 50,
+  "score_max": 120,
+  "description": "RetDec output for a string utility on ARM64 — precise types, no placeholders",
+  "code": "int32_t str_count(char * s, char c) {\n    int32_t count = 0;\n    if (s == NULL) {\n        return 0;\n    }\n    while (*s != '\\0') {\n        if (*s == c) {\n            count++;\n        }\n        s++;\n    }\n    return count;\n}\n"
+}

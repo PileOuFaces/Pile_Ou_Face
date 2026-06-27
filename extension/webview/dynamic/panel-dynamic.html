@@ -1,0 +1,314 @@
+  <section id="panel-dynamic" class="panel">
+  <div class="panel-hero">
+    <div class="panel-hero-icon">▶</div>
+    <h1 class="panel-hero-title">Dynamic — Run Trace</h1>
+    <p class="panel-hero-desc">Le binaire et les paramètres TRACE sont préremplis directement ici, dans le hub.</p>
+  </div>
+  <form id="traceForm" class="form">
+    <div class="form-section modern-card">
+      <div class="dynamic-header-row">
+        <div>
+          <h3>BINARY</h3>
+          <p class="hint">Binaire courant repris depuis le projet.</p>
+        </div>
+      </div>
+      <div class="form-field">
+        <label>Chemin binaire actuel</label>
+        <div class="input-wrap"><input name="binaryPath" id="dynamicBinaryPath" type="text" value="" class="input-inner" spellcheck="false" readonly /></div>
+      </div>
+      <details class="dynamic-binary-details">
+        <summary>Infos binaire</summary>
+        <div class="form-row dynamic-meta-row">
+          <div class="form-field">
+            <label>Architecture</label>
+            <div class="dynamic-meta-value" id="dynamicArchBits">—</div>
+          </div>
+          <div class="form-field">
+            <label>PIE</label>
+            <div class="dynamic-meta-value" id="dynamicPie">—</div>
+          </div>
+        </div>
+      </details>
+      <div class="form-field dynamic-source-field">
+        <label>Code source C optionnel</label>
+        <div class="dynamic-source-row">
+          <div class="input-wrap">
+            <input name="sourcePath" id="dynamicSourcePath" type="text" value="" class="input-inner" spellcheck="false" placeholder="examples/test3.c" />
+          </div>
+          <button id="btnDynamicSelectSource" type="button" class="btn btn-secondary btn-sm">Ajouter un fichier C</button>
+        </div>
+        <p class="hint" id="dynamicSourceHint">Pour une meilleure analyse, ajoutez le code source C du programme.</p>
+      </div>
+    </div>
+
+    <div class="form-section modern-card">
+      <div class="dynamic-header-row">
+        <div>
+          <h3>Payload d'entree</h3>
+          <p class="hint">Prepare un payload, un fichier d'instructions, un helper d'exploitation guide ou un script pwntools analyse localement.</p>
+        </div>
+      </div>
+
+      <div class="dynamic-payload-tabs" role="tablist" aria-label="Mode payload">
+        <button type="button" class="dynamic-payload-tab active" data-payload-mode="payload_builder">Payload Builder</button>
+        <button type="button" class="dynamic-payload-tab" data-payload-mode="file">Fichier</button>
+        <button type="button" class="dynamic-payload-tab" data-payload-mode="pwntools_script">Script pwntools</button>
+        <button type="button" class="dynamic-payload-tab" data-payload-mode="exploit_helper">Exploit Helper</button>
+      </div>
+
+      <div class="form-row dynamic-payload-common-row">
+        <div class="form-field dynamic-payload-target-field">
+          <label>Cible</label>
+          <select name="dynamicPayloadTargetMode" id="dynamicPayloadTargetMode" class="select-modern">
+            <option value="auto" selected>Auto</option>
+            <option value="argv1">argv[1]</option>
+            <option value="stdin">stdin</option>
+            <option value="both">stdin + argv[1]</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="dynamic-payload-mode active" data-payload-panel="payload_builder">
+        <div class="dynamic-payload-page">
+        <div class="form-row">
+          <div class="form-field dynamic-payload-input-field">
+            <label id="payloadBuilderInputLabel">Payload</label>
+            <div class="dynamic-builder-levels" role="tablist" aria-label="Niveau du builder">
+              <button type="button" class="dynamic-builder-level is-active" data-payload-builder-level="beginner">Beginner</button>
+              <button type="button" class="dynamic-builder-level" data-payload-builder-level="advanced">Advanced</button>
+            </div>
+            <textarea
+              name="argvPayload"
+              id="payloadBuilderInput"
+              class="input-inner dynamic-code-input"
+              rows="4"
+              spellcheck="false"
+              placeholder="A*64"
+            ></textarea>
+            <p id="payloadBuilderModeHint" class="hint">Beginner : `A*8`, `AAAA`, `\x41\x42`.</p>
+            <p id="argvPayloadHint" class="hint">Injecte automatiquement selon le code source quand il est disponible.</p>
+          </div>
+        </div>
+        </div>
+      </div>
+
+      <div class="dynamic-payload-mode" data-payload-panel="file">
+        <div class="dynamic-payload-page">
+        <div class="dynamic-file-grid">
+          <div class="form-field">
+            <label>Source</label>
+            <select id="payloadFileSource" class="select-modern">
+              <option value="inline" selected>Contenu editable</option>
+              <option value="path">Fichier existant</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label>Chemin guest</label>
+            <input id="payloadFileGuestPath" class="input-inner" type="text" value="/tmp/pof-input.txt" spellcheck="false" />
+          </div>
+        </div>
+        <div class="form-field dynamic-file-path-row" data-file-source-panel="path">
+          <label>Fichier local</label>
+          <div class="dynamic-source-row">
+            <div class="input-wrap"><input id="payloadFileHostPath" class="input-inner" type="text" spellcheck="false" /></div>
+            <button id="btnDynamicSelectPayloadFile" type="button" class="btn btn-secondary btn-sm">Choisir</button>
+          </div>
+        </div>
+        <div class="form-field" data-file-source-panel="inline">
+          <label>Contenu du fichier</label>
+          <textarea id="payloadFileContent" class="input-inner dynamic-code-input" rows="7" spellcheck="false" placeholder="include stage1&#10;push_a&#10;ret"></textarea>
+        </div>
+        <p class="hint">Le chemin virtuel est passe au binaire en argv[1] et mappe vers le fichier local/stage.</p>
+        </div>
+      </div>
+
+      <div class="dynamic-payload-mode" data-payload-panel="exploit_helper">
+        <div class="dynamic-payload-page">
+        <div class="dynamic-helper-grid">
+          <div class="form-field">
+            <label>Template</label>
+            <select id="exploitHelperTemplate" class="select-modern">
+              <option value="pattern">Pattern / Find offset</option>
+              <option value="overwrite_variable">Overwrite local variable</option>
+              <option value="ret2win">ret2win</option>
+              <option value="call_one_arg">Call function with one argument</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label>Arch</label>
+            <select id="exploitHelperArch" class="select-modern">
+              <option value="auto" selected>Auto</option>
+              <option value="i386">i386</option>
+              <option value="amd64">amd64</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label>Endian</label>
+            <select id="exploitHelperEndian" class="select-modern">
+              <option value="little" selected>little</option>
+              <option value="big">big</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label>Badchars</label>
+            <input id="exploitHelperBadchars" class="input-inner" type="text" placeholder="\x00 \x0a" spellcheck="false" />
+          </div>
+        </div>
+
+        <div class="dynamic-helper-fields" data-helper-fields="pattern">
+          <div class="form-field">
+            <label>Pattern length</label>
+            <input id="exploitPatternLength" class="input-inner" type="number" min="1" value="128" />
+          </div>
+          <div class="form-field">
+            <label>Crashed value</label>
+            <input id="exploitPatternCrashedValue" class="input-inner" type="text" placeholder="0x6161616b" spellcheck="false" />
+          </div>
+        </div>
+
+        <div class="dynamic-helper-fields" data-helper-fields="overwrite_variable">
+          <div class="form-field">
+            <label>Offset</label>
+            <input id="exploitOverwriteOffset" class="input-inner" type="number" min="0" value="64" />
+          </div>
+          <div class="form-field">
+            <label>Value</label>
+            <input id="exploitOverwriteValue" class="input-inner" type="text" placeholder="0xdeadbeef" spellcheck="false" />
+          </div>
+          <div class="form-field">
+            <label>Size</label>
+            <select id="exploitOverwriteSize" class="select-modern">
+              <option value="4" selected>4</option>
+              <option value="8">8</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="dynamic-helper-fields" data-helper-fields="ret2win">
+          <div class="form-field">
+            <label>Offset</label>
+            <input id="exploitRet2winOffset" class="input-inner" type="number" min="0" value="72" />
+          </div>
+          <div class="form-field">
+            <label>Win address</label>
+            <input id="exploitRet2winAddress" class="input-inner" type="text" placeholder="0x401234" spellcheck="false" />
+          </div>
+          <div class="form-field">
+            <label>ret gadget</label>
+            <input id="exploitRet2winRetGadget" class="input-inner" type="text" placeholder="optionnel" spellcheck="false" />
+          </div>
+        </div>
+
+        <div class="dynamic-helper-fields" data-helper-fields="call_one_arg">
+          <div class="form-field">
+            <label>Offset</label>
+            <input id="exploitCallOffset" class="input-inner" type="number" min="0" value="72" />
+          </div>
+          <div class="form-field">
+            <label>Function address</label>
+            <input id="exploitCallFunctionAddress" class="input-inner" type="text" placeholder="0x401234" spellcheck="false" />
+          </div>
+          <div class="form-field">
+            <label>Argument</label>
+            <input id="exploitCallArgument" class="input-inner" type="text" placeholder="0x404050" spellcheck="false" />
+          </div>
+          <div class="form-field">
+            <label>Return address</label>
+            <input id="exploitCallReturnAddress" class="input-inner" type="text" placeholder="i386 optionnel" spellcheck="false" />
+          </div>
+          <div class="form-field">
+            <label>pop rdi</label>
+            <input id="exploitCallPopRdi" class="input-inner" type="text" placeholder="amd64 requis" spellcheck="false" />
+          </div>
+        </div>
+        <div class="dynamic-helper-output">
+          <span class="hint">Output généré</span>
+          <pre id="exploitHelperOutput" class="dynamic-preview-block">—</pre>
+        </div>
+        </div>
+      </div>
+
+      <div class="dynamic-payload-mode" data-payload-panel="pwntools_script">
+        <div class="dynamic-payload-page">
+        <div class="dynamic-pwntools-toolbar">
+          <button id="btnDynamicImportPwntoolsScript" type="button" class="btn btn-secondary btn-sm">Importer .py</button>
+          <button id="btnAnalyzePwntoolsScript" type="button" class="btn btn-secondary btn-sm">Analyser script</button>
+          <span id="payloadPwntoolsSourceLabel" class="hint">Aucun script importé.</span>
+        </div>
+        <div class="form-field">
+          <label>Script pwntools</label>
+          <textarea id="payloadPwntoolsScriptInput" class="input-inner dynamic-code-input" rows="10" spellcheck="false" placeholder='from pwn import *&#10;payload = b"A"*64 + p32(0xdeadbeef)&#10;io = process("./chall")&#10;io.sendline(payload)'></textarea>
+        </div>
+        <p id="payloadPwntoolsScriptWarning" class="hint"></p>
+        <div id="payloadPwntoolsCaptureList" class="dynamic-pwntools-captures">
+          <p class="hint">Aucune capture pour le moment.</p>
+        </div>
+        </div>
+      </div>
+
+      <div class="dynamic-payload-preview">
+        <div class="dynamic-payload-preview-toolbar">
+          <button id="btnPayloadPreview" type="button" class="btn btn-secondary btn-sm" data-payload-action="preview">Preview</button>
+          <button id="btnPayloadUseGenerated" type="button" class="btn btn-secondary btn-sm" data-payload-action="use">Use as payload</button>
+          <button id="btnPayloadCopyPwntools" type="button" class="btn btn-secondary btn-sm" data-payload-action="copy-pwntools">Copy pwntools</button>
+        </div>
+        <div class="dynamic-preview-card">
+          <div class="dynamic-preview-card-header" id="payloadPreviewCardHeader" role="button" tabindex="0" aria-expanded="false">
+            <span class="dynamic-preview-card-title">Aperçu du payload</span>
+            <div class="dynamic-preview-summary-grid">
+              <div><span class="hint">Statut</span><strong id="payloadPreviewStatus">⚠️ Obsolète</strong></div>
+              <div><span class="hint">Cible</span><strong id="payloadPreviewTarget">argv[1]</strong></div>
+              <div><span class="hint">Taille</span><strong id="payloadPreviewSize">0 byte</strong></div>
+            </div>
+            <span id="payloadPreviewToggleLabel" class="dynamic-preview-toggle-label">Afficher l’aperçu</span>
+            <span class="dynamic-preview-chevron" aria-hidden="true">›</span>
+          </div>
+          <div class="dynamic-preview-card-body" id="payloadPreviewCardBody">
+            <p id="payloadPreviewTruncated" class="hint"></p>
+            <div class="dynamic-preview-grid">
+              <div>
+                <span class="hint">ASCII</span>
+                <pre id="payloadPreviewAscii" class="dynamic-preview-block">—</pre>
+              </div>
+              <div>
+                <span class="hint">HEX</span>
+                <pre id="payloadPreviewHex" class="dynamic-preview-block">—</pre>
+              </div>
+            </div>
+            <div class="dynamic-preview-warnings-wrap">
+              <span class="hint">Avertissements</span>
+              <ul id="payloadPreviewWarnings" class="dynamic-preview-warnings">
+                <li>Aucun warning.</li>
+              </ul>
+            </div>
+            <details id="payloadPreviewSnippetDetails" class="dynamic-preview-snippet">
+              <summary>Snippet pwntools</summary>
+              <pre class="dynamic-preview-block"><code id="payloadPwntoolsSnippet"></code></pre>
+            </details>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="form-section modern-card dynamic-section-secondary">
+      <div class="dynamic-header-row">
+        <div>
+          <h3>Historique</h3>
+          <p class="hint">Rouvre un run précédent ou supprime les traces temporaires dont tu n’as plus besoin.</p>
+        </div>
+        <div class="dynamic-history-toolbar">
+          <button id="btnRefreshDynamicTraceHistory" type="button" class="btn btn-secondary btn-sm">Actualiser</button>
+          <button id="btnClearDynamicTraceHistory" type="button" class="btn btn-secondary btn-sm">Nettoyer</button>
+        </div>
+      </div>
+      <div id="dynamicTraceHistory" class="dynamic-history-list">
+        <p class="hint">Aucune trace temporaire pour le moment.</p>
+      </div>
+    </div>
+
+    <div class="form-actions dynamic-run-zone">
+      <span id="dynamicTraceStatus" class="hint">Prêt.</span>
+      <button id="runBtn" type="submit" class="btn btn-primary">Run Trace</button>
+    </div>
+  </form>
+</section>

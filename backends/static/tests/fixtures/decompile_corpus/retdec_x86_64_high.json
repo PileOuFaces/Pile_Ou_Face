@@ -1,0 +1,9 @@
+{
+  "tool": "retdec",
+  "arch": "x86_64",
+  "quality": "high",
+  "score_min": 50,
+  "score_max": 120,
+  "description": "RetDec output for a fibonacci function — precise stdint types, clean structure",
+  "code": "int32_t main(int32_t argc, char ** argv) {\n    int32_t result;\n    if (argc > 1) {\n        int32_t v1 = (int32_t)strtol(argv[1], NULL, 10);\n        if (v1 < 2) {\n            puts(\"Usage: ./fib <n> where n >= 2\");\n            result = 1;\n        } else {\n            printf(\"%d\\n\", (uint32_t)fibonacci(v1));\n            result = 0;\n        }\n    } else {\n        puts(\"Usage: ./fib <n>\");\n        result = 1;\n    }\n    return result;\n}\n"
+}

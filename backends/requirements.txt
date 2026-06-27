@@ -1,0 +1,6 @@
+unicorn
+capstone
+flare-capa
+lief
+cryptography>=42.0.0
+yara-python

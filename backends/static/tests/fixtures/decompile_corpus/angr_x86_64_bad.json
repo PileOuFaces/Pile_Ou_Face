@@ -1,0 +1,9 @@
+{
+  "tool": "angr",
+  "arch": "x86_64",
+  "quality": "bad",
+  "score_min": -50,
+  "score_max": -1,
+  "description": "Angr stub output — UNKNOWN placeholders, gotos, no real logic",
+  "code": "int main():\n    local_10 = UNKNOWN\n    local_18 = UNKNOWN\n    local_20 = UNKNOWN\n    goto LAB_0\nLAB_0:\n    return 0\n"
+}

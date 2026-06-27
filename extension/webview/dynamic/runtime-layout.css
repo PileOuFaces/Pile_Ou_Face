@@ -1,0 +1,73 @@
+/* === Runtime workspace layout === */
+#panel-runtime .runtime-workspace {
+  display: flex; flex-direction: column;
+  height: 100%; min-height: 0; width: 100%;
+  gap: var(--space-2, 8px);
+  padding: var(--space-2, 8px) var(--space-3, 12px);
+  box-sizing: border-box; overflow: hidden;
+}
+#panel-runtime .runtime-workspace .header { flex-shrink: 0; }
+#panel-runtime .runtime-workspace .controls { flex-shrink: 0; }
+#panel-runtime .runtime-workspace .visuals { flex: 1 1 auto; min-height: 0; }
+
+/* Make resize handles slightly more discoverable in hub context */
+#panel-runtime .col-resize-handle::after {
+  background: rgba(255, 255, 255, 0.14);
+}
+#panel-runtime .col-resize-handle:hover::after {
+  background: rgba(109, 166, 255, 0.55);
+}
+
+/* runtime-panel — inner panels, separate from hub's .panel navigation system.
+   graphical-stack.css .panel rules no longer apply here (class renamed). */
+#panel-runtime .runtime-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 8px);
+  min-width: 0;
+  min-height: 0;
+  padding: var(--space-3, 12px);
+  background: var(--ui-panel, #1a2028);
+  border: 1px solid var(--ui-border, rgba(255,255,255,0.06));
+  border-radius: 12px;
+  box-shadow: var(--ui-shadow, 0 8px 24px rgba(0,0,0,0.18));
+  overflow: hidden;
+}
+#panel-runtime .left-col > .runtime-panel {
+  height: auto;
+}
+#panel-runtime .left-col {
+  gap: 0;
+}
+#panel-runtime .left-panel-resize-handle {
+  min-height: 8px;
+  height: 8px;
+  cursor: row-resize;
+  position: relative;
+}
+#panel-runtime .left-panel-resize-handle::after {
+  content: '';
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  top: 50%;
+  height: 2px;
+  transform: translateY(-50%);
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.12);
+  transition: background 120ms ease;
+}
+#panel-runtime .left-panel-resize-handle:hover::after,
+#panel-runtime .left-panel-resize-handle.is-dragging::after {
+  background: rgba(109, 166, 255, 0.58);
+}
+#panel-runtime .runtime-panel .panel-body-fill,
+#panel-runtime .runtime-panel .explain-body {
+  min-height: 0;
+  overflow: auto;
+}
+
+/* Hard hide — only mechanism needed now that .panel conflict is removed */
+#panel-runtime [hidden] {
+  display: none !important;
+}

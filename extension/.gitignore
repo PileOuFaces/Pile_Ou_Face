@@ -1,0 +1,7 @@
+node_modules/
+.vscode-test/
+*.vsix
+.c8_output/
+coverage/
+dist/
+.worktrees/

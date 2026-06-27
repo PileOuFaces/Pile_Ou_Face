@@ -1,0 +1,9 @@
+{
+  "tool": "retdec",
+  "arch": "x86_64",
+  "quality": "medium",
+  "score_min": 15,
+  "score_max": 49,
+  "description": "RetDec output with generic types and moderate readability — no precise stdint types, some casts",
+  "code": "int func(int a, int b) {\n    int result;\n    if (a > 0) {\n        result = (int)((long)a * (long)b);\n    } else {\n        result = (int)(-(long)a + (long)b);\n    }\n    return result;\n}\n"
+}

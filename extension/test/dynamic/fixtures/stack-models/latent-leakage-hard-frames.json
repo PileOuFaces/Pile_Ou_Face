@@ -1,0 +1,57 @@
+{
+  "main": {
+    "name": "main",
+    "locals": [
+      {
+        "id": "main:rbp:buffer:-64:64:frame",
+        "offset": -64,
+        "name": "buffer",
+        "role": "buffer",
+        "size": 64,
+        "source": "static",
+        "confidence": 0.9
+      }
+    ]
+  },
+  "challenge": {
+    "name": "challenge",
+    "locals": [
+      {
+        "id": "challenge:rbp:buffer:-448:448:frame",
+        "offset": -448,
+        "name": "buffer",
+        "role": "buffer",
+        "size": 448,
+        "source": "static",
+        "confidence": 0.9
+      },
+      {
+        "id": "challenge:rbp:canary:-8:8:frame",
+        "offset": -8,
+        "name": "canary",
+        "role": "canary",
+        "size": 8,
+        "source": "static",
+        "confidence": 0.85
+      },
+      {
+        "id": "challenge:rbp:saved_bp:0:8:frame",
+        "offset": 0,
+        "name": "saved rbp",
+        "role": "saved_bp",
+        "size": 8,
+        "source": "control",
+        "confidence": 1
+      },
+      {
+        "id": "challenge:rbp:return_address:8:8:frame",
+        "offset": 8,
+        "name": "return address",
+        "role": "return_address",
+        "size": 8,
+        "source": "control",
+        "confidence": 1
+      }
+    ]
+  }
+}

@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+.venv/
+backends/.venv/
+*.pyc
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Node
+node_modules/
+npm-debug.log*
+
+# VS Code and editors
+# .vscode/
+out/
+.vscode-test/
+*.vsix
+.DS_Store
+Thumbs.db
+*.log
+*.swp
+*.swo
+*~
+.env
+.env.local
+.env.*.local
+.idea/
+.pfdb/
+*.pfdb
+
+# Build artifacts
+build/
+dist/
+
+*.asm
+*.elf
+backends/capa-rules/
+*.dSYM
+output.json
+.pile-ou-face/
+graphify-out/
+.gitnexus/
+
+.claude/
+.codex/
+
+CLAUDE.md
+
+examples/
+docs/plans/

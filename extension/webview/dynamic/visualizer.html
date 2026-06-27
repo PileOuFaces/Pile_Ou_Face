@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<!-- Webview HTML layout for the Pile ou Face UI. -->
+<!-- Keeps structure minimal; JS fills dynamic content. -->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+
+  <!-- CSP pour le webview -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; img-src {{cspSource}}; script-src {{cspSource}} 'unsafe-inline'; style-src {{cspSource}} 'unsafe-inline'; connect-src {{cspSource}};">
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pile ou Face</title>
+
+  <link rel="stylesheet" href="{{styleUri}}">
+</head>
+<body class="dynamic-visualizer">
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <div class="title">Pile ou Face</div>
+      <div id="status" class="status">En attente de données...</div>
+    </header>
+
+    <!-- Step controls -->
+    <section class="controls">
+      <button id="btnPrev" class="btn">&larr;</button>
+      <input id="stepRange" type="range" min="1" max="1" value="1" />
+      <button id="btnNext" class="btn">&rarr;</button>
+      <div class="step-label">
+        Étape: <span id="stepLabel">1</span>
+      </div>
+    </section>
+
+    <!-- Current instruction -->
+    <section class="instr-box">
+      Instruction actuelle : <span id="instrLabel">(aucune)</span>
+    </section>
+
+    <!-- Stack frame summary (SP/BP + heuristic explanation) -->
+    <section class="frame-box">
+      <div class="context-title">Stack Frame</div>
+      <div id="frameContext" class="context-body">Aucune info frame.</div>
+    </section>
+
+    <!-- AST risks (Python only) -->
+    <!-- <section class="risks-panel">
+      <h2 class="panel-title">Zones à risque (AST)</h2>
+      <div id="risks" class="risks"></div>
+    </section> -->
+
+    <!-- Visual panels: stack, registers, disassembly -->
+    <section class="visuals">
+      <div class="stack-container">
+        <div class="panel-header">
+          <h2 class="panel-title">Pile</h2>
+          <div id="stackLegend" class="legend"></div>
+        </div>
+        <div id="stack" class="stack"></div>
+        <div class="memory-dump">
+          <div class="pof-collapse-header" role="button" tabindex="0" data-target="memoryDumpBody" data-pkey="pof-vis-memdump">
+            <span class="panel-subtitle">Dump autour de SP</span>
+            <span class="pof-chevron">›</span>
+          </div>
+          <div id="memoryDumpBody" class="pof-collapse-body">
+            <pre id="memoryDump" class="memory-pre"></pre>
+          </div>
+        </div>
+      </div>
+      <div class="registers-container">
+        <div class="pof-collapse-header panel-title" role="button" tabindex="0" data-target="registersBody" data-pkey="pof-vis-regs">
+          <span>Registres</span>
+          <span class="pof-chevron">›</span>
+        </div>
+        <div id="registersBody" class="pof-collapse-body">
+          <div id="registers" class="registers"></div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    (function () {
+      function initCollapsibles() {
+        document.querySelectorAll('.pof-collapse-header').forEach(function (btn) {
+          var key = btn.dataset.pkey;
+          var targetEl = document.getElementById(btn.dataset.target);
+          if (!targetEl) return;
+          var stored = localStorage.getItem(key);
+          var open = stored === null ? true : stored === 'true';
+          if (!open) targetEl.classList.add('pof-collapse-hidden');
+          btn.classList.toggle('is-open', open);
+          btn.addEventListener('click', function () {
+            var isHidden = targetEl.classList.toggle('pof-collapse-hidden');
+            btn.classList.toggle('is-open', !isHidden);
+            try { localStorage.setItem(key, !isHidden ? 'true' : 'false'); } catch (_) {}
+          });
+          btn.addEventListener('keydown', function (event) {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              btn.click();
+            }
+          });
+        });
+      }
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initCollapsibles);
+      } else {
+        initCollapsibles();
+      }
+    })();
+  </script>
+  <script type="module" src="{{scriptUri}}"></script>
+</body>
+</html>

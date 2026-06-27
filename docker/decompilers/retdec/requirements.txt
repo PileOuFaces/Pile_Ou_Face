@@ -1,0 +1,4 @@
+# Dépendances Python pour le container RetDec
+# retdec est un binaire natif — seuls lief et capstone sont utiles pour le wrapper Python
+lief
+capstone

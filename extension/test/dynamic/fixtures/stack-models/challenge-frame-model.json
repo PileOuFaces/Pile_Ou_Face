@@ -1,0 +1,23 @@
+{
+  "name": "challenge",
+  "locals": [
+    {
+      "id": "challenge:rbp:buffer:-448:440:frame",
+      "offset": -448,
+      "name": "buffer",
+      "role": "buffer",
+      "size": 440,
+      "source": "static",
+      "confidence": 0.9
+    },
+    {
+      "id": "challenge:rbp:canary:-8:8:frame",
+      "offset": -8,
+      "name": "canary",
+      "role": "canary",
+      "size": 8,
+      "source": "static",
+      "confidence": 0.75
+    }
+  ]
+}

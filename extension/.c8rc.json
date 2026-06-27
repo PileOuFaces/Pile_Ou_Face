@@ -1,0 +1,21 @@
+{
+  "all": true,
+  "include": [
+    "src/**/*.ts",
+    "webview/**/*.js"
+  ],
+  "exclude": [
+    "test/**",
+    "webview/shared/elk.bundled.js"
+  ],
+  "reporter": [
+    "text",
+    "json-summary",
+    "lcov"
+  ],
+  "check-coverage": true,
+  "lines": 30,
+  "statements": 30,
+  "branches": 60,
+  "functions": 77
+}

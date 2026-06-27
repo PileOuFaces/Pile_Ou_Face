@@ -1,0 +1,13 @@
+{
+  "mode": "file",
+  "targetMode": "argv1",
+  "target": "argv1",
+  "file": {
+    "source": "path",
+    "guestPath": "/tmp/pof-input.txt",
+    "hostPath": "/repo/input.vm",
+    "passAs": "argv1"
+  },
+  "inlineContent": "PRINT FLAG",
+  "warnings": []
+}
