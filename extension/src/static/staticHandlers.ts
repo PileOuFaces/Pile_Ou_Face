@@ -29,6 +29,7 @@ const AUTH_STRICT_LICENSE_ENV = 'BINHOST_DISABLE_LICENSE_FALLBACK';
 
 function staticHandlers(config) {
   const { root, panel, context, logChannel } = config;
+  const extensionPath = context?.extensionPath || root;
   const getSavedSettings = () => {
     try {
       return context?.globalState?.get('pof-settings', {}) || {};
@@ -100,7 +101,7 @@ function staticHandlers(config) {
   const runPython = (argsWithScript, { timeout = 60000, maxBuffer = 4 * 1024 * 1024 } = {}) =>
     new Promise((resolve, reject) => {
       const [scriptRelPath, ...rest] = argsWithScript;
-      const scriptPath = path.join(root, scriptRelPath);
+      const scriptPath = path.join(extensionPath, scriptRelPath);
       cp.execFile(getPythonExecutable(), [scriptPath, ...rest], {
         encoding: 'utf8', cwd: root, maxBuffer, timeout, env: buildPythonEnv(),
       }, (err, stdout, stderr) => {
@@ -179,7 +180,7 @@ function staticHandlers(config) {
   const runPluginRuntime = async (runtimeArgs, options = {}) => {
     const pluginEnv = await buildPluginRuntimeEnv();
     const { timeout = 60000, maxBuffer = 4 * 1024 * 1024 } = options;
-    const scriptPath = path.join(root, 'backends/plugins/runtime.py');
+    const scriptPath = path.join(extensionPath, 'backends/plugins/runtime.py');
     const { stdout } = await new Promise((resolve, reject) => {
       cp.execFile(getPythonExecutable(), [
         scriptPath,
@@ -523,7 +524,7 @@ function staticHandlers(config) {
         });
         return;
       }
-      const scriptPath = path.join(root, 'backends/mcp/ollama_bridge.py');
+      const scriptPath = path.join(extensionPath, 'backends/mcp/ollama_bridge.py');
       const args = [
         scriptPath,
         '--base-url', baseUrl,

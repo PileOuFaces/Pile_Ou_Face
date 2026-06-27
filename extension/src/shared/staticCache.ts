@@ -10,6 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const cp = require('child_process');
+const { getExtensionPath } = require('./utils');
 
 const CACHE_DIR_NAME = 'static_cache';
 const META_FILE = 'meta.json';
@@ -41,14 +42,16 @@ function getCacheIndexDbPath(root) {
 }
 
 function getCacheIndexScriptPath(root) {
-  return path.join(root, 'backends', 'static', 'cache', 'cache_index.py');
+  const base = getExtensionPath() || root;
+  return path.join(base, 'backends', 'static', 'cache', 'cache_index.py');
 }
 
 function detectPythonExecutable(root) {
+  const base = getExtensionPath() || root;
   const candidates = [
-    path.join(root, 'backends', '.venv', 'bin', 'python3'),
-    path.join(root, 'backends', '.venv', 'Scripts', 'python.exe'),
-    path.join(root, 'backends', '.venv', 'Scripts', 'python'),
+    path.join(base, 'backends', '.venv', 'bin', 'python3'),
+    path.join(base, 'backends', '.venv', 'Scripts', 'python.exe'),
+    path.join(base, 'backends', '.venv', 'Scripts', 'python'),
   ];
   return candidates.find((candidate) => fs.existsSync(candidate)) || 'python3';
 }

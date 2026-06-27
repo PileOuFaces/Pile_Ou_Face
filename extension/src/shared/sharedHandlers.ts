@@ -12,7 +12,7 @@ const cp = require('child_process');
 const crypto = require('crypto');
 const readline = require('readline');
 const fileManager = require('./fileManager');
-const { detectPythonExecutable } = require('./utils');
+const { detectPythonExecutable, getExtensionPath } = require('./utils');
 const {
   cancelAiProcess,
   clearAiProcess,
@@ -675,7 +675,7 @@ function sharedHandlers(ctx) {
         try { return context?.globalState?.get('pof-settings', {}) || {}; } catch (_) { return {}; }
       };
       const pythonExe = getSavedSettings().pythonPath || detectPythonExecutable(root);
-      const script = path.join(root, 'backends', 'mcp', 'ai_provider.py');
+      const script = path.join(getExtensionPath() || root, 'backends', 'mcp', 'ai_provider.py');
       cp.execFile(pythonExe, [script, 'list'], { encoding: 'utf8', cwd: root, timeout: 15000 }, (err, stdout) => {
         if (err) {
           panel.webview.postMessage({ type: 'hubAiProvidersResult', data: { error: String(err.message || err) } });
@@ -694,7 +694,7 @@ function sharedHandlers(ctx) {
         try { return context?.globalState?.get('pof-settings', {}) || {}; } catch (_) { return {}; }
       };
       const pythonExe = getSavedSettings().pythonPath || detectPythonExecutable(root);
-      const script = path.join(root, 'backends', 'mcp', 'ai_provider.py');
+      const script = path.join(getExtensionPath() || root, 'backends', 'mcp', 'ai_provider.py');
       const args = [script, 'set', '--provider', String(message.provider || ''), '--api-key-stdin'];
       if (message.model) { args.push('--model', String(message.model)); }
       const proc = cp.execFile(pythonExe, args, { encoding: 'utf8', cwd: root, timeout: 15000 }, (err, stdout) => {
@@ -731,7 +731,7 @@ function sharedHandlers(ctx) {
         try { return context?.globalState?.get('pof-settings', {}) || {}; } catch (_) { return {}; }
       };
       const pythonExe = getSavedSettings().pythonPath || detectPythonExecutable(root);
-      const script = path.join(root, 'backends', 'mcp', 'ai_provider.py');
+      const script = path.join(getExtensionPath() || root, 'backends', 'mcp', 'ai_provider.py');
       // Test = refresh list and show current configured state
       cp.execFile(pythonExe, [script, 'list'], { encoding: 'utf8', cwd: root, timeout: 15000 }, (err, stdout) => {
         if (err) {
@@ -760,7 +760,7 @@ function sharedHandlers(ctx) {
         try { return context?.globalState?.get('pof-settings', {}) || {}; } catch (_) { return {}; }
       };
       const pythonExe = getSavedSettings().pythonPath || detectPythonExecutable(root);
-      const script = path.join(root, 'backends', 'mcp', 'ai_provider.py');
+      const script = path.join(getExtensionPath() || root, 'backends', 'mcp', 'ai_provider.py');
       cp.execFile(
         pythonExe,
         [script, 'set-default', '--provider', String(message.provider || '')],
@@ -794,7 +794,7 @@ function sharedHandlers(ctx) {
         try { return context?.globalState?.get('pof-settings', {}) || {}; } catch (_) { return {}; }
       };
       const pythonExe = getSavedSettings().pythonPath || detectPythonExecutable(root);
-      const script = path.join(root, 'backends', 'mcp', 'ai_provider.py');
+      const script = path.join(getExtensionPath() || root, 'backends', 'mcp', 'ai_provider.py');
       const provider = String(message.provider || '');
       const model = String(message.model || '');
       const displayModel = model ? `${provider}@${model}` : provider;

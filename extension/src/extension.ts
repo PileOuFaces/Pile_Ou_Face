@@ -30,6 +30,7 @@ const {
   buildRuntimeEnv,
   ensurePythonDependencies,
   check32BitToolchain,
+  setExtensionPath,
 } = require('./shared/utils');
 const { readTraceJson, writeTraceJson, setViewMode, loadTraceFromWorkspace } = require('./shared/trace');
 const { payloadToHex, parseStdinExpression } = require('./shared/payload');
@@ -48,6 +49,8 @@ const decorationTypes = new Map();
  * @param context Contexte VS Code.
  */
 function activate(context) {
+  setExtensionPath(context.extensionPath);
+
   // Ensure Python dependencies are installed at startup
   const folders = vscode.workspace.workspaceFolders;
   if (folders && folders.length > 0) {

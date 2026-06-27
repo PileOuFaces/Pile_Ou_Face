@@ -7,19 +7,20 @@
  */
 
 const path = require('path');
+const { getExtensionPath } = require('./utils');
 
 /**
  * @brief Retourne le chemin absolu vers un script Python dans backends/static/.
  */
 function backendStatic(root, script) {
-  return path.join(root, 'backends', 'static', script);
+  return path.join(getExtensionPath() || root, 'backends', 'static', script);
 }
 
 /**
  * @brief Retourne le chemin absolu vers un script Python dans backends/dynamic/.
  */
 function backendDynamic(root, ...segments) {
-  return path.join(root, 'backends', 'dynamic', ...segments);
+  return path.join(getExtensionPath() || root, 'backends', 'dynamic', ...segments);
 }
 
 /** backends/static/disasm/disasm.py — Désassemblage */

@@ -19,7 +19,7 @@ const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
 const cp = require('child_process');
-const { buildRuntimeEnv, resolveDockerExecutable } = require('../shared/utils');
+const { buildRuntimeEnv, resolveDockerExecutable, getExtensionPath } = require('../shared/utils');
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
@@ -365,7 +365,7 @@ async function cmdDecompilerAdd(root, editId = null) {
         const pythonExe = _findPythonExe(root);
         const child = cp.spawn(
           pythonExe,
-          [path.join(root, 'backends/static/decompile/decompile.py'), '--list', '--provider', 'auto'],
+          [path.join(getExtensionPath() || root, 'backends/static/decompile/decompile.py'), '--list', '--provider', 'auto'],
           { encoding: 'utf8', cwd: root, env: buildRuntimeEnv(root) },
         );
         let stdout = '';
@@ -715,7 +715,7 @@ async function cmdDecompilerTest(root, runPython, preselectedId = null) {
       progress.report({ message: testMode });
       try {
         const pythonExe = _findPythonExe(root);
-        const scriptPath = path.join(root, 'backends/static/decompile/decompile.py');
+        const scriptPath = path.join(getExtensionPath() || root, 'backends/static/decompile/decompile.py');
         const args = [scriptPath, '--binary', binaryPath, '--decompiler', targetId, '--provider', providerChoice.value];
         if (modeChoice.value === 'full') {
           args.push('--full');
@@ -751,9 +751,10 @@ async function cmdDecompilerTest(root, runPython, preselectedId = null) {
 // ─── Helpers exécution Python ─────────────────────────────────────────────────
 
 function _findPythonExe(root) {
+  const base = getExtensionPath() || root;
   const candidates = [
-    path.join(root, 'backends', '.venv', 'bin', 'python3'),
-    path.join(root, 'backends', '.venv', 'bin', 'python'),
+    path.join(base, 'backends', '.venv', 'bin', 'python3'),
+    path.join(base, 'backends', '.venv', 'bin', 'python'),
     'python3',
     'python',
   ];

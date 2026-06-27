@@ -12,7 +12,7 @@ const path = require('path');
 const crypto = require('crypto');
 const cp = require('child_process');
 const { getHubContent } = require('../shared/webview');
-const { buildRuntimeEnv, resolveProjectRoot } = require('../shared/utils');
+const { buildRuntimeEnv, resolveProjectRoot, getExtensionPath } = require('../shared/utils');
 const { AuthService } = require('../shared/authService');
 const { resolveAuthServerUrl } = require('../shared/authConfig');
 const {
@@ -160,6 +160,7 @@ function createHub(config) {
       return null;
     }
     const root = resolveProjectRoot(folders[0].uri.fsPath);
+    const backendRoot = getExtensionPath() || root;
     const pythonExe = detectPythonExecutable(root);
     const pythonEnv = buildRuntimeEnv(root);
     const getAuthServerUrl = () => {
@@ -279,7 +280,7 @@ function createHub(config) {
         const { stdout } = await new Promise((resolve, reject) => {
           cp.execFile(
             pythonExe,
-            [path.join(root, 'backends/static/decompile/decompile.py'), '--list', '--provider', 'auto'],
+            [path.join(backendRoot, 'backends/static/decompile/decompile.py'), '--list', '--provider', 'auto'],
             { encoding: 'utf8', cwd: root, maxBuffer: 2 * 1024 * 1024, timeout: 30000, env: pythonEnv },
             (err, stdout, stderr) => err ? reject(Object.assign(err, { stderr })) : resolve({ stdout }),
           );
@@ -347,7 +348,7 @@ function createHub(config) {
         const data = await new Promise((resolve, reject) => {
           cp.execFile(
             pythonExe,
-            [path.join(root, 'backends/plugins/runtime.py'), 'list', '--json'],
+            [path.join(backendRoot, 'backends/plugins/runtime.py'), 'list', '--json'],
             { encoding: 'utf8', cwd: root, timeout: 30000, maxBuffer: 4 * 1024 * 1024, env: pluginEnv },
             (err, stdout, stderr) => {
               if (err) { const w = err instanceof Error ? err : new Error(String(err)); w.stderr = stderr; reject(w); return; }
@@ -461,7 +462,7 @@ function createHub(config) {
           cp.execFile(
             pythonExe,
             [
-              path.join(root, 'backends/plugins/runtime.py'),
+              path.join(backendRoot, 'backends/plugins/runtime.py'),
               '--host-version', '0.1.0',
               '--api-version', '1',
               'invoke',

@@ -14,35 +14,21 @@ const logChannel = vscode.window.createOutputChannel('Pile ou Face');
 
 const TEMP_DIR_NAME = '.pile-ou-face';
 
-function _looksLikePublicRepoRoot(candidate) {
-  if (!candidate) return false;
-  try {
-    return fs.existsSync(path.join(candidate, 'extension', 'package.json'))
-      && fs.existsSync(path.join(candidate, 'backends'));
-  } catch (_) {
-    return false;
-  }
+// Singleton initialisé au démarrage avec context.extensionPath.
+// Sépare "où vivent les backends" (extensionPath) de "workspace utilisateur" (root).
+let _extensionPath = '';
+
+function setExtensionPath(p) {
+  _extensionPath = String(p || '').trim();
+}
+
+function getExtensionPath() {
+  return _extensionPath;
 }
 
 function resolveProjectRoot(root) {
   const value = String(root || '').trim();
-  if (!value) return value;
-  const absRoot = path.resolve(value);
-  if (_looksLikePublicRepoRoot(absRoot)) return absRoot;
-
-  const directPublicChild = path.join(absRoot, 'Pile_Ou_Face');
-  if (_looksLikePublicRepoRoot(directPublicChild)) return directPublicChild;
-
-  try {
-    const children = fs.readdirSync(absRoot, { withFileTypes: true });
-    for (const child of children) {
-      if (!child.isDirectory()) continue;
-      const candidate = path.join(absRoot, child.name);
-      if (_looksLikePublicRepoRoot(candidate)) return candidate;
-    }
-  } catch (_) { /* intentional */ }
-
-  return absRoot;
+  return value ? path.resolve(value) : value;
 }
 
 function getTempDir(root) {
@@ -59,16 +45,14 @@ function ensureTempDir(root) {
 }
 
 async function ensurePythonDependencies(pythonExe, root) {
-  root = resolveProjectRoot(root);
-  const requirementsPath = fs.existsSync(path.join(root, 'requirements.txt'))
-    ? path.join(root, 'requirements.txt')
-    : path.join(root, 'backends', 'requirements.txt');
+  const backendBase = _extensionPath || path.resolve(String(root || '').trim());
+  const requirementsPath = path.join(backendBase, 'backends', 'requirements.txt');
   if (!fs.existsSync(requirementsPath)) {
     logChannel.appendLine('[pip] requirements.txt introuvable.');
     return;
   }
   if (pythonExe === 'python3' || pythonExe === 'python') {
-    const venvPath = path.join(root, 'backends', '.venv');
+    const venvPath = path.join(backendBase, 'backends', '.venv');
     if (!fs.existsSync(venvPath)) {
       logChannel.appendLine('[venv] Création du venv…');
       try {
@@ -129,11 +113,11 @@ async function ensurePythonDependencies(pythonExe, root) {
 
 function detectPythonExecutable(root, settingsPythonPath) {
   if (settingsPythonPath) return settingsPythonPath;
-  root = resolveProjectRoot(root);
+  const backendBase = _extensionPath || path.resolve(String(root || '').trim());
   const venvPaths = [
-    path.join(root, 'backends', '.venv', 'bin', 'python3'),
-    path.join(root, 'backends', '.venv', 'Scripts', 'python.exe'),
-    path.join(root, 'backends', '.venv', 'Scripts', 'python')
+    path.join(backendBase, 'backends', '.venv', 'bin', 'python3'),
+    path.join(backendBase, 'backends', '.venv', 'Scripts', 'python.exe'),
+    path.join(backendBase, 'backends', '.venv', 'Scripts', 'python')
   ];
   for (const p of venvPaths) {
     if (fs.existsSync(p)) return p;
@@ -165,9 +149,9 @@ function resolveDockerExecutable() {
 }
 
 function buildRuntimeEnv(root, extraEnv = {}) {
-  root = resolveProjectRoot(root);
+  const backendBase = _extensionPath || path.resolve(String(root || '').trim());
   const env = { ...process.env, ...extraEnv };
-  if (root) env.PYTHONPATH = extraEnv.PYTHONPATH || root;
+  if (backendBase) env.PYTHONPATH = extraEnv.PYTHONPATH || backendBase;
   const dockerExe = resolveDockerExecutable();
   if (dockerExe && dockerExe.includes(path.sep)) {
     const dockerDir = path.dirname(dockerExe);
@@ -294,5 +278,7 @@ module.exports = {
   buildRuntimeEnv,
   check32BitToolchain,
   runCommand,
-  escapeHtml
+  escapeHtml,
+  setExtensionPath,
+  getExtensionPath,
 };

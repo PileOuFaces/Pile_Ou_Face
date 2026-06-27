@@ -1,21 +1,33 @@
 {
   "name": "stack-visualizer",
   "displayName": "Pile ou Face",
-  "description": "Visualiser graphiquement la pile à partir d'un output.json généré par ton simulateur C.",
+  "description": "Binary reverse engineering tool for CTF: disassembly, CFG, call graph, xrefs, decompilation and annotations for ELF/PE/Mach-O binaries.",
   "version": "0.0.1",
-  "publisher": "your-name",
+  "publisher": "PileOuFaces",
   "type": "commonjs",
   "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PileOuFaces/Pile_Ou_Face"
+  },
+  "keywords": [
+    "reverse engineering",
+    "disassembly",
+    "binary analysis",
+    "CTF",
+    "ELF",
+    "PE",
+    "decompiler",
+    "CFG",
+    "assembly"
+  ],
   "engines": {
-    "vscode": "^1.80.0"
+    "vscode": "^1.120.0"
   },
   "categories": [
     "Other"
   ],
-  "main": "./src/extension.ts",
-  "activationEvents": [
-    "*"
-  ],
+  "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
@@ -263,6 +275,7 @@
     }
   },
   "scripts": {
+    "vscode:prepublish": "npm run build",
     "build": "tsc -p tsconfig.json",
     "build:watch": "tsc -p tsconfig.json --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
