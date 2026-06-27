@@ -16,5 +16,5 @@
     "types": ["node"]
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "out", "test", "webview"]
+  "exclude": ["node_modules", "out", "src/tests", "front/tests"]
 }
