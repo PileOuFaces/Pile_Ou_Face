@@ -105,17 +105,17 @@ function loadPluginWebviews(root, options: { includeUserPlugins?: boolean; webvi
 }
 
 function getWebviewContent(webview, extensionUri) {
-  const preferredPath = vscode.Uri.joinPath(extensionUri, 'webview', 'dynamic', 'graphical-stack.html');
-  const legacyPath = vscode.Uri.joinPath(extensionUri, 'webview', 'dynamic', 'visualizer.html');
+  const preferredPath = vscode.Uri.joinPath(extensionUri, 'front', 'dynamic', 'graphical-stack.html');
+  const legacyPath = vscode.Uri.joinPath(extensionUri, 'front', 'dynamic', 'visualizer.html');
   let html = '';
   if (fs.existsSync(preferredPath.fsPath)) {
     html = fs.readFileSync(preferredPath.fsPath, 'utf8');
   } else {
     html = fs.readFileSync(legacyPath.fsPath, 'utf8');
   }
-  const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'dynamic', 'app', 'main.js'));
-  const preferredStyle = vscode.Uri.joinPath(extensionUri, 'webview', 'dynamic', 'graphical-stack.css');
-  const fallbackStyle = vscode.Uri.joinPath(extensionUri, 'webview', 'dynamic', 'legacy-visualizer.css');
+  const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'dynamic', 'app', 'main.js'));
+  const preferredStyle = vscode.Uri.joinPath(extensionUri, 'front', 'dynamic', 'graphical-stack.css');
+  const fallbackStyle = vscode.Uri.joinPath(extensionUri, 'front', 'dynamic', 'legacy-visualizer.css');
   const stylePath = fs.existsSync(preferredStyle.fsPath) ? preferredStyle : fallbackStyle;
   const styleUri = webview.asWebviewUri(stylePath);
   const csp = webview.cspSource;
@@ -137,91 +137,91 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', worksp
       webviewResourceResolver: (filePath) => webview.asWebviewUri(vscode.Uri.file(filePath)).toString(),
     }) : { styles: '', panels: '', scripts: '' };
 
-  const html = read('webview', 'hub.html')
-    .replace('{{panelDashboard}}', read('webview', 'shared', 'panel-dashboard.html'))
-    .replace('{{panelStatic}}',    read('webview', 'static',  'panel-static.html'))
-    .replace('{{panelDynamic}}',   read('webview', 'dynamic', 'panel-dynamic.html'))
-    .replace('{{panelOutils}}',    read('webview', 'shared',  'panel-outils.html'))
-    .replace('{{panelOptions}}',   read('webview', 'shared',  'panel-options.html'));
+  const html = read('front', 'hub.html')
+    .replace('{{panelDashboard}}', read('front', 'shared', 'panel-dashboard.html'))
+    .replace('{{panelStatic}}',    read('front', 'static',  'panel-static.html'))
+    .replace('{{panelDynamic}}',   read('front', 'dynamic', 'panel-dynamic.html'))
+    .replace('{{panelOutils}}',    read('front', 'shared',  'panel-outils.html'))
+    .replace('{{panelOptions}}',   read('front', 'shared',  'panel-options.html'));
 
-  const scriptUri              = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'hub.js'));
+  const scriptUri              = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'hub.js'));
   // shared modules
-  const sharedStateUri         = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'state.js'));
-  const sharedBinaryUri        = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'binary.js'));
-  const sharedNavUri           = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'nav.js'));
-  const sharedMarkdownRendererUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'markdownRenderer.js'));
-  const sharedChatMessageActionsUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'chatMessageActions.js'));
-  const sharedChatExportUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'chatExport.js'));
-  const sharedChatHistoryUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'chatHistory.js'));
-  const sharedChatContextBudgetUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'chatContextBudget.js'));
-  const sharedAiGenerationSettingsUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'aiGenerationSettings.js'));
-  const sharedAiPricingUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'aiPricing.js'));
-  const sharedAiContextActionsUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'aiContextActions.js'));
-  const sharedOutilsUri        = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'outils.js'));
-  const sharedMessagesUri      = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'messages.js'));
-  const sharedSettingsUri      = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'settings.js'));
-  const sharedAnnotationsUri   = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'annotations.js'));
-  const sharedAccountUri       = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'account.js'));
+  const sharedStateUri         = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'state.js'));
+  const sharedBinaryUri        = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'binary.js'));
+  const sharedNavUri           = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'nav.js'));
+  const sharedMarkdownRendererUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'markdownRenderer.js'));
+  const sharedChatMessageActionsUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'chatMessageActions.js'));
+  const sharedChatExportUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'chatExport.js'));
+  const sharedChatHistoryUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'chatHistory.js'));
+  const sharedChatContextBudgetUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'chatContextBudget.js'));
+  const sharedAiGenerationSettingsUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'aiGenerationSettings.js'));
+  const sharedAiPricingUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'aiPricing.js'));
+  const sharedAiContextActionsUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'aiContextActions.js'));
+  const sharedOutilsUri        = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'outils.js'));
+  const sharedMessagesUri      = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'messages.js'));
+  const sharedSettingsUri      = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'settings.js'));
+  const sharedAnnotationsUri   = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'annotations.js'));
+  const sharedAccountUri       = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'account.js'));
   // static modules
-  const staticPayloadUri       = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'static', 'payload.js'));
-  const staticSearchUri        = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'static', 'search.js'));
-  const staticToolsUri         = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'static', 'tools.js'));
-  const staticDiffUri          = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'static', 'diff.js'));
+  const staticPayloadUri       = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'static', 'payload.js'));
+  const staticSearchUri        = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'static', 'search.js'));
+  const staticToolsUri         = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'static', 'tools.js'));
+  const staticDiffUri          = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'static', 'diff.js'));
   // dynamic modules
-  const dynamicPanelUri        = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'dynamic', 'panel.js'));
+  const dynamicPanelUri        = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'dynamic', 'panel.js'));
   // shared controllers
-  const sharedHubStateUri              = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'hubState.js'));
-  const sharedMessageBusUri            = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'messageBus.js'));
-  const sharedMessageRouterUri         = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'messageRouter.js'));
-  const sharedStatusControllerUri      = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'statusController.js'));
-  const sharedToastControllerUri       = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'toastController.js'));
-  const sharedArchBadgeControllerUri   = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'archBadgeController.js'));
-  const sharedBinarySourceControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'binarySourceController.js'));
-  const sharedExploitNotesControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'exploitNotesController.js'));
-  const sharedHubIndexUri              = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'hubIndex.js'));
-  const sharedConversionControllerUri  = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'conversionController.js'));
+  const sharedHubStateUri              = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'hubState.js'));
+  const sharedMessageBusUri            = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'messageBus.js'));
+  const sharedMessageRouterUri         = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'messageRouter.js'));
+  const sharedStatusControllerUri      = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'statusController.js'));
+  const sharedToastControllerUri       = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'toastController.js'));
+  const sharedArchBadgeControllerUri   = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'archBadgeController.js'));
+  const sharedBinarySourceControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'binarySourceController.js'));
+  const sharedExploitNotesControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'exploitNotesController.js'));
+  const sharedHubIndexUri              = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'hubIndex.js'));
+  const sharedConversionControllerUri  = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'conversionController.js'));
   // static controllers
-  const staticPayloadCoreUri           = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'static', 'payloadCore.js'));
-  const staticPayloadTabsControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'static', 'payloadTabsController.js'));
-  const staticPayloadBuilderControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'static', 'payloadBuilderController.js'));
-  const staticPayloadStateControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'static', 'payloadStateController.js'));
-  const staticPayloadPreviewControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'static', 'payloadPreviewController.js'));
-  const staticFilePayloadControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'static', 'filePayloadController.js'));
-  const staticExploitHelperControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'static', 'exploitHelperController.js'));
-  const staticPwntoolsScriptControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'static', 'pwntoolsScriptController.js'));
-  const staticToolsWidgetsControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'static', 'staticToolsWidgetsController.js'));
+  const staticPayloadCoreUri           = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'static', 'payloadCore.js'));
+  const staticPayloadTabsControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'static', 'payloadTabsController.js'));
+  const staticPayloadBuilderControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'static', 'payloadBuilderController.js'));
+  const staticPayloadStateControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'static', 'payloadStateController.js'));
+  const staticPayloadPreviewControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'static', 'payloadPreviewController.js'));
+  const staticFilePayloadControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'static', 'filePayloadController.js'));
+  const staticExploitHelperControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'static', 'exploitHelperController.js'));
+  const staticPwntoolsScriptControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'static', 'pwntoolsScriptController.js'));
+  const staticToolsWidgetsControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'static', 'staticToolsWidgetsController.js'));
   // dynamic controllers
-  const dynamicPayloadHistoryControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'dynamic', 'payloadHistoryController.js'));
-  const dynamicVisualizerControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'dynamic', 'dynamicVisualizerController.js'));
-  const dynamicPresetControllerUri     = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'dynamic', 'dynamicPresetController.js'));
-  const dynamicRunTraceControllerUri   = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'dynamic', 'runTraceController.js'));
-  const dynamicRuntimeFallbackRendererUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'dynamic', 'runtimeFallbackRenderer.js'));
-  const dynamicRuntimeSessionControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'dynamic', 'runtimeSessionController.js'));
-  const dynamicRuntimeWorkspaceLayoutControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'dynamic', 'runtimeWorkspaceLayoutController.js'));
-  const dynamicPayloadUri              = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'dynamic', 'dynamicPayload.js'));
+  const dynamicPayloadHistoryControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'dynamic', 'payloadHistoryController.js'));
+  const dynamicVisualizerControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'dynamic', 'dynamicVisualizerController.js'));
+  const dynamicPresetControllerUri     = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'dynamic', 'dynamicPresetController.js'));
+  const dynamicRunTraceControllerUri   = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'dynamic', 'runTraceController.js'));
+  const dynamicRuntimeFallbackRendererUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'dynamic', 'runtimeFallbackRenderer.js'));
+  const dynamicRuntimeSessionControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'dynamic', 'runtimeSessionController.js'));
+  const dynamicRuntimeWorkspaceLayoutControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'dynamic', 'runtimeWorkspaceLayoutController.js'));
+  const dynamicPayloadUri              = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'dynamic', 'dynamicPayload.js'));
   // shared helpers
-  const cfgHelpersUri          = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'cfgHelpers.js'));
-  const exploitHelperUri       = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'exploitHelper.js'));
-  const payloadPreviewUri      = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'payloadPreview.js'));
-  const sharedConversionUtilsUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'conversionUtils.js'));
-  const elkUri                 = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'elk.bundled.js'));
+  const cfgHelpersUri          = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'cfgHelpers.js'));
+  const exploitHelperUri       = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'exploitHelper.js'));
+  const payloadPreviewUri      = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'payloadPreview.js'));
+  const sharedConversionUtilsUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'conversionUtils.js'));
+  const elkUri                 = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'elk.bundled.js'));
   // CSS
-  const baseCssUri             = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'base.css'));
-  const dashboardCssUri        = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'panel-dashboard.css'));
-  const staticBinaryBarCssUri  = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'static', 'binary-bar.css'));
-  const staticDisasmCssUri     = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'static', 'disasm.css'));
-  const staticCfgCssUri        = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'static', 'cfg.css'));
-  const staticDecompileCssUri  = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'static', 'decompile.css'));
-  const staticSearchCssUri     = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'static', 'search.css'));
-  const staticAnalysisCssUri   = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'static', 'analysis.css'));
-  const staticToolsCssUri      = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'static', 'tools.css'));
-  const dynamicCssUri          = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'dynamic', 'panel-dynamic.css'));
-  const dynamicRuntimeSessionCssUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'dynamic', 'runtime-session.css'));
-  const graphicalStackHubCssUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'dynamic', 'graphical-stack-hub.css'));
-  const dynamicRuntimeLayoutCssUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'dynamic', 'runtime-layout.css'));
-  const runtimeModuleUri       = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'dynamic', 'app', 'main.js'));
-  const outilsCssUri           = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'panel-outils.css'));
-  const optionsCssUri          = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'webview', 'shared', 'panel-options.css'));
+  const baseCssUri             = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'base.css'));
+  const dashboardCssUri        = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'panel-dashboard.css'));
+  const staticBinaryBarCssUri  = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'static', 'binary-bar.css'));
+  const staticDisasmCssUri     = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'static', 'disasm.css'));
+  const staticCfgCssUri        = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'static', 'cfg.css'));
+  const staticDecompileCssUri  = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'static', 'decompile.css'));
+  const staticSearchCssUri     = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'static', 'search.css'));
+  const staticAnalysisCssUri   = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'static', 'analysis.css'));
+  const staticToolsCssUri      = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'static', 'tools.css'));
+  const dynamicCssUri          = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'dynamic', 'panel-dynamic.css'));
+  const dynamicRuntimeSessionCssUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'dynamic', 'runtime-session.css'));
+  const graphicalStackHubCssUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'dynamic', 'graphical-stack-hub.css'));
+  const dynamicRuntimeLayoutCssUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'dynamic', 'runtime-layout.css'));
+  const runtimeModuleUri       = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'dynamic', 'app', 'main.js'));
+  const outilsCssUri           = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'panel-outils.css'));
+  const optionsCssUri          = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'panel-options.css'));
   const csp = webview.cspSource;
 
   return html
