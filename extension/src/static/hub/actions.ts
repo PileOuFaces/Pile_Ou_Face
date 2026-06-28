@@ -126,7 +126,7 @@ function createActions({
 
   // ── Rules helpers ────────────────────────────────────────────────────────────
 
-  const getRulesConfigPath = () => path.join(context.globalStorageUri.fsPath, 'rules-config.json');
+  const getRulesConfigPath = () => path.join(globalDir || context.globalStorageUri?.fsPath || '', 'rules-config.json');
 
   const ensureRulesStateDir = () => {
     const dir = globalDir || path.join(root, '.pile-ou-face');
