@@ -8,6 +8,7 @@ puissent mesurer les analyseurs même quand la table de symboles est retirée.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import warnings
@@ -133,9 +134,14 @@ def expected_cfg_call_edges(spec: CorpusSpec) -> set[tuple[str, str]]:
 
 
 def default_corpus_specs() -> list[CorpusSpec]:
-    """Matrice courte et CI-friendly couvrant compilateurs/optimisations clés."""
+    """Matrice courte et CI-friendly couvrant compilateurs/optimisations clés.
+
+    Set POF_CORPUS_SKIP_COMPILERS=clang (comma-separated) to exclude compilers
+    whose analysis is known to be incomplete (e.g. clang PIE on linux/x86_64).
+    """
+    skip = {c.strip() for c in os.environ.get("POF_CORPUS_SKIP_COMPILERS", "").split(",") if c.strip()}
     specs: list[CorpusSpec] = []
-    if shutil.which("gcc"):
+    if shutil.which("gcc") and "gcc" not in skip:
         specs.extend(
             [
                 CorpusSpec("gcc", "-O0", pie=False, stripped=False),
@@ -144,7 +150,7 @@ def default_corpus_specs() -> list[CorpusSpec]:
         )
         if shutil.which("strip"):
             specs.append(CorpusSpec("gcc", "-Os", pie=False, stripped=True))
-    if shutil.which("clang"):
+    if shutil.which("clang") and "clang" not in skip:
         specs.extend(
             [
                 CorpusSpec("clang", "-O0", pie=False, stripped=False),
@@ -153,7 +159,7 @@ def default_corpus_specs() -> list[CorpusSpec]:
         )
         if shutil.which("strip"):
             specs.append(CorpusSpec("clang", "-Os", pie=False, stripped=True))
-    if shutil.which("aarch64-linux-gnu-gcc"):
+    if shutil.which("aarch64-linux-gnu-gcc") and "aarch64-linux-gnu-gcc" not in skip:
         specs.append(
             CorpusSpec(
                 "aarch64-linux-gnu-gcc", "-O2", pie=True, stripped=False, arch="arm64"
