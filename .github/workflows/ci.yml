@@ -4,18 +4,12 @@ on:
   push:
     branches: ['**']
     paths:
-      - 'backends/**'
       - 'extension/**'
-      - 'pyproject.toml'
-      - 'Makefile'
       - '.github/workflows/ci.yml'
   pull_request:
     branches: [main, develops]
     paths:
-      - 'backends/**'
       - 'extension/**'
-      - 'pyproject.toml'
-      - 'Makefile'
       - '.github/workflows/ci.yml'
 
 permissions:
@@ -52,16 +46,17 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r backends/requirements-ci.txt
+          pip install -r extension/backends/requirements-ci.txt
           cd extension && npm ci
 
       - name: Run tests
+        working-directory: ./extension
         run: |
           python3 -m ruff check .
           python3 -m ruff format --check .
           python3 -m coverage run -m pytest
           python3 -m coverage report
-          cd extension && npm run test:coverage
+          npm run test:coverage
 
   # ══════════════════════════════════════════════════════════════
   # 🧪 Tests Complets Multi-OS — PRs uniquement
@@ -107,15 +102,17 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r backends/requirements-ci.txt
+          pip install -r extension/backends/requirements-ci.txt
           cd extension && npm ci
 
       - name: Run Ruff
+        working-directory: ./extension
         run: |
           python3 -m ruff check .
           python3 -m ruff format --check .
 
       - name: Run Python tests with coverage
+        working-directory: ./extension
         run: |
           python3 -m coverage run -m pytest
           python3 -m coverage report
@@ -152,16 +149,20 @@ jobs:
             binutils-aarch64-linux-gnu
 
       - name: Install Python dependencies
-        run: pip install -r backends/requirements-ci.txt
+        run: pip install -r extension/backends/requirements-ci.txt
 
       - name: Run real binary corpus with ARM64
-        run: make test-real-corpus
+        working-directory: ./extension
+        run: |
+          mkdir -p .pile-ou-face/test-artifacts
+          POF_REAL_CORPUS_SUMMARY_JSON=.pile-ou-face/test-artifacts/real_binary_corpus_metrics.json \
+            PYTHONPATH=. python3 -m pytest backends/static/tests/test_real_binary_corpus.py -q
 
       - name: Upload corpus metrics
         uses: actions/upload-artifact@v4
         with:
           name: real-binary-corpus-metrics
-          path: .pile-ou-face/test-artifacts/real_binary_corpus_metrics.json
+          path: extension/.pile-ou-face/test-artifacts/real_binary_corpus_metrics.json
           if-no-files-found: error
 
   # ══════════════════════════════════════════════════════════════
@@ -192,7 +193,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r backends/requirements-ci.txt pip-audit
+          pip install -r extension/backends/requirements-ci.txt pip-audit
           cd extension && npm ci
 
       - name: npm audit
