@@ -1,6 +1,6 @@
 const { expect } = require('chai');
 
-const chatHistory = require('../webview/shared/chatHistory');
+const chatHistory = require('../shared/chatHistory');
 
 describe('chat conversation history helpers', () => {
   const history = [

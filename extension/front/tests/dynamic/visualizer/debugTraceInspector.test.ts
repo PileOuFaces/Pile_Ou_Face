@@ -13,7 +13,7 @@ describe('dynamic/visualizer debug trace JSON inspector', () => {
   };
 
   before(async () => {
-    const modulePath = path.resolve(__dirname, '../../../webview/dynamic/app/debugTraceInspector.js');
+    const modulePath = path.resolve(__dirname, '../../../dynamic/app/debugTraceInspector.js');
     inspector = await import(pathToFileURL(modulePath).href);
   });
 
@@ -330,19 +330,19 @@ describe('dynamic/visualizer debug trace JSON inspector', () => {
   });
 
   it('standalone-graphical-stack-html-mounts-a-hidden-debug-json-control', () => {
-    const html = readWebviewHtml('webview/dynamic/graphical-stack.html');
+    const html = readWebviewHtml('front/dynamic/graphical-stack.html');
 
     expectHiddenDebugControl(html);
   });
 
   it('hub-runtime-html-mounts-the-same-hidden-debug-json-control', () => {
-    const html = readWebviewHtml('webview/hub.html');
+    const html = readWebviewHtml('front/hub.html');
 
     expectHiddenDebugControl(html);
   });
 
   it('main-runtime-initializes-debug-inspector-with-current-trace-state', () => {
-    const source = readWebviewHtml('webview/dynamic/app/main.js');
+    const source = readWebviewHtml('front/dynamic/app/main.js');
 
     expect(source).to.contain("from './debugTraceInspector.js'");
     expect(source).to.contain('renderTraceDebugInspector({');

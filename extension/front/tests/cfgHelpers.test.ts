@@ -4,7 +4,7 @@
  */
 const { expect } = require('chai');
 const path = require('path');
-const helpers = require(path.resolve(__dirname, '../webview/shared/cfgHelpers.js'));
+const helpers = require(path.resolve(__dirname, '../shared/cfgHelpers.js'));
 
 const { buildAdjacency, buildReverseAdj, bfsLevels, classifyEdges, computeLayout, bfsPath } = helpers;
 

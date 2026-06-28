@@ -1,7 +1,7 @@
 const { expect } = require('chai');
 
-const helper = require('../webview/shared/exploitHelper');
-const preview = require('../webview/shared/payloadPreview');
+const helper = require('../shared/exploitHelper');
+const preview = require('../shared/payloadPreview');
 
 describe('payload preview state', () => {
   it('formats a simple preview from the current payload source', () => {

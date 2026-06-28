@@ -1,6 +1,6 @@
 const { expect } = require('chai');
 
-const aiContext = require('../webview/shared/aiContextActions');
+const aiContext = require('../shared/aiContextActions');
 
 describe('AI analysis context actions', () => {
   it('builds a focused CFG prompt with binary and navigation context', () => {

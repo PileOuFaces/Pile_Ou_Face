@@ -1,6 +1,6 @@
 const { expect } = require('chai');
 
-const actions = require('../webview/shared/chatMessageActions');
+const actions = require('../shared/chatMessageActions');
 
 describe('chat message edit and regeneration plans', () => {
   const conversation = [

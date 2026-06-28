@@ -281,9 +281,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "test": "tsx node_modules/.bin/_mocha 'test/**/*.test.ts' --ignore 'test/hubPayloadCore.test.ts' --require test/setup.ts --exit",
-    "test:watch": "tsx node_modules/.bin/_mocha 'test/**/*.test.ts' --watch --ignore 'test/hubPayloadCore.test.ts' --require test/setup.ts",
-    "test:coverage": "c8 tsx node_modules/.bin/_mocha 'test/**/*.test.ts' --ignore 'test/hubPayloadCore.test.ts' --require test/setup.ts --exit",
+    "test": "tsx node_modules/.bin/_mocha '{front/tests,src/tests}/**/*.test.ts' --ignore 'front/tests/hubPayloadCore.test.ts' --require src/tests/setup.ts --exit",
+    "test:watch": "tsx node_modules/.bin/_mocha '{front/tests,src/tests}/**/*.test.ts' --watch --ignore 'front/tests/hubPayloadCore.test.ts' --require src/tests/setup.ts",
+    "test:coverage": "c8 tsx node_modules/.bin/_mocha '{front/tests,src/tests}/**/*.test.ts' --ignore 'front/tests/hubPayloadCore.test.ts' --require src/tests/setup.ts --exit",
     "nexus:analyze": "npx gitnexus analyze ..",
     "nexus:status": "npx gitnexus status",
     "nexus:wiki": "npx gitnexus wiki .."

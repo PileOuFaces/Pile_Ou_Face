@@ -1,6 +1,6 @@
 const { expect } = require('chai');
 
-const payloadCore = require('../webview/hub/payloadCore');
+const payloadCore = require('../hub/payloadCore');
 
 describe('hub payload core helpers', () => {
   it('keeps payload preview sizing deterministic for simple expressions', () => {

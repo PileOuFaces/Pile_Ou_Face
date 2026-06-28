@@ -6,7 +6,7 @@ describe('dynamic/visualizer function mismatch empty stack state', () => {
   let renderStackEmptyState: Function;
 
   before(async () => {
-    const modulePath = path.resolve(__dirname, '../../../webview/dynamic/app/stackEmptyState.js');
+    const modulePath = path.resolve(__dirname, '../../../dynamic/app/stackEmptyState.js');
     ({ renderStackEmptyState } = await import(pathToFileURL(modulePath).href));
   });
 

@@ -125,7 +125,7 @@ describe('dynamic/workflows clear trace history', () => {
     });
 
     try {
-      const { createHub } = proxyquire('../../../src/static/hub', {
+      const { createHub } = proxyquire('../../../../src/static/hub', {
         '../shared/webview': { getHubContent: () => '<!doctype html>' },
         './handlers': { createHandlers: () => ({}) }
       });
@@ -168,7 +168,7 @@ describe('dynamic/workflows clear trace history', () => {
 
   function loadPayloadHistoryController() {
     const source = fs.readFileSync(
-      path.resolve(__dirname, '../../../webview/dynamic/payloadHistoryController.js'),
+      path.resolve(__dirname, '../../../dynamic/payloadHistoryController.js'),
       'utf8'
     );
     const context: any = { window: {}, console };
@@ -179,7 +179,7 @@ describe('dynamic/workflows clear trace history', () => {
 
   function loadRuntimeSessionController(extraWindow: Record<string, unknown> = {}) {
     const source = fs.readFileSync(
-      path.resolve(__dirname, '../../../webview/dynamic/runtimeSessionController.js'),
+      path.resolve(__dirname, '../../../dynamic/runtimeSessionController.js'),
       'utf8'
     );
     const context: any = {

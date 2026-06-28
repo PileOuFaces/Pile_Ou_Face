@@ -17,7 +17,7 @@ describe('dynamic/visualizer corruption and diagnostic badges', () => {
     globals.__stackExpertDom = { stack: null };
     globals.__buildSimplifiedStackViewModel = () => ({ items: [] });
     globals.__renderStackEmptyState = () => null;
-    const modulePath = path.resolve(__dirname, '../../../webview/dynamic/app/stackExpertView.js');
+    const modulePath = path.resolve(__dirname, '../../../dynamic/app/stackExpertView.js');
     let source = fs.readFileSync(modulePath, 'utf8');
     source = source.replace(
       /^import \{ buildSimplifiedStackViewModel \}.*$/m,

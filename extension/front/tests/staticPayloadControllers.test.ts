@@ -34,7 +34,7 @@ function button() {
 
 describe("webview static file payload controller", () => {
   it("builds snapshots with inline defaults and path payloads", () => {
-    const sandbox = loadClassicController("webview/static/filePayloadController.js");
+    const sandbox = loadClassicController("static/filePayloadController.js");
     const source = field("inline");
     const guestPath = field("");
     const hostPath = field(" /tmp/input.bin ");
@@ -64,7 +64,7 @@ describe("webview static file payload controller", () => {
   });
 
   it("invalidates preview when file fields change", () => {
-    const sandbox = loadClassicController("webview/static/filePayloadController.js");
+    const sandbox = loadClassicController("static/filePayloadController.js");
     const guestPath = field("/tmp/a");
     const hostPath = field("/tmp/b");
     const content = field("payload");
@@ -84,7 +84,7 @@ describe("webview static file payload controller", () => {
   });
 
   it("requests host file picking from the select button", () => {
-    const sandbox = loadClassicController("webview/static/filePayloadController.js");
+    const sandbox = loadClassicController("static/filePayloadController.js");
     const selectButton = button();
     const messages = [];
     const statuses = [];
@@ -102,7 +102,7 @@ describe("webview static file payload controller", () => {
   });
 
   it("handles picked-file messages and ignores unrelated messages", () => {
-    const sandbox = loadClassicController("webview/static/filePayloadController.js");
+    const sandbox = loadClassicController("static/filePayloadController.js");
     const hostPath = field("");
     const calls = [];
 
@@ -131,7 +131,7 @@ describe("webview static file payload controller", () => {
 
 describe("webview static payload builder controller", () => {
   it("reads and writes builder levels and hints", () => {
-    const sandbox = loadClassicController("webview/static/payloadBuilderController.js");
+    const sandbox = loadClassicController("static/payloadBuilderController.js");
     let level = "beginner";
     const controller = sandbox.POFHubPayloadBuilderController.initPayloadBuilderController({
       payloadBuilderInput: field("A*8"),
@@ -152,7 +152,7 @@ describe("webview static payload builder controller", () => {
   });
 
   it("builds a complete payload snapshot", () => {
-    const sandbox = loadClassicController("webview/static/payloadBuilderController.js");
+    const sandbox = loadClassicController("static/payloadBuilderController.js");
     const controller = sandbox.POFHubPayloadBuilderController.initPayloadBuilderController({
       payloadBuilderInput: field("A*16"),
       getBuilderLevel: () => "advanced",
@@ -174,7 +174,7 @@ describe("webview static payload builder controller", () => {
   });
 
   it("normalizes helper payload output into a dynamic input config", () => {
-    const sandbox = loadClassicController("webview/static/payloadBuilderController.js");
+    const sandbox = loadClassicController("static/payloadBuilderController.js");
     const helperCalls = [];
     const normalizeCalls = [];
     const controller = sandbox.POFHubPayloadBuilderController.initPayloadBuilderController({
@@ -220,7 +220,7 @@ describe("webview static payload builder controller", () => {
   });
 
   it("updates status for input, empty input and invalid expressions", () => {
-    const sandbox = loadClassicController("webview/static/payloadBuilderController.js");
+    const sandbox = loadClassicController("static/payloadBuilderController.js");
     const input = field("A*8");
     const statuses = [];
     let shouldThrow = false;
@@ -255,7 +255,7 @@ describe("webview static payload builder controller", () => {
   });
 
   it("refreshes the builder UI through the injected renderer", () => {
-    const sandbox = loadClassicController("webview/static/payloadBuilderController.js");
+    const sandbox = loadClassicController("static/payloadBuilderController.js");
     let renderCount = 0;
     const controller = sandbox.POFHubPayloadBuilderController.initPayloadBuilderController({
       payloadBuilderInput: field(""),
@@ -269,7 +269,7 @@ describe("webview static payload builder controller", () => {
 
 describe("webview static payload state controller", () => {
   function createStateController(overrides = {}) {
-    const sandbox = loadClassicController("webview/static/payloadStateController.js");
+    const sandbox = loadClassicController("static/payloadStateController.js");
     const state = {
       mode: overrides.mode || "payload_builder",
       trace: overrides.trace || {},
