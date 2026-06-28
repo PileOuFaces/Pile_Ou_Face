@@ -29,7 +29,7 @@ MULTIARCH_PLATFORMS ?= linux/amd64,linux/arm64
 
 EFFECTIVE_PLATFORM := $(PLATFORM)
 
-.PHONY: help venv install install-dev pipeline lint format format-check test test-python test-python-coverage test-extension test-extension-coverage test-real-corpus test-coverage clean demo demo-similarity demo-suite demo-elf demo-push-ret capa-rules capa-docker \
+.PHONY: help venv install install-dev pipeline lint fix format format-check test test-python test-python-coverage test-extension test-extension-coverage test-real-corpus test-coverage test-security ci clean demo demo-similarity demo-suite demo-elf demo-push-ret capa-rules capa-docker \
         decompiler-docker-build decompiler-docker-list decompiler-docker-build-multiarch \
         decompiler-smoke-test decompilers-smoke-test-all \
         decompilers-docker-build decompilers-docker-list decompilers-docker-build-all \
@@ -74,6 +74,7 @@ help:
 	@echo "  yara-test  Test YARA sur examples/demo_analysis.elf avec examples/test_rules.yar"
 	@echo "  pipeline   Run full pipeline (use ARGS=\"...\")"
 	@echo "  lint       Run Ruff on Python sources"
+	@echo "  fix        Auto-fix all Ruff issues (imports, style) + format"
 	@echo "  format     Format Python sources with Ruff"
 	@echo "  format-check Check Python formatting without modifying files"
 	@echo "  test-python Run all Python tests with pytest"
@@ -82,6 +83,8 @@ help:
 	@echo "  test-extension-coverage Run extension tests with c8 thresholds"
 	@echo "  test-real-corpus Run real-binary corpus tests and write metrics JSON"
 	@echo "  test-coverage Run Python and extension coverage checks"
+	@echo "  test-security  Bandit (SAST) + pip-audit + npm audit"
+	@echo "  ci             Pipeline CI complète en local (lint + tests + sécu)"
 	@echo "  test       Run Ruff + all coverage thresholds"
 	@echo "  test-features  Test des nouvelles features (push+ret, prelude, gaps)"
 	@echo "  clean      Remove venv and caches"
@@ -296,29 +299,33 @@ install-dev: venv
 pipeline: venv
 	$(PY) backends/dynamic/pipeline/run_pipeline.py $(ARGS)
 
-lint:
+lint: install-dev
 	$(PY) -m ruff check .
 
-format:
+fix: install-dev
+	$(PY) -m ruff check --fix . || true
 	$(PY) -m ruff format .
 
-format-check:
+format: install-dev
+	$(PY) -m ruff format .
+
+format-check: install-dev
 	$(PY) -m ruff format --check .
 
-test-python:
+test-python: install-dev
 	PYTHONPATH=. $(PY) -m pytest
 
-test-python-coverage:
+test-python-coverage: install-dev
 	$(PY) -m coverage erase
 	PYTHONPATH=. $(PY) -m coverage run -m pytest
 	$(PY) -m coverage report
 	$(PY) -m coverage xml
 
 test-extension:
-	cd extension && npm test
+	npm test
 
 test-extension-coverage:
-	cd extension && npm run test:coverage
+	npm run test:coverage
 
 test-real-corpus:
 	@mkdir -p .pile-ou-face/test-artifacts
@@ -329,6 +336,25 @@ test-real-corpus:
 test-coverage: test-python-coverage test-extension-coverage
 
 test: lint format-check test-coverage
+
+test-security: install-dev
+	@echo "==> [1/3] Bandit — SAST Python (severity medium+)"
+	$(PY) -m bandit -r backends/ \
+		--exclude backends/.venv,backends/static/tests \
+		--severity-level medium -q || true
+	@echo ""
+	@echo "==> [2/3] pip-audit — vulnérabilités dans les dépendances Python"
+	$(PY) -m pip_audit -r backends/requirements.txt || true
+	@echo ""
+	@echo "==> [3/3] npm audit — vulnérabilités JS (high+)"
+	npm audit --audit-level=high 2>/dev/null || true
+	@echo ""
+	@echo "==> test-security terminé. Vérifier les résultats ci-dessus."
+
+# Pipeline CI complète simulée en local : lint + types + tests + couverture + sécurité
+ci: lint format-check test-python-coverage test-extension-coverage test-security
+	@echo ""
+	@echo "=== Pipeline CI locale terminée ==="
 
 test-features:
 	@echo "=== Tests unitaires (push+ret, prelude, gaps) ==="

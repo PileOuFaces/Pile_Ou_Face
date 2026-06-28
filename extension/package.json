@@ -187,45 +187,6 @@
         }
       ]
     },
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "pileOuFace",
-          "title": "Pile ou Face",
-          "icon": "media/icon.svg"
-        }
-      ]
-    },
-    "views": {
-      "pileOuFace": [
-        {
-          "id": "pileOuFace.launch",
-          "name": "Pile ou Face"
-        },
-        {
-          "id": "pileOuFace.symbols",
-          "name": "Symboles"
-        },
-        {
-          "id": "pileOuFace.strings",
-          "name": "Strings"
-        },
-        {
-          "id": "pileOuFace.sections",
-          "name": "Sections"
-        },
-        {
-          "id": "pileOuFace.calculator",
-          "name": "Calculatrice"
-        }
-      ]
-    },
-    "viewsWelcome": [
-      {
-        "view": "pileOuFace.launch",
-        "contents": "Outil d'analyse binaire CTF.\n\n[Ouvrir l'interface](command:pileOuFace.open)\n\n[Charger un binaire](command:pileOuFace.sidebarRefresh)"
-      }
-    ],
     "keybindings": [
       {
         "command": "pileOuFace.open",

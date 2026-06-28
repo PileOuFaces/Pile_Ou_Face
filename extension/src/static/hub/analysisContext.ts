@@ -13,6 +13,7 @@ function createAnalysisContext({
   resolvePathFromWorkspace,
   toWebviewPath,
   storageDir,
+  ensureTempDir,
   getRawProfile,
   vscode,
   fs,
@@ -31,6 +32,9 @@ function createAnalysisContext({
   getExampleCandidates,
   normalizeAddress,
 }) {
+  // In-flight deduplication: concurrent callers for the same disasmPath share one subprocess.
+  const _disasmInFlight = new Map<string, Promise<void>>();
+
   const sanitizeArtifactToken = (value, fallback = 'item') => {
     const text = String(value || '').trim();
     const safe = text.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/_+/g, '_');
@@ -62,7 +66,7 @@ function createAnalysisContext({
   const getArtifactPaths = ({ binaryPath, section = '', binaryMeta = null }) => {
     const absPath = resolvePathFromWorkspace(binaryPath);
     const profile = getBinaryRuntimeProfile(absPath, binaryMeta);
-    const tempDir = storageDir;
+    const tempDir = storageDir || (ensureTempDir ? ensureTempDir(root) : '');
     const baseName = path.basename(absPath, path.extname(absPath)) || 'binary';
     const rawSuffix = profile.kind === 'raw'
       ? `.raw.${sanitizeArtifactToken(profile.rawConfig?.arch, 'raw')}.${sanitizeArtifactToken(profile.rawConfig?.endian || 'little')}.${sanitizeArtifactToken(String(profile.rawConfig?.baseAddr || '0x0').replace(/^0x/i, '0x'))}`
@@ -279,35 +283,45 @@ function createAnalysisContext({
       ? useCacheDb
       : (artifacts.binaryMeta.kind !== 'raw' && !section && syntax === 'intel');
     if (!fs.existsSync(artifacts.disasmPath) || !fs.existsSync(artifacts.mappingPath)) {
-      let disasmArch = null;
-      if (artifacts.binaryMeta.kind !== 'raw') {
-        try {
-          const info = await loadBinaryHeaders(absPath);
-          disasmArch = (info.arch || '').trim() || null;
-        } catch (_) { /* fallback */ }
-      }
-      const args = buildDisasmArgs({
-        binaryPath: absPath,
-        disasmPath: artifacts.disasmPath,
-        mappingPath: artifacts.mappingPath,
-        syntax,
-        section,
-        arch: disasmArch,
-        rawArch: artifacts.binaryMeta.rawConfig?.arch || null,
-        rawBaseAddr: artifacts.binaryMeta.rawConfig?.baseAddr || null,
-        rawEndian: artifacts.binaryMeta.rawConfig?.endian || null,
-        annotationsJson,
-        dwarfLines,
-        useCacheDb: shouldUseCacheDb,
-        emitProgress,
-      });
-      if (emitProgress) {
-        await runDisasmWithProgress(
-          progressTitle || `Désassemblage de ${path.basename(absPath)}`,
-          args,
-        );
+      const inflightKey = artifacts.disasmPath;
+      if (_disasmInFlight.has(inflightKey)) {
+        await _disasmInFlight.get(inflightKey);
       } else {
-        await runCommand(pythonExe, args, root, logChannel, { PYTHONPATH: getExtensionPath() || root });
+        const runDisasm = async () => {
+          let disasmArch = null;
+          if (artifacts.binaryMeta.kind !== 'raw') {
+            try {
+              const info = await loadBinaryHeaders(absPath);
+              disasmArch = (info.arch || '').trim() || null;
+            } catch (_) { /* fallback */ }
+          }
+          const args = buildDisasmArgs({
+            binaryPath: absPath,
+            disasmPath: artifacts.disasmPath,
+            mappingPath: artifacts.mappingPath,
+            syntax,
+            section,
+            arch: disasmArch,
+            rawArch: artifacts.binaryMeta.rawConfig?.arch || null,
+            rawBaseAddr: artifacts.binaryMeta.rawConfig?.baseAddr || null,
+            rawEndian: artifacts.binaryMeta.rawConfig?.endian || null,
+            annotationsJson,
+            dwarfLines,
+            useCacheDb: shouldUseCacheDb,
+            emitProgress,
+          });
+          if (emitProgress) {
+            await runDisasmWithProgress(
+              progressTitle || `Désassemblage de ${path.basename(absPath)}`,
+              args,
+            );
+          } else {
+            await runCommand(pythonExe, args, root, logChannel, { PYTHONPATH: getExtensionPath() || root });
+          }
+        };
+        const promise = runDisasm().finally(() => { _disasmInFlight.delete(inflightKey); });
+        _disasmInFlight.set(inflightKey, promise);
+        await promise;
       }
     }
     return {
@@ -366,7 +380,7 @@ function createAnalysisContext({
 
   const buildAnalysisArtifactContext = (binaryPath, binaryMeta = null) => {
     const absPath = binaryPath ? path.resolve(root, binaryPath) : root;
-    const tempDir = storageDir;
+    const tempDir = storageDir || (ensureTempDir ? ensureTempDir(root) : '');
     const hasFileBinary = !!binaryPath && fs.existsSync(absPath) && !fs.statSync(absPath).isDirectory();
     const artifacts = hasFileBinary
       ? getArtifactPaths({ binaryPath: absPath, binaryMeta })
@@ -505,7 +519,8 @@ function createAnalysisContext({
       .update(fs.existsSync(absPath) ? String(fs.statSync(absPath).mtimeMs) : '')
       .digest('hex')
       .slice(0, 16);
-    return path.join(storageDir, 'annotations', `${hash}.json`);
+    const effectiveDir = storageDir || (ensureTempDir ? ensureTempDir(root) : '');
+    return path.join(effectiveDir, 'annotations', `${hash}.json`);
   };
 
   const loadBinarySymbols = async (binaryPath, { includeAll = false } = {}) => {
@@ -544,7 +559,8 @@ function createAnalysisContext({
     mappingPath,
     baseName,
   }) => {
-    const discoveredPath = artifacts?.discoveredPath || path.join(storageDir, `${baseName}.discovered.json`);
+    const effectiveDir = storageDir || (ensureTempDir ? ensureTempDir(root) : '');
+    const discoveredPath = artifacts?.discoveredPath || path.join(effectiveDir, `${baseName}.discovered.json`);
     if (fs.existsSync(discoveredPath)) return discoveredPath;
     if (!fs.existsSync(mappingPath)) return null;
     const discScript = getDiscoverFunctionsScript(root);

@@ -16,7 +16,6 @@ if (!require.extensions['.ts']) {
   require.extensions['.ts'] = require.extensions['.js'];
 }
 
-const { SidebarSymbolsProvider, SidebarStringsProvider, SidebarSectionsProvider, SidebarCalculatorProvider } = require('./shared/sidebarProvider');
 const { ensureStaticAsm } = require('./static/asmBuilder');
 const { createVisualizer } = require('./dynamic/visualizer');
 const { createHub } = require('./static/hub');
@@ -160,27 +159,8 @@ function activate(context) {
   const root = resolveProjectRoot(vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || '');
   const savedSettings = context.globalState.get('pof-settings', {});
   const pythonExe = savedSettings.pythonPath || (root ? detectPythonExecutable(root) : 'python3');
-  const symbolsProvider = new SidebarSymbolsProvider(root, pythonExe);
-  const stringsProvider = new SidebarStringsProvider(root, pythonExe);
-  const sectionsProvider = new SidebarSectionsProvider(root, pythonExe);
-  const calculatorProvider = new SidebarCalculatorProvider();
-  vscode.window.registerTreeDataProvider('pileOuFace.symbols', symbolsProvider);
-  vscode.window.registerTreeDataProvider('pileOuFace.strings', stringsProvider);
-  vscode.window.registerTreeDataProvider('pileOuFace.sections', sectionsProvider);
-  vscode.window.registerTreeDataProvider('pileOuFace.calculator', calculatorProvider);
-
-  const refreshSidebar = (binaryPath) => {
-    if (binaryPath) {
-      symbolsProvider.refresh(binaryPath);
-      stringsProvider.refresh(binaryPath);
-      sectionsProvider.refresh(binaryPath);
-    }
-  };
-  const setSidebarMode = (mode) => {
-    symbolsProvider.setMode(mode);
-    stringsProvider.setMode(mode);
-    sectionsProvider.setMode(mode);
-  };
+  const refreshSidebar = (_binaryPath) => {};
+  const setSidebarMode = (_mode) => {};
   hubConfig.refreshSidebar = refreshSidebar;
   hubConfig.setSidebarMode = setSidebarMode;
 

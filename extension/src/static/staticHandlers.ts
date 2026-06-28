@@ -48,8 +48,11 @@ function staticHandlers(config) {
   };
   const getHostArtifactRoot = (kind) => {
     const normalizedKind = String(kind || '').trim();
-    const base = normalizedKind ? path.join(storageDir, normalizedKind) : storageDir;
-    if (!fs.existsSync(base)) fs.mkdirSync(base, { recursive: true });
+    const baseDir = storageDir || path.join(root, '.pile-ou-face');
+    const base = normalizedKind ? path.join(baseDir, normalizedKind) : baseDir;
+    try {
+      if (!fs.existsSync(base)) fs.mkdirSync(base, { recursive: true });
+    } catch (_) {}
     return base;
   };
   const buildPythonEnv = () => {
@@ -104,6 +107,10 @@ function staticHandlers(config) {
 
   const buildPluginRuntimeEnv = async () => {
     const base = buildPythonEnv();
+    // Injecter le dossier plugins du workspace storage pour que Python le découvre.
+    if (storageDir) {
+      base['BINHOST_PLUGIN_PATH'] = path.join(storageDir, 'plugins');
+    }
     let hasOnlineKeys = false;
     try {
       const authSvc = AuthService.getInstance(
@@ -132,13 +139,23 @@ function staticHandlers(config) {
       base[AUTH_STRICT_LICENSE_ENV] = '1';
     } else {
       // Pas de clés en ligne : vérifier la présence de fichiers licence offline signés.
-      const licenseDir = path.join(storageDir, 'licenses');
+      // On cherche dans storageDir/licenses ET dans ~/.pile-ou-face/licenses (même
+      // logique que le runtime Python : default_license_search_paths).
+      const licenseDirs = [
+        ...(storageDir ? [path.join(storageDir, 'licenses')] : []),
+        path.join(os.homedir(), '.pile-ou-face', 'licenses'),
+      ];
       let hasOfflineLicenses = false;
-      try {
-        const files = fs.readdirSync(licenseDir);
-        hasOfflineLicenses = files.some((f) => String(f).endsWith('.license.json'));
-      } catch (_e) {
-        // Répertoire absent → pas de licences offline.
+      for (const licenseDir of licenseDirs) {
+        try {
+          const files = fs.readdirSync(licenseDir);
+          if (files.some((f) => String(f).endsWith('.license.json'))) {
+            hasOfflineLicenses = true;
+            break;
+          }
+        } catch (_e) {
+          // Répertoire absent → continuer.
+        }
       }
 
       if (!hasOfflineLicenses) {
@@ -380,7 +397,7 @@ function staticHandlers(config) {
     },
     hubInstallPlugin: async (message = {}) => {
       const requestedScope = String(message.scope || 'user').trim() === 'workspace' ? 'workspace' : 'user';
-      const selectedScope = storageDir ? 'workspace' : requestedScope;
+      const selectedScope = (storageDir || fs.existsSync(path.join(root, '.pile-ou-face'))) ? 'workspace' : requestedScope;
       try {
         const picked = await vscode.window.showOpenDialog({
           canSelectFiles: true,
@@ -777,7 +794,7 @@ function staticHandlers(config) {
     },
     hubLoadDecompile: async (message) => {
       const { binaryPath, addr, funcName, full, decompiler, provider } = message;
-      const decompilersJsonPath = path.join(storageDir, 'decompilers.json');
+      const decompilersJsonPath = storageDir ? path.join(storageDir, 'decompilers.json') : '';
 
       // Build base args (annotation injection preserved)
       const buildArgs = (targetDecompiler) => {
@@ -792,8 +809,8 @@ function staticHandlers(config) {
           .update(absPath)
           .update(fs.existsSync(absPath) ? String(fs.statSync(absPath).mtimeMs) : '')
           .digest('hex').slice(0, 16);
-        const annPath = path.join(storageDir, 'annotations', `${annHash}.json`);
-        if (fs.existsSync(annPath)) args.push('--annotations-json', annPath);
+        const annPath = storageDir ? path.join(storageDir, 'annotations', `${annHash}.json`) : '';
+        if (annPath && fs.existsSync(annPath)) args.push('--annotations-json', annPath);
         return args;
       };
 

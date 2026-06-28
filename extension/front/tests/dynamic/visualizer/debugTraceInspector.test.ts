@@ -272,7 +272,7 @@ describe('dynamic/visualizer debug trace JSON inspector', () => {
   }
 
   function readWebviewHtml(relativePath: string) {
-    return fs.readFileSync(path.resolve(__dirname, '../../..', relativePath), 'utf8');
+    return fs.readFileSync(path.resolve(__dirname, '../../../..', relativePath), 'utf8');
   }
 
   function expectHiddenDebugControl(html: string) {

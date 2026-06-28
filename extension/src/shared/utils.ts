@@ -28,7 +28,22 @@ function getExtensionPath() {
 
 function resolveProjectRoot(root) {
   const value = String(root || '').trim();
-  return value ? path.resolve(value) : value;
+  if (!value) return value;
+  const absValue = path.resolve(value);
+  if (fs.existsSync(path.join(absValue, 'extension', 'package.json'))) {
+    return absValue;
+  }
+  try {
+    const entries = fs.readdirSync(absValue, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const candidate = path.join(absValue, entry.name);
+      if (fs.existsSync(path.join(candidate, 'extension', 'package.json'))) {
+        return candidate;
+      }
+    }
+  } catch (_) {}
+  return absValue;
 }
 
 function findGitRoot(dir) {

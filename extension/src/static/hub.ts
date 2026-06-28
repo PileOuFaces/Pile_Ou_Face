@@ -263,6 +263,7 @@ function createHub(config) {
           context.extensionUri,
           vscode.Uri.file(root),
           vscode.Uri.file(storageDir || path.join(root, '.pile-ou-face')),
+          vscode.Uri.file(path.join(storageDir || path.join(root, '.pile-ou-face'), 'plugins')),
           vscode.Uri.file(globalDir || path.join(os.homedir(), '.pile-ou-face')),
           vscode.Uri.file(path.join(globalDir || path.join(os.homedir(), '.pile-ou-face'), 'plugins')),
         ],
@@ -364,7 +365,7 @@ function createHub(config) {
     }, LICENSE_RECHECK_MS);
     panel.onDidDispose(() => { globalThis.clearInterval(licenseRecheckTimer); });
 
-    panel.webview.html = getHubContent(panel.webview, context.extensionUri, initialPanel, root, globalDir);
+    panel.webview.html = getHubContent(panel.webview, context.extensionUri, initialPanel, root, globalDir, storageDir);
     const handlerCtx = {
       root,
       storageDir,

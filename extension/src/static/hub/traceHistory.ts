@@ -5,6 +5,7 @@ function createTraceHistory({
   panel,
   root,
   storageDir,
+  ensureTempDir,
   readTraceJson,
   writeTraceJson,
   setViewMode,
@@ -86,8 +87,8 @@ function createTraceHistory({
   };
 
   const buildDynamicTraceHistoryItems = () => {
-    const tempDir = storageDir;
-    if (!fs.existsSync(tempDir)) return [];
+    const tempDir = storageDir || (ensureTempDir ? ensureTempDir(root) : '');
+    if (!tempDir || !fs.existsSync(tempDir)) return [];
     const activePath = normalizeHistoryPath(_activeDynamicTracePath);
     const candidates = fs.readdirSync(tempDir)
       .filter((name) => /^output\.run-\d+-.*\.json$/.test(name));
@@ -167,7 +168,7 @@ function createTraceHistory({
 
   const isManagedDynamicTracePath = (targetPath) => {
     const normalized = normalizeHistoryPath(targetPath);
-    const tempDir = normalizeHistoryPath(storageDir);
+    const tempDir = normalizeHistoryPath(storageDir || (ensureTempDir ? ensureTempDir(root) : ''));
     const fileName = path.basename(normalized);
     return Boolean(
       normalized &&
