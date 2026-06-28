@@ -28,7 +28,7 @@ const {
 const AUTH_STRICT_LICENSE_ENV = 'BINHOST_DISABLE_LICENSE_FALLBACK';
 
 function staticHandlers(config) {
-  const { root, panel, context, logChannel } = config;
+  const { root, panel, context, logChannel, storageDir, globalDir } = config;
   const extensionPath = context?.extensionPath || root;
   const getSavedSettings = () => {
     try {
@@ -46,25 +46,18 @@ function staticHandlers(config) {
       projectRoot: root,
     });
   };
-  const getWorkspacePofRoot = () => path.join(root, '.pile-ou-face');
-  const hasWorkspacePofRoot = () => {
-    try {
-      return fs.existsSync(getWorkspacePofRoot());
-    } catch (_) {
-      return false;
-    }
-  };
   const getHostArtifactRoot = (kind) => {
     const normalizedKind = String(kind || '').trim();
-    if (hasWorkspacePofRoot()) return path.join(getWorkspacePofRoot(), normalizedKind);
-    return path.join(os.homedir(), '.pile-ou-face', normalizedKind);
+    const base = normalizedKind ? path.join(storageDir, normalizedKind) : storageDir;
+    if (!fs.existsSync(base)) fs.mkdirSync(base, { recursive: true });
+    return base;
   };
   const buildPythonEnv = () => {
     const settings = getSavedSettings();
     const localPaths = settings.decompilerLocalPaths && typeof settings.decompilerLocalPaths === 'object'
       ? settings.decompilerLocalPaths
       : {};
-    const env = buildRuntimeEnv(root);
+    const env = buildRuntimeEnv(root, storageDir);
     const ghidraPath = String(localPaths.ghidra || '').trim();
     if (ghidraPath) env.GHIDRA_INSTALL_DIR = ghidraPath;
     return env;
@@ -139,7 +132,7 @@ function staticHandlers(config) {
       base[AUTH_STRICT_LICENSE_ENV] = '1';
     } else {
       // Pas de clés en ligne : vérifier la présence de fichiers licence offline signés.
-      const licenseDir = path.join(root, '.pile-ou-face', 'licenses');
+      const licenseDir = path.join(storageDir, 'licenses');
       let hasOfflineLicenses = false;
       try {
         const files = fs.readdirSync(licenseDir);
@@ -346,7 +339,7 @@ function staticHandlers(config) {
     hubOpenPluginDirectory: async (message = {}) => {
       const requestedScope = String(message.scope || 'user').trim() === 'workspace' ? 'workspace' : 'user';
       const pluginDir = getHostArtifactRoot('plugins');
-      const scope = hasWorkspacePofRoot() ? 'workspace' : requestedScope;
+      const scope = storageDir ? 'workspace' : requestedScope;
       try {
         await fs.promises.mkdir(pluginDir, { recursive: true });
         await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(pluginDir));
@@ -387,7 +380,7 @@ function staticHandlers(config) {
     },
     hubInstallPlugin: async (message = {}) => {
       const requestedScope = String(message.scope || 'user').trim() === 'workspace' ? 'workspace' : 'user';
-      const selectedScope = hasWorkspacePofRoot() ? 'workspace' : requestedScope;
+      const selectedScope = storageDir ? 'workspace' : requestedScope;
       try {
         const picked = await vscode.window.showOpenDialog({
           canSelectFiles: true,
@@ -784,7 +777,7 @@ function staticHandlers(config) {
     },
     hubLoadDecompile: async (message) => {
       const { binaryPath, addr, funcName, full, decompiler, provider } = message;
-      const decompilersJsonPath = path.join(root, '.pile-ou-face', 'decompilers.json');
+      const decompilersJsonPath = path.join(storageDir, 'decompilers.json');
 
       // Build base args (annotation injection preserved)
       const buildArgs = (targetDecompiler) => {
@@ -799,7 +792,7 @@ function staticHandlers(config) {
           .update(absPath)
           .update(fs.existsSync(absPath) ? String(fs.statSync(absPath).mtimeMs) : '')
           .digest('hex').slice(0, 16);
-        const annPath = path.join(root, '.pile-ou-face', 'annotations', `${annHash}.json`);
+        const annPath = path.join(storageDir, 'annotations', `${annHash}.json`);
         if (fs.existsSync(annPath)) args.push('--annotations-json', annPath);
         return args;
       };
