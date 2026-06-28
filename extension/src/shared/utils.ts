@@ -55,10 +55,12 @@ function ensureTempDir(root) {
   return dir;
 }
 
+// Returns '' when context.storageUri is unavailable — check before use.
 function getStorageDir(context) {
   return String(context?.storageUri?.fsPath || '');
 }
 
+// Returns '' when context.globalStorageUri is unavailable — check before use.
 function getGlobalStorageDir(context) {
   return String(context?.globalStorageUri?.fsPath || '');
 }
@@ -177,6 +179,14 @@ function resolveDockerExecutable() {
   return 'docker';
 }
 
+/**
+ * Build the runtime env for Python/Docker processes.
+ * Accepts two call patterns (backward-compatible):
+ *   buildRuntimeEnv(root, storageDir)           — new style: storageDir is a string path
+ *   buildRuntimeEnv(root, extraEnv)             — legacy: extraEnv is a plain object
+ *   buildRuntimeEnv(root, storageDir, extraEnv) — new style with extra overrides
+ * When storageDir is provided, injects POF_STORAGE_DIR, DECOMPILERS_CONFIG, COMPILERS_CONFIG.
+ */
 function buildRuntimeEnv(root, storageDirOrExtra, extraEnv = {}) {
   let storageDir = '';
   let mergedExtra = extraEnv;
