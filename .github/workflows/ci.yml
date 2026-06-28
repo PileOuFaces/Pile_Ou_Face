@@ -17,6 +17,39 @@ permissions:
 
 jobs:
   # ══════════════════════════════════════════════════════════════
+  # 🔎 Lint — feature branches + PRs (une seule fois, ubuntu uniquement)
+  # ══════════════════════════════════════════════════════════════
+  lint:
+    name: Lint
+    if: |
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'push' &&
+       github.ref != 'refs/heads/main' &&
+       github.ref != 'refs/heads/develops')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Ruff
+        run: pip install -r extension/backends/requirements-ci.txt
+
+      - name: Ruff check
+        working-directory: ./extension
+        run: python3 -m ruff check .
+
+      - name: Ruff format
+        working-directory: ./extension
+        run: python3 -m ruff format --check .
+
+  # ══════════════════════════════════════════════════════════════
   # 🔍 Tests Rapides — feature branches (push uniquement, hors main/develops)
   # ══════════════════════════════════════════════════════════════
   quick-test:
@@ -49,14 +82,15 @@ jobs:
           pip install -r extension/backends/requirements-ci.txt
           cd extension && npm ci
 
-      - name: Run tests
+      - name: Python tests
         working-directory: ./extension
         run: |
-          python3 -m ruff check .
-          python3 -m ruff format --check .
           python3 -m coverage run -m pytest
           python3 -m coverage report
-          npm run test:coverage
+
+      - name: JavaScript tests
+        working-directory: ./extension
+        run: npm run test:coverage
 
   # ══════════════════════════════════════════════════════════════
   # 🧪 Tests Complets Multi-OS — PRs uniquement
@@ -70,10 +104,10 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        node: [18.x, 20.x]
+        node: [20.x, 22.x]
         exclude:
           - os: macos-latest
-            node: 18.x
+            node: 20.x
 
     steps:
       - name: Checkout
@@ -92,33 +126,19 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Install build tools (Linux)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y build-essential
-
-      - name: Install build tools (macOS)
-        if: runner.os == 'macOS'
-        run: xcode-select --install 2>/dev/null || true
-
       - name: Install dependencies
         run: |
           pip install -r extension/backends/requirements-ci.txt
           cd extension && npm ci
 
-      - name: Run Ruff
-        working-directory: ./extension
-        run: |
-          python3 -m ruff check .
-          python3 -m ruff format --check .
-
-      - name: Run Python tests with coverage
+      - name: Python tests with coverage
         working-directory: ./extension
         run: |
           python3 -m coverage run -m pytest
           python3 -m coverage report
           python3 -m coverage xml
 
-      - name: Run JavaScript tests with coverage
+      - name: JavaScript tests with coverage
         working-directory: ./extension
         run: npm run test:coverage
 
@@ -219,18 +239,20 @@ jobs:
   ci-success:
     name: CI Success
     if: always()
-    needs: [quick-test, full-test, real-corpus-arm64, security-scan]
+    needs: [lint, quick-test, full-test, real-corpus-arm64, security-scan]
     runs-on: ubuntu-latest
     steps:
       - name: Check results
         shell: bash
         run: |
+          LINT="${{ needs.lint.result }}"
           QUICK="${{ needs.quick-test.result }}"
           FULL="${{ needs.full-test.result }}"
           REAL_CORPUS="${{ needs.real-corpus-arm64.result }}"
           SECURITY="${{ needs.security-scan.result }}"
 
           echo "Event      : ${{ github.event_name }}"
+          echo "Lint       : $LINT"
           echo "Quick test : $QUICK"
           echo "Full test  : $FULL"
           echo "Corpus ARM : $REAL_CORPUS"
@@ -243,19 +265,21 @@ jobs:
           }
 
           if [[ "${{ github.event_name }}" == "push" ]]; then
-            # Sur un push de feature branch : quick-test doit passer
-            # Sur main/develops : quick-test est skippé → on vérifie qu'il n'a pas échoué
+            fail_if_bad "$LINT" "Lint"
             fail_if_bad "$QUICK" "Quick test"
-            echo "✅ Push checks passed (quick=$QUICK)"
+            echo "✅ Push checks passed (lint=$LINT, quick=$QUICK)"
             exit 0
           fi
 
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            # full-test et security doivent réussir ou être explicitement skippés
+            fail_if_bad "$LINT" "Lint"
             fail_if_bad "$FULL" "Full test"
             fail_if_bad "$REAL_CORPUS" "Real Corpus ARM64"
-            fail_if_bad "$SECURITY" "Security scan"
-            # Au moins full-test doit avoir tourné (pas juste skippé)
+            # security-scan est informatif uniquement (continue-on-error sur tous ses steps)
+            if [[ "$LINT" == "skipped" ]]; then
+              echo "❌ Lint was skipped on a PR — check workflow conditions"
+              exit 1
+            fi
             if [[ "$FULL" == "skipped" ]]; then
               echo "❌ Full test was skipped on a PR — check workflow conditions"
               exit 1
@@ -264,7 +288,7 @@ jobs:
               echo "❌ Real Corpus ARM64 was skipped on a PR — check workflow conditions"
               exit 1
             fi
-            echo "✅ PR checks passed (full=$FULL, real-corpus-arm64=$REAL_CORPUS, security=$SECURITY)"
+            echo "✅ PR checks passed (lint=$LINT, full=$FULL, real-corpus-arm64=$REAL_CORPUS, security=$SECURITY)"
             exit 0
           fi
 
