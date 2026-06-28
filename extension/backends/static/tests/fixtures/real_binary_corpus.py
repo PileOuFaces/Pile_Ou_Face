@@ -139,7 +139,11 @@ def default_corpus_specs() -> list[CorpusSpec]:
     Set POF_CORPUS_SKIP_COMPILERS=clang (comma-separated) to exclude compilers
     whose analysis is known to be incomplete (e.g. clang PIE on linux/x86_64).
     """
-    skip = {c.strip() for c in os.environ.get("POF_CORPUS_SKIP_COMPILERS", "").split(",") if c.strip()}
+    skip = {
+        c.strip()
+        for c in os.environ.get("POF_CORPUS_SKIP_COMPILERS", "").split(",")
+        if c.strip()
+    }
     specs: list[CorpusSpec] = []
     if shutil.which("gcc") and "gcc" not in skip:
         specs.extend(
