@@ -77,9 +77,10 @@ _DECOMPILERS_CONFIG = (
     Path(_cfg_env) if _cfg_env
     else Path.home() / ".config" / "pile-ou-face" / "decompilers.json"
 )
+_pof_storage_env = os.environ.get("POF_STORAGE_DIR", "").strip()
 _POF_DIR = (
-    Path(os.environ.get("POF_STORAGE_DIR")).resolve()
-    if os.environ.get("POF_STORAGE_DIR")
+    Path(_pof_storage_env).resolve()
+    if _pof_storage_env
     else Path.home() / ".config" / "pile-ou-face"
 )
 _DOCKER_AVAILABLE_CACHE: dict[str, bool] = {}
@@ -1233,8 +1234,8 @@ def _write_cache(
 
 
 _DEFAULT_CACHE_DIR = (
-    Path(os.environ.get("POF_STORAGE_DIR")) / "decompile_cache"
-    if os.environ.get("POF_STORAGE_DIR")
+    Path(_pof_storage_env) / "decompile_cache"
+    if _pof_storage_env
     else Path.home() / ".config" / "pile-ou-face" / "decompile_cache"
 )
 

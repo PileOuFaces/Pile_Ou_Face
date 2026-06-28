@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Moteur de compilation générique — aucun toolchain n'est câblé en dur.
 
-Tous les outils sont déclarés dans .pile-ou-face/compilers.json (ou via
+Tous les outils sont déclarés dans ~/.config/pile-ou-face/compilers.json (ou via
 la variable d'environnement COMPILERS_CONFIG). Le moteur détecte ce qui
 est disponible localement (champ "native_cmd") ou via Docker (champ "docker_image"),
 et route automatiquement vers le bon compilateur.
@@ -38,16 +38,17 @@ _COMPILERS_CONFIG = (
     Path(_cfg_env) if _cfg_env
     else Path.home() / ".config" / "pile-ou-face" / "compilers.json"
 )
+_pof_storage_env = os.environ.get("POF_STORAGE_DIR", "").strip()
 _POF_DIR = (
-    Path(os.environ.get("POF_STORAGE_DIR")).resolve()
-    if os.environ.get("POF_STORAGE_DIR")
+    Path(_pof_storage_env).resolve()
+    if _pof_storage_env
     else Path.home() / ".config" / "pile-ou-face"
 )
 _DOCKER_AVAILABLE_CACHE: dict[str, bool] = {}
 
 
 def _load_compilers(config_path: Path | None = None) -> dict[str, dict[str, Any]]:
-    """Charge les toolchains depuis .pile-ou-face/compilers.json."""
+    """Charge les toolchains depuis le chemin défini par COMPILERS_CONFIG ou ~/.config/pile-ou-face/compilers.json."""
     env_path = os.environ.get("COMPILERS_CONFIG", "").strip()
     cfg_path = config_path or (Path(env_path) if env_path else _COMPILERS_CONFIG)
     try:
