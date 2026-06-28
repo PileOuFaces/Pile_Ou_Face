@@ -8,9 +8,12 @@ const sinon = require("sinon");
 
 describe("fileManager", () => {
   let tempRoot;
+  let mockStorageDir;
 
   beforeEach(() => {
     tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pof-file-manager-"));
+    mockStorageDir = path.join(tempRoot, "storage");
+    fs.mkdirSync(mockStorageDir, { recursive: true });
   });
 
   afterEach(() => {
@@ -19,22 +22,21 @@ describe("fileManager", () => {
   });
 
   it("hides config files like decompilers.json from artifacts", () => {
-    const baseDir = path.join(tempRoot, ".pile-ou-face");
-    fs.mkdirSync(baseDir, { recursive: true });
-    fs.writeFileSync(path.join(baseDir, "decompilers.json"), "{}");
-    fs.writeFileSync(path.join(baseDir, "sample.disasm.asm"), "mov eax, eax");
-    fs.writeFileSync(path.join(baseDir, "sample.symbols.json"), "[]");
+    // storageDir IS the base dir now (no .pile-ou-face subfolder)
+    fs.writeFileSync(path.join(mockStorageDir, "decompilers.json"), "{}");
+    fs.writeFileSync(path.join(mockStorageDir, "sample.disasm.asm"), "mov eax, eax");
+    fs.writeFileSync(path.join(mockStorageDir, "sample.symbols.json"), "[]");
 
     const fileManager = proxyquire("../shared/fileManager", {
       "./staticCache": {
-        getCacheDir: () => path.join(baseDir, "static_cache"),
+        getCacheDir: () => path.join(mockStorageDir, "static_cache"),
         readMeta: () => null,
         listIndexedCacheEntries: () => null,
         pruneIndexedCacheEntries: () => 0,
       },
     });
 
-    const artifacts = fileManager.listArtifacts(tempRoot);
+    const artifacts = fileManager.listArtifacts(mockStorageDir);
     expect(artifacts.map((entry) => entry.name).sort()).to.deep.equal([
       "sample.disasm.asm",
       "sample.symbols.json",
@@ -44,7 +46,7 @@ describe("fileManager", () => {
   it("surfaces stale cache entries from the SQLite-backed index", () => {
     const fileManager = proxyquire("../shared/fileManager", {
       "./staticCache": {
-        getCacheDir: () => path.join(tempRoot, ".pile-ou-face", "static_cache"),
+        getCacheDir: () => path.join(mockStorageDir, "static_cache"),
         readMeta: () => null,
         listIndexedCacheEntries: () => ([
           { key: "ok1", path: "/tmp/a", binaryPath: "/bin/ok", status: "ok", size: 10, mtime: 2, cacheTypes: ["info"], fileCount: 1, binaryExists: true },
@@ -54,15 +56,15 @@ describe("fileManager", () => {
       },
     });
 
-    const summary = fileManager.listAll(tempRoot);
+    const summary = fileManager.listAll(mockStorageDir);
     expect(summary.cache).to.have.length(2);
     expect(summary.staleCache).to.have.length(1);
     expect(summary.staleCache[0].key).to.equal("stale1");
   });
 
   it("purges stale cache directories and prunes the index", () => {
-    const staleDir = path.join(tempRoot, ".pile-ou-face", "static_cache", "stale");
-    const okDir = path.join(tempRoot, ".pile-ou-face", "static_cache", "ok");
+    const staleDir = path.join(mockStorageDir, "static_cache", "stale");
+    const okDir = path.join(mockStorageDir, "static_cache", "ok");
     fs.mkdirSync(staleDir, { recursive: true });
     fs.mkdirSync(okDir, { recursive: true });
     fs.writeFileSync(path.join(staleDir, "info.json"), "{}");
@@ -71,7 +73,7 @@ describe("fileManager", () => {
 
     const fileManager = proxyquire("../shared/fileManager", {
       "./staticCache": {
-        getCacheDir: () => path.join(tempRoot, ".pile-ou-face", "static_cache"),
+        getCacheDir: () => path.join(mockStorageDir, "static_cache"),
         readMeta: () => null,
         listIndexedCacheEntries: () => ([
           { key: "stale1", path: staleDir, binaryPath: "/bin/missing", status: "missing", size: 10, mtime: 2, cacheTypes: ["info"], fileCount: 1, binaryExists: false },
@@ -81,7 +83,7 @@ describe("fileManager", () => {
       },
     });
 
-    const result = fileManager.purgeStaleCache(tempRoot);
+    const result = fileManager.purgeStaleCache(mockStorageDir, tempRoot);
     expect(result.removed).to.equal(1);
     expect(fs.existsSync(staleDir)).to.equal(false);
     expect(fs.existsSync(okDir)).to.equal(true);
@@ -94,11 +96,10 @@ describe("fileManager", () => {
     fs.writeFileSync(workspaceFile, Buffer.from("demo"));
     const stat = fs.statSync(workspaceFile);
 
-    const pofDir = path.join(tempRoot, ".pile-ou-face");
-    const annotationsDir = path.join(pofDir, "annotations");
-    const decompileDir = path.join(pofDir, "decompile_cache");
-    const patchesDir = path.join(pofDir, "patches");
-    const pfdbDir = path.join(pofDir, "pfdb");
+    const annotationsDir = path.join(mockStorageDir, "annotations");
+    const decompileDir = path.join(mockStorageDir, "decompile_cache");
+    const patchesDir = path.join(mockStorageDir, "patches");
+    const pfdbDir = path.join(mockStorageDir, "pfdb");
     fs.mkdirSync(annotationsDir, { recursive: true });
     fs.mkdirSync(decompileDir, { recursive: true });
     fs.mkdirSync(patchesDir, { recursive: true });
@@ -124,14 +125,14 @@ describe("fileManager", () => {
 
     const fileManager = proxyquire("../shared/fileManager", {
       "./staticCache": {
-        getCacheDir: () => path.join(pofDir, "static_cache"),
+        getCacheDir: () => path.join(mockStorageDir, "static_cache"),
         readMeta: () => null,
         listIndexedCacheEntries: () => [],
         pruneIndexedCacheEntries: () => 0,
       },
     });
 
-    const result = fileManager.purgeStaleCache(tempRoot);
+    const result = fileManager.purgeStaleCache(mockStorageDir, tempRoot);
     expect(result.removed).to.equal(5);
     expect(fs.existsSync(path.join(annotationsDir, `${annKey}.json`))).to.equal(true);
     expect(fs.existsSync(path.join(annotationsDir, "deadbeefdeadbeef.json"))).to.equal(false);
@@ -144,38 +145,36 @@ describe("fileManager", () => {
   });
 
   describe("cleanupAll — PROTECTED_NAMES", () => {
-    // Helper : construit un fileManager stubé et une baseDir fraîche
+    // Helper: builds a stubbed fileManager with a fresh mockStorageDir
     function makeCleanupEnv() {
-      const baseDir = path.join(tempRoot, ".pile-ou-face");
-      fs.mkdirSync(baseDir, { recursive: true });
       const fileManager = proxyquire("../shared/fileManager", {
         "./staticCache": {
-          getCacheDir: () => path.join(baseDir, "static_cache"),
+          getCacheDir: () => path.join(mockStorageDir, "static_cache"),
           readMeta: () => null,
           listIndexedCacheEntries: () => [],
           pruneIndexedCacheEntries: () => 0,
         },
       });
-      return { baseDir, fileManager };
+      return { baseDir: mockStorageDir, fileManager };
     }
 
-    // ── Entrées protégées : fichiers JSON de config ────────────────────────
+    // ── Protected entries: config JSON files ────────────────────────────────
 
     it("does NOT delete decompilers.json", () => {
       const { baseDir, fileManager } = makeCleanupEnv();
       fs.writeFileSync(path.join(baseDir, "decompilers.json"), "{}");
-      fileManager.cleanupAll(tempRoot);
+      fileManager.cleanupAll(mockStorageDir);
       expect(fs.existsSync(path.join(baseDir, "decompilers.json"))).to.equal(true);
     });
 
     it("does NOT delete compilers.json", () => {
       const { baseDir, fileManager } = makeCleanupEnv();
       fs.writeFileSync(path.join(baseDir, "compilers.json"), "{}");
-      fileManager.cleanupAll(tempRoot);
+      fileManager.cleanupAll(mockStorageDir);
       expect(fs.existsSync(path.join(baseDir, "compilers.json"))).to.equal(true);
     });
 
-    // ── Entrées protégées : dossiers ────────────────────────────────────────
+    // ── Protected entries: directories ─────────────────────────────────────
 
     const PROTECTED_DIRS = ["licenses", "plugins", "annotations", "patches", "pfdb"];
 
@@ -185,21 +184,15 @@ describe("fileManager", () => {
         const dir = path.join(baseDir, dirName);
         fs.mkdirSync(dir, { recursive: true });
         fs.writeFileSync(path.join(dir, "sentinel.json"), "{}");
-        fileManager.cleanupAll(tempRoot);
+        fileManager.cleanupAll(mockStorageDir);
         expect(fs.existsSync(dir)).to.equal(true);
         expect(fs.existsSync(path.join(dir, "sentinel.json"))).to.equal(true);
       });
     }
 
-    // ── Exhaustivité : tous les noms protégés ont un test ──────────────────
-    //
-    // Si quelqu'un ajoute une entrée dans PROTECTED_NAMES sans ajouter un test
-    // ci-dessus, ce test échoue et signale le nom manquant.
+    // ── Exhaustiveness: all PROTECTED_NAMES entries have a test ────────────
 
     it("all PROTECTED_NAMES entries are covered by an individual test above", () => {
-      // Ces noms correspondent EXACTEMENT au contenu de PROTECTED_NAMES dans fileManager.ts.
-      // Si tu ajoutes une entrée là-bas, ajoute aussi un test individuel ci-dessus ET
-      // mets à jour ce tableau.
       const EXPECTED_PROTECTED = [
         "decompilers.json",
         "compilers.json",
@@ -210,13 +203,10 @@ describe("fileManager", () => {
         "pfdb",
       ];
 
-      // Vérifier que la source a exactement ces entrées (ni plus, ni moins)
       const { fileManager } = makeCleanupEnv();
-      // On reconstruit PROTECTED_NAMES en testant empiriquement quels noms survivent à cleanupAll
       const candidateNames = [...EXPECTED_PROTECTED, "should-be-deleted.asm"];
-      const baseDir = path.join(tempRoot, ".pile-ou-face");
+      const baseDir = mockStorageDir;
 
-      // Créer tous les candidats
       for (const name of candidateNames) {
         const p = path.join(baseDir, name);
         if (name.endsWith(".json") || name.endsWith(".asm")) {
@@ -227,23 +217,21 @@ describe("fileManager", () => {
         }
       }
 
-      fileManager.cleanupAll(tempRoot);
+      fileManager.cleanupAll(mockStorageDir);
 
-      // Tous les protégés doivent survivre
       for (const name of EXPECTED_PROTECTED) {
         expect(fs.existsSync(path.join(baseDir, name)), `${name} should be protected`).to.equal(true);
       }
-      // Le non-protégé doit être supprimé
       expect(fs.existsSync(path.join(baseDir, "should-be-deleted.asm")), "non-protected should be deleted").to.equal(false);
     });
 
-    // ── Négatif : les artifacts ordinaires sont bien supprimés ─────────────
+    // ── Negative: ordinary artifacts are deleted ────────────────────────────
 
     it("DOES delete non-protected artifacts", () => {
       const { baseDir, fileManager } = makeCleanupEnv();
       fs.writeFileSync(path.join(baseDir, "binary.asm"), "content");
       fs.writeFileSync(path.join(baseDir, "binary.symbols.json"), "[]");
-      fileManager.cleanupAll(tempRoot);
+      fileManager.cleanupAll(mockStorageDir);
       expect(fs.existsSync(path.join(baseDir, "binary.asm"))).to.equal(false);
       expect(fs.existsSync(path.join(baseDir, "binary.symbols.json"))).to.equal(false);
     });
@@ -255,19 +243,18 @@ describe("fileManager", () => {
     fs.mkdirSync(path.dirname(otherBinary), { recursive: true });
     fs.writeFileSync(otherBinary, Buffer.from("ok"));
 
-    const pofDir = path.join(tempRoot, ".pile-ou-face");
-    const cacheDir = path.join(pofDir, "static_cache");
-    const decompileDir = path.join(pofDir, "decompile_cache");
-    const patchesDir = path.join(pofDir, "patches");
-    const pfdbDir = path.join(pofDir, "pfdb");
+    const cacheDir = path.join(mockStorageDir, "static_cache");
+    const decompileDir = path.join(mockStorageDir, "decompile_cache");
+    const patchesDir = path.join(mockStorageDir, "patches");
+    const pfdbDir = path.join(mockStorageDir, "pfdb");
     fs.mkdirSync(cacheDir, { recursive: true });
     fs.mkdirSync(decompileDir, { recursive: true });
     fs.mkdirSync(patchesDir, { recursive: true });
     fs.mkdirSync(pfdbDir, { recursive: true });
 
-    fs.writeFileSync(path.join(pofDir, "ghost.bin.disasm.asm"), "nop");
-    fs.writeFileSync(path.join(pofDir, "ghost.bin.disasm.mapping.json"), "{}");
-    fs.writeFileSync(path.join(pofDir, "other.bin.disasm.asm"), "mov eax, eax");
+    fs.writeFileSync(path.join(mockStorageDir, "ghost.bin.disasm.asm"), "nop");
+    fs.writeFileSync(path.join(mockStorageDir, "ghost.bin.disasm.mapping.json"), "{}");
+    fs.writeFileSync(path.join(mockStorageDir, "other.bin.disasm.asm"), "mov eax, eax");
 
     const staleCacheDir = path.join(cacheDir, "ghost-cache");
     const okCacheDir = path.join(cacheDir, "other-cache");
@@ -307,11 +294,11 @@ describe("fileManager", () => {
       },
     });
 
-    const result = fileManager.cleanupForBinary(tempRoot, missingBinary);
+    const result = fileManager.cleanupForBinary(mockStorageDir, missingBinary, { root: tempRoot });
     expect(result.total).to.be.greaterThan(0);
-    expect(fs.existsSync(path.join(pofDir, "ghost.bin.disasm.asm"))).to.equal(false);
-    expect(fs.existsSync(path.join(pofDir, "ghost.bin.disasm.mapping.json"))).to.equal(false);
-    expect(fs.existsSync(path.join(pofDir, "other.bin.disasm.asm"))).to.equal(true);
+    expect(fs.existsSync(path.join(mockStorageDir, "ghost.bin.disasm.asm"))).to.equal(false);
+    expect(fs.existsSync(path.join(mockStorageDir, "ghost.bin.disasm.mapping.json"))).to.equal(false);
+    expect(fs.existsSync(path.join(mockStorageDir, "other.bin.disasm.asm"))).to.equal(true);
     expect(fs.existsSync(staleCacheDir)).to.equal(false);
     expect(fs.existsSync(okCacheDir)).to.equal(true);
     expect(fs.existsSync(path.join(decompileDir, "ghost.json"))).to.equal(false);
