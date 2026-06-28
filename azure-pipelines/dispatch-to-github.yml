@@ -1,0 +1,92 @@
+# Azure Pipeline — Dispatch ticket vers GitHub Actions
+#
+# Déclenché par un Service Hook AzDO "Work item updated → State = Active"
+# Appelle l'API GitHub repository_dispatch sur le bon repo.
+#
+# Variables requises (Variable Group "github-dispatch") :
+#   GITHUB_PAT   : GitHub PAT avec scope repo + workflow
+#   GITHUB_ORG   : PileOuFaces
+#
+# Paramètres passés par le Service Hook (via triggerInfo ou variables) :
+#   WORK_ITEM_ID, WORK_ITEM_TITLE, WORK_ITEM_DESC,
+#   WORK_ITEM_ACCEPTANCE, WORK_ITEM_REPO, WORK_ITEM_AREA
+
+trigger: none  # déclenché uniquement par Service Hook
+
+parameters:
+  - name: work_item_id
+    type: string
+    default: ''
+  - name: work_item_title
+    type: string
+    default: ''
+  - name: work_item_description
+    type: string
+    default: ''
+  - name: work_item_acceptance
+    type: string
+    default: ''
+  - name: work_item_repo
+    type: string
+    default: 'Pile_Ou_Face'
+    values:
+      - Pile_Ou_Face
+      - Pile_ou_Face_plugins
+      - Pile_ou_Face_web
+      - Pile_ou_Face_auth
+      - Pile_ou_Face_documentation
+  - name: work_item_area
+    type: string
+    default: ''
+
+variables:
+  - group: github-dispatch
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+  - checkout: none
+
+  - bash: |
+      echo "Dispatching ticket AZ-#${{ parameters.work_item_id }} to ${{ parameters.work_item_repo }}"
+
+      # Encode le payload en JSON proprement via python3
+      PAYLOAD=$(python3 -c "
+      import json, sys
+      payload = {
+          'event_type': 'azdo-ticket-active',
+          'client_payload': {
+              'work_item_id': '${{ parameters.work_item_id }}',
+              'title':        '''${{ parameters.work_item_title }}''',
+              'description':  '''${{ parameters.work_item_description }}''',
+              'acceptance':   '''${{ parameters.work_item_acceptance }}''',
+              'repo':         '${{ parameters.work_item_repo }}',
+              'area':         '${{ parameters.work_item_area }}'
+          }
+      }
+      print(json.dumps(payload))
+      ")
+
+      HTTP_STATUS=$(curl -s -o /tmp/gh_response.json -w "%{http_code}" \
+        -X POST \
+        -H "Authorization: Bearer $(GITHUB_PAT)" \
+        -H "Accept: application/vnd.github.v3+json" \
+        -H "Content-Type: application/json" \
+        "https://api.github.com/repos/$(GITHUB_ORG)/${{ parameters.work_item_repo }}/dispatches" \
+        -d "$PAYLOAD")
+
+      echo "GitHub API response: $HTTP_STATUS"
+      cat /tmp/gh_response.json
+
+      if [ "$HTTP_STATUS" != "204" ]; then
+        echo "##vso[task.logissue type=error]Dispatch failed with HTTP $HTTP_STATUS"
+        exit 1
+      fi
+
+      echo "##vso[task.setvariable variable=dispatch_status]success"
+      echo "Dispatched successfully — GitHub Actions will create the branch and PR."
+    displayName: Dispatch ticket to GitHub Actions
+    env:
+      GITHUB_PAT: $(GITHUB_PAT)
+      GITHUB_ORG: $(GITHUB_ORG)
