@@ -108,10 +108,15 @@ function activate(context) {
     });
   }
 
-  // Migration one-shot depuis l'ancien .pile-ou-face/
-  if (folders && folders.length > 0) {
+  // Migration one-shot depuis l'ancien .pile-ou-face/ (ne tourne qu'une fois)
+  if (!context.globalState.get('pof-storage-migration-v1') && folders && folders.length > 0) {
     const legacyRoot = resolveProjectRoot(folders[0].uri.fsPath);
-    _migrateFromLegacyPofDir(legacyRoot, storageDir, globalDir);
+    try {
+      _migrateFromLegacyPofDir(legacyRoot, storageDir, globalDir);
+      context.globalState.update('pof-storage-migration-v1', true);
+    } catch (migErr) {
+      logChannel.appendLine(`[storage] Migration error (non-fatal): ${migErr.message || migErr}`);
+    }
   }
 
   // checkDecompilerDeps supprimé : l'install est proposé à la demande via le dropdown
