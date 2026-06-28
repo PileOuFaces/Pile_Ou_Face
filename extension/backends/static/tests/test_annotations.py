@@ -10,7 +10,11 @@ ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backends.static.annotations.annotations import AnnotationStore, KIND_COMMENT, KIND_RENAME
+from backends.static.annotations.annotations import (
+    KIND_COMMENT,
+    KIND_RENAME,
+    AnnotationStore,
+)
 
 
 class TestAnnotationStore(unittest.TestCase):

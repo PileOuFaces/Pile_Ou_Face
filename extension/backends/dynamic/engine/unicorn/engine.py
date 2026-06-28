@@ -3,8 +3,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 from backends.dynamic.core.interfaces import ExecutionEngine, TraceConfigLike
 from backends.dynamic.core.types import TraceResult
 
@@ -18,7 +16,7 @@ class UnicornExecutionEngine:
         self,
         code_bytes: bytes,
         config: TraceConfigLike,
-        binary_path: Optional[str],
+        binary_path: str | None,
     ) -> TraceResult:
         from .tracer import trace_binary
 

@@ -49,7 +49,7 @@ def decode_instruction(code_bytes: bytes, addr: int, arch_bits: int) -> dict[str
             "text": text,
         }
 
-    from capstone import Cs, CS_ARCH_X86, CS_MODE_32, CS_MODE_64  # type: ignore
+    from capstone import CS_ARCH_X86, CS_MODE_32, CS_MODE_64, Cs  # type: ignore
 
     mode = CS_MODE_64 if arch_bits == 64 else CS_MODE_32
     disasm = Cs(CS_ARCH_X86, mode)

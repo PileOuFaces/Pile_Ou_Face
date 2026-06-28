@@ -20,17 +20,16 @@ Capture un modele d'execution coherent par step:
 from __future__ import annotations
 
 import re
-from typing import Any, List, Optional
+from typing import Any
 
 from unicorn import UcError
 
 from .disasm import decode_instruction
 
-
 DIRECT_ADDR_RE = re.compile(r"(?<![\w])(?:0x[0-9a-fA-F]+|\d+)(?![\w])")
 
 
-def _hex(value: Optional[int]) -> Optional[str]:
+def _hex(value: int | None) -> str | None:
     if value is None:
         return None
     return hex(int(value))
@@ -72,7 +71,7 @@ class SnapshotCollector:
         sp_reg: int,
         rbp_reg: int,
         pc_reg: int,
-        external_state: Optional[dict] = None,
+        external_state: dict | None = None,
     ) -> None:
         self._config = config
         self._reg_order = reg_order
@@ -83,9 +82,9 @@ class SnapshotCollector:
         self._stack_start = int(config.stack_base)
         self._stack_end = int(config.stack_base + config.stack_size)
         self._external_state = external_state if external_state is not None else {}
-        self.snapshots: List[dict] = []
+        self.snapshots: list[dict] = []
         self.step = 0
-        self._pending: Optional[dict[str, Any]] = None
+        self._pending: dict[str, Any] | None = None
 
     def _in_capture_ranges(self, addr: int) -> bool:
         ranges = self._config.capture_ranges
@@ -102,7 +101,7 @@ class SnapshotCollector:
                 continue
         return regs
 
-    def _register_aliases(self) -> dict[str, Optional[str]]:
+    def _register_aliases(self) -> dict[str, str | None]:
         if self._config.arch_bits == 32:
             return {"sp": "esp", "bp": "ebp", "fp": "ebp", "ip": "eip", "lr": None}
         return {"sp": "rsp", "bp": "rbp", "fp": "rbp", "ip": "rip", "lr": None}
@@ -113,7 +112,7 @@ class SnapshotCollector:
         }
 
     def _legacy_register_items(
-        self, regs: dict[str, int], instruction_addr: Optional[int]
+        self, regs: dict[str, int], instruction_addr: int | None
     ) -> list[dict]:
         items = []
         for idx, (name, _reg_id) in enumerate(self._reg_order):
@@ -157,7 +156,7 @@ class SnapshotCollector:
         data: bytes | None = None,
         *,
         source: str = "runtime",
-    ) -> Optional[dict]:
+    ) -> dict | None:
         if size <= 0 or not self._is_stack_access(addr, size):
             return None
         clipped_start = max(addr, self._stack_start)
@@ -197,7 +196,13 @@ class SnapshotCollector:
         self._pending[kind].append(entry)
 
     def hook_mem_read(
-        self, uc_engine, _access, address: int, size: int, _value: int, _user_data: object
+        self,
+        uc_engine,
+        _access,
+        address: int,
+        size: int,
+        _value: int,
+        _user_data: object,
     ) -> bool:
         if self._pending is None:
             return True
@@ -206,7 +211,13 @@ class SnapshotCollector:
         return True
 
     def hook_mem_write(
-        self, _uc_engine, _access, address: int, size: int, value: int, _user_data: object
+        self,
+        _uc_engine,
+        _access,
+        address: int,
+        size: int,
+        value: int,
+        _user_data: object,
     ) -> bool:
         if self._pending is None:
             return True
@@ -220,7 +231,7 @@ class SnapshotCollector:
         self._record_access("writes", address, size, data)
         return True
 
-    def _consume_external_event(self, addr: int) -> Optional[dict]:
+    def _consume_external_event(self, addr: int) -> dict | None:
         events = self._external_state.get("events_by_addr")
         if not isinstance(events, dict):
             return None
@@ -232,7 +243,9 @@ class SnapshotCollector:
             events.pop(addr, None)
         return event if isinstance(event, dict) else None
 
-    def _merge_access_lists(self, runtime: list[dict], synthetic: list[dict], kind: str) -> list[dict]:
+    def _merge_access_lists(
+        self, runtime: list[dict], synthetic: list[dict], kind: str
+    ) -> list[dict]:
         merged = list(runtime)
         for entry in synthetic:
             if not isinstance(entry, dict):
@@ -248,7 +261,7 @@ class SnapshotCollector:
             )
         return merged
 
-    def _parse_direct_target(self, instruction: dict) -> Optional[int]:
+    def _parse_direct_target(self, instruction: dict) -> int | None:
         mnemonic = str(instruction.get("mnemonic") or "").lower()
         if mnemonic not in {"call", "jmp"} and not mnemonic.startswith("j"):
             return None
@@ -262,7 +275,9 @@ class SnapshotCollector:
         except ValueError:
             return None
 
-    def _effect_kind(self, instruction: dict, writes: list[dict], reads: list[dict]) -> str:
+    def _effect_kind(
+        self, instruction: dict, writes: list[dict], reads: list[dict]
+    ) -> str:
         mnemonic = str(instruction.get("mnemonic") or "").lower()
         operands = str(instruction.get("operands") or "").lower()
         if mnemonic == "push":
@@ -293,16 +308,22 @@ class SnapshotCollector:
         before_regs: dict[str, int],
         after_regs: dict[str, int],
         accesses: list[dict],
-    ) -> tuple[Optional[int], bytes]:
+    ) -> tuple[int | None, bytes]:
         points: list[int] = []
-        default_size = max(self._config.stack_entries * self._word_size, self._word_size * 16)
+        default_size = max(
+            self._config.stack_entries * self._word_size, self._word_size * 16
+        )
         margin = max(self._word_size * 4, 0x20)
 
         for reg_name in ("rsp", "rbp", "esp", "ebp"):
             if reg_name in before_regs:
-                points.extend([before_regs[reg_name], before_regs[reg_name] + self._word_size])
+                points.extend(
+                    [before_regs[reg_name], before_regs[reg_name] + self._word_size]
+                )
             if reg_name in after_regs:
-                points.extend([after_regs[reg_name], after_regs[reg_name] + self._word_size])
+                points.extend(
+                    [after_regs[reg_name], after_regs[reg_name] + self._word_size]
+                )
 
         bp_after = after_regs.get("rbp") or after_regs.get("ebp")
         bp_before = before_regs.get("rbp") or before_regs.get("ebp")
@@ -352,7 +373,7 @@ class SnapshotCollector:
         return start, _safe_read_bytes(uc_engine, start, end - start)
 
     def _legacy_stack_items(
-        self, window_start: Optional[int], window_bytes: bytes, active_sp: Optional[int]
+        self, window_start: int | None, window_bytes: bytes, active_sp: int | None
     ) -> list[dict]:
         if window_start is None or not window_bytes:
             return []
@@ -381,7 +402,7 @@ class SnapshotCollector:
         after_regs: dict[str, int],
         reads: list[dict],
         writes: list[dict],
-        external_event: Optional[dict],
+        external_event: dict | None,
     ) -> dict[str, Any]:
         before_regs = pending["before_regs"]
         instruction = pending["instruction"]
@@ -410,12 +431,22 @@ class SnapshotCollector:
 
         return {
             "kind": self._effect_kind(instruction, writes, reads),
-            "sp_delta": (after_sp - before_sp) if after_sp is not None and before_sp is not None else None,
-            "frame_delta": (after_bp - before_bp) if after_bp is not None and before_bp is not None else None,
+            "sp_delta": (after_sp - before_sp)
+            if after_sp is not None and before_sp is not None
+            else None,
+            "frame_delta": (after_bp - before_bp)
+            if after_bp is not None and before_bp is not None
+            else None,
             "branch_taken": branch_taken,
-            "call_target": _hex(external_target if external_target is not None else direct_target),
-            "external_simulated": bool(external_event and external_event.get("external_simulated")),
-            "external_symbol": external_event.get("external_symbol") if external_event else None,
+            "call_target": _hex(
+                external_target if external_target is not None else direct_target
+            ),
+            "external_simulated": bool(
+                external_event and external_event.get("external_simulated")
+            ),
+            "external_symbol": external_event.get("external_symbol")
+            if external_event
+            else None,
         }
 
     def _start_pending(self, uc_engine, addr: int, size: int) -> None:
@@ -460,7 +491,9 @@ class SnapshotCollector:
         if active_sp is None and sp_name:
             active_sp = pending["before_regs"].get(sp_name)
 
-        effects = self._build_effects(pending, after_regs, reads, writes, external_event)
+        effects = self._build_effects(
+            pending, after_regs, reads, writes, external_event
+        )
         instruction_addr = int(pending["addr"])
         snapshot = {
             "step": pending["step"],
@@ -476,7 +509,9 @@ class SnapshotCollector:
             },
             "memory": {
                 "window_start": _hex(window_start),
-                "window_end": _hex(window_start + len(window_bytes)) if window_start is not None else None,
+                "window_end": _hex(window_start + len(window_bytes))
+                if window_start is not None
+                else None,
                 "window_bytes": _bytes_to_hex(window_bytes),
                 "stack_window_bytes": len(window_bytes),
                 "reads": reads,
@@ -503,7 +538,9 @@ class SnapshotCollector:
         if self._pending is not None:
             self.finalize_pending(uc_engine)
 
-        stop_here = self._config.stop_addr is not None and addr == self._config.stop_addr
+        stop_here = (
+            self._config.stop_addr is not None and addr == self._config.stop_addr
+        )
 
         # Memory patches apply to the new instruction context, not to the previous step.
         self._apply_memory_patches(uc_engine, addr)

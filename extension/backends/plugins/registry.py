@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
 
 from backends.shared.log import get_logger
 
@@ -92,7 +92,9 @@ def _parse_version(version: str) -> tuple[int, ...]:
     return tuple(items)
 
 
-def _is_version_compatible(host_version: str, min_version: str, max_version: str) -> bool:
+def _is_version_compatible(
+    host_version: str, min_version: str, max_version: str
+) -> bool:
     host_tuple = _parse_version(host_version)
     if min_version and host_tuple < _parse_version(min_version):
         return False
@@ -116,7 +118,9 @@ def build_plugin_registry(
     api_version: int = 1,
     disabled_plugin_ids: Iterable[str] | None = None,
 ) -> list[PluginRecord]:
-    disabled = {str(item).strip() for item in (disabled_plugin_ids or []) if str(item).strip()}
+    disabled = {
+        str(item).strip() for item in (disabled_plugin_ids or []) if str(item).strip()
+    }
     records: list[PluginRecord] = []
     seen_ids: set[str] = set()
 
@@ -196,7 +200,9 @@ def build_plugin_registry(
     return records
 
 
-def get_plugin_record(records: Iterable[PluginRecord], plugin_id: str) -> PluginRecord | None:
+def get_plugin_record(
+    records: Iterable[PluginRecord], plugin_id: str
+) -> PluginRecord | None:
     plugin_id = str(plugin_id or "").strip()
     for record in records:
         if record.plugin_id == plugin_id:

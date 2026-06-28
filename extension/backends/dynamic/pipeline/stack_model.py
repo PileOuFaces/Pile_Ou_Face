@@ -12,7 +12,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 try:
     from backends.static.binary.symbols import extract_symbols
@@ -44,7 +44,7 @@ SIGNED_HEX_RE = re.compile(r"^[+-]?0x[0-9a-fA-F]+$")
 SIGNED_DEC_RE = re.compile(r"^[+-]?\d+$")
 
 
-def _parse_int(value: Any) -> Optional[int]:
+def _parse_int(value: Any) -> int | None:
     if value is None:
         return None
     if isinstance(value, bool):
@@ -68,7 +68,7 @@ def _parse_int(value: Any) -> Optional[int]:
     return None
 
 
-def _hex(value: Optional[int]) -> Optional[str]:
+def _hex(value: int | None) -> str | None:
     if value is None:
         return None
     if value < 0:
@@ -76,7 +76,7 @@ def _hex(value: Optional[int]) -> Optional[str]:
     return f"0x{value:x}"
 
 
-def _signed_hex(value: Optional[int]) -> Optional[str]:
+def _signed_hex(value: int | None) -> str | None:
     if value is None:
         return None
     if value == 0:
@@ -151,7 +151,9 @@ def _normalize_reg_map(snapshot: dict, stage: str = "after") -> dict[str, int]:
                 out[str(key).lower()] = iv
         return out
 
-    legacy = snapshot.get("registers") if isinstance(snapshot.get("registers"), list) else []
+    legacy = (
+        snapshot.get("registers") if isinstance(snapshot.get("registers"), list) else []
+    )
     out = {}
     for entry in legacy:
         name = str(entry.get("name") or "").lower()
@@ -163,14 +165,16 @@ def _normalize_reg_map(snapshot: dict, stage: str = "after") -> dict[str, int]:
     return out
 
 
-def _memory_window(snapshot: dict) -> tuple[Optional[int], list[int]]:
+def _memory_window(snapshot: dict) -> tuple[int | None, list[int]]:
     memory = snapshot.get("memory") if isinstance(snapshot.get("memory"), dict) else {}
     start = _parse_int(memory.get("window_start"))
     data = _parse_hex_bytes(memory.get("window_bytes"))
     if start is not None and data:
         return start, data
 
-    stack_items = snapshot.get("stack") if isinstance(snapshot.get("stack"), list) else []
+    stack_items = (
+        snapshot.get("stack") if isinstance(snapshot.get("stack"), list) else []
+    )
     if not stack_items:
         return None, []
     first_addr = _parse_int(stack_items[0].get("addr"))
@@ -224,18 +228,33 @@ def _aligned_up(value: int, align: int) -> int:
 
 
 # Functions known to write user-controlled data into a buffer destination.
-_BUFFER_SINK_FUNCS: frozenset[str] = frozenset({
-    "strcpy", "strncpy", "gets", "fgets", "read", "scanf",
-    "sscanf", "fscanf", "memcpy", "memset", "sprintf", "snprintf",
-    "recv", "recvfrom",
-})
+_BUFFER_SINK_FUNCS: frozenset[str] = frozenset(
+    {
+        "strcpy",
+        "strncpy",
+        "gets",
+        "fgets",
+        "read",
+        "scanf",
+        "sscanf",
+        "fscanf",
+        "memcpy",
+        "memset",
+        "sprintf",
+        "snprintf",
+        "recv",
+        "recvfrom",
+    }
+)
 
 
-def _has_buffer_evidence(snapshot: dict, bp: Optional[int], meta: dict) -> bool:
+def _has_buffer_evidence(snapshot: dict, bp: int | None, meta: dict) -> bool:
     """Return True when there is strong evidence that a stack region is a writable buffer."""
     if meta.get("buffer_offset") is not None:
         return True
-    effects = snapshot.get("effects") if isinstance(snapshot.get("effects"), dict) else {}
+    effects = (
+        snapshot.get("effects") if isinstance(snapshot.get("effects"), dict) else {}
+    )
     if str(effects.get("external_symbol") or "").lower() in _BUFFER_SINK_FUNCS:
         return True
     if bp is None:
@@ -272,8 +291,12 @@ def _instruction_text(snapshot: dict) -> str:
     return str(snapshot.get("instr") or "").strip()
 
 
-def _function_cache_key(function_info: Optional[dict], snapshot: dict) -> Optional[str]:
-    addr = _parse_int(function_info.get("addr")) if isinstance(function_info, dict) else None
+def _function_cache_key(function_info: dict | None, snapshot: dict) -> str | None:
+    addr = (
+        _parse_int(function_info.get("addr"))
+        if isinstance(function_info, dict)
+        else None
+    )
     if addr is not None:
         return f"addr:{addr:x}"
     name = ""
@@ -285,7 +308,7 @@ def _function_cache_key(function_info: Optional[dict], snapshot: dict) -> Option
 
 
 def _is_plausible_frame_bp(
-    bp: Optional[int],
+    bp: int | None,
     snapshot: dict,
     meta: dict,
     word_size: int,
@@ -315,8 +338,8 @@ def _select_frame_base_pointer(
     meta: dict,
     arch_bits: int,
     word_size: int,
-    stable_bp: Optional[int],
-) -> Optional[int]:
+    stable_bp: int | None,
+) -> int | None:
     regs_after = _normalize_reg_map(snapshot, "after")
     regs_before = _normalize_reg_map(snapshot, "before")
     aliases = _register_aliases(regs_after or regs_before, arch_bits)
@@ -346,12 +369,16 @@ def _instruction_mnemonic(snapshot: dict) -> str:
     return text.split(" ", 1)[0].lower() if text else ""
 
 
-def _access_summary(accesses: list[dict]) -> Optional[str]:
+def _access_summary(accesses: list[dict]) -> str | None:
     if not accesses:
         return None
     starts = [_parse_int(access.get("addr")) for access in accesses]
     sizes = [_parse_int(access.get("size")) or 0 for access in accesses]
-    valid = [(start, size) for start, size in zip(starts, sizes) if start is not None]
+    valid = [
+        (start, size)
+        for start, size in zip(starts, sizes, strict=False)
+        if start is not None
+    ]
     if not valid:
         return None
     first = min(start for start, _ in valid)
@@ -367,12 +394,12 @@ class StaticTraceResolver:
         self.binary_path = binary_path
         self.meta = meta
         self.disasm_lines = disasm_lines
-        self._symbols: Optional[list[dict]] = None
-        self._function_ranges: Optional[list[tuple[int, Optional[int], dict]]] = None
+        self._symbols: list[dict] | None = None
+        self._function_ranges: list[tuple[int, int | None, dict]] | None = None
         self._stack_frames: dict[int, dict] = {}
         self._conventions: dict[int, dict] = {}
-        self._annotation_names: Optional[dict[int, str]] = None
-        self._annotation_comments: Optional[dict[int, str]] = None
+        self._annotation_names: dict[int, str] | None = None
+        self._annotation_comments: dict[int, str] | None = None
         addresses = [_parse_int(line.get("addr")) for line in disasm_lines]
         valid = [addr for addr in addresses if addr is not None]
         self.code_min = min(valid) if valid else None
@@ -380,7 +407,9 @@ class StaticTraceResolver:
         self.stack_base = _parse_int(meta.get("stack_base"))
         stack_size = _parse_int(meta.get("stack_size")) or 0
         self.stack_end = (
-            self.stack_base + stack_size if self.stack_base is not None and stack_size > 0 else None
+            self.stack_base + stack_size
+            if self.stack_base is not None and stack_size > 0
+            else None
         )
         # For PIE binaries, snapshot RIP values include the load base but symbol
         # addresses from extract_symbols are ELF-relative. Subtract the base before
@@ -439,7 +468,7 @@ class StaticTraceResolver:
             self._symbols = []
         return self._symbols
 
-    def _load_function_ranges(self) -> list[tuple[int, Optional[int], dict]]:
+    def _load_function_ranges(self) -> list[tuple[int, int | None, dict]]:
         if self._function_ranges is not None:
             return self._function_ranges
         functions = []
@@ -453,7 +482,7 @@ class StaticTraceResolver:
             size = _parse_int(symbol.get("size"))
             functions.append((addr, size if size and size > 0 else None, symbol))
         functions.sort(key=lambda item: item[0])
-        ranges: list[tuple[int, Optional[int], dict]] = []
+        ranges: list[tuple[int, int | None, dict]] = []
         for index, (addr, size, symbol) in enumerate(functions):
             next_addr = functions[index + 1][0] if index + 1 < len(functions) else None
             end = addr + size if size is not None else next_addr
@@ -463,14 +492,18 @@ class StaticTraceResolver:
         self._function_ranges = ranges
         return ranges
 
-    def resolve_function(self, ip: Optional[int], fallback_name: str | None = None) -> Optional[dict]:
+    def resolve_function(
+        self, ip: int | None, fallback_name: str | None = None
+    ) -> dict | None:
         if ip is None:
             return None
         # Normalize PIE-rebased runtime addresses to ELF-relative before lookup.
         # Symbol ranges come from extract_symbols which returns ELF-relative addresses.
         # Without this, a rebased address like 0x401d4d always falls past every known
         # symbol range, causing _fini (the last symbol, end=None) to match everything.
-        normalized = ip - self.load_base if self.load_base > 0 and ip >= self.load_base else ip
+        normalized = (
+            ip - self.load_base if self.load_base > 0 and ip >= self.load_base else ip
+        )
         for start, end, symbol in self._load_function_ranges():
             if normalized < start:
                 break
@@ -485,7 +518,7 @@ class StaticTraceResolver:
                     return dict(symbol)
         return None
 
-    def frame_for_function(self, func_addr: Optional[int]) -> dict:
+    def frame_for_function(self, func_addr: int | None) -> dict:
         if func_addr is None:
             return {}
         if func_addr in self._stack_frames:
@@ -500,7 +533,7 @@ class StaticTraceResolver:
             self._stack_frames[func_addr] = {}
         return self._stack_frames[func_addr]
 
-    def convention_for_function(self, func_addr: Optional[int]) -> Optional[dict]:
+    def convention_for_function(self, func_addr: int | None) -> dict | None:
         if func_addr is None:
             return None
         if func_addr in self._conventions:
@@ -510,26 +543,32 @@ class StaticTraceResolver:
             return None
         try:
             payload = analyze_calling_conventions(self.binary_path, [func_addr])
-            conventions = payload.get("conventions") if isinstance(payload, dict) else {}
-            entry = conventions.get(_hex(func_addr) or "") if isinstance(conventions, dict) else {}
+            conventions = (
+                payload.get("conventions") if isinstance(payload, dict) else {}
+            )
+            entry = (
+                conventions.get(_hex(func_addr) or "")
+                if isinstance(conventions, dict)
+                else {}
+            )
             self._conventions[func_addr] = entry if isinstance(entry, dict) else {}
         except Exception:
             self._conventions[func_addr] = {}
         return self._conventions[func_addr] or None
 
-    def rename_for(self, addr: Optional[int]) -> Optional[str]:
+    def rename_for(self, addr: int | None) -> str | None:
         if addr is None:
             return None
         names, _ = self._load_annotations()
         return names.get(addr)
 
-    def comment_for(self, addr: Optional[int]) -> Optional[str]:
+    def comment_for(self, addr: int | None) -> str | None:
         if addr is None:
             return None
         _, comments = self._load_annotations()
         return comments.get(addr)
 
-    def pointer_kind(self, value: Optional[int]) -> Optional[str]:
+    def pointer_kind(self, value: int | None) -> str | None:
         if value is None:
             return None
         if self.stack_base is not None and self.stack_end is not None:
@@ -541,7 +580,7 @@ class StaticTraceResolver:
         return None
 
 
-def _register_aliases(regs: dict[str, int], arch_bits: int) -> dict[str, Optional[str]]:
+def _register_aliases(regs: dict[str, int], arch_bits: int) -> dict[str, str | None]:
     if arch_bits == 32:
         return {"sp": "esp", "bp": "ebp", "ip": "eip", "fp": "ebp", "lr": None}
     sp = "rsp" if "rsp" in regs else "sp" if "sp" in regs else None
@@ -557,8 +596,8 @@ def _region_entry(
     role: str,
     label: str,
     source: str,
-    offset: Optional[int] = None,
-    size: Optional[int] = None,
+    offset: int | None = None,
+    size: int | None = None,
     confidence: float = 0.9,
 ) -> dict:
     return {
@@ -573,7 +612,7 @@ def _region_entry(
     }
 
 
-def _guess_buffer_region(frame: dict, bp: Optional[int], meta: dict) -> Optional[dict]:
+def _guess_buffer_region(frame: dict, bp: int | None, meta: dict) -> dict | None:
     if bp is None:
         return None
     buffer_offset = _parse_int(meta.get("buffer_offset"))
@@ -589,7 +628,11 @@ def _guess_buffer_region(frame: dict, bp: Optional[int], meta: dict) -> Optional
                 buffer_size = size
                 break
         can_trust_trace_offset = matched_entry is not None or not frame_vars
-        if can_trust_trace_offset and buffer_size > 0 and (buffer_offset + buffer_size) <= 0:
+        if (
+            can_trust_trace_offset
+            and buffer_size > 0
+            and (buffer_offset + buffer_size) <= 0
+        ):
             start = bp + buffer_offset
             label = f"local_buf_{buffer_size:x}h"
             if isinstance(matched_entry, dict):
@@ -635,7 +678,9 @@ def _guess_buffer_region(frame: dict, bp: Optional[int], meta: dict) -> Optional
     return best[2] if best else None
 
 
-def _static_regions(frame: dict, bp: Optional[int], word_size: int, meta: dict) -> list[dict]:
+def _static_regions(
+    frame: dict, bp: int | None, word_size: int, meta: dict
+) -> list[dict]:
     if bp is None:
         return []
     regions: list[dict] = []
@@ -710,10 +755,10 @@ def _static_regions(frame: dict, bp: Optional[int], word_size: int, meta: dict) 
 
 def _runtime_buffer_region(
     snapshot: dict,
-    bp: Optional[int],
+    bp: int | None,
     word_size: int,
-    existing_buffer: Optional[dict],
-) -> Optional[dict]:
+    existing_buffer: dict | None,
+) -> dict | None:
     if bp is None:
         return existing_buffer
     writes = _access_list(snapshot, "writes")
@@ -758,13 +803,13 @@ def _runtime_buffer_region(
 
 def _window_bounds(
     snapshot: dict,
-    prev_snapshot: Optional[dict],
+    prev_snapshot: dict | None,
     frame_regions: list[dict],
     regs_after: dict[str, int],
     regs_before: dict[str, int],
     word_size: int,
     meta: dict,
-) -> tuple[Optional[int], Optional[int]]:
+) -> tuple[int | None, int | None]:
     start, data = _memory_window(snapshot)
     if start is not None and data:
         return start, start + len(data)
@@ -794,7 +839,9 @@ def _window_bounds(
     end = _aligned_up(max(points) + margin, word_size)
     stack_base = _parse_int(meta.get("stack_base"))
     stack_size = _parse_int(meta.get("stack_size")) or 0
-    stack_end = stack_base + stack_size if stack_base is not None and stack_size > 0 else None
+    stack_end = (
+        stack_base + stack_size if stack_base is not None and stack_size > 0 else None
+    )
     if stack_base is not None:
         start = max(stack_base, start)
     if stack_end is not None:
@@ -804,7 +851,7 @@ def _window_bounds(
     return start, end
 
 
-def _value_display(data: list[int], pointer_kind: Optional[str]) -> str:
+def _value_display(data: list[int], pointer_kind: str | None) -> str:
     if _is_ascii_candidate(data):
         text = _bytes_to_ascii(data).rstrip(".")
         return f'"{text[:24]}"'
@@ -824,20 +871,25 @@ def _slot_flags(
     resolver: StaticTraceResolver,
     writes: list[dict],
     reads: list[dict],
-    buffer_region: Optional[dict],
-) -> tuple[list[str], bool, bool, bool, Optional[str]]:
+    buffer_region: dict | None,
+) -> tuple[list[str], bool, bool, bool, str | None]:
     recent_write = any(
         (addr := _parse_int(access.get("addr"))) is not None
-        and _overlaps(start, end, addr, addr + max(1, _parse_int(access.get("size")) or 1))
+        and _overlaps(
+            start, end, addr, addr + max(1, _parse_int(access.get("size")) or 1)
+        )
         for access in writes
     )
     recent_read = any(
         (addr := _parse_int(access.get("addr"))) is not None
-        and _overlaps(start, end, addr, addr + max(1, _parse_int(access.get("size")) or 1))
+        and _overlaps(
+            start, end, addr, addr + max(1, _parse_int(access.get("size")) or 1)
+        )
         for access in reads
     )
     changed = bool(prev_map) and any(
-        prev_map.get(address) != byte for address, byte in zip(range(start, end), data)
+        prev_map.get(address) != byte
+        for address, byte in zip(range(start, end), data, strict=False)
     )
     flags: list[str] = []
     if recent_write:
@@ -865,10 +917,14 @@ def _slot_flags(
         # Only flag corruption when the slot was actually touched — avoids false
         # positives before the frame prologue is complete or when the initial
         # saved-RBP value happens to be out of the stack window.
-        corrupted = (recent_write or changed) and resolver.pointer_kind(pointer) != "stack"
+        corrupted = (recent_write or changed) and resolver.pointer_kind(
+            pointer
+        ) != "stack"
     elif role == "return_address":
         pointer = _little_int(data) if len(data) in (4, 8) else None
-        corrupted = (recent_write or changed) and resolver.pointer_kind(pointer) != "code"
+        corrupted = (recent_write or changed) and resolver.pointer_kind(
+            pointer
+        ) != "code"
     elif buffer_region is not None and start >= buffer_region["end"]:
         corrupted = recent_write or changed
     if corrupted:
@@ -881,10 +937,14 @@ def _slot_role_label(
     start: int,
     end: int,
     regions: list[dict],
-    bp: Optional[int],
-    buffer_region: Optional[dict],
-) -> tuple[str, str, Optional[int], float, str]:
-    matches = [region for region in regions if _overlaps(start, end, region["start"], region["end"])]
+    bp: int | None,
+    buffer_region: dict | None,
+) -> tuple[str, str, int | None, float, str]:
+    matches = [
+        region
+        for region in regions
+        if _overlaps(start, end, region["start"], region["end"])
+    ]
     if matches:
         matches.sort(
             key=lambda region: (
@@ -911,9 +971,17 @@ def _slot_role_label(
         if buffer_region is not None and start >= buffer_region["end"]:
             return "padding", f"padding_{bp - start:x}h", start - bp, 0.55, "heuristic"
         return "unknown", f"stack_{bp - start:x}h", start - bp, 0.4, "heuristic"
-    if bp is not None and start >= bp + (8 if any(region["size"] == 8 for region in regions) else 4):
+    if bp is not None and start >= bp + (
+        8 if any(region["size"] == 8 for region in regions) else 4
+    ):
         return "argument", f"arg_{start - bp:x}", start - bp, 0.45, "heuristic"
-    return "unknown", f"slot_{start:x}", start - bp if bp is not None else None, 0.25, "memory"
+    return (
+        "unknown",
+        f"slot_{start:x}",
+        start - bp if bp is not None else None,
+        0.25,
+        "memory",
+    )
 
 
 def _assign_display_labels(slots: list[dict]) -> None:
@@ -947,11 +1015,11 @@ def _assign_display_labels(slots: list[dict]) -> None:
 
 def _build_slots(
     snapshot: dict,
-    prev_snapshot: Optional[dict],
+    prev_snapshot: dict | None,
     meta: dict,
     resolver: StaticTraceResolver,
-    function_info: Optional[dict],
-    frame_bp: Optional[int] = None,
+    function_info: dict | None,
+    frame_bp: int | None = None,
 ) -> dict:
     arch_bits = _parse_int(meta.get("arch_bits")) or 64
     word_size = _parse_int(meta.get("word_size")) or (8 if arch_bits == 64 else 4)
@@ -971,13 +1039,19 @@ def _build_slots(
     # Validate heuristic buffer: only keep "buffer" role when there is real evidence.
     # Without evidence, reclassify as local to avoid misleading the user.
     heuristic_buf = next(
-        (r for r in regions if r["role"] == "buffer" and r.get("source") == "heuristic"),
+        (
+            r
+            for r in regions
+            if r["role"] == "buffer" and r.get("source") == "heuristic"
+        ),
         None,
     )
     if heuristic_buf is not None and not _has_buffer_evidence(snapshot, bp, meta):
         heuristic_buf["role"] = "local"
 
-    buffer_region = next((region for region in regions if region["role"] == "buffer"), None)
+    buffer_region = next(
+        (region for region in regions if region["role"] == "buffer"), None
+    )
     runtime_buffer = _runtime_buffer_region(snapshot, bp, word_size, buffer_region)
     if runtime_buffer is not None and runtime_buffer is not buffer_region:
         regions = [region for region in regions if region["role"] != "buffer"]
@@ -1002,7 +1076,8 @@ def _build_slots(
                 "savedBpAddr": _hex(bp),
                 "retAddrAddr": _hex(bp + word_size) if bp is not None else None,
                 "registerArguments": [
-                    entry for entry in frame.get("args", [])
+                    entry
+                    for entry in frame.get("args", [])
                     if isinstance(entry, dict) and entry.get("offset") is None
                 ],
             },
@@ -1016,7 +1091,7 @@ def _build_slots(
 
     curr_map = _window_byte_map(snapshot)
     prev_map = _window_byte_map(prev_snapshot or {})
-    curr_data = [curr_map.get(address, 0) for address in range(window_start, window_end)]
+    [curr_map.get(address, 0) for address in range(window_start, window_end)]
     writes = _access_list(snapshot, "writes")
     reads = _access_list(snapshot, "reads")
 
@@ -1044,7 +1119,7 @@ def _build_slots(
     )
     slots = []
     roles_by_addr: dict[str, str] = {}
-    for left, right in zip(ordered, ordered[1:]):
+    for left, right in zip(ordered, ordered[1:], strict=False):
         if right <= left:
             continue
         data = [curr_map.get(address, 0) for address in range(left, right)]
@@ -1058,11 +1133,14 @@ def _build_slots(
         if role in ("unknown", "padding"):
             has_writes_here = any(
                 (wa := _parse_int(w.get("addr"))) is not None
-                and _overlaps(left, right, wa, wa + max(1, _parse_int(w.get("size")) or 1))
+                and _overlaps(
+                    left, right, wa, wa + max(1, _parse_int(w.get("size")) or 1)
+                )
                 for w in writes
             )
             has_changes_here = bool(prev_map) and any(
-                prev_map.get(addr) != curr_map.get(addr, 0) for addr in range(left, right)
+                prev_map.get(addr) != curr_map.get(addr, 0)
+                for addr in range(left, right)
             )
             if not has_writes_here and not has_changes_here:
                 continue
@@ -1150,7 +1228,8 @@ def _build_slots(
             "stackPointer": _hex(sp),
             "frameSize": _parse_int(frame.get("frame_size")) or 0,
             "registerArguments": [
-                entry for entry in frame.get("args", [])
+                entry
+                for entry in frame.get("args", [])
                 if isinstance(entry, dict) and entry.get("offset") is None
             ],
         },
@@ -1169,7 +1248,11 @@ def _build_slots(
                 (slot["valueHex"] for slot in slots if slot["role"] == "saved_bp"), None
             ),
             "retValue": next(
-                (slot["valueHex"] for slot in slots if slot["role"] == "return_address"),
+                (
+                    slot["valueHex"]
+                    for slot in slots
+                    if slot["role"] == "return_address"
+                ),
                 None,
             ),
         },
@@ -1182,11 +1265,15 @@ def _build_slots(
     }
 
 
-def _overflow_summary(analysis: dict) -> Optional[dict]:
+def _overflow_summary(analysis: dict) -> dict | None:
     frame = analysis.get("frame") if isinstance(analysis.get("frame"), dict) else {}
     slots = frame.get("slots") if isinstance(frame.get("slots"), list) else []
-    buffer = analysis.get("buffer") if isinstance(analysis.get("buffer"), dict) else None
-    control = analysis.get("control") if isinstance(analysis.get("control"), dict) else {}
+    buffer = (
+        analysis.get("buffer") if isinstance(analysis.get("buffer"), dict) else None
+    )
+    control = (
+        analysis.get("control") if isinstance(analysis.get("control"), dict) else {}
+    )
     delta = analysis.get("delta") if isinstance(analysis.get("delta"), dict) else {}
     if not buffer:
         return None
@@ -1201,7 +1288,8 @@ def _overflow_summary(analysis: dict) -> Optional[dict]:
     writes = delta.get("writes") if isinstance(delta.get("writes"), list) else []
     has_runtime_writes = bool(writes)
     buffer_touched = any(
-        slot.get("role") == "buffer" and (slot.get("recentWrite") or slot.get("changed"))
+        slot.get("role") == "buffer"
+        and (slot.get("recentWrite") or slot.get("changed"))
         for slot in slots
     )
     crossing_write = False
@@ -1233,18 +1321,24 @@ def _overflow_summary(analysis: dict) -> Optional[dict]:
             for slot in slots
             if (
                 slot.get("role") in {"saved_bp", "return_address"}
-                and (slot.get("recentWrite") or (crossing_write and slot.get("changed")))
+                and (
+                    slot.get("recentWrite") or (crossing_write and slot.get("changed"))
+                )
             )
         ]
         if control_corruption and crossing_write:
             touched = control_corruption
-            frontier = max(_parse_int(slot.get("end")) or buffer_end for slot in touched)
+            frontier = max(
+                _parse_int(slot.get("end")) or buffer_end for slot in touched
+            )
 
     if not touched or not (buffer_touched or crossing_write):
         return {
             "active": False,
             "bufferName": buffer.get("name"),
-            "distanceToSavedBp": saved_bp - buffer_end if saved_bp is not None else None,
+            "distanceToSavedBp": saved_bp - buffer_end
+            if saved_bp is not None
+            else None,
             "distanceToRet": ret_addr - buffer_end if ret_addr is not None else None,
             "reached": [],
             "frontier": _hex(buffer_end),
@@ -1276,14 +1370,22 @@ def _overflow_summary(analysis: dict) -> Optional[dict]:
 
 
 def _build_explanation(snapshot: dict, analysis: dict) -> list[str]:
-    instruction = snapshot.get("instruction") if isinstance(snapshot.get("instruction"), dict) else {}
-    effects = snapshot.get("effects") if isinstance(snapshot.get("effects"), dict) else {}
+    instruction = (
+        snapshot.get("instruction")
+        if isinstance(snapshot.get("instruction"), dict)
+        else {}
+    )
+    effects = (
+        snapshot.get("effects") if isinstance(snapshot.get("effects"), dict) else {}
+    )
     cpu = snapshot.get("cpu") if isinstance(snapshot.get("cpu"), dict) else {}
     aliases = cpu.get("aliases") if isinstance(cpu.get("aliases"), dict) else {}
     sp_name = aliases.get("sp") or "sp"
     bullets = []
 
-    text = str(instruction.get("text") or snapshot.get("instr") or "(instruction inconnue)")
+    text = str(
+        instruction.get("text") or snapshot.get("instr") or "(instruction inconnue)"
+    )
     bullets.append(f"Instruction: {text}")
 
     effect_kind = str(effects.get("kind") or "instruction")
@@ -1295,9 +1397,9 @@ def _build_explanation(snapshot: dict, analysis: dict) -> list[str]:
 
     effect_bits = [effect_kind.replace("_", " ")]
     if sp_delta:
-        effect_bits.append(f"{sp_name.upper()} { _signed_hex(sp_delta) }")
+        effect_bits.append(f"{sp_name.upper()} {_signed_hex(sp_delta)}")
     if frame_delta:
-        effect_bits.append(f"frame { _signed_hex(frame_delta) }")
+        effect_bits.append(f"frame {_signed_hex(frame_delta)}")
     if branch_taken is True:
         effect_bits.append("branche prise")
     elif branch_taken is False:
@@ -1317,7 +1419,9 @@ def _build_explanation(snapshot: dict, analysis: dict) -> list[str]:
     if changed_slots:
         bullets.append(f"Slots modifiés: {len(changed_slots)}")
 
-    overflow = analysis.get("overflow") if isinstance(analysis.get("overflow"), dict) else None
+    overflow = (
+        analysis.get("overflow") if isinstance(analysis.get("overflow"), dict) else None
+    )
     if overflow and overflow.get("active"):
         reached = ", ".join(overflow.get("reached") or []) or "données adjacentes"
         distance_saved = overflow.get("distanceToSavedBp")
@@ -1332,7 +1436,9 @@ def _build_explanation(snapshot: dict, analysis: dict) -> list[str]:
             + (f" ({', '.join(distance_bits)})" if distance_bits else "")
         )
 
-    control = analysis.get("control") if isinstance(analysis.get("control"), dict) else {}
+    control = (
+        analysis.get("control") if isinstance(analysis.get("control"), dict) else {}
+    )
     if control.get("savedBpValue"):
         bullets.append(
             f"Contrôle: saved BP={control.get('savedBpValue')} • RET={control.get('retValue') or 'n/a'}"
@@ -1352,8 +1458,8 @@ def _normalize_legacy_analysis(analysis: dict) -> dict:
 def build_dynamic_analysis(
     snapshots: list[dict],
     meta: dict,
-    binary_path: Optional[str],
-    disasm_lines: Optional[list[dict]] = None,
+    binary_path: str | None,
+    disasm_lines: list[dict] | None = None,
 ) -> dict[str, dict]:
     """Build per-step deterministic analysis for the dynamic visualizer."""
     if not binary_path or not snapshots:
@@ -1374,10 +1480,16 @@ def build_dynamic_analysis(
             or _parse_int(snapshot.get("rip"))
             or _parse_int(snapshot.get("eip"))
         )
-        function_info = resolver.resolve_function(ip, fallback_name=snapshot.get("func"))
+        function_info = resolver.resolve_function(
+            ip, fallback_name=snapshot.get("func")
+        )
         function_key = _function_cache_key(function_info, snapshot)
-        stable_bp = stable_frame_bp_by_function.get(function_key) if function_key else None
-        frame_bp = _select_frame_base_pointer(snapshot, meta, arch_bits, word_size, stable_bp)
+        stable_bp = (
+            stable_frame_bp_by_function.get(function_key) if function_key else None
+        )
+        frame_bp = _select_frame_base_pointer(
+            snapshot, meta, arch_bits, word_size, stable_bp
+        )
         if function_key and _is_plausible_frame_bp(frame_bp, snapshot, meta, word_size):
             stable_frame_bp_by_function[function_key] = int(frame_bp)
 
@@ -1394,6 +1506,8 @@ def build_dynamic_analysis(
         analysis["function"].setdefault("name", snapshot.get("func"))
         analysis["function"].setdefault("file", snapshot.get("file"))
         analysis["function"].setdefault("line", snapshot.get("line"))
-        analysis_by_step[str(snapshot.get("step") or index + 1)] = _normalize_legacy_analysis(analysis)
+        analysis_by_step[str(snapshot.get("step") or index + 1)] = (
+            _normalize_legacy_analysis(analysis)
+        )
 
     return analysis_by_step

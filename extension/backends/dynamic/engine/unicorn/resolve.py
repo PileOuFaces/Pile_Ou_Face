@@ -13,12 +13,11 @@
 
 import shutil
 import subprocess
-from typing import Dict, List, Optional
 
 
 def addr2line_map(
-    binary_path: str, addresses: List[str], base_adjust: int
-) -> Dict[str, Dict[str, object]]:
+    binary_path: str, addresses: list[str], base_adjust: int
+) -> dict[str, dict[str, object]]:
     """@brief Resolves addr->file/line/func via addr2line.
     @param binary_path Chemin du binaire.
     @param addresses Liste d'adresses hex (0x...).
@@ -61,12 +60,12 @@ def addr2line_map(
 
     # addr2line renvoie 3 lignes par adresse: addr, func, file:line.
     lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
-    mapping: Dict[str, Dict[str, object]] = {}
+    mapping: dict[str, dict[str, object]] = {}
     idx = 0
     for orig_addr in unique:
         if idx + 2 >= len(lines):
             break
-        addr_line = lines[idx]
+        lines[idx]
         func_line = lines[idx + 1]
         file_line = lines[idx + 2]
         idx += 3
@@ -87,9 +86,7 @@ def addr2line_map(
     return mapping
 
 
-def resolve_symbol_addr(
-    binary_path: str, symbol: str, base_adjust: int
-) -> Optional[int]:
+def resolve_symbol_addr(binary_path: str, symbol: str, base_adjust: int) -> int | None:
     """@brief Resolves un symbole en adresse via nm.
     @param binary_path Chemin du binaire.
     @param symbol Nom du symbole.

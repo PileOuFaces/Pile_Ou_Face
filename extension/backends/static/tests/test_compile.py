@@ -123,11 +123,14 @@ class TestSelectToolchain(unittest.TestCase):
 class TestListAvailableCompilers(unittest.TestCase):
     def test_lists_all_when_docker_available(self):
         compilers = FAKE_CONFIG["compilers"]
-        with mock.patch(
-            "backends.static.compile.compile._is_docker_image_available", return_value=True
+        with (
+            mock.patch(
+                "backends.static.compile.compile._is_docker_image_available",
+                return_value=True,
+            ),
+            mock.patch("shutil.which", return_value=None),
         ):
-            with mock.patch("shutil.which", return_value=None):
-                result = list_available_compilers(compilers=compilers)
+            result = list_available_compilers(compilers=compilers)
         self.assertEqual(len(result), 2)
         self.assertIn("tool_a", [c["id"] for c in result])
 
@@ -145,7 +148,10 @@ class TestCompileSource(unittest.TestCase):
 
     def test_error_when_src_missing(self):
         result = compile_source(
-            "/nonexistent/file.c", lang="c", target="elf-x64", compilers=FAKE_CONFIG["compilers"]
+            "/nonexistent/file.c",
+            lang="c",
+            target="elf-x64",
+            compilers=FAKE_CONFIG["compilers"],
         )
         self.assertIn("error", result)
 
@@ -154,7 +160,9 @@ class TestCompileSource(unittest.TestCase):
             f.write(b"int main(){return 0;}")
             src = f.name
         with mock.patch("shutil.which", return_value="/usr/bin/tool_a_bin"):
-            with mock.patch("backends.static.compile.compile._run_native_compiler") as mock_native:
+            with mock.patch(
+                "backends.static.compile.compile._run_native_compiler"
+            ) as mock_native:
                 mock_native.return_value = {
                     "output_path": "/tmp/out.elf",
                     "compiler_used": "tool_a",
@@ -172,23 +180,29 @@ class TestCompileSource(unittest.TestCase):
         with tempfile.NamedTemporaryFile(suffix=".c", delete=False) as f:
             f.write(b"int main(){return 0;}")
             src = f.name
-        with mock.patch("shutil.which", return_value=None):
-            with mock.patch(
-                "backends.static.compile.compile._is_docker_image_available", return_value=True
-            ):
-                with mock.patch(
-                    "backends.static.compile.compile._run_docker_compiler"
-                ) as mock_docker:
-                    mock_docker.return_value = {
-                        "output_path": "/tmp/out.elf",
-                        "compiler_used": "tool_a",
-                        "target": "elf-x64",
-                        "exit_code": 0,
-                        "stderr": "",
-                    }
-                    result = compile_source(
-                        src, lang="c", target="elf-x64", compilers=FAKE_CONFIG["compilers"]
-                    )
+        with (
+            mock.patch("shutil.which", return_value=None),
+            mock.patch(
+                "backends.static.compile.compile._is_docker_image_available",
+                return_value=True,
+            ),
+            mock.patch(
+                "backends.static.compile.compile._run_docker_compiler"
+            ) as mock_docker,
+        ):
+            mock_docker.return_value = {
+                "output_path": "/tmp/out.elf",
+                "compiler_used": "tool_a",
+                "target": "elf-x64",
+                "exit_code": 0,
+                "stderr": "",
+            }
+            result = compile_source(
+                src,
+                lang="c",
+                target="elf-x64",
+                compilers=FAKE_CONFIG["compilers"],
+            )
         mock_docker.assert_called_once()
         self.assertIn("output_path", result)
 
@@ -196,27 +210,33 @@ class TestCompileSource(unittest.TestCase):
         with tempfile.NamedTemporaryFile(suffix=".c", delete=False) as f:
             f.write(b"int main(){return 0;}")
             src = f.name
-        with mock.patch("shutil.which", return_value=None):
-            with mock.patch(
+        with (
+            mock.patch("shutil.which", return_value=None),
+            mock.patch(
                 "backends.static.compile.compile._is_docker_image_available",
                 return_value=False,
-            ):
-                result = compile_source(
-                    src,
-                    lang="c",
-                    target="elf-x64",
-                    compilers=FAKE_CONFIG["compilers"],
-                )
+            ),
+        ):
+            result = compile_source(
+                src,
+                lang="c",
+                target="elf-x64",
+                compilers=FAKE_CONFIG["compilers"],
+            )
         self.assertIn("error", result)
         self.assertIn("tool_a", result["error"])
 
 
 class TestBuildTargetFlagsNative(unittest.TestCase):
     def test_gcc_multiarch_x64(self):
-        self.assertEqual(_build_target_flags_native("gcc-multiarch", "elf-x64"), ["-m64"])
+        self.assertEqual(
+            _build_target_flags_native("gcc-multiarch", "elf-x64"), ["-m64"]
+        )
 
     def test_gcc_multiarch_x86(self):
-        self.assertEqual(_build_target_flags_native("gcc-multiarch", "elf-x86"), ["-m32"])
+        self.assertEqual(
+            _build_target_flags_native("gcc-multiarch", "elf-x86"), ["-m32"]
+        )
 
     def test_gcc_multiarch_unknown_target(self):
         self.assertEqual(_build_target_flags_native("gcc-multiarch", "elf-mips"), [])
@@ -251,7 +271,8 @@ class TestNativePlatforms(unittest.TestCase):
         with mock.patch("platform.system", return_value="Darwin"):
             with mock.patch("shutil.which", return_value="/usr/bin/linux_gcc_bin"):
                 with mock.patch(
-                    "backends.static.compile.compile._is_docker_image_available", return_value=True
+                    "backends.static.compile.compile._is_docker_image_available",
+                    return_value=True,
                 ):
                     with mock.patch(
                         "backends.static.compile.compile._run_docker_compiler"
@@ -263,7 +284,9 @@ class TestNativePlatforms(unittest.TestCase):
                             "exit_code": 0,
                             "stderr": "",
                         }
-                        compile_source(src, lang="c", target="elf-x64", compilers=compilers)
+                        compile_source(
+                            src, lang="c", target="elf-x64", compilers=compilers
+                        )
         mock_docker.assert_called_once()
 
     def test_native_allowed_on_correct_platform(self):
@@ -292,9 +315,12 @@ class TestNativePlatforms(unittest.TestCase):
         with mock.patch("platform.system", return_value="Darwin"):
             with mock.patch("shutil.which", return_value="/usr/bin/linux_gcc_bin"):
                 with mock.patch(
-                    "backends.static.compile.compile._is_docker_image_available", return_value=False
+                    "backends.static.compile.compile._is_docker_image_available",
+                    return_value=False,
                 ):
-                    result = compile_source(src, lang="c", target="elf-x64", compilers=compilers)
+                    result = compile_source(
+                        src, lang="c", target="elf-x64", compilers=compilers
+                    )
         self.assertIn("error", result)
         self.assertIn("darwin", result["error"])
 
@@ -306,7 +332,8 @@ class TestListAvailableCompilersExtended(unittest.TestCase):
         with mock.patch("platform.system", return_value="Darwin"):
             with mock.patch("shutil.which", return_value="/usr/bin/linux_gcc_bin"):
                 with mock.patch(
-                    "backends.static.compile.compile._is_docker_image_available", return_value=False
+                    "backends.static.compile.compile._is_docker_image_available",
+                    return_value=False,
                 ):
                     result = list_available_compilers(compilers=compilers)
         entry = result[0]
@@ -320,7 +347,8 @@ class TestListAvailableCompilersExtended(unittest.TestCase):
         with mock.patch("platform.system", return_value="Darwin"):
             with mock.patch("shutil.which", return_value="/usr/bin/linux_gcc_bin"):
                 with mock.patch(
-                    "backends.static.compile.compile._is_docker_image_available", return_value=False
+                    "backends.static.compile.compile._is_docker_image_available",
+                    return_value=False,
                 ):
                     result = list_available_compilers(compilers=compilers)
         self.assertFalse(result[0]["available"])
@@ -330,7 +358,8 @@ class TestListAvailableCompilersExtended(unittest.TestCase):
         with mock.patch("platform.system", return_value="Darwin"):
             with mock.patch("shutil.which", return_value=None):
                 with mock.patch(
-                    "backends.static.compile.compile._is_docker_image_available", return_value=True
+                    "backends.static.compile.compile._is_docker_image_available",
+                    return_value=True,
                 ):
                     result = list_available_compilers(compilers=compilers)
         self.assertTrue(result[0]["available"])
@@ -345,7 +374,9 @@ class TestCompileSourceFlags(unittest.TestCase):
             src = f.name
         custom_flags = ["-O2", "-fno-pie"]
         with mock.patch("shutil.which", return_value="/usr/bin/tool_a_bin"):
-            with mock.patch("backends.static.compile.compile._run_native_compiler") as mock_native:
+            with mock.patch(
+                "backends.static.compile.compile._run_native_compiler"
+            ) as mock_native:
                 mock_native.return_value = {
                     "output_path": "/tmp/out.elf",
                     "compiler_used": "tool_a",
@@ -368,27 +399,30 @@ class TestCompileSourceFlags(unittest.TestCase):
             f.write(b"int main(){return 0;}")
             src = f.name
         custom_flags = ["-O2", "-g"]
-        with mock.patch("shutil.which", return_value=None):
-            with mock.patch(
-                "backends.static.compile.compile._is_docker_image_available", return_value=True
-            ):
-                with mock.patch(
-                    "backends.static.compile.compile._run_docker_compiler"
-                ) as mock_docker:
-                    mock_docker.return_value = {
-                        "output_path": "/tmp/out.elf",
-                        "compiler_used": "tool_a",
-                        "target": "elf-x64",
-                        "exit_code": 0,
-                        "stderr": "",
-                    }
-                    compile_source(
-                        src,
-                        lang="c",
-                        target="elf-x64",
-                        compilers=FAKE_CONFIG["compilers"],
-                        flags=custom_flags,
-                    )
+        with (
+            mock.patch("shutil.which", return_value=None),
+            mock.patch(
+                "backends.static.compile.compile._is_docker_image_available",
+                return_value=True,
+            ),
+            mock.patch(
+                "backends.static.compile.compile._run_docker_compiler"
+            ) as mock_docker,
+        ):
+            mock_docker.return_value = {
+                "output_path": "/tmp/out.elf",
+                "compiler_used": "tool_a",
+                "target": "elf-x64",
+                "exit_code": 0,
+                "stderr": "",
+            }
+            compile_source(
+                src,
+                lang="c",
+                target="elf-x64",
+                compilers=FAKE_CONFIG["compilers"],
+                flags=custom_flags,
+            )
         call_args = mock_docker.call_args[0]
         self.assertEqual(call_args[-1], custom_flags)
 

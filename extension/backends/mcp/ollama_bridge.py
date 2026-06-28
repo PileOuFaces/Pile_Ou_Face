@@ -15,7 +15,8 @@ import re
 import shlex
 import subprocess
 import sys
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 from urllib import error, request
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -114,7 +115,9 @@ class McpStdioClient:
             payload["params"] = params
         self._write_message(payload)
 
-    def request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    def request(
+        self, method: str, params: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         req_id = self._next_id
         self._next_id += 1
         payload: dict[str, Any] = {"jsonrpc": "2.0", "id": req_id, "method": method}
@@ -123,7 +126,9 @@ class McpStdioClient:
         self._write_message(payload)
         response = self._read_message()
         if response.get("id") != req_id:
-            raise RuntimeError(f"Unexpected response id: {response.get('id')} != {req_id}")
+            raise RuntimeError(
+                f"Unexpected response id: {response.get('id')} != {req_id}"
+            )
         if "error" in response:
             err = response["error"]
             raise RuntimeError(f"MCP error {err.get('code')}: {err.get('message')}")
@@ -136,7 +141,9 @@ class McpStdioClient:
 
     def _write_message(self, message: dict[str, Any]) -> None:
         stdin, _ = self._pipes()
-        body = json.dumps(message, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+        body = json.dumps(message, ensure_ascii=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
         frame = f"Content-Length: {len(body)}\r\n\r\n".encode("ascii") + body
         stdin.write(frame)
         stdin.flush()
@@ -377,7 +384,9 @@ def _extract_filename_hints(prompt: str) -> list[str]:
     return unique
 
 
-def _select_best_file_from_find_results(query: str, results: list[dict[str, Any]]) -> str | None:
+def _select_best_file_from_find_results(
+    query: str, results: list[dict[str, Any]]
+) -> str | None:
     if not results:
         return None
     query_low = query.lower()
@@ -493,7 +502,9 @@ def _normalize_tool_call_arguments(
     if name == "disassemble":
         raw_max = normalized.get("max_lines")
         try:
-            max_lines = int(raw_max) if raw_max is not None else DEFAULT_DISASM_MAX_LINES
+            max_lines = (
+                int(raw_max) if raw_max is not None else DEFAULT_DISASM_MAX_LINES
+            )
         except (TypeError, ValueError):
             max_lines = DEFAULT_DISASM_MAX_LINES
         if max_lines <= 0:
@@ -551,7 +562,10 @@ def _auto_tool_fallback(client: McpStdioClient, prompt: str) -> str | None:
     if intent == "disassemble":
         result = client.request(
             "tools/call",
-            {"name": "disassemble", "arguments": {"binary_path": binary, "max_lines": 60}},
+            {
+                "name": "disassemble",
+                "arguments": {"binary_path": binary, "max_lines": 60},
+            },
         )
         payload = result.get("structuredContent", {})
         if not isinstance(payload, dict) or not payload.get("ok"):
@@ -630,11 +644,17 @@ def _auto_tool_fallback(client: McpStdioClient, prompt: str) -> str | None:
     )
 
 
-def _load_memory_context(memory_path: str | None, max_chars: int = DEFAULT_MEMORY_MAX_CHARS) -> str:
+def _load_memory_context(
+    memory_path: str | None, max_chars: int = DEFAULT_MEMORY_MAX_CHARS
+) -> str:
     candidates: list[str] = []
     if isinstance(memory_path, str) and memory_path.strip():
         candidates.append(memory_path.strip())
-    for fallback in (DEFAULT_MEMORY_PATH, LEGACY_DOCS_MEMORY_PATH, LEGACY_ROOT_MEMORY_PATH):
+    for fallback in (
+        DEFAULT_MEMORY_PATH,
+        LEGACY_DOCS_MEMORY_PATH,
+        LEGACY_ROOT_MEMORY_PATH,
+    ):
         if fallback not in candidates:
             candidates.append(fallback)
 
@@ -642,7 +662,7 @@ def _load_memory_context(memory_path: str | None, max_chars: int = DEFAULT_MEMOR
         if not os.path.isfile(path):
             continue
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 content = f.read().strip()
         except OSError:
             continue
@@ -730,7 +750,9 @@ Always call tools to gather real data before answering — never guess or halluc
 """
 
 
-def _build_system_prompt(base_prompt: str | None, memory_path: str | None) -> str | None:
+def _build_system_prompt(
+    base_prompt: str | None, memory_path: str | None
+) -> str | None:
     base = (base_prompt or _DEFAULT_SYSTEM_PROMPT).strip()
     memory = _load_memory_context(memory_path)
     if not memory:
@@ -831,7 +853,9 @@ def _ollama_chat(
         msg = _read_http_error_body(exc)
         if exc.code == 400 and "does not support tools" in msg:
             raise OllamaToolsUnsupportedError(msg) from None
-        raise RuntimeError(f"Ollama rejected request (HTTP {exc.code}): {msg}") from None
+        raise RuntimeError(
+            f"Ollama rejected request (HTTP {exc.code}): {msg}"
+        ) from None
     except error.URLError as exc:
         raise RuntimeError(f"Cannot reach Ollama at {url}: {exc.reason}") from None
 
@@ -925,7 +949,11 @@ def run_agent_once(
                 ollama_tools,
                 timeout_s,
                 on_token=_on_token if on_event else None,
-                **({"generation_options": generation_options} if generation_options else {}),
+                **(
+                    {"generation_options": generation_options}
+                    if generation_options
+                    else {}
+                ),
             )
             _collect_usage(response)
             msg = response.get("message", {})
@@ -970,7 +998,11 @@ def run_agent_once(
                     tools=[],
                     timeout_s=timeout_s,
                     on_token=_on_token if on_event else None,
-                    **({"generation_options": generation_options} if generation_options else {}),
+                    **(
+                        {"generation_options": generation_options}
+                        if generation_options
+                        else {}
+                    ),
                 )
                 _collect_usage(response)
             except RuntimeError:
@@ -984,7 +1016,11 @@ def run_agent_once(
                     messages=messages,
                     tools=[],
                     timeout_s=timeout_s,
-                    **({"generation_options": generation_options} if generation_options else {}),
+                    **(
+                        {"generation_options": generation_options}
+                        if generation_options
+                        else {}
+                    ),
                 )
                 _collect_usage(response)
                 if on_event:
@@ -1009,7 +1045,11 @@ def run_agent_once(
         last_content = assistant_entry.get("content", "")
 
         if not isinstance(tool_calls, list) or not tool_calls:
-            if not retried_after_noop and needs_tools and _looks_like_noop_response(last_content):
+            if (
+                not retried_after_noop
+                and needs_tools
+                and _looks_like_noop_response(last_content)
+            ):
                 retried_after_noop = True
                 if on_event:
                     on_event({"type": "token_rollback"})
@@ -1058,7 +1098,9 @@ def run_agent_once(
                         _collect_usage(synthesis)
                         synthesis_message = synthesis.get("message", {})
                         if isinstance(synthesis_message, dict):
-                            synthesis_content = str(synthesis_message.get("content", "")).strip()
+                            synthesis_content = str(
+                                synthesis_message.get("content", "")
+                            ).strip()
                             if synthesis_content:
                                 return _result(tools_warning + synthesis_content)
                     except RuntimeError:
@@ -1331,7 +1373,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.stream_output:
             sys.stdout.write(
                 json.dumps(
-                    {"type": "error", "ok": False, "error": str(exc), "model": args.model},
+                    {
+                        "type": "error",
+                        "ok": False,
+                        "error": str(exc),
+                        "model": args.model,
+                    },
                     ensure_ascii=True,
                 )
                 + "\n"

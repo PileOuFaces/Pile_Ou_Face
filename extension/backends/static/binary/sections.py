@@ -79,15 +79,7 @@ def get_section_file_ranges(binary_path: str) -> list[tuple[str, int, int]]:
             result.append((name, offset, offset + size))
 
     # Mach-O
-    elif isinstance(binary, lief.MachO.Binary):
-        for sec in binary.sections:
-            name = sec.name
-            offset = sec.offset
-            size = sec.size
-            result.append((name, offset, offset + size))
-
-    # PE
-    elif isinstance(binary, lief.PE.Binary):
+    elif isinstance(binary, (lief.MachO.Binary, lief.PE.Binary)):
         for sec in binary.sections:
             name = sec.name
             offset = sec.offset

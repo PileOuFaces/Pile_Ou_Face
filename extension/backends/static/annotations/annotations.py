@@ -21,10 +21,10 @@ Usage:
 
 from __future__ import annotations
 
-from typing import List, Optional  # List needed: 'list' method name shadows builtin
+import builtins
 
-from backends.static.cache.cache import DisasmCache, default_cache_path
 from backends.shared.log import configure_logging, get_logger
+from backends.static.cache.cache import DisasmCache, default_cache_path
 
 logger = get_logger(__name__)
 
@@ -39,7 +39,7 @@ class AnnotationStore:
     Gère commentaires et renommages via le cache SQLite.
     """
 
-    def __init__(self, binary_path: str, cache_path: Optional[str] = None) -> None:
+    def __init__(self, binary_path: str, cache_path: str | None = None) -> None:
         """Initialise le store.
 
         Args:
@@ -70,7 +70,7 @@ class AnnotationStore:
         self._cache.save_annotation(self._binary_path, addr, KIND_RENAME, name)
         logger.debug("Rename set: %s → %r", addr, name)
 
-    def get(self, addr: str) -> List[dict]:
+    def get(self, addr: str) -> builtins.list[dict]:
         """Retourne toutes les annotations pour une adresse.
 
         Args:
@@ -81,21 +81,21 @@ class AnnotationStore:
         """
         return self._cache.get_annotations(self._binary_path, addr=addr)
 
-    def get_comment(self, addr: str) -> Optional[str]:
+    def get_comment(self, addr: str) -> str | None:
         """Retourne le commentaire d'une adresse, ou None si absent."""
         for ann in self._cache.get_annotations(self._binary_path, addr=addr):
             if ann["kind"] == KIND_COMMENT:
                 return str(ann["value"])
         return None
 
-    def get_name(self, addr: str) -> Optional[str]:
+    def get_name(self, addr: str) -> str | None:
         """Retourne le nom renommé d'une adresse, ou None si absent."""
         for ann in self._cache.get_annotations(self._binary_path, addr=addr):
             if ann["kind"] == KIND_RENAME:
                 return str(ann["value"])
         return None
 
-    def list(self, addr: Optional[str] = None) -> List[dict]:  # type: ignore[override]
+    def list(self, addr: str | None = None) -> builtins.list[dict]:  # type: ignore[override]
         """Liste toutes les annotations (ou filtrées par adresse).
 
         Returns:
@@ -103,7 +103,7 @@ class AnnotationStore:
         """
         return self._cache.get_annotations(self._binary_path, addr=addr)
 
-    def delete(self, addr: str, kind: Optional[str] = None) -> int:
+    def delete(self, addr: str, kind: str | None = None) -> int:
         """Supprime les annotations d'une adresse.
 
         Args:
@@ -117,14 +117,14 @@ class AnnotationStore:
         logger.debug("Deleted %d annotation(s) at %s (kind=%s)", n, addr, kind)
         return n
 
-    def export_json(self) -> List[dict]:
+    def export_json(self) -> builtins.list[dict]:
         """Retourne toutes les annotations au format JSON-serializable."""
         return self._cache.get_annotations(self._binary_path)
 
     def close(self) -> None:
         self._cache.close()
 
-    def __enter__(self) -> "AnnotationStore":
+    def __enter__(self) -> AnnotationStore:
         return self
 
     def __exit__(self, *_: object) -> None:
@@ -136,7 +136,9 @@ def main() -> int:
     import argparse
     import json
 
-    parser = argparse.ArgumentParser(description="Manage binary annotations (comments, renames)")
+    parser = argparse.ArgumentParser(
+        description="Manage binary annotations (comments, renames)"
+    )
     parser.add_argument("--binary", required=True, help="Binary path")
     parser.add_argument("--cache-db", help="Cache DB path (default: auto)")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -168,14 +170,18 @@ def main() -> int:
     args = parser.parse_args()
     configure_logging()
 
-    with AnnotationStore(args.binary, cache_path=getattr(args, "cache_db", None)) as store:
+    with AnnotationStore(
+        args.binary, cache_path=getattr(args, "cache_db", None)
+    ) as store:
         if args.cmd == "list":
             annotations = store.list(addr=getattr(args, "addr", None))
             out = json.dumps(annotations, indent=2, ensure_ascii=False)
             if getattr(args, "output", None):
                 with open(args.output, "w", encoding="utf-8") as f:
                     f.write(out)
-                print(f"Annotations written to {args.output} ({len(annotations)} entries)")
+                print(
+                    f"Annotations written to {args.output} ({len(annotations)} entries)"
+                )
             else:
                 print(out)
 
@@ -194,12 +200,13 @@ def main() -> int:
     return 0
 
 
+import contextlib
 import json as _json
-from pathlib import Path as _Path
 import time as _time
+from pathlib import Path as _Path
 
 
-def get_annotations_path(workspace: str) -> "_Path":
+def get_annotations_path(workspace: str) -> _Path:
     return _Path(workspace) / ".pof" / "annotations.json"
 
 
@@ -236,9 +243,9 @@ def save_annotation(
 
 
 if __name__ == "__main__":
-    import sys
     import argparse as _argparse
     import hashlib as _hashlib
+    import sys
 
     # If the first argument is --save or --load, use the new persistence CLI
     if len(sys.argv) > 1 and sys.argv[1] in ("--save", "--load"):
@@ -254,13 +261,15 @@ if __name__ == "__main__":
 
         binary_sha256 = "unknown"
         if args.binary:
-            try:
-                binary_sha256 = _hashlib.sha256(open(args.binary, "rb").read()).hexdigest()
-            except Exception:
-                pass
+            with contextlib.suppress(Exception):
+                binary_sha256 = _hashlib.sha256(
+                    open(args.binary, "rb").read()
+                ).hexdigest()
 
         if args.save and args.addr:
-            save_annotation(args.workspace, binary_sha256, args.addr, args.note, args.color)
+            save_annotation(
+                args.workspace, binary_sha256, args.addr, args.note, args.color
+            )
             print('{"saved": true}')
         elif args.load:
             result = load_annotations(args.workspace, binary_sha256)

@@ -18,10 +18,12 @@ def load_dwarf_functions(binary_path: str) -> tuple[list[dict[str, Any]], str | 
         end = str(fn.get("high_pc") or "0x0")
         if not name or start in {"", "0x0"}:
             continue
-        functions.append({
-            "name": name,
-            "start": start,
-            "end": end,
-            "source": "DWARF",
-        })
+        functions.append(
+            {
+                "name": name,
+                "start": start,
+                "end": end,
+                "source": "DWARF",
+            }
+        )
     return functions, (str(error) if error else None)

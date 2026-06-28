@@ -37,7 +37,6 @@ def extract_dwarf_info(binary_path: str) -> dict[str, Any]:
 
     try:
         from elftools.elf.elffile import ELFFile
-        from elftools.common.exceptions import ELFError
     except ImportError:
         return {
             "error": "pyelftools non installé (pip install pyelftools)",
@@ -151,7 +150,11 @@ def _parse_subprogram(die: Any, type_map: dict) -> dict | None:
     high_pc_attr = die.attributes.get("DW_AT_high_pc")
     if high_pc_attr is not None:
         high_pc_val = int(high_pc_attr.value)
-        high_pc = (low_pc + high_pc_val) if high_pc_attr.form != "DW_FORM_addr" else high_pc_val
+        high_pc = (
+            (low_pc + high_pc_val)
+            if high_pc_attr.form != "DW_FORM_addr"
+            else high_pc_val
+        )
     else:
         high_pc = 0
     return {
@@ -278,7 +281,9 @@ def main() -> int:
     import argparse
     import json
 
-    parser = argparse.ArgumentParser(description="Extract DWARF debug info from ELF binary")
+    parser = argparse.ArgumentParser(
+        description="Extract DWARF debug info from ELF binary"
+    )
     parser.add_argument("--binary", required=True, help="ELF binary path")
     parser.add_argument("--output", help="Output JSON file (default: stdout)")
     args = parser.parse_args()

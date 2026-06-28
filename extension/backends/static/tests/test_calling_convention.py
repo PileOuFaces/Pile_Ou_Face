@@ -1,12 +1,19 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-import sys, os, json, subprocess, tempfile
+import json
+import os
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
 
 ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "../../.."))
 sys.path.insert(0, ROOT)
-from backends.static.tests.util import compile_minimal_elf
 from backends.static.binary.arch import get_raw_arch_info
-from backends.static.disasm.calling_convention import _analyze_function, _known_abi_convention
+from backends.static.disasm.calling_convention import (
+    _analyze_function,
+    _known_abi_convention,
+)
+from backends.static.tests.util import compile_minimal_elf
 
 try:
     import lief as _lief
@@ -24,7 +31,12 @@ except ImportError:
 
 
 def run_cc(binary, addrs=None):
-    args = [sys.executable, "backends/static/disasm/calling_convention.py", "--binary", binary]
+    args = [
+        sys.executable,
+        "backends/static/disasm/calling_convention.py",
+        "--binary",
+        binary,
+    ]
     if addrs:
         args += ["--addrs", ",".join(addrs)]
     env = {**os.environ, "PYTHONPATH": ROOT}
@@ -54,7 +66,7 @@ class TestCallingConvention(unittest.TestCase):
             if not binary:
                 self.skipTest("gcc non disponible")
             result = run_cc(str(binary))
-            for addr, info in result["conventions"].items():
+            for _addr, info in result["conventions"].items():
                 self.assertIn("convention", info)
                 self.assertIn("confidence", info)
                 self.assertIsInstance(info["confidence"], float)
@@ -78,10 +90,19 @@ class TestCallingConvention(unittest.TestCase):
         cases = {
             "mips32": ("MIPS o32", ("a0", "a1", "a2", "a3")),
             "mips64": ("MIPS n64", ("a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7")),
-            "ppc32": ("PowerPC SysV", ("r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10")),
-            "ppc64": ("PowerPC ELFv2", ("r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10")),
+            "ppc32": (
+                "PowerPC SysV",
+                ("r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10"),
+            ),
+            "ppc64": (
+                "PowerPC ELFv2",
+                ("r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10"),
+            ),
             "sparc": ("SPARC ABI", ("o0", "o1", "o2", "o3", "o4", "o5")),
-            "riscv64": ("RISC-V psABI", ("a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7")),
+            "riscv64": (
+                "RISC-V psABI",
+                ("a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7"),
+            ),
             "sysz": ("System V s390x", ("r2", "r3", "r4", "r5", "r6")),
         }
         for raw_arch, (expected_name, expected_regs) in cases.items():
@@ -106,7 +127,9 @@ class TestCallingConvention(unittest.TestCase):
 
         self.assertEqual(result["convention"], "RISC-V psABI")
         self.assertEqual(result["source"], "abi")
-        self.assertEqual(result["arg_registers"], ["a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7"])
+        self.assertEqual(
+            result["arg_registers"], ["a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7"]
+        )
 
     def test_x86_still_requires_instruction_bytes_for_heuristic(self):
         info = get_raw_arch_info("i386:x86-64")

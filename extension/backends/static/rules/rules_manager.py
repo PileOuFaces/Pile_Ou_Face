@@ -25,13 +25,17 @@ class RulesManager:
     _PROJECT_SCOPE = "project"
     _GLOBAL_SCOPE = "global"
 
-    def __init__(self, project_root: str, global_config_path: str | None = None) -> None:
+    def __init__(
+        self, project_root: str, global_config_path: str | None = None
+    ) -> None:
         self._root = Path(project_root)
         self._project_rules_dir = self._root / self._POF_DIR / "rules"
         self._project_config = self._root / self._POF_DIR / "rules-config.json"
         self._global_config = Path(global_config_path) if global_config_path else None
         self._global_root = self._global_config.parent if self._global_config else None
-        self._global_rules_dir = self._global_root / "rules" if self._global_root else None
+        self._global_rules_dir = (
+            self._global_root / "rules" if self._global_root else None
+        )
 
     def _iter_rule_files(self, rule_type: str) -> list[tuple[str, str, Path]]:
         exts = {
@@ -52,7 +56,11 @@ class RulesManager:
             for ext in exts:
                 for file_path in sorted(rule_dir.glob(ext)):
                     entries.append(
-                        (scope, self._rule_id(scope, rule_type, file_path.name), file_path)
+                        (
+                            scope,
+                            self._rule_id(scope, rule_type, file_path.name),
+                            file_path,
+                        )
                     )
         return entries
 
@@ -113,7 +121,9 @@ class RulesManager:
         for scope, rule_id, file_path in self._iter_rule_files("capa"):
             if config.get(rule_id, {}).get("enabled", True):
                 target_name = (
-                    file_path.name if scope == self._PROJECT_SCOPE else f"global__{file_path.name}"
+                    file_path.name
+                    if scope == self._PROJECT_SCOPE
+                    else f"global__{file_path.name}"
                 )
                 shutil.copy2(file_path, dest / target_name)
 
@@ -144,7 +154,9 @@ class RulesManager:
         if scope not in (self._PROJECT_SCOPE, self._GLOBAL_SCOPE):
             raise ValueError(f"Scope inconnu : {scope!r} (attendu: project ou global)")
         base_dir = (
-            self._global_rules_dir if scope == self._GLOBAL_SCOPE else self._project_rules_dir
+            self._global_rules_dir
+            if scope == self._GLOBAL_SCOPE
+            else self._project_rules_dir
         )
         if base_dir is None:
             raise ValueError("Le stockage global des règles n'est pas configuré.")
@@ -157,7 +169,9 @@ class RulesManager:
         """Supprime le fichier et nettoie la config projet."""
         scope, rule_type, name = self._parse_rule_id(rule_id)
         base_dir = (
-            self._global_rules_dir if scope == self._GLOBAL_SCOPE else self._project_rules_dir
+            self._global_rules_dir
+            if scope == self._GLOBAL_SCOPE
+            else self._project_rules_dir
         )
         if base_dir is None:
             raise ValueError("Le stockage global des règles n'est pas configuré.")
@@ -180,7 +194,9 @@ class RulesManager:
         """Retourne le contenu brut d'une règle pour édition."""
         scope, rule_type, name = self._parse_rule_id(rule_id)
         base_dir = (
-            self._global_rules_dir if scope == self._GLOBAL_SCOPE else self._project_rules_dir
+            self._global_rules_dir
+            if scope == self._GLOBAL_SCOPE
+            else self._project_rules_dir
         )
         if base_dir is None:
             raise ValueError("Le stockage global des règles n'est pas configuré.")
@@ -200,7 +216,9 @@ class RulesManager:
         """Met à jour le contenu d'une règle et renomme le fichier si besoin."""
         scope, rule_type, old_name = self._parse_rule_id(rule_id)
         base_dir = (
-            self._global_rules_dir if scope == self._GLOBAL_SCOPE else self._project_rules_dir
+            self._global_rules_dir
+            if scope == self._GLOBAL_SCOPE
+            else self._project_rules_dir
         )
         if base_dir is None:
             raise ValueError("Le stockage global des règles n'est pas configuré.")
@@ -295,7 +313,9 @@ def main() -> int:
 
     p_add = sub.add_parser("add")
     p_add.add_argument("--name", required=True)
-    p_add.add_argument("--type", dest="rule_type", required=True, choices=("yara", "capa"))
+    p_add.add_argument(
+        "--type", dest="rule_type", required=True, choices=("yara", "capa")
+    )
     p_add.add_argument("--content", required=True)
     p_add.add_argument("--scope", default="project", choices=("project", "global"))
     _add_common(p_add)
@@ -318,16 +338,25 @@ def main() -> int:
     mgr = RulesManager(args.cwd, getattr(args, "global_config", None))
     try:
         if args.cmd == "list":
-            print(json.dumps({"rules": mgr.list_rules(), "error": None}, ensure_ascii=False))
+            print(
+                json.dumps(
+                    {"rules": mgr.list_rules(), "error": None}, ensure_ascii=False
+                )
+            )
         elif args.cmd == "get":
             print(
-                json.dumps({"rule": mgr.get_rule(args.rule_id), "error": None}, ensure_ascii=False)
+                json.dumps(
+                    {"rule": mgr.get_rule(args.rule_id), "error": None},
+                    ensure_ascii=False,
+                )
             )
         elif args.cmd == "toggle":
             mgr.toggle_rule(args.rule_id, args.enabled == "true")
             print(json.dumps({"success": True, "error": None}))
         elif args.cmd == "add":
-            rule_id = mgr.add_user_rule(args.name, args.content, args.rule_type, args.scope)
+            rule_id = mgr.add_user_rule(
+                args.name, args.content, args.rule_type, args.scope
+            )
             print(json.dumps({"rule_id": rule_id, "error": None}))
         elif args.cmd == "update":
             rule_id = mgr.update_user_rule(args.rule_id, args.name, args.content)

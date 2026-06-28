@@ -114,7 +114,9 @@ def search_in_binary(
             ctx_after = data_slice[start + match_len : start + match_len + 8]
             context = (ctx_before + matched_bytes + ctx_after).hex()
             val_hex = matched_bytes.hex()
-            value = val_hex if len(val_hex) <= 64 else val_hex[:32] + "..." + val_hex[-16:]
+            value = (
+                val_hex if len(val_hex) <= 64 else val_hex[:32] + "..." + val_hex[-16:]
+            )
             results.append(
                 _enrich_with_raw_vaddr(
                     {
@@ -209,7 +211,9 @@ def search_in_binary(
             ctx_after = data_slice[pos + pat_len : pos + pat_len + 8]
             context = (ctx_before + match_bytes + ctx_after).hex()
             # Valeur réelle des bytes trouvés (insensible à la casse = bytes originaux)
-            actual_value = data_slice[pos : pos + pat_len].decode("utf-8", errors="replace")
+            actual_value = data_slice[pos : pos + pat_len].decode(
+                "utf-8", errors="replace"
+            )
             results.append(
                 _enrich_with_raw_vaddr(
                     {
@@ -236,7 +240,9 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(description="Search in binary (hex or text)")
     parser.add_argument("--binary", required=True, help="Binary path")
-    parser.add_argument("--pattern", required=True, help="Pattern to search (hex or text)")
+    parser.add_argument(
+        "--pattern", required=True, help="Pattern to search (hex or text)"
+    )
     parser.add_argument(
         "--mode", choices=["text", "hex", "regex"], default="text", help="Search mode"
     )
@@ -254,7 +260,9 @@ def main() -> int:
     parser.add_argument(
         "--offset-start", type=lambda x: int(x, 0), default=None, dest="offset_start"
     )
-    parser.add_argument("--offset-end", type=lambda x: int(x, 0), default=None, dest="offset_end")
+    parser.add_argument(
+        "--offset-end", type=lambda x: int(x, 0), default=None, dest="offset_end"
+    )
     parser.add_argument("--raw-base-addr", default=None, dest="raw_base_addr")
     args = parser.parse_args()
 

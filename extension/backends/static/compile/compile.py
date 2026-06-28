@@ -35,7 +35,8 @@ from typing import Any
 
 _cfg_env = os.environ.get("COMPILERS_CONFIG", "").strip()
 _COMPILERS_CONFIG = (
-    Path(_cfg_env) if _cfg_env
+    Path(_cfg_env)
+    if _cfg_env
     else Path.home() / ".config" / "pile-ou-face" / "compilers.json"
 )
 _pof_storage_env = os.environ.get("POF_STORAGE_DIR", "").strip()
@@ -122,7 +123,11 @@ def _run_native_compiler(
 ) -> dict[str, Any]:
     """Invoque le compilateur natif directement."""
     native_cmd_cpp = cfg.get("native_cmd_cpp", "")
-    native_cmd = native_cmd_cpp if lang == "cpp" and native_cmd_cpp else cfg.get("native_cmd", "")
+    native_cmd = (
+        native_cmd_cpp
+        if lang == "cpp" and native_cmd_cpp
+        else cfg.get("native_cmd", "")
+    )
     arch_flags = _build_target_flags_native(toolchain_id, target)
     extra = flags if flags else ["-O0", "-g"]
     cmd: list[str] = [native_cmd, *arch_flags, *extra, "-o", output, src]
@@ -190,7 +195,9 @@ def _run_docker_compiler(
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
         return {
-            "output_path": str(out_path) if r.returncode == 0 and out_path.exists() else None,
+            "output_path": str(out_path)
+            if r.returncode == 0 and out_path.exists()
+            else None,
             "compiler_used": toolchain_id,
             "target": target,
             "exit_code": r.returncode,
@@ -255,17 +262,19 @@ def compile_source(
     current_platform = platform.system().lower()
     native_allowed = not native_platforms or current_platform in native_platforms
     if native_allowed and native_cmd and shutil.which(native_cmd):
-        return _run_native_compiler(toolchain_id, toolchain_cfg, src, lang, target, output, flags)
+        return _run_native_compiler(
+            toolchain_id, toolchain_cfg, src, lang, target, output, flags
+        )
 
     docker_image = toolchain_cfg.get("docker_image", "")
     if docker_image and _is_docker_image_available(docker_image):
-        return _run_docker_compiler(toolchain_id, toolchain_cfg, src, lang, target, output, flags)
+        return _run_docker_compiler(
+            toolchain_id, toolchain_cfg, src, lang, target, output, flags
+        )
 
     platform_note = ""
     if native_platforms and current_platform not in native_platforms:
-        platform_note = (
-            f" (sur {current_platform}, gcc\u202f=\u202fApple Clang — ne produit pas d'ELF/PE)"
-        )
+        platform_note = f" (sur {current_platform}, gcc\u202f=\u202fApple Clang — ne produit pas d'ELF/PE)"
     return {
         "error": (
             f"Docker requis pour {toolchain_id!r}{platform_note}. "
@@ -329,10 +338,16 @@ if __name__ == "__main__":
         _parser.error("--src, --lang et --target sont requis")
 
     try:
-        _flags = json.loads(_args.flags) if _args.flags and _args.flags != "[]" else None
+        _flags = (
+            json.loads(_args.flags) if _args.flags and _args.flags != "[]" else None
+        )
     except json.JSONDecodeError:
         _flags = None
 
-    _result = compile_source(_args.src, _args.lang, _args.target, _args.output, flags=_flags)
+    _result = compile_source(
+        _args.src, _args.lang, _args.target, _args.output, flags=_flags
+    )
     print(json.dumps(_result))
-    _sys.exit(0)  # exit_code in JSON carries the compilation result; caller parses stdout
+    _sys.exit(
+        0
+    )  # exit_code in JSON carries the compilation result; caller parses stdout

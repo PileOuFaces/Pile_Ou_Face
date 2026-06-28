@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # backends/static/tests/test_pe_resources.py
-import os
-import sys
 import json
+import os
 import subprocess
+import sys
 import tempfile
 import unittest
 

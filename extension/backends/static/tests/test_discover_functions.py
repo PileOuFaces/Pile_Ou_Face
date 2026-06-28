@@ -11,10 +11,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backends.static.disasm.discover_functions import (
+    _addr_to_int,
     _estimate_function_bounds,
     _matches_prologue,
     _normalize_addr,
-    _addr_to_int,
     discover_functions,
     evaluate_function_discovery,
 )

@@ -38,10 +38,13 @@ def build_function_ranges(
         }
 
     symbol_functions = [
-        sym for sym in symbols
+        sym
+        for sym in symbols
         if sym.get("kind") == "FUNC" and _addr_int(sym.get("addr")) is not None
     ]
-    symbol_functions.sort(key=lambda item: (_addr_int(item.get("addr")) or 0, str(item.get("name") or "")))
+    symbol_functions.sort(
+        key=lambda item: (_addr_int(item.get("addr")) or 0, str(item.get("name") or ""))
+    )
     starts = [_addr_int(sym.get("addr")) for sym in symbol_functions]
 
     for index, sym in enumerate(symbol_functions):
@@ -54,9 +57,20 @@ def build_function_ranges(
             end = start + size
             source = str(sym.get("source") or "LIEF")
         else:
-            next_start = next((candidate for candidate in starts[index + 1:] if candidate and candidate > start), None)
+            next_start = next(
+                (
+                    candidate
+                    for candidate in starts[index + 1 :]
+                    if candidate and candidate > start
+                ),
+                None,
+            )
             end = next_start
-            source = "symbol+heuristic" if end is not None else str(sym.get("source") or "LIEF")
+            source = (
+                "symbol+heuristic"
+                if end is not None
+                else str(sym.get("source") or "LIEF")
+            )
         result_by_start[start] = {
             "name": str(sym.get("name") or f"sub_{start:x}"),
             "start": _hex(start),

@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+import base64
+import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
-import base64
-import hashlib
-import shutil
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -23,8 +23,8 @@ from backends.plugins.registry import build_plugin_registry, discover_plugin_dir
 from backends.plugins.runtime import (
     _DECRYPTED_PLUGIN_CACHE,
     _DECRYPTED_PLUGIN_TEMPS,
-    _cleanup_decrypted_plugin_cache,
     PluginContext,
+    _cleanup_decrypted_plugin_cache,
     apply_plugin_licensing,
     attach_plugins,
     collect_runtime_state,
@@ -53,7 +53,15 @@ class TestPluginRuntime(unittest.TestCase):
             text=True,
         )
         subprocess.run(
-            ["openssl", "pkey", "-in", str(private_key), "-pubout", "-out", str(public_key)],
+            [
+                "openssl",
+                "pkey",
+                "-in",
+                str(private_key),
+                "-pubout",
+                "-out",
+                str(public_key),
+            ],
             check=True,
             capture_output=True,
             text=True,
@@ -92,7 +100,11 @@ class TestPluginRuntime(unittest.TestCase):
                         "name": "Demo",
                         "version": "0.1.0",
                         "kind": "analysis-pack",
-                        "host": {"api_version": 1, "min_version": "0.1.0", "max_version": "0.1.x"},
+                        "host": {
+                            "api_version": 1,
+                            "min_version": "0.1.0",
+                            "max_version": "0.1.x",
+                        },
                         "distribution": {"encrypted": True, "bundle_format": "pofplug"},
                         "licensing": {
                             "required": True,
@@ -101,7 +113,10 @@ class TestPluginRuntime(unittest.TestCase):
                             "message": "License required",
                         },
                         "entrypoints": {
-                            "python": {"module": "plugin_main", "register": "register_plugin"}
+                            "python": {
+                                "module": "plugin_main",
+                                "register": "register_plugin",
+                            }
                         },
                         "capabilities": {"analysis": ["vuln_patterns.enrich"]},
                     }
@@ -137,7 +152,10 @@ class TestPluginRuntime(unittest.TestCase):
             base = Path(tmp)
             disabled = base / "pof.disabled"
             incompatible = base / "pof.incompatible"
-            for plugin_dir, max_version in ((disabled, "0.1.x"), (incompatible, "0.0.x")):
+            for plugin_dir, max_version in (
+                (disabled, "0.1.x"),
+                (incompatible, "0.0.x"),
+            ):
                 plugin_dir.mkdir()
                 (plugin_dir / "manifest.json").write_text(
                     json.dumps(
@@ -178,9 +196,16 @@ class TestPluginRuntime(unittest.TestCase):
                         "name": "Demo",
                         "version": "0.1.0",
                         "kind": "analysis-pack",
-                        "host": {"api_version": 1, "min_version": "0.1.0", "max_version": "0.1.x"},
+                        "host": {
+                            "api_version": 1,
+                            "min_version": "0.1.0",
+                            "max_version": "0.1.x",
+                        },
                         "entrypoints": {
-                            "python": {"module": "plugin_main", "register": "register_plugin"}
+                            "python": {
+                                "module": "plugin_main",
+                                "register": "register_plugin",
+                            }
                         },
                     }
                 ),
@@ -217,9 +242,16 @@ class TestPluginRuntime(unittest.TestCase):
                         "name": "Audit",
                         "version": "0.1.0",
                         "kind": "analysis-pack",
-                        "host": {"api_version": 1, "min_version": "0.1.0", "max_version": "0.1.x"},
+                        "host": {
+                            "api_version": 1,
+                            "min_version": "0.1.0",
+                            "max_version": "0.1.x",
+                        },
                         "entrypoints": {
-                            "python": {"module": "plugin_main", "register": "register_plugin"}
+                            "python": {
+                                "module": "plugin_main",
+                                "register": "register_plugin",
+                            }
                         },
                     }
                 ),
@@ -265,9 +297,16 @@ class TestPluginRuntime(unittest.TestCase):
                         "name": "Demo",
                         "version": "0.1.0",
                         "kind": "analysis-pack",
-                        "host": {"api_version": 1, "min_version": "0.1.0", "max_version": "0.1.x"},
+                        "host": {
+                            "api_version": 1,
+                            "min_version": "0.1.0",
+                            "max_version": "0.1.x",
+                        },
                         "entrypoints": {
-                            "python": {"module": "plugin_main", "register": "register_plugin"}
+                            "python": {
+                                "module": "plugin_main",
+                                "register": "register_plugin",
+                            }
                         },
                     }
                 ),
@@ -293,11 +332,17 @@ class TestPluginRuntime(unittest.TestCase):
             project = Path(tmp) / "project"
             workspace_root = project / ".pile-ou-face"
             workspace_root.mkdir(parents=True)
-            paths = default_plugin_search_paths(cwd=project, home=Path(tmp) / "home", env={})
+            paths = default_plugin_search_paths(
+                cwd=project, home=Path(tmp) / "home", env={}
+            )
         self.assertEqual(paths, [(workspace_root / "plugins").resolve()])
 
-    def test_default_plugin_search_paths_falls_back_to_home_without_workspace_root(self):
-        paths = default_plugin_search_paths(cwd="/tmp/project", home="/tmp/home", env={})
+    def test_default_plugin_search_paths_falls_back_to_home_without_workspace_root(
+        self,
+    ):
+        paths = default_plugin_search_paths(
+            cwd="/tmp/project", home="/tmp/home", env={}
+        )
         self.assertEqual(paths, [Path("/tmp/home/.pile-ou-face/plugins").resolve()])
 
     def test_default_license_search_paths_prefers_workspace_root_when_present(self):
@@ -305,11 +350,17 @@ class TestPluginRuntime(unittest.TestCase):
             project = Path(tmp) / "project"
             workspace_root = project / ".pile-ou-face"
             workspace_root.mkdir(parents=True)
-            paths = default_license_search_paths(cwd=project, home=Path(tmp) / "home", env={})
+            paths = default_license_search_paths(
+                cwd=project, home=Path(tmp) / "home", env={}
+            )
         self.assertEqual(paths, [(workspace_root / "licenses").resolve()])
 
-    def test_default_license_search_paths_falls_back_to_home_without_workspace_root(self):
-        paths = default_license_search_paths(cwd="/tmp/project", home="/tmp/home", env={})
+    def test_default_license_search_paths_falls_back_to_home_without_workspace_root(
+        self,
+    ):
+        paths = default_license_search_paths(
+            cwd="/tmp/project", home="/tmp/home", env={}
+        )
         self.assertEqual(paths, [Path("/tmp/home/.pile-ou-face/licenses").resolve()])
 
     def test_collect_runtime_state_includes_search_paths_and_summary(self):
@@ -324,7 +375,11 @@ class TestPluginRuntime(unittest.TestCase):
                         "name": "Demo",
                         "version": "0.1.0",
                         "kind": "analysis-pack",
-                        "host": {"api_version": 1, "min_version": "0.1.0", "max_version": "0.1.x"},
+                        "host": {
+                            "api_version": 1,
+                            "min_version": "0.1.0",
+                            "max_version": "0.1.x",
+                        },
                         "entrypoints": {"python": {"module": "plugin_main"}},
                     }
                 ),
@@ -355,7 +410,11 @@ class TestPluginRuntime(unittest.TestCase):
                         "name": "Audit",
                         "version": "0.1.0",
                         "kind": "analysis-pack",
-                        "host": {"api_version": 1, "min_version": "0.1.0", "max_version": "0.1.x"},
+                        "host": {
+                            "api_version": 1,
+                            "min_version": "0.1.0",
+                            "max_version": "0.1.x",
+                        },
                         "licensing": {
                             "required": True,
                             "mode": "signed-license",
@@ -364,7 +423,10 @@ class TestPluginRuntime(unittest.TestCase):
                             "public_key_path": f"keys/{public_key.name}",
                         },
                         "entrypoints": {
-                            "python": {"module": "plugin_main", "register": "register_plugin"}
+                            "python": {
+                                "module": "plugin_main",
+                                "register": "register_plugin",
+                            }
                         },
                     }
                 ),
@@ -387,7 +449,9 @@ class TestPluginRuntime(unittest.TestCase):
                 )
             self.assertEqual(state["summary"], {"locked": 1})
             self.assertEqual(state["plugins"][0]["state"], "locked")
-            self.assertEqual(state["plugins"][0]["manifest"]["licensing"]["status"], "locked")
+            self.assertEqual(
+                state["plugins"][0]["manifest"]["licensing"]["status"], "locked"
+            )
             self.assertEqual(state["attached"]["commands"], [])
 
     def test_valid_signed_account_based_license_unlocks_plugin(self):
@@ -409,7 +473,11 @@ class TestPluginRuntime(unittest.TestCase):
                         "name": "Audit",
                         "version": "0.1.0",
                         "kind": "analysis-pack",
-                        "host": {"api_version": 1, "min_version": "0.1.0", "max_version": "0.1.x"},
+                        "host": {
+                            "api_version": 1,
+                            "min_version": "0.1.0",
+                            "max_version": "0.1.x",
+                        },
                         "licensing": {
                             "required": True,
                             "mode": "signed-license",
@@ -419,7 +487,10 @@ class TestPluginRuntime(unittest.TestCase):
                             "license_filename": f"{plugin_id}.license.json",
                         },
                         "entrypoints": {
-                            "python": {"module": "plugin_main", "register": "register_plugin"}
+                            "python": {
+                                "module": "plugin_main",
+                                "register": "register_plugin",
+                            }
                         },
                     }
                 ),
@@ -456,7 +527,10 @@ class TestPluginRuntime(unittest.TestCase):
                 signature_path = sign_tmp_path / "payload.sig"
                 payload_path.write_text(
                     json.dumps(
-                        raw_to_sign, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+                        raw_to_sign,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        ensure_ascii=False,
                     ),
                     encoding="utf-8",
                 )
@@ -475,10 +549,12 @@ class TestPluginRuntime(unittest.TestCase):
                     capture_output=True,
                     text=True,
                 )
-                license_payload["signature"] = base64.b64encode(signature_path.read_bytes()).decode(
-                    "ascii"
-                )
-            license_path.write_text(json.dumps(license_payload, indent=2), encoding="utf-8")
+                license_payload["signature"] = base64.b64encode(
+                    signature_path.read_bytes()
+                ).decode("ascii")
+            license_path.write_text(
+                json.dumps(license_payload, indent=2), encoding="utf-8"
+            )
 
             records = apply_plugin_licensing(
                 build_plugin_registry([base], host_version="0.1.0"),
@@ -508,9 +584,16 @@ class TestPluginRuntime(unittest.TestCase):
                         "name": "Demo Plugin",
                         "version": "0.1.0",
                         "kind": "analysis-pack",
-                        "host": {"api_version": 1, "min_version": "0.1.0", "max_version": "0.1.x"},
+                        "host": {
+                            "api_version": 1,
+                            "min_version": "0.1.0",
+                            "max_version": "0.1.x",
+                        },
                         "entrypoints": {
-                            "python": {"module": "plugin_main", "register": "register_plugin"}
+                            "python": {
+                                "module": "plugin_main",
+                                "register": "register_plugin",
+                            }
                         },
                     }
                 ),
@@ -523,7 +606,9 @@ class TestPluginRuntime(unittest.TestCase):
             bundle_path = base / "demo.pofplug"
             with ZipFile(bundle_path, "w") as archive:
                 archive.write(bundle_root / "manifest.json", "manifest.json")
-                archive.write(bundle_root / "python" / "plugin_main.py", "python/plugin_main.py")
+                archive.write(
+                    bundle_root / "python" / "plugin_main.py", "python/plugin_main.py"
+                )
 
             target_root = base / ".pile-ou-face" / "plugins"
             result = install_plugin(bundle_path, target_root)
@@ -567,7 +652,9 @@ class TestPluginRuntime(unittest.TestCase):
             private_key, public_key = self._generate_rsa_keypair(keys_dir)
             plugin_id = "pof.vulnerability-audit-pro"
             account_id = "test-account-id"
-            content_key = base64.b64encode(b"0123456789abcdef0123456789abcdef").decode("ascii")
+            content_key = base64.b64encode(b"0123456789abcdef0123456789abcdef").decode(
+                "ascii"
+            )
 
             inner_root = base / "inner"
             (inner_root / "python").mkdir(parents=True)
@@ -579,8 +666,15 @@ class TestPluginRuntime(unittest.TestCase):
                         "name": "Audit",
                         "version": "0.1.0",
                         "kind": "analysis-pack",
-                        "host": {"api_version": 1, "min_version": "0.1.0", "max_version": "0.1.x"},
-                        "distribution": {"encrypted": True, "bundle_format": "pofplug-enc"},
+                        "host": {
+                            "api_version": 1,
+                            "min_version": "0.1.0",
+                            "max_version": "0.1.x",
+                        },
+                        "distribution": {
+                            "encrypted": True,
+                            "bundle_format": "pofplug-enc",
+                        },
                         "licensing": {
                             "required": True,
                             "mode": "signed-license",
@@ -590,7 +684,10 @@ class TestPluginRuntime(unittest.TestCase):
                             "license_filename": f"{plugin_id}.license.json",
                         },
                         "entrypoints": {
-                            "python": {"module": "plugin_main", "register": "register_plugin"}
+                            "python": {
+                                "module": "plugin_main",
+                                "register": "register_plugin",
+                            }
                         },
                     }
                 ),
@@ -601,7 +698,8 @@ class TestPluginRuntime(unittest.TestCase):
                 encoding="utf-8",
             )
             shutil.copy2(
-                public_key, inner_root / "metadata" / "extras" / "keys" / "license-public.pem"
+                public_key,
+                inner_root / "metadata" / "extras" / "keys" / "license-public.pem",
             )
 
             inner_zip = base / "payload.zip"
@@ -624,7 +722,11 @@ class TestPluginRuntime(unittest.TestCase):
                 "name": "Audit",
                 "version": "0.1.0",
                 "kind": "analysis-pack",
-                "host": {"api_version": 1, "min_version": "0.1.0", "max_version": "0.1.x"},
+                "host": {
+                    "api_version": 1,
+                    "min_version": "0.1.0",
+                    "max_version": "0.1.x",
+                },
                 "distribution": {"encrypted": True, "bundle_format": "pofplug-enc"},
                 "licensing": {
                     "required": True,
@@ -634,7 +736,9 @@ class TestPluginRuntime(unittest.TestCase):
                     "public_key_path": "metadata/extras/keys/license-public.pem",
                     "license_filename": f"{plugin_id}.license.json",
                 },
-                "entrypoints": {"python": {"module": "plugin_main", "register": "register_plugin"}},
+                "entrypoints": {
+                    "python": {"module": "plugin_main", "register": "register_plugin"}
+                },
             }
             bundle_path = base / "audit-release.pofplug"
             with ZipFile(bundle_path, "w") as archive:
@@ -646,7 +750,9 @@ class TestPluginRuntime(unittest.TestCase):
                             "algorithm": "aes-256-gcm",
                             "nonce_b64": base64.b64encode(_nonce).decode("ascii"),
                             "payload_file": "payload.enc",
-                            "payload_sha256": hashlib.sha256(_inner_plaintext).hexdigest(),
+                            "payload_sha256": hashlib.sha256(
+                                _inner_plaintext
+                            ).hexdigest(),
                             "content_format": "zip",
                             "license_id": "lic-enc-001",
                         },
@@ -680,7 +786,10 @@ class TestPluginRuntime(unittest.TestCase):
                 signature_path = sign_tmp_path / "payload.sig"
                 payload_path.write_text(
                     json.dumps(
-                        raw_to_sign, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+                        raw_to_sign,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        ensure_ascii=False,
                     ),
                     encoding="utf-8",
                 )
@@ -699,9 +808,9 @@ class TestPluginRuntime(unittest.TestCase):
                     capture_output=True,
                     text=True,
                 )
-                license_payload["signature"] = base64.b64encode(signature_path.read_bytes()).decode(
-                    "ascii"
-                )
+                license_payload["signature"] = base64.b64encode(
+                    signature_path.read_bytes()
+                ).decode("ascii")
             (license_dir / f"{plugin_id}.license.json").write_text(
                 json.dumps(license_payload, indent=2),
                 encoding="utf-8",

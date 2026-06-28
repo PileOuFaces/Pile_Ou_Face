@@ -8,14 +8,13 @@ puissent mesurer les analyseurs même quand la table de symboles est retirée.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import shutil
 import subprocess
 import warnings
+from dataclasses import dataclass
 from pathlib import Path
 
 from backends.static.binary.symbols import extract_symbols
-
 
 SOURCE = r"""
 #include <stdint.h>
@@ -156,7 +155,9 @@ def default_corpus_specs() -> list[CorpusSpec]:
             specs.append(CorpusSpec("clang", "-Os", pie=False, stripped=True))
     if shutil.which("aarch64-linux-gnu-gcc"):
         specs.append(
-            CorpusSpec("aarch64-linux-gnu-gcc", "-O2", pie=True, stripped=False, arch="arm64")
+            CorpusSpec(
+                "aarch64-linux-gnu-gcc", "-O2", pie=True, stripped=False, arch="arm64"
+            )
         )
     return specs
 
@@ -232,7 +233,9 @@ def build_corpus_binary(root: Path, spec: CorpusSpec) -> CorpusBinary:
     if spec.stripped:
         strip = shutil.which("strip")
         if not strip:
-            return CorpusBinary(spec, source, binary, expected, skipped_reason="strip unavailable")
+            return CorpusBinary(
+                spec, source, binary, expected, skipped_reason="strip unavailable"
+            )
         stripped = subprocess.run(
             [strip, str(binary)],
             capture_output=True,

@@ -24,11 +24,10 @@ def _hex_bytes(data: bytes) -> str:
 
 
 class TestDynamicStackModel(unittest.TestCase):
-
     def test_compat_imports_reexport_moved_symbols(self):
-        from backends.dynamic.stack_model import build_dynamic_analysis as compat_build
         from backends.dynamic.engine.unicorn.config import TraceConfig
         from backends.dynamic.run_pipeline import TraceConfig as pipeline_compat_config
+        from backends.dynamic.stack_model import build_dynamic_analysis as compat_build
 
         self.assertIs(compat_build, build_dynamic_analysis)
         self.assertIs(pipeline_compat_config, TraceConfig)
@@ -81,7 +80,13 @@ class TestDynamicStackModel(unittest.TestCase):
                 "arch": "x86_64",
                 "word_size": word,
                 "endian": "little",
-                "aliases": {"sp": "rsp", "bp": "rbp", "fp": "rbp", "ip": "rip", "lr": None},
+                "aliases": {
+                    "sp": "rsp",
+                    "bp": "rbp",
+                    "fp": "rbp",
+                    "ip": "rip",
+                    "lr": None,
+                },
                 "before": {
                     "registers": {
                         "rsp": hex(rsp),
@@ -130,7 +135,10 @@ class TestDynamicStackModel(unittest.TestCase):
             "stack_size": 0x200,
             "binary": str(__file__),
         }
-        disasm = [{"addr": "0x401020", "text": "call 0x401030"}, {"addr": "0x401030", "text": "ret"}]
+        disasm = [
+            {"addr": "0x401020", "text": "call 0x401030"},
+            {"addr": "0x401030", "text": "ret"},
+        ]
 
         analysis = build_dynamic_analysis([snapshot], meta, str(__file__), disasm)
         step = analysis["1"]
@@ -141,7 +149,9 @@ class TestDynamicStackModel(unittest.TestCase):
         self.assertEqual(step["overflow"]["controlRisk"], "return_address")
         self.assertIn("saved_bp", step["overflow"]["reached"])
         self.assertIn("return_address", step["overflow"]["reached"])
-        self.assertTrue(any("Overflow:" in bullet for bullet in step["explanationBullets"]))
+        self.assertTrue(
+            any("Overflow:" in bullet for bullet in step["explanationBullets"])
+        )
 
     def test_leave_keeps_frame_control_addresses_on_last_valid_bp(self):
         word = 4
@@ -175,9 +185,19 @@ class TestDynamicStackModel(unittest.TestCase):
                 "arch": "x86",
                 "word_size": word,
                 "endian": "little",
-                "aliases": {"sp": "esp", "bp": "ebp", "fp": "ebp", "ip": "eip", "lr": None},
-                "before": {"registers": {"esp": hex(esp), "ebp": hex(ebp), "eip": "0x401000"}},
-                "after": {"registers": {"esp": hex(esp), "ebp": hex(ebp), "eip": "0x401003"}},
+                "aliases": {
+                    "sp": "esp",
+                    "bp": "ebp",
+                    "fp": "ebp",
+                    "ip": "eip",
+                    "lr": None,
+                },
+                "before": {
+                    "registers": {"esp": hex(esp), "ebp": hex(ebp), "eip": "0x401000"}
+                },
+                "after": {
+                    "registers": {"esp": hex(esp), "ebp": hex(ebp), "eip": "0x401003"}
+                },
             },
             "memory": {
                 "window_start": hex(window_start),
@@ -206,8 +226,16 @@ class TestDynamicStackModel(unittest.TestCase):
                 "arch": "x86",
                 "word_size": word,
                 "endian": "little",
-                "aliases": {"sp": "esp", "bp": "ebp", "fp": "ebp", "ip": "eip", "lr": None},
-                "before": {"registers": {"esp": hex(esp), "ebp": hex(ebp), "eip": "0x401003"}},
+                "aliases": {
+                    "sp": "esp",
+                    "bp": "ebp",
+                    "fp": "ebp",
+                    "ip": "eip",
+                    "lr": None,
+                },
+                "before": {
+                    "registers": {"esp": hex(esp), "ebp": hex(ebp), "eip": "0x401003"}
+                },
                 "after": {
                     "registers": {
                         "esp": hex(ebp + 4),
@@ -265,9 +293,25 @@ class TestDynamicStackModel(unittest.TestCase):
             },
             "frame": {
                 "slots": [
-                    {"role": "buffer", "start": "0xfc0", "end": "0x1000", "recentWrite": True, "changed": True},
-                    {"role": "saved_bp", "start": "0x1000", "end": "0x1008", "corrupted": True},
-                    {"role": "return_address", "start": "0x1008", "end": "0x1010", "corrupted": True},
+                    {
+                        "role": "buffer",
+                        "start": "0xfc0",
+                        "end": "0x1000",
+                        "recentWrite": True,
+                        "changed": True,
+                    },
+                    {
+                        "role": "saved_bp",
+                        "start": "0x1000",
+                        "end": "0x1008",
+                        "corrupted": True,
+                    },
+                    {
+                        "role": "return_address",
+                        "start": "0x1008",
+                        "end": "0x1010",
+                        "corrupted": True,
+                    },
                 ]
             },
             "delta": {
@@ -295,17 +339,17 @@ class TestResolveFunction(unittest.TestCase):
 
     # Minimal symbol table mirroring login-leakage-hard's .text section.
     SYMBOLS = [
-        {"name": "win",              "addr": "0x1aae", "size": 263,  "type": "T"},
-        {"name": "challenge",        "addr": "0x1bb5", "size": 408,  "type": "T"},
-        {"name": "main",             "addr": "0x1d4d", "size": 141,  "type": "T"},
-        {"name": "__libc_csu_init",  "addr": "0x1de0", "size": 101,  "type": "T"},
-        {"name": "__libc_csu_fini",  "addr": "0x1e50", "size": 5,    "type": "T"},
-        {"name": "_fini",            "addr": "0x1e58", "size": None,  "type": "T"},
+        {"name": "win", "addr": "0x1aae", "size": 263, "type": "T"},
+        {"name": "challenge", "addr": "0x1bb5", "size": 408, "type": "T"},
+        {"name": "main", "addr": "0x1d4d", "size": 141, "type": "T"},
+        {"name": "__libc_csu_init", "addr": "0x1de0", "size": 101, "type": "T"},
+        {"name": "__libc_csu_fini", "addr": "0x1e50", "size": 5, "type": "T"},
+        {"name": "_fini", "addr": "0x1e58", "size": None, "type": "T"},
     ]
-    META_PIE    = {"base": "0x400000", "stack_base": "0x7fff0000", "stack_size": 0x10000}
-    META_NOPIE  = {"base": "0x0",      "stack_base": "0x7fff0000", "stack_size": 0x10000}
+    META_PIE = {"base": "0x400000", "stack_base": "0x7fff0000", "stack_size": 0x10000}
+    META_NOPIE = {"base": "0x0", "stack_base": "0x7fff0000", "stack_size": 0x10000}
 
-    def _make_resolver(self, meta: dict) -> "StaticTraceResolver":
+    def _make_resolver(self, meta: dict) -> StaticTraceResolver:
         resolver = StaticTraceResolver.__new__(StaticTraceResolver)
         resolver.binary_path = "/fake/binary"
         resolver.meta = meta
@@ -320,6 +364,7 @@ class TestResolveFunction(unittest.TestCase):
         resolver.stack_base = None
         resolver.stack_end = None
         from backends.dynamic.pipeline.stack_model import _parse_int
+
         resolver.load_base = _parse_int(meta.get("base")) or 0
         resolver._symbols = self.SYMBOLS
         return resolver
@@ -327,21 +372,21 @@ class TestResolveFunction(unittest.TestCase):
     def test_rebased_main_address_resolves_to_main_not_fini(self):
         """0x401d4d is main rebased. Must return 'main', never '_fini'."""
         resolver = self._make_resolver(self.META_PIE)
-        result = resolver.resolve_function(0x401d4d)
+        result = resolver.resolve_function(0x401D4D)
         self.assertIsNotNone(result)
         self.assertEqual(result["name"], "main")
 
     def test_rebased_challenge_address_resolves_to_challenge(self):
         """0x401bb5 is challenge rebased."""
         resolver = self._make_resolver(self.META_PIE)
-        result = resolver.resolve_function(0x401bb5)
+        result = resolver.resolve_function(0x401BB5)
         self.assertIsNotNone(result)
         self.assertEqual(result["name"], "challenge")
 
     def test_rebased_address_inside_challenge_resolves_to_challenge(self):
         """0x401c00 is inside challenge (0x1bb5 + 0x4b offset)."""
         resolver = self._make_resolver(self.META_PIE)
-        result = resolver.resolve_function(0x401c00)
+        result = resolver.resolve_function(0x401C00)
         self.assertIsNotNone(result)
         self.assertEqual(result["name"], "challenge")
 
@@ -349,38 +394,41 @@ class TestResolveFunction(unittest.TestCase):
         """_fini (end=None) must never be returned for addresses in main."""
         resolver = self._make_resolver(self.META_PIE)
         for offset in range(0, 141, 4):
-            addr = 0x400000 + 0x1d4d + offset
+            addr = 0x400000 + 0x1D4D + offset
             result = resolver.resolve_function(addr)
             self.assertIsNotNone(result, f"no function for 0x{addr:x}")
             self.assertNotEqual(
-                result["name"], "_fini",
-                f"0x{addr:x} resolved to _fini instead of main"
+                result["name"], "_fini", f"0x{addr:x} resolved to _fini instead of main"
             )
 
     def test_libc_csu_fini_does_not_swallow_user_functions(self):
         """__libc_csu_fini must not be returned for challenge or main addresses."""
         resolver = self._make_resolver(self.META_PIE)
-        for func, base_offset, size in [("main", 0x1d4d, 141), ("challenge", 0x1bb5, 408)]:
+        for func, base_offset, size in [
+            ("main", 0x1D4D, 141),
+            ("challenge", 0x1BB5, 408),
+        ]:
             for offset in range(0, size, max(1, size // 8)):
                 addr = 0x400000 + base_offset + offset
                 result = resolver.resolve_function(addr)
                 self.assertIsNotNone(result, f"no function for 0x{addr:x}")
                 self.assertNotIn(
-                    result["name"], ("_fini", "__libc_csu_fini"),
-                    f"0x{addr:x} ({func}+{offset}) resolved to {result['name']}"
+                    result["name"],
+                    ("_fini", "__libc_csu_fini"),
+                    f"0x{addr:x} ({func}+{offset}) resolved to {result['name']}",
                 )
 
     def test_pie_relative_address_still_works_when_base_zero(self):
         """When base=0x0 (non-PIE or already normalized), ELF-relative lookup works."""
         resolver = self._make_resolver(self.META_NOPIE)
-        result = resolver.resolve_function(0x1d4d)
+        result = resolver.resolve_function(0x1D4D)
         self.assertIsNotNone(result)
         self.assertEqual(result["name"], "main")
 
     def test_build_dynamic_analysis_pie_trace_all_steps_resolve_main(self):
         """build_dynamic_analysis must return 'main' for all main-body steps."""
         base = 0x400000
-        main_start = 0x1d4d
+        main_start = 0x1D4D
         snapshots = [
             {
                 "step": i + 1,
@@ -404,8 +452,9 @@ class TestResolveFunction(unittest.TestCase):
         for step_key, entry in analysis.items():
             fn_name = entry.get("function", {}).get("name")
             self.assertNotEqual(
-                fn_name, "_fini",
-                f"step {step_key}: function.name is '_fini', expected 'main' or None"
+                fn_name,
+                "_fini",
+                f"step {step_key}: function.name is '_fini', expected 'main' or None",
             )
 
 

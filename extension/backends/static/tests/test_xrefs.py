@@ -12,13 +12,13 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backends.static.disasm.xrefs import (
-    extract_xrefs,
-    extract_xrefs_from_addr,
-    build_xref_map,
+    _classify_data_ref,
     _describe_source_context,
     _is_store_ref,
-    _classify_data_ref,
     _location_matches_text,
+    build_xref_map,
+    extract_xrefs,
+    extract_xrefs_from_addr,
 )
 
 
@@ -273,7 +273,9 @@ class TestBuildXrefMapTypeInfo(unittest.TestCase):
             {"addr": "0x401000", "text": "call\t0x401100", "line": 1},
         ]
         xmap = build_xref_map(lines)
-        self.assertTrue(len(xmap) > 0, "xref map should not be empty for 'call' instruction")
+        self.assertTrue(
+            len(xmap) > 0, "xref map should not be empty for 'call' instruction"
+        )
         for refs in xmap.values():
             for ref in refs:
                 self.assertIn("type_info", ref)
@@ -322,8 +324,13 @@ class TestXrefBinaryContext(unittest.TestCase):
         ]
         with (
             tempfile.NamedTemporaryFile() as tmp,
-            mock.patch("backends.static.disasm.xrefs.DisasmCache", return_value=self._fake_cache()),
-            mock.patch("backends.static.disasm.xrefs.default_cache_path", return_value=tmp.name),
+            mock.patch(
+                "backends.static.disasm.xrefs.DisasmCache",
+                return_value=self._fake_cache(),
+            ),
+            mock.patch(
+                "backends.static.disasm.xrefs.default_cache_path", return_value=tmp.name
+            ),
         ):
             refs = extract_xrefs(lines, "0x601000", binary_path=tmp.name)
 
@@ -342,8 +349,13 @@ class TestXrefBinaryContext(unittest.TestCase):
         ]
         with (
             tempfile.NamedTemporaryFile() as tmp,
-            mock.patch("backends.static.disasm.xrefs.DisasmCache", return_value=self._fake_cache()),
-            mock.patch("backends.static.disasm.xrefs.default_cache_path", return_value=tmp.name),
+            mock.patch(
+                "backends.static.disasm.xrefs.DisasmCache",
+                return_value=self._fake_cache(),
+            ),
+            mock.patch(
+                "backends.static.disasm.xrefs.default_cache_path", return_value=tmp.name
+            ),
             mock.patch(
                 "backends.static.disasm.xrefs.build_typed_struct_index",
                 return_value={
@@ -403,14 +415,21 @@ class TestXrefBinaryContext(unittest.TestCase):
         ]
         with (
             tempfile.NamedTemporaryFile() as tmp,
-            mock.patch("backends.static.disasm.xrefs.DisasmCache", return_value=FakeCache()),
-            mock.patch("backends.static.disasm.xrefs.default_cache_path", return_value=tmp.name),
+            mock.patch(
+                "backends.static.disasm.xrefs.DisasmCache", return_value=FakeCache()
+            ),
+            mock.patch(
+                "backends.static.disasm.xrefs.default_cache_path", return_value=tmp.name
+            ),
         ):
             refs = extract_xrefs(lines, "0x601000", binary_path=tmp.name)
 
         self.assertEqual(len(refs), 1)
         self.assertTrue(
-            any(h["name"] == "arg_rdi" and h["kind"] == "arg" for h in refs[0]["stack_hints"])
+            any(
+                h["name"] == "arg_rdi" and h["kind"] == "arg"
+                for h in refs[0]["stack_hints"]
+            )
         )
 
     def test_extract_xrefs_matches_arm_memory_stack_context(self):
@@ -436,11 +455,19 @@ class TestXrefBinaryContext(unittest.TestCase):
             def get_stack_frame(self, _binary_path, func_addr):
                 if func_addr == "0x500000":
                     return {
-                        "args": [{"name": "arg_saved", "location": "[x29+0x10]", "source": "auto"}],
+                        "args": [
+                            {
+                                "name": "arg_saved",
+                                "location": "[x29+0x10]",
+                                "source": "auto",
+                            }
+                        ],
                         "vars": [],
                     }
                 return {
-                    "args": [{"name": "arg_fp", "location": "[r11+0x8]", "source": "auto"}],
+                    "args": [
+                        {"name": "arg_fp", "location": "[r11+0x8]", "source": "auto"}
+                    ],
                     "vars": [],
                 }
 
@@ -458,8 +485,12 @@ class TestXrefBinaryContext(unittest.TestCase):
         ]
         with (
             tempfile.NamedTemporaryFile() as tmp,
-            mock.patch("backends.static.disasm.xrefs.DisasmCache", return_value=FakeCache()),
-            mock.patch("backends.static.disasm.xrefs.default_cache_path", return_value=tmp.name),
+            mock.patch(
+                "backends.static.disasm.xrefs.DisasmCache", return_value=FakeCache()
+            ),
+            mock.patch(
+                "backends.static.disasm.xrefs.default_cache_path", return_value=tmp.name
+            ),
         ):
             refs_arm64 = extract_xrefs(lines, "0x601000", binary_path=tmp.name)
             refs_arm32 = extract_xrefs(lines, "0x602000", binary_path=tmp.name)
@@ -473,7 +504,10 @@ class TestXrefBinaryContext(unittest.TestCase):
             )
         )
         self.assertTrue(
-            any(h["name"] == "arg_fp" and h["kind"] == "arg" for h in refs_arm32[0]["stack_hints"])
+            any(
+                h["name"] == "arg_fp" and h["kind"] == "arg"
+                for h in refs_arm32[0]["stack_hints"]
+            )
         )
 
     def test_extract_xrefs_matches_offset_base_stack_context(self):
@@ -496,7 +530,9 @@ class TestXrefBinaryContext(unittest.TestCase):
             def get_stack_frame(self, _binary_path, _func_addr):
                 return {
                     "args": [],
-                    "vars": [{"name": "saved_ra", "location": "[sp+0x8]", "source": "auto"}],
+                    "vars": [
+                        {"name": "saved_ra", "location": "[sp+0x8]", "source": "auto"}
+                    ],
                 }
 
         lines = [
@@ -508,14 +544,21 @@ class TestXrefBinaryContext(unittest.TestCase):
         ]
         with (
             tempfile.NamedTemporaryFile() as tmp,
-            mock.patch("backends.static.disasm.xrefs.DisasmCache", return_value=FakeCache()),
-            mock.patch("backends.static.disasm.xrefs.default_cache_path", return_value=tmp.name),
+            mock.patch(
+                "backends.static.disasm.xrefs.DisasmCache", return_value=FakeCache()
+            ),
+            mock.patch(
+                "backends.static.disasm.xrefs.default_cache_path", return_value=tmp.name
+            ),
         ):
             refs = extract_xrefs(lines, "0x900100", binary_path=tmp.name)
 
         self.assertEqual(len(refs), 1)
         self.assertTrue(
-            any(h["name"] == "saved_ra" and h["kind"] == "var" for h in refs[0]["stack_hints"])
+            any(
+                h["name"] == "saved_ra" and h["kind"] == "var"
+                for h in refs[0]["stack_hints"]
+            )
         )
 
     def test_extract_xrefs_can_enrich_from_functions_without_binary(self):
@@ -543,8 +586,13 @@ class TestXrefBinaryContext(unittest.TestCase):
         ]
         with (
             tempfile.NamedTemporaryFile() as tmp,
-            mock.patch("backends.static.disasm.xrefs.DisasmCache", return_value=self._fake_cache()),
-            mock.patch("backends.static.disasm.xrefs.default_cache_path", return_value=tmp.name),
+            mock.patch(
+                "backends.static.disasm.xrefs.DisasmCache",
+                return_value=self._fake_cache(),
+            ),
+            mock.patch(
+                "backends.static.disasm.xrefs.default_cache_path", return_value=tmp.name
+            ),
         ):
             source = _describe_source_context(lines, "0x401010", binary_path=tmp.name)
 

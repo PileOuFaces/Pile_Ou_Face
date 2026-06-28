@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
-from typing import Optional
 
 from backends.shared.log import configure_logging, get_logger
 
@@ -91,7 +90,9 @@ def db_stats(db_path: str) -> dict:
         n_sym = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
         n_str = conn.execute("SELECT COUNT(*) FROM strings_data").fetchone()[0]
         n_ann = conn.execute("SELECT COUNT(*) FROM annotations").fetchone()[0]
-        ver_row = conn.execute("SELECT value FROM schema_meta WHERE key='version'").fetchone()
+        ver_row = conn.execute(
+            "SELECT value FROM schema_meta WHERE key='version'"
+        ).fetchone()
         schema_ver = ver_row["value"] if ver_row else "unknown"
 
     return {
@@ -107,7 +108,7 @@ def db_stats(db_path: str) -> dict:
     }
 
 
-def purge_binary(db_path: str, binary_path: Optional[str] = None) -> int:
+def purge_binary(db_path: str, binary_path: str | None = None) -> int:
     """Supprime un ou tous les binaires du cache.
 
     Args:
@@ -207,7 +208,11 @@ def main() -> int:
             if target:
                 confirm = input(f"Remove cache for '{target}'? [y/N] ").strip().lower()
             else:
-                confirm = input(f"Purge ALL binaries from '{args.db}'? [y/N] ").strip().lower()
+                confirm = (
+                    input(f"Purge ALL binaries from '{args.db}'? [y/N] ")
+                    .strip()
+                    .lower()
+                )
             if confirm != "y":
                 print("Aborted.")
                 return 0

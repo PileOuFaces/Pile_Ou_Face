@@ -10,12 +10,12 @@ ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backends.static.tests.util import compile_minimal_elf
 from backends.static.disasm.disasm import main
+from backends.static.tests.util import compile_minimal_elf
 
 try:
-    import lief as _lief
     import capstone as _capstone
+    import lief as _lief
 
     _DISASM_AVAILABLE = True
 except ImportError:

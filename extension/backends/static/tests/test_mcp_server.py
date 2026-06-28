@@ -34,7 +34,9 @@ class TestMcpServer(unittest.TestCase):
         self.assertIn("serverInfo", response["result"])
 
     @patch("backends.mcp.server._load_mcp_memory_context")
-    def test_initialize_includes_instructions_when_memory_is_available(self, mock_memory):
+    def test_initialize_includes_instructions_when_memory_is_available(
+        self, mock_memory
+    ):
         mock_memory.return_value = "MCP memory context"
         request = {
             "jsonrpc": "2.0",
@@ -68,7 +70,9 @@ class TestMcpServer(unittest.TestCase):
         self.assertNotIn("taint_analysis", names)
 
     @patch("backends.mcp.server._dynamic_plugin_tools")
-    def test_tools_list_includes_dynamic_plugin_commands(self, mock_dynamic_plugin_tools):
+    def test_tools_list_includes_dynamic_plugin_commands(
+        self, mock_dynamic_plugin_tools
+    ):
         mock_dynamic_plugin_tools.return_value = [
             {
                 "name": "plugin.audit.vulns.run",
@@ -119,12 +123,16 @@ class TestMcpServer(unittest.TestCase):
     @patch("backends.plugins.runtime.invoke_plugin_command")
     @patch("backends.plugins.runtime.build_plugin_registry")
     @patch("backends.plugins.runtime.default_plugin_search_paths")
-    def test_tools_call_plugin_invoke(self, mock_search_paths, mock_build_registry, mock_invoke):
+    def test_tools_call_plugin_invoke(
+        self, mock_search_paths, mock_build_registry, mock_invoke
+    ):
         mock_search_paths.return_value = [Path("/repo/.pile-ou-face/plugins")]
         mock_build_registry.return_value = []
         mock_invoke.return_value = (
             {"ok": True, "command": "audit.vulns.run", "result": {"findings": 1}},
-            type("Ctx", (), {"snapshot": lambda self: {"commands": ["audit.vulns.run"]}})(),
+            type(
+                "Ctx", (), {"snapshot": lambda self: {"commands": ["audit.vulns.run"]}}
+            )(),
             [],
         )
         request = {
@@ -172,7 +180,9 @@ class TestMcpServer(unittest.TestCase):
         mock_build_registry.return_value = []
         mock_invoke.return_value = (
             {"ok": True, "command": "audit.vulns.run", "result": {"findings": 2}},
-            type("Ctx", (), {"snapshot": lambda self: {"commands": ["audit.vulns.run"]}})(),
+            type(
+                "Ctx", (), {"snapshot": lambda self: {"commands": ["audit.vulns.run"]}}
+            )(),
             [],
         )
         request = {
@@ -236,7 +246,9 @@ class TestMcpServer(unittest.TestCase):
         mock_find_files.assert_called_once_with("demo_analysis.elf", limit=20)
 
     @patch("backends.static.decompile.decompile.decompile_function")
-    def test_tools_call_decompile_function_ignores_legacy_quality(self, mock_decompile_function):
+    def test_tools_call_decompile_function_ignores_legacy_quality(
+        self, mock_decompile_function
+    ):
         mock_decompile_function.return_value = {
             "addr": "0x401000",
             "code": "int main() { return 0; }",
@@ -274,9 +286,13 @@ class TestMcpServer(unittest.TestCase):
             )
 
     @patch("backends.static.decompile.decompile.decompile_binary")
-    def test_tools_call_decompile_binary_ignores_legacy_quality(self, mock_decompile_binary):
+    def test_tools_call_decompile_binary_ignores_legacy_quality(
+        self, mock_decompile_binary
+    ):
         mock_decompile_binary.return_value = {
-            "functions": [{"addr": "0x401000", "code": "int main() { return 0; }", "error": None}],
+            "functions": [
+                {"addr": "0x401000", "code": "int main() { return 0; }", "error": None}
+            ],
             "decompiler": "retdec",
             "error": None,
         }
@@ -326,7 +342,9 @@ class TestMcpServer(unittest.TestCase):
             result = response["result"]
             self.assertFalse(result["isError"])
             self.assertEqual(result["structuredContent"]["ok"], True)
-            mock_call_tool.assert_called_once_with("extract_strings", {"binary_path": binary_path})
+            mock_call_tool.assert_called_once_with(
+                "extract_strings", {"binary_path": binary_path}
+            )
 
     def test_tools_call_invalid_params_returns_tool_error_payload(self):
         with tempfile.NamedTemporaryFile() as tmp:
@@ -349,7 +367,11 @@ class TestMcpServer(unittest.TestCase):
 
     @patch("backends.mcp.server._disassemble_for_mcp")
     def test_tools_call_disassemble_without_output_param(self, mock_disassemble):
-        mock_disassemble.return_value = {"ok": True, "count": 2, "lines": [{"addr": "0x1"}]}
+        mock_disassemble.return_value = {
+            "ok": True,
+            "count": 2,
+            "lines": [{"addr": "0x1"}],
+        }
         with tempfile.NamedTemporaryFile() as tmp:
             binary_path = str(Path(tmp.name).resolve())
             request = {
@@ -367,7 +389,9 @@ class TestMcpServer(unittest.TestCase):
             result = response["result"]
             self.assertFalse(result["isError"])
             self.assertEqual(result["structuredContent"]["ok"], True)
-            mock_disassemble.assert_called_once_with(binary_path, addr=None, max_lines=400)
+            mock_disassemble.assert_called_once_with(
+                binary_path, addr=None, max_lines=400
+            )
 
     def test_tools_call_disassemble_invalid_max_lines(self):
         with tempfile.NamedTemporaryFile() as tmp:
@@ -401,7 +425,9 @@ class TestMcpServer(unittest.TestCase):
 
     @patch("backends.mcp.server._iter_workspace_files")
     @patch("backends.mcp.server.os.path.isfile")
-    def test_resolve_binary_path_with_basename_search(self, mock_isfile, mock_iter_files):
+    def test_resolve_binary_path_with_basename_search(
+        self, mock_isfile, mock_iter_files
+    ):
         mock_isfile.return_value = False
         mock_iter_files.return_value = [
             "/repo/examples/demo_analysis.elf",
@@ -412,7 +438,9 @@ class TestMcpServer(unittest.TestCase):
 
     @patch("backends.mcp.server._iter_workspace_files")
     @patch("backends.mcp.server.os.path.isfile")
-    def test_resolve_binary_path_with_fuzzy_basename(self, mock_isfile, mock_iter_files):
+    def test_resolve_binary_path_with_fuzzy_basename(
+        self, mock_isfile, mock_iter_files
+    ):
         mock_isfile.return_value = False
         mock_iter_files.return_value = [
             "/repo/examples/vuln_demo.elf",

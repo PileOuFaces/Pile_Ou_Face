@@ -10,21 +10,21 @@ ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from backends.shared.utils import normalize_addr as _normalize_addr
 from backends.static.disasm.cfg import (
-    build_cfg,
-    build_cfg_for_function,
     _detect_switch_max_case,
-    _get_mnemonic,
+    _extract_jump_table_base,
     _extract_jump_target,
+    _get_mnemonic,
     _is_branch,
     _is_jump_table,
-    _extract_jump_table_base,
-    _read_jump_table_entries,
-    _section_is_exec,
     _is_valid_code_addr,
+    _read_jump_table_entries,
     _resolve_rip_relative_table,
+    _section_is_exec,
+    build_cfg,
+    build_cfg_for_function,
 )
-from backends.shared.utils import normalize_addr as _normalize_addr
 
 
 class TestCfgHelpers(unittest.TestCase):
@@ -37,7 +37,9 @@ class TestCfgHelpers(unittest.TestCase):
             _extract_jump_target("call\t0x1000004d8 <_printf+0x1000004d8>"),
             "0x1000004d8",
         )
-        self.assertEqual(_extract_jump_target("jne\t0x1000004be <_main+0x2e>"), "0x1000004be")
+        self.assertEqual(
+            _extract_jump_target("jne\t0x1000004be <_main+0x2e>"), "0x1000004be"
+        )
 
     def test_extract_jump_target_ignores_leading_instruction_bytes(self):
         self.assertEqual(_extract_jump_target("0c200008 jal 0x800020"), "0x800020")
@@ -143,7 +145,9 @@ class TestBuildCfg(unittest.TestCase):
         ]
         cfg = build_cfg(lines)
         self.assertIn("0x401000", [b["addr"] for b in cfg["blocks"]])
-        jmp_to_4020 = [e for e in cfg["edges"] if e["from"] == "0x401000" and e["to"] == "0x401020"]
+        jmp_to_4020 = [
+            e for e in cfg["edges"] if e["from"] == "0x401000" and e["to"] == "0x401020"
+        ]
         self.assertEqual(len(jmp_to_4020), 1)
         self.assertEqual(jmp_to_4020[0]["type"], "jmp")
 
@@ -156,7 +160,9 @@ class TestBuildCfg(unittest.TestCase):
             {"addr": "0x401030", "text": "ret", "line": 4},
         ]
         cfg = build_cfg(lines)
-        jmp_to_4030 = [e for e in cfg["edges"] if e["from"] == "0x401000" and e["to"] == "0x401030"]
+        jmp_to_4030 = [
+            e for e in cfg["edges"] if e["from"] == "0x401000" and e["to"] == "0x401030"
+        ]
         self.assertEqual(len(jmp_to_4030), 1)
 
     def test_preserves_line_metadata_for_cfg_views(self):
@@ -168,7 +174,9 @@ class TestBuildCfg(unittest.TestCase):
                 "comment": "saved value",
                 "label": "entry_label",
                 "function_name": "entry_main",
-                "stack_hints": [{"kind": "var", "name": "saved_tmp", "location": "[rsp+0x18]"}],
+                "stack_hints": [
+                    {"kind": "var", "name": "saved_tmp", "location": "[rsp+0x18]"}
+                ],
             },
             {"addr": "0x401005", "text": "ret", "line": 2},
         ]
@@ -191,10 +199,16 @@ class TestBuildCfg(unittest.TestCase):
         ]
         cfg = build_cfg(lines)
         self.assertTrue(
-            any(edge["type"] == "call" and edge["to"] == "0x800020" for edge in cfg["edges"])
+            any(
+                edge["type"] == "call" and edge["to"] == "0x800020"
+                for edge in cfg["edges"]
+            )
         )
         self.assertTrue(
-            any(edge["type"] == "jmp" and edge["to"] == "0x800018" for edge in cfg["edges"])
+            any(
+                edge["type"] == "jmp" and edge["to"] == "0x800018"
+                for edge in cfg["edges"]
+            )
         )
         self.assertFalse(any(edge["to"] == "0x03e00008" for edge in cfg["edges"]))
         self.assertIn(cfg["support_level"], {"full", "partial"})
@@ -351,12 +365,16 @@ class TestSwitchHelpers(unittest.TestCase):
     # --- tests _section_is_exec ---
 
     def test_section_is_exec_elf_executable(self):
-        lief_mod, binary, sec = self._make_elf_fixture(0x401000, 0x1000, executable=True)
+        lief_mod, binary, sec = self._make_elf_fixture(
+            0x401000, 0x1000, executable=True
+        )
         with patch("backends.static.disasm.cfg.lief", lief_mod):
             self.assertTrue(_section_is_exec(sec, binary))
 
     def test_section_is_exec_elf_not_executable(self):
-        lief_mod, binary, sec = self._make_elf_fixture(0x601000, 0x1000, executable=False)
+        lief_mod, binary, sec = self._make_elf_fixture(
+            0x601000, 0x1000, executable=False
+        )
         with patch("backends.static.disasm.cfg.lief", lief_mod):
             self.assertFalse(_section_is_exec(sec, binary))
 
@@ -400,7 +418,10 @@ class TestJumpTableIntegration(unittest.TestCase):
         car offset_in_section = table_addr - virtual_address = 0x402000 - 0x402000 = 0,
         donc la lecture commence exactement au début du fichier temporaire (offset 0).
         """
-        import struct, tempfile, os
+        import os
+        import struct
+        import tempfile
+
         from backends.static.disasm.cfg import _read_jump_table_entries
 
         addrs = [0x401000, 0x401050, 0]
@@ -493,9 +514,13 @@ class TestJumpTableIntegration(unittest.TestCase):
         ]
         with (
             patch("backends.static.disasm.cfg._is_jump_table", return_value=True),
-            patch("backends.static.disasm.cfg._extract_jump_table_base", return_value="0x1000"),
             patch(
-                "backends.static.disasm.cfg._resolve_rip_relative_table", return_value=0x403000
+                "backends.static.disasm.cfg._extract_jump_table_base",
+                return_value="0x1000",
+            ),
+            patch(
+                "backends.static.disasm.cfg._resolve_rip_relative_table",
+                return_value=0x403000,
             ) as mock_resolve,
             patch(
                 "backends.static.disasm.cfg._read_jump_table_entries",
@@ -504,7 +529,7 @@ class TestJumpTableIntegration(unittest.TestCase):
             patch("backends.static.disasm.cfg.lief") as mock_lief,
         ):
             mock_lief.parse.return_value = MagicMock(name="binary")
-            result = build_cfg(lines, binary_path="/fake/binary")
+            build_cfg(lines, binary_path="/fake/binary")
 
         mock_resolve.assert_called_once()
         mock_read.assert_called_once()
@@ -521,8 +546,14 @@ class TestJumpTableIntegration(unittest.TestCase):
         ]
         with (
             patch("backends.static.disasm.cfg._is_jump_table", return_value=True),
-            patch("backends.static.disasm.cfg._extract_jump_table_base", return_value="0x1000"),
-            patch("backends.static.disasm.cfg._read_jump_table_entries", return_value=["0x401010"]),
+            patch(
+                "backends.static.disasm.cfg._extract_jump_table_base",
+                return_value="0x1000",
+            ),
+            patch(
+                "backends.static.disasm.cfg._read_jump_table_entries",
+                return_value=["0x401010"],
+            ),
             patch("backends.static.disasm.cfg.lief", None),
         ):
             result = build_cfg(lines, binary_path="/fake/binary")
@@ -541,7 +572,10 @@ class TestJumpTableIntegration(unittest.TestCase):
         fake_binary = MagicMock(name="binary")
         with (
             patch("backends.static.disasm.cfg.lief") as mock_lief,
-            patch("backends.static.disasm.cfg._resolve_table_addr_from_lea", return_value=0x403000),
+            patch(
+                "backends.static.disasm.cfg._resolve_table_addr_from_lea",
+                return_value=0x403000,
+            ),
             patch(
                 "backends.static.disasm.cfg._read_jump_table_entries",
                 return_value=["0x401100", "0x401120"],
@@ -746,7 +780,10 @@ class TestCfgSwitchSerialization(unittest.TestCase):
         ]
         with (
             patch("backends.static.disasm.cfg._is_jump_table", return_value=True),
-            patch("backends.static.disasm.cfg._extract_jump_table_base", return_value="0x602000"),
+            patch(
+                "backends.static.disasm.cfg._extract_jump_table_base",
+                return_value="0x602000",
+            ),
             patch(
                 "backends.static.disasm.cfg._read_jump_table_entries",
                 return_value=["0x401010", "0x401020", "0x401030"],
@@ -782,7 +819,10 @@ class TestCfgSwitchSerialization(unittest.TestCase):
                 "backends.static.disasm.cfg._is_jump_table",
                 side_effect=lambda text: "jmp" in text.lower(),
             ),
-            patch("backends.static.disasm.cfg._extract_jump_table_base", return_value="0x602000"),
+            patch(
+                "backends.static.disasm.cfg._extract_jump_table_base",
+                return_value="0x602000",
+            ),
             patch(
                 "backends.static.disasm.cfg._read_jump_table_entries",
                 return_value=["0x401010", "0x401020"],
@@ -797,7 +837,9 @@ class TestCfgSwitchSerialization(unittest.TestCase):
             self.assertIn("case_label", e, f"case_label manquant sur {e}")
             self.assertIsNotNone(e["case_label"])
         # Vérifier que les labels sont 0 et 1 (index des 2 entrées)
-        labels = sorted(e["case_label"] for e in jt_edges if isinstance(e.get("case_label"), int))
+        labels = sorted(
+            e["case_label"] for e in jt_edges if isinstance(e.get("case_label"), int)
+        )
         self.assertEqual(labels, [0, 1])
 
     def test_switch_target_blocks_receive_incoming_case_labels(self):
@@ -816,7 +858,10 @@ class TestCfgSwitchSerialization(unittest.TestCase):
                 "backends.static.disasm.cfg._is_jump_table",
                 side_effect=lambda text: "jmp" in text.lower(),
             ),
-            patch("backends.static.disasm.cfg._extract_jump_table_base", return_value="0x602000"),
+            patch(
+                "backends.static.disasm.cfg._extract_jump_table_base",
+                return_value="0x602000",
+            ),
             patch(
                 "backends.static.disasm.cfg._read_jump_table_entries",
                 return_value=["0x401010", "0x401020"],
@@ -849,7 +894,10 @@ class TestCfgSwitchSerialization(unittest.TestCase):
                 "backends.static.disasm.cfg._is_jump_table",
                 side_effect=lambda text: "jmp" in text.lower(),
             ),
-            patch("backends.static.disasm.cfg._extract_jump_table_base", return_value="0x602000"),
+            patch(
+                "backends.static.disasm.cfg._extract_jump_table_base",
+                return_value="0x602000",
+            ),
             patch(
                 "backends.static.disasm.cfg._read_jump_table_entries",
                 return_value=["0x401010", "0x401010", "0x401020"],
@@ -897,7 +945,10 @@ class TestCfgSwitchSerialization(unittest.TestCase):
                 "backends.static.disasm.cfg._is_jump_table",
                 side_effect=lambda text: "jmp" in text.lower(),
             ),
-            patch("backends.static.disasm.cfg._extract_jump_table_base", return_value="0x602000"),
+            patch(
+                "backends.static.disasm.cfg._extract_jump_table_base",
+                return_value="0x602000",
+            ),
             patch(
                 "backends.static.disasm.cfg._read_jump_table_entries",
                 return_value=["0x401010", "0x401020"],
@@ -918,12 +969,15 @@ class TestCfgSwitchSerialization(unittest.TestCase):
     def test_large_jump_table_fallback_is_256(self):
         """Sans cmp détecté, le fallback max_entries est 256 (non plus 64)."""
         import inspect
+
         import backends.static.disasm.cfg as cfg_mod
 
         # _detect_switch_max_case returns None when no cmp is found
         block_lines = [{"addr": "0x401000", "text": "jmp qword ptr [rax*8+0x602000]"}]
         result = _detect_switch_max_case(block_lines)
-        self.assertIsNone(result, "Sans cmp, _detect_switch_max_case doit retourner None")
+        self.assertIsNone(
+            result, "Sans cmp, _detect_switch_max_case doit retourner None"
+        )
         # Verify the fallback 256 is present in _resolve_register_jump_table
         src_resolve = inspect.getsource(cfg_mod._resolve_register_jump_table)
         self.assertIn(
@@ -933,7 +987,9 @@ class TestCfgSwitchSerialization(unittest.TestCase):
         )
         # Verify build_cfg also uses 256 for its inline _read_jump_table_entries call
         src_build = inspect.getsource(cfg_mod.build_cfg)
-        self.assertIn("or 256", src_build, "Le fallback max_entries doit être 256 dans build_cfg")
+        self.assertIn(
+            "or 256", src_build, "Le fallback max_entries doit être 256 dans build_cfg"
+        )
 
 
 if __name__ == "__main__":

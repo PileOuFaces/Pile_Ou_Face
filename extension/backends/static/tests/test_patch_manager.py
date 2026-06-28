@@ -1,6 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-import json, os, subprocess, sys, tempfile, importlib.util
-from pathlib import Path
+import importlib.util
+import json
+import os
+import subprocess
+import sys
+import tempfile
 
 ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "../../.."))
 sys.path.insert(0, ROOT)

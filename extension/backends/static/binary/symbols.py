@@ -6,9 +6,9 @@ Utilise lief pour extraire les symboles (robuste, multi-format).
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
-import re
 
 try:
     import lief
@@ -29,7 +29,9 @@ _COMMON_SYMBOL_PREFIXES = (
 )
 
 
-def _fallback_symbols_from_strings(binary_path: str, defined_only: bool = True) -> list[dict]:
+def _fallback_symbols_from_strings(
+    binary_path: str, defined_only: bool = True
+) -> list[dict]:
     del defined_only
     path = Path(binary_path)
     if not path.exists() or not path.is_file():
@@ -103,7 +105,11 @@ def extract_symbols(binary_path: str, defined_only: bool = True) -> list[dict]:
             if not sym.name or sym.name in seen:
                 continue
             # Filtrer undefined si demandé
-            if defined_only and sym.binding == lief.ELF.Symbol.BINDING.GLOBAL and sym.shndx == 0:
+            if (
+                defined_only
+                and sym.binding == lief.ELF.Symbol.BINDING.GLOBAL
+                and sym.shndx == 0
+            ):
                 continue
             seen.add(sym.name)
 
@@ -120,7 +126,9 @@ def extract_symbols(binary_path: str, defined_only: bool = True) -> list[dict]:
 
             addr = f"0x{sym.value:x}" if sym.value else "0x0"
             sym_size = sym.size if hasattr(sym, "size") and sym.size else None
-            symbols.append(Symbol(name=sym.name, addr=addr, type=sym_type, size=sym_size))
+            symbols.append(
+                Symbol(name=sym.name, addr=addr, type=sym_type, size=sym_size)
+            )
 
         # Symboles dynamiques
         for sym in binary.dynamic_symbols:
@@ -133,7 +141,9 @@ def extract_symbols(binary_path: str, defined_only: bool = True) -> list[dict]:
             sym_type = "T" if sym.type == lief.ELF.Symbol.TYPE.FUNC else "D"
             addr = f"0x{sym.value:x}" if sym.value else "0x0"
             sym_size = sym.size if hasattr(sym, "size") and sym.size else None
-            symbols.append(Symbol(name=sym.name, addr=addr, type=sym_type, size=sym_size))
+            symbols.append(
+                Symbol(name=sym.name, addr=addr, type=sym_type, size=sym_size)
+            )
 
     # Mach-O
     elif isinstance(binary, lief.MachO.Binary):

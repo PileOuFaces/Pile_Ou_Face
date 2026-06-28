@@ -1,15 +1,17 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # backends/static/tests/test_decompile_stack_vars.py
-import sys, tempfile, unittest
+import sys
+import tempfile
+import unittest
+from contextlib import ExitStack
 from pathlib import Path
 from unittest import mock
-from contextlib import ExitStack
 
 ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backends.static.decompile.decompile import decompile_function, _postprocess_code
+from backends.static.decompile.decompile import _postprocess_code, decompile_function
 
 
 class TestPostprocessStackVars(unittest.TestCase):
@@ -126,7 +128,12 @@ class TestPostprocessStackVars(unittest.TestCase):
 def _make_run_custom(fake_code, decompiler="tool_a"):
     def _fake(d, binary_path, addr="", func_name="", full=False, **kw):
         if d == decompiler:
-            return {"addr": addr, "code": fake_code, "error": None, "decompiler": decompiler}
+            return {
+                "addr": addr,
+                "code": fake_code,
+                "error": None,
+                "decompiler": decompiler,
+            }
         return {"addr": addr, "code": "", "error": f"no mock for {d}", "decompiler": d}
 
     return _fake
@@ -136,7 +143,8 @@ class TestDecompileFunctionStackVars(unittest.TestCase):
     def _base_patches(self, fake_code="int f() { *(uint32_t *)(rbp - 0x8); }"):
         return [
             mock.patch(
-                "backends.static.decompile.decompile._auto_decompiler_order", lambda: ["tool_a"]
+                "backends.static.decompile.decompile._auto_decompiler_order",
+                lambda: ["tool_a"],
             ),
             mock.patch(
                 "backends.static.decompile.decompile._is_decompiler_available",
@@ -153,48 +161,45 @@ class TestDecompileFunctionStackVars(unittest.TestCase):
             "vars": [{"name": "my_var", "offset": -8, "size": 4, "source": "auto"}],
             "args": [],
         }
-        with tempfile.TemporaryDirectory() as d:
-            with ExitStack() as stack:
-                for p in self._base_patches():
-                    stack.enter_context(p)
-                # Patch analyse_stack_frame at the module level it's imported from
-                stack.enter_context(
-                    mock.patch(
-                        "backends.static.disasm.stack_frame.analyse_stack_frame",
-                        return_value=fake_stack,
-                    )
+        with tempfile.TemporaryDirectory() as d, ExitStack() as stack:
+            for p in self._base_patches():
+                stack.enter_context(p)
+            # Patch analyse_stack_frame at the module level it's imported from
+            stack.enter_context(
+                mock.patch(
+                    "backends.static.disasm.stack_frame.analyse_stack_frame",
+                    return_value=fake_stack,
                 )
-                result = decompile_function("/bin/ls", "0x401000", cache_dir=Path(d))
+            )
+            result = decompile_function("/bin/ls", "0x401000", cache_dir=Path(d))
         self.assertIn("my_var", result.get("code", ""))
 
     def test_graceful_degradation_if_analyse_raises(self):
-        with tempfile.TemporaryDirectory() as d:
-            with ExitStack() as stack:
-                for p in self._base_patches("int f() {}"):
-                    stack.enter_context(p)
-                stack.enter_context(
-                    mock.patch(
-                        "backends.static.disasm.stack_frame.analyse_stack_frame",
-                        side_effect=Exception("capstone not available"),
-                    )
+        with tempfile.TemporaryDirectory() as d, ExitStack() as stack:
+            for p in self._base_patches("int f() {}"):
+                stack.enter_context(p)
+            stack.enter_context(
+                mock.patch(
+                    "backends.static.disasm.stack_frame.analyse_stack_frame",
+                    side_effect=Exception("capstone not available"),
                 )
-                result = decompile_function("/bin/ls", "0x401000", cache_dir=Path(d))
+            )
+            result = decompile_function("/bin/ls", "0x401000", cache_dir=Path(d))
         self.assertIsNone(result.get("error"))
         self.assertIn("int f()", result.get("code", ""))
 
     def test_decimal_addr_does_not_crash(self):
         """addr sans préfixe 0x (décimal) ne doit pas crasher l'injection stack vars."""
-        with tempfile.TemporaryDirectory() as d:
-            with ExitStack() as stack:
-                for p in self._base_patches("int f() {}"):
-                    stack.enter_context(p)
-                stack.enter_context(
-                    mock.patch(
-                        "backends.static.disasm.stack_frame.analyse_stack_frame",
-                        return_value={"vars": [], "args": []},
-                    )
+        with tempfile.TemporaryDirectory() as d, ExitStack() as stack:
+            for p in self._base_patches("int f() {}"):
+                stack.enter_context(p)
+            stack.enter_context(
+                mock.patch(
+                    "backends.static.disasm.stack_frame.analyse_stack_frame",
+                    return_value={"vars": [], "args": []},
                 )
-                result = decompile_function("/bin/ls", "4198400", cache_dir=Path(d))
+            )
+            result = decompile_function("/bin/ls", "4198400", cache_dir=Path(d))
         self.assertIsNone(result.get("error"))
 
     def test_explicit_stack_vars_not_overwritten(self):
@@ -206,18 +211,18 @@ class TestDecompileFunctionStackVars(unittest.TestCase):
             analyse_called["n"] += 1
             return {"vars": [], "args": []}
 
-        with tempfile.TemporaryDirectory() as d:
-            with ExitStack() as stack:
-                for p in self._base_patches("int f() { *(uint32_t *)(rbp - 0x8); }"):
-                    stack.enter_context(p)
-                stack.enter_context(
-                    mock.patch(
-                        "backends.static.disasm.stack_frame.analyse_stack_frame", fake_analyse
-                    )
+        with tempfile.TemporaryDirectory() as d, ExitStack() as stack:
+            for p in self._base_patches("int f() { *(uint32_t *)(rbp - 0x8); }"):
+                stack.enter_context(p)
+            stack.enter_context(
+                mock.patch(
+                    "backends.static.disasm.stack_frame.analyse_stack_frame",
+                    fake_analyse,
                 )
-                result = decompile_function(
-                    "/bin/ls", "0x401000", stack_vars=explicit_vars, cache_dir=Path(d)
-                )
+            )
+            result = decompile_function(
+                "/bin/ls", "0x401000", stack_vars=explicit_vars, cache_dir=Path(d)
+            )
         self.assertEqual(analyse_called["n"], 0)
         self.assertIn("explicit_var", result.get("code", ""))
 
@@ -308,21 +313,22 @@ class TestDecompileFunctionStackVars(unittest.TestCase):
 
     def test_pipeline_substitutes_decompiler_specific_stack_aliases(self):
         fake_stack = {
-            "vars": [{"name": "saved_ctx", "offset": -0x10, "size": 8, "source": "auto"}],
+            "vars": [
+                {"name": "saved_ctx", "offset": -0x10, "size": 8, "source": "auto"}
+            ],
             "args": [{"name": "arg_left", "location": "rdi", "source": "abi"}],
         }
         fake_code = "undefined8 local_10;\nlocal_10 = param_1;\nreturn local_10;"
-        with tempfile.TemporaryDirectory() as d:
-            with ExitStack() as stack:
-                for p in self._base_patches(fake_code):
-                    stack.enter_context(p)
-                stack.enter_context(
-                    mock.patch(
-                        "backends.static.disasm.stack_frame.analyse_stack_frame",
-                        return_value=fake_stack,
-                    )
+        with tempfile.TemporaryDirectory() as d, ExitStack() as stack:
+            for p in self._base_patches(fake_code):
+                stack.enter_context(p)
+            stack.enter_context(
+                mock.patch(
+                    "backends.static.disasm.stack_frame.analyse_stack_frame",
+                    return_value=fake_stack,
                 )
-                result = decompile_function("/bin/ls", "0x401000", cache_dir=Path(d))
+            )
+            result = decompile_function("/bin/ls", "0x401000", cache_dir=Path(d))
         self.assertIn("saved_ctx", result.get("code", ""))
         self.assertIn("arg_left", result.get("code", ""))
         self.assertNotIn("local_10", result.get("code", ""))

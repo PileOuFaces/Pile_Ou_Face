@@ -43,10 +43,30 @@ class TestFunctionRadar(unittest.TestCase):
                 cache.save_symbols(
                     str(binary_path),
                     [
-                        {"name": "entry", "addr": "0x401000", "type": "T", "size": 0x30},
-                        {"name": "decrypt_config", "addr": "0x401030", "type": "T", "size": 0x20},
-                        {"name": "sendBeacon", "addr": "0x401050", "type": "T", "size": 0x20},
-                        {"name": "connect", "addr": "0x402000", "type": "U", "size": None},
+                        {
+                            "name": "entry",
+                            "addr": "0x401000",
+                            "type": "T",
+                            "size": 0x30,
+                        },
+                        {
+                            "name": "decrypt_config",
+                            "addr": "0x401030",
+                            "type": "T",
+                            "size": 0x20,
+                        },
+                        {
+                            "name": "sendBeacon",
+                            "addr": "0x401050",
+                            "type": "T",
+                            "size": 0x20,
+                        },
+                        {
+                            "name": "connect",
+                            "addr": "0x402000",
+                            "type": "U",
+                            "size": None,
+                        },
                     ],
                 )
                 cache.save_functions(
@@ -81,12 +101,16 @@ class TestFunctionRadar(unittest.TestCase):
                         "blocks": [
                             {
                                 "addr": "0x401000",
-                                "lines": [{"addr": "0x401000", "text": "call 0x401030"}],
+                                "lines": [
+                                    {"addr": "0x401000", "text": "call 0x401030"}
+                                ],
                                 "successors": ["0x401010"],
                             },
                             {
                                 "addr": "0x401010",
-                                "lines": [{"addr": "0x401010", "text": "call 0x401050"}],
+                                "lines": [
+                                    {"addr": "0x401010", "text": "call 0x401050"}
+                                ],
                                 "successors": [],
                             },
                             {
@@ -96,7 +120,9 @@ class TestFunctionRadar(unittest.TestCase):
                             },
                             {
                                 "addr": "0x401050",
-                                "lines": [{"addr": "0x401050", "text": "call 0x402000"}],
+                                "lines": [
+                                    {"addr": "0x401050", "text": "call 0x402000"}
+                                ],
                                 "successors": [],
                             },
                         ],
@@ -123,7 +149,9 @@ class TestFunctionRadar(unittest.TestCase):
                 cache.save_imports_analysis(
                     str(binary_path),
                     {
-                        "imports": [{"dll": "ws2_32.dll", "functions": ["connect"], "count": 1}],
+                        "imports": [
+                            {"dll": "ws2_32.dll", "functions": ["connect"], "count": 1}
+                        ],
                         "suspicious": [
                             {
                                 "function": "connect",
@@ -146,7 +174,9 @@ class TestFunctionRadar(unittest.TestCase):
                         }
                     ],
                 )
-                cache.save_annotation(str(binary_path), "0x401030", "comment", "decrypt routine")
+                cache.save_annotation(
+                    str(binary_path), "0x401030", "comment", "decrypt routine"
+                )
 
             with patch(
                 "backends.static.analysis.function_radar.build_analysis_index"
@@ -170,14 +200,22 @@ class TestFunctionRadar(unittest.TestCase):
             self.assertEqual(entry_fn["priority_level"], "high")
             self.assertIn("Entrée probable du binaire", entry_fn["reasons"])
             self.assertTrue(
-                any(item["label"] == "Entrypoint" for item in entry_fn["score_breakdown"])
+                any(
+                    item["label"] == "Entrypoint"
+                    for item in entry_fn["score_breakdown"]
+                )
             )
 
             self.assertGreaterEqual(decrypt_fn["annotation_count"], 1)
-            self.assertTrue(any("annotee" in reason for reason in decrypt_fn["reasons"]))
+            self.assertTrue(
+                any("annotee" in reason for reason in decrypt_fn["reasons"])
+            )
             self.assertEqual(decrypt_fn["review_status"], "in_progress")
             self.assertTrue(
-                any(item["label"] == "Contexte analyste" for item in decrypt_fn["score_breakdown"])
+                any(
+                    item["label"] == "Contexte analyste"
+                    for item in decrypt_fn["score_breakdown"]
+                )
             )
 
             self.assertIn("Reseau", beacon_fn["import_categories"])
@@ -194,7 +232,10 @@ class TestFunctionRadar(unittest.TestCase):
             self.assertEqual(beacon_fn["proof_dossiers"][0]["kind"], "FUNCTION_RADAR")
             self.assertTrue(beacon_fn["proof_dossiers"][0]["evidence"])
             self.assertTrue(
-                any(item["label"] == "Appels sensibles" for item in beacon_fn["score_breakdown"])
+                any(
+                    item["label"] == "Appels sensibles"
+                    for item in beacon_fn["score_breakdown"]
+                )
             )
 
 

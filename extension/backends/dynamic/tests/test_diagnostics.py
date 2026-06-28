@@ -162,7 +162,9 @@ class TestDynamicDiagnostics(unittest.TestCase):
         kinds = {diag["kind"] for diag in diagnostics}
         self.assertIn("buffer_overflow", kinds)
         self.assertIn("return_address_corrupted", kinds)
-        ret_diag = next(diag for diag in diagnostics if diag["kind"] == "return_address_corrupted")
+        ret_diag = next(
+            diag for diag in diagnostics if diag["kind"] == "return_address_corrupted"
+        )
         self.assertEqual(ret_diag["severity"], "error")
         self.assertEqual(ret_diag["slot"]["kind"], "return_address")
         self.assertEqual(ret_diag["probableSource"], "argv[1]")
@@ -256,7 +258,11 @@ class TestDynamicDiagnostics(unittest.TestCase):
                 "faultAddress": "0x4343434343434343",
                 "reason": "Retour vers une adresse non executable ou non mappee.",
             },
-            [_snapshot(step=1, instr="ret", mnemonic="ret", after_rip="0x4343434343434343")],
+            [
+                _snapshot(
+                    step=1, instr="ret", mnemonic="ret", after_rip="0x4343434343434343"
+                )
+            ],
             {"1": analysis},
             meta,
             [{"addr": "0x401000"}, {"addr": "0x401100"}],
@@ -300,7 +306,12 @@ class TestDynamicDiagnostics(unittest.TestCase):
 
     def test_crash_block_adds_runtime_crash_diagnostic(self):
         analysis = _base_analysis()
-        snap = _snapshot(step=1, instr="mov dword ptr [eax], ebx", mnemonic="mov", after_rip="0x401012")
+        snap = _snapshot(
+            step=1,
+            instr="mov dword ptr [eax], ebx",
+            mnemonic="mov",
+            after_rip="0x401012",
+        )
         meta = {"arch_bits": 32, "word_size": 4}
 
         diagnostics = build_diagnostics(
@@ -350,7 +361,9 @@ class TestDynamicDiagnostics(unittest.TestCase):
             "frontier": "0x7fffffffe010",
             "progressBytes": 0,
         }
-        snap = _snapshot(step=2, instr="mov eax, eax", mnemonic="mov", after_rip="0x401011")
+        snap = _snapshot(
+            step=2, instr="mov eax, eax", mnemonic="mov", after_rip="0x401011"
+        )
         meta = {"arch_bits": 64, "word_size": 8}
 
         diagnostics = build_diagnostics(
@@ -385,7 +398,9 @@ class TestCrashClassification(unittest.TestCase):
         analysis["frame"]["slots"][2].update(
             {
                 "valueHex": ret_value,
-                "bytesHex": _hex_bytes(bytes.fromhex(ret_value.replace("0x", "").zfill(16))[::-1]),
+                "bytesHex": _hex_bytes(
+                    bytes.fromhex(ret_value.replace("0x", "").zfill(16))[::-1]
+                ),
                 "recentWrite": True,
                 "changed": True,
                 "flags": ["corrupted"],
@@ -424,12 +439,20 @@ class TestCrashClassification(unittest.TestCase):
                 "step": 1,
                 "instructionAddress": "0x401050",
                 "instructionText": "ret",
-                "registers": {"rip": "0x4141414141414141", "rsp": "0x7fffffffdf80", "rbp": "0x7fffffffe000"},
+                "registers": {
+                    "rip": "0x4141414141414141",
+                    "rsp": "0x7fffffffdf80",
+                    "rbp": "0x7fffffffe000",
+                },
                 "rip": "0x4141414141414141",
                 "faultAddress": "0x4141414141414141",
                 "reason": "Retour vers une adresse non mappee.",
             },
-            [_snapshot(step=1, instr="ret", mnemonic="ret", after_rip="0x4141414141414141")],
+            [
+                _snapshot(
+                    step=1, instr="ret", mnemonic="ret", after_rip="0x4141414141414141"
+                )
+            ],
             {"1": analysis},
             meta,
             [{"addr": "0x401000"}, {"addr": "0x401100"}],
@@ -446,7 +469,9 @@ class TestCrashClassification(unittest.TestCase):
             "word_size": 8,
             "payload_hex": _hex_bytes(b"A" * 72 + b"\x50\x10\x40\x00\x00\x00\x00\x00"),
             "payload_target": "stdin",
-            "functions": [{"name": "helper", "addr": "0x401050", "type": "T", "size": "0x30"}],
+            "functions": [
+                {"name": "helper", "addr": "0x401050", "type": "T", "size": "0x30"}
+            ],
         }
         crash = _build_crash_report(
             {
@@ -454,7 +479,11 @@ class TestCrashClassification(unittest.TestCase):
                 "step": 1,
                 "instructionAddress": "0x401020",
                 "instructionText": "ret",
-                "registers": {"rip": "0x401050", "rsp": "0x7fffffffdf80", "rbp": "0x7fffffffe000"},
+                "registers": {
+                    "rip": "0x401050",
+                    "rsp": "0x7fffffffdf80",
+                    "rbp": "0x7fffffffe000",
+                },
                 "rip": "0x401050",
                 "faultAddress": "0x401050",
                 "reason": "Retour vers une zone executable.",
@@ -476,7 +505,9 @@ class TestCrashClassification(unittest.TestCase):
             "word_size": 8,
             "payload_hex": _hex_bytes(b"A" * 72 + b"\x34\x12\x40\x00\x00\x00\x00\x00"),
             "payload_target": "stdin",
-            "functions": [{"name": "win", "addr": win_addr, "type": "T", "size": "0x20"}],
+            "functions": [
+                {"name": "win", "addr": win_addr, "type": "T", "size": "0x20"}
+            ],
         }
         crash = _build_crash_report(
             {
@@ -484,7 +515,11 @@ class TestCrashClassification(unittest.TestCase):
                 "step": 1,
                 "instructionAddress": "0x401020",
                 "instructionText": "ret",
-                "registers": {"rip": win_addr, "rsp": "0x7fffffffdf80", "rbp": "0x7fffffffe000"},
+                "registers": {
+                    "rip": win_addr,
+                    "rsp": "0x7fffffffdf80",
+                    "rbp": "0x7fffffffe000",
+                },
                 "rip": win_addr,
                 "faultAddress": win_addr,
                 "reason": "Retour vers win().",
@@ -510,7 +545,9 @@ class TestCrashClassification(unittest.TestCase):
             "word_size": 8,
             "payload_hex": _hex_bytes(b"A" * 72 + b"\x34\x12\x40\x00\x00\x00\x00\x00"),
             "payload_target": "stdin",
-            "functions": [{"name": "win", "addr": win_addr, "type": "T", "size": "0x20"}],
+            "functions": [
+                {"name": "win", "addr": win_addr, "type": "T", "size": "0x20"}
+            ],
         }
         diagnostics = build_diagnostics(
             [snap],
@@ -534,7 +571,9 @@ class TestCrashClassification(unittest.TestCase):
             "word_size": 8,
             "payload_hex": _hex_bytes(b"A" * 72 + b"\x50\x10\x40\x00\x00\x00\x00\x00"),
             "payload_target": "stdin",
-            "functions": [{"name": "helper", "addr": target_addr, "type": "T", "size": "0x30"}],
+            "functions": [
+                {"name": "helper", "addr": target_addr, "type": "T", "size": "0x30"}
+            ],
         }
         diagnostics = build_diagnostics(
             [snap],

@@ -3,7 +3,11 @@
 
 from __future__ import annotations
 
-from typing import Mapping, Optional, Protocol, Sequence, Tuple, Union, runtime_checkable
+from collections.abc import Mapping, Sequence
+from typing import (
+    Protocol,
+    runtime_checkable,
+)
 
 from .types import TraceResult
 
@@ -21,19 +25,19 @@ class TraceConfigLike(Protocol):
     interp_base: int
     start_interp: bool
     stdin_data: bytes
-    buffer_offset: Optional[int]
+    buffer_offset: int | None
     buffer_size: int
-    start_symbol: Optional[str]
-    argv1: Optional[str]
-    argv1_data: Optional[bytes]
-    stop_symbol: Optional[str]
-    capture_start_addr: Optional[int]
-    loader_max_steps: Optional[int]
-    capture_ranges: Optional[Sequence[Tuple[int, int]]]
-    stop_addr: Optional[int]
-    memory_patches: Optional[Sequence[Tuple[int, int, Union[int, bytes]]]]
-    stack_payload: Optional[Tuple[int, bytes]]
-    virtual_files: Optional[Mapping[str, bytes]]
+    start_symbol: str | None
+    argv1: str | None
+    argv1_data: bytes | None
+    stop_symbol: str | None
+    capture_start_addr: int | None
+    loader_max_steps: int | None
+    capture_ranges: Sequence[tuple[int, int]] | None
+    stop_addr: int | None
+    memory_patches: Sequence[tuple[int, int, int | bytes]] | None
+    stack_payload: tuple[int, bytes] | None
+    virtual_files: Mapping[str, bytes] | None
 
 
 @runtime_checkable
@@ -46,6 +50,6 @@ class ExecutionEngine(Protocol):
         self,
         code_bytes: bytes,
         config: TraceConfigLike,
-        binary_path: Optional[str],
+        binary_path: str | None,
     ) -> TraceResult:
         """Trace a binary blob and return snapshots plus engine metadata."""

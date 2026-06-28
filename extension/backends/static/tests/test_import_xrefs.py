@@ -42,7 +42,9 @@ class TestImportXrefs(unittest.TestCase):
                     "backends.static.disasm.import_xrefs._get_plt_addr",
                     return_value="0x401020",
                 ),
-                mock.patch("backends.static.disasm.import_xrefs._load_disasm_lines") as load_disasm,
+                mock.patch(
+                    "backends.static.disasm.import_xrefs._load_disasm_lines"
+                ) as load_disasm,
             ):
                 result = find_callsites(str(binary), "puts")
 

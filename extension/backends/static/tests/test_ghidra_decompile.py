@@ -39,7 +39,13 @@ class TestLoadDecompilers(unittest.TestCase):
                         "mytool": {
                             "label": "My Tool",
                             "detect": "mytool",
-                            "command": ["mytool", "--binary", "{binary}", "--addr", "{addr}"],
+                            "command": [
+                                "mytool",
+                                "--binary",
+                                "{binary}",
+                                "--addr",
+                                "{addr}",
+                            ],
                             "output_format": "c",
                         }
                     }
@@ -77,7 +83,9 @@ class TestLoadDecompilers(unittest.TestCase):
 
     def test_entry_without_command_ignored(self):
         with tempfile.TemporaryDirectory() as tmp:
-            cfg = self._write_config(tmp, {"decompilers": {"nodeco": {"label": "No Command"}}})
+            cfg = self._write_config(
+                tmp, {"decompilers": {"nodeco": {"label": "No Command"}}}
+            )
             result = _load_decompilers(cfg)
             self.assertNotIn("nodeco", result)
 
@@ -139,7 +147,11 @@ class TestLoadDecompilers(unittest.TestCase):
                                 "bitness": [64],
                             },
                             "exclude_targets": [
-                                {"format": "macho", "arch": "arm64", "reason": "fragile"},
+                                {
+                                    "format": "macho",
+                                    "arch": "arm64",
+                                    "reason": "fragile",
+                                },
                             ],
                         }
                     }
@@ -147,7 +159,9 @@ class TestLoadDecompilers(unittest.TestCase):
             )
             result = _load_decompilers(cfg)
         self.assertEqual(result["tool_a"]["supports"]["formats"], ["elf", "macho"])
-        self.assertEqual(result["tool_a"]["supports"]["architectures"], ["x86_64", "arm64"])
+        self.assertEqual(
+            result["tool_a"]["supports"]["architectures"], ["x86_64", "arm64"]
+        )
         self.assertEqual(result["tool_a"]["supports"]["bitness"], ["64"])
         self.assertEqual(result["tool_a"]["exclude_targets"][0]["format"], "macho")
         self.assertEqual(result["tool_a"]["exclude_targets"][0]["arch"], "arm64")
@@ -165,7 +179,12 @@ class TestIsDecompilerAvailableLocal(unittest.TestCase):
                             "tool_a": {
                                 "label": "Tool A",
                                 "detect": "tool_a_bin",
-                                "command": ["tool_a_bin", "--addr", "{addr}", "{binary}"],
+                                "command": [
+                                    "tool_a_bin",
+                                    "--addr",
+                                    "{addr}",
+                                    "{binary}",
+                                ],
                                 "output_format": "c",
                             }
                         }
@@ -174,34 +193,42 @@ class TestIsDecompilerAvailableLocal(unittest.TestCase):
                 encoding="utf-8",
             )
             # Simule tool_a présent dans PATH
-            with mock.patch(
-                "backends.static.decompile.decompile._load_decompilers",
-                return_value={
-                    "tool_a": {
-                        "command": ["tool_a_bin", "..."],
-                        "detect": "tool_a_bin",
-                    }
-                },
+            with (
+                mock.patch(
+                    "backends.static.decompile.decompile._load_decompilers",
+                    return_value={
+                        "tool_a": {
+                            "command": ["tool_a_bin", "..."],
+                            "detect": "tool_a_bin",
+                        }
+                    },
+                ),
+                mock.patch("shutil.which", return_value="/usr/bin/tool_a_bin"),
             ):
-                with mock.patch("shutil.which", return_value="/usr/bin/tool_a_bin"):
-                    from backends.static.decompile.decompile import _is_decompiler_available_local
+                from backends.static.decompile.decompile import (
+                    _is_decompiler_available_local,
+                )
 
-                    self.assertTrue(_is_decompiler_available_local("tool_a"))
+                self.assertTrue(_is_decompiler_available_local("tool_a"))
 
     def test_detect_not_found_in_path(self):
-        with mock.patch(
-            "backends.static.decompile.decompile._load_decompilers",
-            return_value={
-                "ghidra": {
-                    "command": ["analyzeHeadless", "..."],
-                    "detect": "analyzeHeadless",
-                }
-            },
+        with (
+            mock.patch(
+                "backends.static.decompile.decompile._load_decompilers",
+                return_value={
+                    "ghidra": {
+                        "command": ["analyzeHeadless", "..."],
+                        "detect": "analyzeHeadless",
+                    }
+                },
+            ),
+            mock.patch("shutil.which", return_value=None),
         ):
-            with mock.patch("shutil.which", return_value=None):
-                from backends.static.decompile.decompile import _is_decompiler_available_local
+            from backends.static.decompile.decompile import (
+                _is_decompiler_available_local,
+            )
 
-                self.assertFalse(_is_decompiler_available_local("ghidra"))
+            self.assertFalse(_is_decompiler_available_local("ghidra"))
 
     def test_no_detect_field_always_available(self):
         with mock.patch(
@@ -213,7 +240,9 @@ class TestIsDecompilerAvailableLocal(unittest.TestCase):
                 }
             },
         ):
-            from backends.static.decompile.decompile import _is_decompiler_available_local
+            from backends.static.decompile.decompile import (
+                _is_decompiler_available_local,
+            )
 
             self.assertTrue(_is_decompiler_available_local("mytool"))
 
@@ -295,7 +324,9 @@ class TestListAvailableDecompilersReasons(unittest.TestCase):
                     "label": "Tool C",
                     "docker_command": ["run", "{binary}"],
                     "docker_image": "example/tool_c:latest",
-                    "exclude_targets": [{"format": "macho", "arch": "arm64", "reason": "fragile"}],
+                    "exclude_targets": [
+                        {"format": "macho", "arch": "arm64", "reason": "fragile"}
+                    ],
                 }
             },
         ):
@@ -309,7 +340,11 @@ class TestListAvailableDecompilersReasons(unittest.TestCase):
                 ):
                     with mock.patch(
                         "backends.static.decompile.decompile._binary_info",
-                        return_value={"format": "macho", "arch": "arm64", "bitness": "64"},
+                        return_value={
+                            "format": "macho",
+                            "arch": "arm64",
+                            "bitness": "64",
+                        },
                     ):
                         result = list_available_decompilers(
                             "docker", binary_path="/tmp/demo", full=False
@@ -391,10 +426,14 @@ class TestOutputFilter(unittest.TestCase):
             )
             result = _load_decompilers(p)
         self.assertIn("output_filter", result["noisy_tool"])
-        self.assertEqual(result["noisy_tool"]["output_filter"], ["^\\[\\*\\]", "^DEBUG:"])
+        self.assertEqual(
+            result["noisy_tool"]["output_filter"], ["^\\[\\*\\]", "^DEBUG:"]
+        )
 
     def test_output_filter_strips_matching_lines(self):
-        from backends.static.decompile.decompile import _parse_external_decompiler_output
+        from backends.static.decompile.decompile import (
+            _parse_external_decompiler_output,
+        )
 
         raw = "[*] Starting analysis\nDEBUG: loading...\nvoid foo() {\n  return;\n}"
         with mock.patch(
@@ -452,7 +491,9 @@ class TestHttpEndpoint(unittest.TestCase):
             )
             result = _load_decompilers(p)
         self.assertIn("ida_server", result)
-        self.assertEqual(result["ida_server"]["endpoint"], "http://localhost:9090/decompile")
+        self.assertEqual(
+            result["ida_server"]["endpoint"], "http://localhost:9090/decompile"
+        )
         self.assertEqual(result["ida_server"]["method"], "POST")
 
     def test_run_http_decompiler_sends_request(self):
@@ -474,15 +515,18 @@ class TestHttpEndpoint(unittest.TestCase):
             "timeout": 10,
         }
         with mock.patch("urllib.request.urlopen", return_value=mock_resp) as mock_open:
-            result = _run_http_decompiler("ida_server", "/tmp/test.elf", config, addr="0x1000")
+            result = _run_http_decompiler(
+                "ida_server", "/tmp/test.elf", config, addr="0x1000"
+            )
         self.assertTrue(mock_open.called)
         self.assertEqual(result.get("code"), "int foo() { return 0; }")
         self.assertIsNone(result.get("error"))
         self.assertEqual(result.get("provider"), "http")
 
     def test_run_http_decompiler_handles_connection_error(self):
-        from backends.static.decompile.decompile import _run_http_decompiler
         import urllib.error
+
+        from backends.static.decompile.decompile import _run_http_decompiler
 
         config = {
             "endpoint": "http://localhost:9090/decompile",
@@ -492,34 +536,39 @@ class TestHttpEndpoint(unittest.TestCase):
             "timeout": 5,
         }
         with mock.patch(
-            "urllib.request.urlopen", side_effect=urllib.error.URLError("Connection refused")
+            "urllib.request.urlopen",
+            side_effect=urllib.error.URLError("Connection refused"),
         ):
-            result = _run_http_decompiler("ida_server", "/tmp/test.elf", config, addr="0x1000")
+            result = _run_http_decompiler(
+                "ida_server", "/tmp/test.elf", config, addr="0x1000"
+            )
         self.assertIsNotNone(result.get("error"))
         self.assertIn("Connection refused", result["error"])
         self.assertEqual(result.get("provider"), "http")
 
     def test_run_custom_decompiler_routes_to_http(self):
         """Vérifie que _run_custom_decompiler délègue à HTTP si endpoint présent."""
-        with mock.patch(
-            "backends.static.decompile.decompile._load_custom_decompilers",
-            return_value={
-                "ida": {
-                    "endpoint": "http://localhost:9090/decompile",
-                    "method": "POST",
-                    "body_template": "{}",
-                    "output_format": "json",
-                    "timeout": 10,
-                }
-            },
-        ):
-            with mock.patch(
+        with (
+            mock.patch(
+                "backends.static.decompile.decompile._load_custom_decompilers",
+                return_value={
+                    "ida": {
+                        "endpoint": "http://localhost:9090/decompile",
+                        "method": "POST",
+                        "body_template": "{}",
+                        "output_format": "json",
+                        "timeout": 10,
+                    }
+                },
+            ),
+            mock.patch(
                 "backends.static.decompile.decompile._run_http_decompiler",
                 return_value={"code": "int f() {}", "error": None, "provider": "http"},
-            ) as mock_http:
-                from backends.static.decompile.decompile import _run_custom_decompiler
+            ) as mock_http,
+        ):
+            from backends.static.decompile.decompile import _run_custom_decompiler
 
-                result = _run_custom_decompiler("ida", "/tmp/test.elf", addr="0x1000")
+            result = _run_custom_decompiler("ida", "/tmp/test.elf", addr="0x1000")
         self.assertTrue(mock_http.called)
         self.assertEqual(result.get("provider"), "http")
 
@@ -555,7 +604,9 @@ class TestHttpAuth(unittest.TestCase):
     def test_bearer_token_added_to_request(self):
         from backends.static.decompile.decompile import _run_http_decompiler
 
-        fake_response = json.dumps({"addr": "0x1000", "code": "int foo() {}", "error": None})
+        fake_response = json.dumps(
+            {"addr": "0x1000", "code": "int foo() {}", "error": None}
+        )
         mock_resp = mock.MagicMock()
         mock_resp.read.return_value = fake_response.encode()
         mock_resp.__enter__ = mock.MagicMock(return_value=mock_resp)
@@ -594,7 +645,11 @@ class TestHttpAuth(unittest.TestCase):
             "body_template": "{}",
             "output_format": "json",
             "timeout": 10,
-            "auth": {"type": "api_key", "token_env": "API_KEY_VAR", "header": "X-API-Key"},
+            "auth": {
+                "type": "api_key",
+                "token_env": "API_KEY_VAR",
+                "header": "X-API-Key",
+            },
         }
         captured_req = {}
 
@@ -607,11 +662,14 @@ class TestHttpAuth(unittest.TestCase):
                 _run_http_decompiler("api_tool", "/tmp/test.elf", config, addr="0x1000")
         # urllib normalise les noms de headers en title-case
         found = any("myapikey123" in v for v in captured_req["headers"].values())
-        self.assertTrue(found, f"API key not found in headers: {captured_req['headers']}")
+        self.assertTrue(
+            found, f"API key not found in headers: {captured_req['headers']}"
+        )
 
     def test_missing_token_env_returns_error(self):
-        from backends.static.decompile.decompile import _run_http_decompiler
         import os
+
+        from backends.static.decompile.decompile import _run_http_decompiler
 
         config = {
             "endpoint": "http://localhost:9090/decompile",

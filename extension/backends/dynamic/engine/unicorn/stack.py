@@ -11,14 +11,14 @@
 @details Mappe la pile, aligne, et construit argv/env/auxv.
 """
 
-from typing import List, Tuple, Union
+import contextlib
 
 from unicorn import UC_PROT_ALL
 from unicorn.x86_const import (
-    UC_X86_REG_RBP,
-    UC_X86_REG_RSP,
     UC_X86_REG_EBP,
     UC_X86_REG_ESP,
+    UC_X86_REG_RBP,
+    UC_X86_REG_RSP,
 )
 
 from .config import TraceConfig
@@ -78,18 +78,16 @@ def inject_stack_payload(uc, sp: int, config: TraceConfig) -> None:
         return
     offset, payload = config.stack_payload
     addr = sp + offset
-    try:
+    with contextlib.suppress(Exception):
         uc.mem_write(addr, payload)
-    except Exception:
-        pass
 
 
 def build_initial_stack(
     uc,
     config: TraceConfig,
-    argv: List[Union[str, bytes]],
-    env: List[Union[str, bytes]],
-    auxv: List[Tuple[int, int]],
+    argv: list[str | bytes],
+    env: list[str | bytes],
+    auxv: list[tuple[int, int]],
 ) -> int:
     """@brief Construit un layout argc/argv/envp/auxv minimal.
     @param uc Instance Unicorn.
@@ -125,13 +123,13 @@ def build_initial_stack(
         uc.mem_write(sp, masked.to_bytes(word_size, "little", signed=False))
 
     # Place d'abord les chaînes et mémorise leurs pointeurs.
-    env_ptrs: List[int] = []
+    env_ptrs: list[int] = []
     for item in reversed(env):
         raw = item if isinstance(item, bytes) else item.encode("utf-8", errors="ignore")
         addr = push_bytes(raw + b"\x00")
         env_ptrs.insert(0, addr)
 
-    argv_ptrs: List[int] = []
+    argv_ptrs: list[int] = []
     for item in reversed(argv):
         raw = item if isinstance(item, bytes) else item.encode("utf-8", errors="ignore")
         addr = push_bytes(raw + b"\x00")

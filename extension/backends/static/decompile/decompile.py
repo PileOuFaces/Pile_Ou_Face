@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import base64
 import concurrent.futures
+import contextlib
 import hashlib
 import json
 import os
@@ -74,7 +75,8 @@ _LOW_LEVEL_PSEUDOC_RE = re.compile(
 )
 _cfg_env = os.environ.get("DECOMPILERS_CONFIG", "").strip()
 _DECOMPILERS_CONFIG = (
-    Path(_cfg_env) if _cfg_env
+    Path(_cfg_env)
+    if _cfg_env
     else Path.home() / ".config" / "pile-ou-face" / "decompilers.json"
 )
 _pof_storage_env = os.environ.get("POF_STORAGE_DIR", "").strip()
@@ -88,7 +90,16 @@ _BUILTIN_TARGET_POLICIES: dict[str, dict[str, Any]] = {
     "ghidra": {
         "supports": {
             "formats": ["elf", "pe", "macho"],
-            "architectures": ["x86", "x86_64", "arm", "arm64", "mips", "mips64", "ppc", "ppc64"],
+            "architectures": [
+                "x86",
+                "x86_64",
+                "arm",
+                "arm64",
+                "mips",
+                "mips64",
+                "ppc",
+                "ppc64",
+            ],
         },
         "quality_bias": 20,
     },
@@ -280,7 +291,9 @@ def _load_decompilers(
         # Commandes locales (remplacement de {root_dir})
         root_dir = str(_POF_DIR)
         if has_local:
-            normalized["command"] = [str(p).replace("{root_dir}", root_dir) for p in command]  # type: ignore[union-attr]
+            normalized["command"] = [
+                str(p).replace("{root_dir}", root_dir) for p in command
+            ]  # type: ignore[union-attr]
         full_command = value.get("full_command")
         if isinstance(full_command, list) and full_command:
             normalized["full_command"] = [
@@ -300,10 +313,8 @@ def _load_decompilers(
         normalized["supports_full"] = bool(value.get("supports_full", True))
         raw_timeout = value.get("timeout")
         if raw_timeout is not None:
-            try:
+            with contextlib.suppress(TypeError, ValueError):
                 normalized["timeout"] = max(5, int(raw_timeout))
-            except (TypeError, ValueError):
-                pass
 
         output_format = str(value.get("output_format") or "json").strip().lower()
         if output_format not in ("json", "c", "text"):
@@ -322,7 +333,11 @@ def _load_decompilers(
                 raw_values = supports_cfg.get(cfg_key)
                 if not isinstance(raw_values, list):
                     continue
-                cleaned = [str(item).strip().lower() for item in raw_values if str(item).strip()]
+                cleaned = [
+                    str(item).strip().lower()
+                    for item in raw_values
+                    if str(item).strip()
+                ]
                 if cleaned:
                     normalized_supports[normalized_key] = cleaned
             if normalized_supports:
@@ -401,23 +416,32 @@ def _load_decompilers(
 
 
 # Alias pour compatibilité interne
-def _load_custom_decompilers(config_path: Path | None = None) -> dict[str, dict[str, Any]]:
+def _load_custom_decompilers(
+    config_path: Path | None = None,
+) -> dict[str, dict[str, Any]]:
     return _load_decompilers(config_path)
 
 
 def _custom_decompiler_labels() -> dict[str, str]:
-    return {key: str(value.get("label") or key) for key, value in _load_decompilers().items()}
+    return {
+        key: str(value.get("label") or key)
+        for key, value in _load_decompilers().items()
+    }
 
 
 def _docker_env_var_name_for_decompiler(decompiler: str) -> str:
-    suffix = re.sub(r"[^A-Z0-9]+", "_", _normalize_decompiler_id(decompiler).upper()).strip("_")
+    suffix = re.sub(
+        r"[^A-Z0-9]+", "_", _normalize_decompiler_id(decompiler).upper()
+    ).strip("_")
     return f"POF_DECOMPILER_IMAGE_{suffix}"
 
 
 def _get_decompiler_docker_image(decompiler: str) -> str:
     normalized = _normalize_decompiler_id(decompiler)
     # Variable d'env prioritaire (permet de surcharger l'image sans toucher au JSON)
-    specific = os.environ.get(_docker_env_var_name_for_decompiler(normalized), "").strip()
+    specific = os.environ.get(
+        _docker_env_var_name_for_decompiler(normalized), ""
+    ).strip()
     if specific:
         return specific
     entry = _load_decompilers().get(normalized)
@@ -452,7 +476,8 @@ def _format_custom_command(
 ) -> list[str]:
     # Détecter si la commande utilise des tokens binaires avant d'appeler lief
     needs_binary_info = any(
-        "{arch}" in str(p) or "{bitness}" in str(p) or "{format}" in str(p) for p in command
+        "{arch}" in str(p) or "{bitness}" in str(p) or "{format}" in str(p)
+        for p in command
     )
     binary_meta = _binary_info(binary_path) if needs_binary_info else {}
     replacements = {
@@ -593,11 +618,15 @@ def _parse_external_decompiler_output(
     if not text:
         text = stdout or ""
     # Filtrage custom par outil (output_filter déclaré dans decompilers.json)
-    _tool_filters = (_load_decompilers().get(decompiler or "", {}) or {}).get("output_filter") or []
+    _tool_filters = (_load_decompilers().get(decompiler or "", {}) or {}).get(
+        "output_filter"
+    ) or []
     if _tool_filters and text:
         _compiled_filters = [re.compile(f) for f in _tool_filters if f]
         filtered_lines = [
-            ln for ln in text.splitlines() if not any(pat.search(ln) for pat in _compiled_filters)
+            ln
+            for ln in text.splitlines()
+            if not any(pat.search(ln) for pat in _compiled_filters)
         ]
         text = "\n".join(filtered_lines)
     # Filtrer les lignes de diagnostic CLI qui polluent stdout.
@@ -640,7 +669,9 @@ def _parse_external_decompiler_output(
     # ── Format C/text : pas de parsing JSON ──────────────────────────────────
     if output_format in ("c", "text"):
         if full:
-            blocks = _parse_c_like_function_blocks(stripped) if output_format == "c" else []
+            blocks = (
+                _parse_c_like_function_blocks(stripped) if output_format == "c" else []
+            )
             return {
                 "functions": blocks,
                 "code": stripped,
@@ -693,7 +724,8 @@ def _parse_external_decompiler_output(
                 if not good:
                     # Toutes les fonctions sont vides → erreur explicite
                     first_err = next(
-                        (item.get("error") for item in functions if item.get("error")), None
+                        (item.get("error") for item in functions if item.get("error")),
+                        None,
                     )
                     return {
                         "functions": [],
@@ -709,7 +741,11 @@ def _parse_external_decompiler_output(
                 }
             chosen = next((item for item in functions if item.get("code")), None)
             if chosen:
-                return {**chosen, "decompiler": decompiler, "error": chosen.get("error")}
+                return {
+                    **chosen,
+                    "decompiler": decompiler,
+                    "error": chosen.get("error"),
+                }
     except Exception:
         pass
     # Fallback : traiter comme C/texte brut
@@ -787,7 +823,9 @@ def _run_http_decompiler(
                     "decompiler": decompiler,
                     "provider": "http",
                 }
-            credentials = base64.b64encode(f"{user_val}:{password_val}".encode()).decode()
+            credentials = base64.b64encode(
+                f"{user_val}:{password_val}".encode()
+            ).decode()
             headers["Authorization"] = f"Basic {credentials}"
 
     body_template = str(config.get("body_template") or "")
@@ -820,23 +858,27 @@ def _run_http_decompiler(
 
     try:
         data = body_str.encode("utf-8") if body_str else None
-        req = urllib.request.Request(endpoint, data=data, headers=headers, method=method)
+        req = urllib.request.Request(
+            endpoint, data=data, headers=headers, method=method
+        )
         if "Content-Type" not in headers and data:
             req.add_header("Content-Type", "application/json")
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
         result = _parse_external_decompiler_output(
-            raw, decompiler=decompiler, addr=addr, full=full, output_format=output_format
+            raw,
+            decompiler=decompiler,
+            addr=addr,
+            full=full,
+            output_format=output_format,
         )
         result["provider"] = "http"
         result["endpoint"] = endpoint
         return result
     except urllib.error.HTTPError as exc:
         body_err = ""
-        try:
+        with contextlib.suppress(Exception):
             body_err = exc.read().decode("utf-8", errors="replace")[:500]
-        except Exception:
-            pass
         return {
             "addr": addr,
             "code": "",
@@ -888,9 +930,15 @@ def _run_custom_decompiler(
             decompiler, binary_path, config, addr=addr, func_name=func_name, full=full
         )
     command = (
-        config.get("full_command") if full and config.get("full_command") else config.get("command")
+        config.get("full_command")
+        if full and config.get("full_command")
+        else config.get("command")
     )
-    if full and not config.get("supports_full", True) and not config.get("full_command"):
+    if (
+        full
+        and not config.get("supports_full", True)
+        and not config.get("full_command")
+    ):
         return {
             "functions": [],
             "error": f"{decompiler} ne déclare pas supports_full",
@@ -915,7 +963,11 @@ def _run_custom_decompiler(
     try:
         with tempfile.TemporaryDirectory(prefix="pof_custom_decompiler_") as tmp:
             out_ext = (
-                ".json" if output_format == "json" else ".c" if output_format == "c" else ".txt"
+                ".json"
+                if output_format == "json"
+                else ".c"
+                if output_format == "c"
+                else ".txt"
             )
             out_file = Path(tmp) / f"out{out_ext}"
             argv = _format_custom_command(
@@ -956,7 +1008,8 @@ def _run_custom_decompiler(
                 ):
                     stderr_tail_ = (proc_.stderr or "").strip()[-800:]
                     result_["error"] = (
-                        stderr_tail_ or f"{decompiler} exited with code {proc_.returncode}"
+                        stderr_tail_
+                        or f"{decompiler} exited with code {proc_.returncode}"
                     )
                     result_["error_type"] = "tool_error"
                 return result_
@@ -964,7 +1017,11 @@ def _run_custom_decompiler(
             parsed = _run_argv(argv, out_file)
 
             # Si la commande principale ne produit rien, tenter fallback_command
-            if parsed.get("error") and not parsed.get("code") and not parsed.get("functions"):
+            if (
+                parsed.get("error")
+                and not parsed.get("code")
+                and not parsed.get("functions")
+            ):
                 fallback_command = config.get("fallback_command")
                 if not full and fallback_command and isinstance(fallback_command, list):
                     fb_argv = _format_custom_command(
@@ -1078,7 +1135,11 @@ def _run_custom_decompiler_in_docker(
             binary_mount_dir, container_binary = _docker_mount_for_binary(binary_path)
             output_mount_dir, container_out = _docker_mount_for_output(tmp)
             out_ext = (
-                ".json" if output_format == "json" else ".c" if output_format == "c" else ".txt"
+                ".json"
+                if output_format == "json"
+                else ".c"
+                if output_format == "c"
+                else ".txt"
             )
             # Adapter le chemin de sortie container selon l'extension
             container_out_path = f"/output/out{out_ext}"
@@ -1135,11 +1196,14 @@ def _run_custom_decompiler_in_docker(
                 stderr_tail = (proc.stderr or "").strip()[-800:]
                 if _docker_run_failed_because_image_missing(stderr_tail):
                     _DOCKER_AVAILABLE_CACHE[image_name] = False
-                    parsed["error"] = _docker_missing_image_error(decompiler, image_name)
+                    parsed["error"] = _docker_missing_image_error(
+                        decompiler, image_name
+                    )
                     parsed["error_type"] = "image_not_found"
                 else:
                     parsed["error"] = (
-                        stderr_tail or f"{decompiler} Docker exited with code {proc.returncode}"
+                        stderr_tail
+                        or f"{decompiler} Docker exited with code {proc.returncode}"
                     )
                     parsed["error_type"] = "tool_error"
             return parsed
@@ -1324,7 +1388,9 @@ def _is_docker_decompiler_image_available(image: str) -> bool:
 
 
 def _is_docker_image_available_for_decompiler(decompiler: str) -> bool:
-    return _is_docker_decompiler_image_available(_get_decompiler_docker_image(decompiler))
+    return _is_docker_decompiler_image_available(
+        _get_decompiler_docker_image(decompiler)
+    )
 
 
 def _is_local_dev_docker_image(image_name: str) -> bool:
@@ -1336,7 +1402,9 @@ def _docker_missing_image_error(decompiler: str, image_name: str) -> str:
     normalized = _normalize_decompiler_id(decompiler)
     lines = [f"Image Docker introuvable pour {decompiler} : {image_name}"]
     if _is_local_dev_docker_image(image_name):
-        lines.append(f"Construis-la d'abord : make decompiler-docker-build DECOMPILER={normalized}")
+        lines.append(
+            f"Construis-la d'abord : make decompiler-docker-build DECOMPILER={normalized}"
+        )
         lines.append(
             f"Ou surcharge l'image avec {_docker_env_var_name_for_decompiler(normalized)}=registry/image:tag"
         )
@@ -1509,9 +1577,7 @@ def _extract_reachable_call_names(
             return True
         if mnemonic == "bx" and operands == "lr":
             return True
-        if mnemonic == "pop" and "pc" in operands:
-            return True
-        return False
+        return bool(mnemonic == "pop" and "pc" in operands)
 
     def _successors(ins: dict[str, Any]) -> list[str]:
         mnemonic = str(ins.get("mnemonic") or "").strip().lower()
@@ -1528,7 +1594,11 @@ def _extract_reachable_call_names(
             return [item for item in (target, next_addr) if item]
         if mnemonic.startswith("b.") or mnemonic in {"cbz", "cbnz", "tbz", "tbnz"}:
             return [item for item in (target, next_addr) if item]
-        if re.fullmatch(r"b[a-z]{1,2}", mnemonic) and mnemonic not in {"bl", "blx", "bx"}:
+        if re.fullmatch(r"b[a-z]{1,2}", mnemonic) and mnemonic not in {
+            "bl",
+            "blx",
+            "bx",
+        }:
             return [item for item in (target, next_addr) if item]
         return [next_addr] if next_addr else []
 
@@ -1565,7 +1635,9 @@ def _score_decompile_code(
     text = code or ""
     stripped_lines = [line.strip() for line in text.splitlines() if line.strip()]
     line_count = len(stripped_lines)
-    call_names = {_pretty_symbol_name(name).lower() for name in _extract_call_names(text)}
+    call_names = {
+        _pretty_symbol_name(name).lower() for name in _extract_call_names(text)
+    }
     call_count = len(call_names)
     placeholder_count = len(_PLACEHOLDER_SYMBOL_RE.findall(text))
     control_count = sum(
@@ -1591,7 +1663,9 @@ def _score_decompile_code(
     missing_call_count = 0
     if expected_calls:
         normalized_expected = {
-            _pretty_symbol_name(name).lower() for name in expected_calls if str(name or "").strip()
+            _pretty_symbol_name(name).lower()
+            for name in expected_calls
+            if str(name or "").strip()
         }
         matched_call_count = len(call_names & normalized_expected)
         missing_call_count = len(normalized_expected - call_names)
@@ -1615,10 +1689,14 @@ def _score_decompile_code(
     }
 
 
-def _score_binary_decompile(result: dict[str, Any], decompiler: str = "") -> dict[str, Any]:
+def _score_binary_decompile(
+    result: dict[str, Any], decompiler: str = ""
+) -> dict[str, Any]:
     functions = result.get("functions") or []
     fn_count = len(functions)
-    total_code_len = sum(len((f.get("code") or "")) for f in functions if isinstance(f, dict))
+    total_code_len = sum(
+        len(f.get("code") or "") for f in functions if isinstance(f, dict)
+    )
     error_count = sum(1 for f in functions if isinstance(f, dict) and f.get("error"))
     score = fn_count * 14
     score += min(total_code_len // 150, 28)
@@ -1633,9 +1711,13 @@ def _score_binary_decompile(result: dict[str, Any], decompiler: str = "") -> dic
     }
 
 
-def _select_best_function_candidate(attempts: list[dict[str, Any]]) -> dict[str, Any] | None:
+def _select_best_function_candidate(
+    attempts: list[dict[str, Any]],
+) -> dict[str, Any] | None:
     successes = [
-        attempt for attempt in attempts if not attempt.get("error") and attempt.get("code")
+        attempt
+        for attempt in attempts
+        if not attempt.get("error") and attempt.get("code")
     ]
     if not successes:
         return None
@@ -1658,9 +1740,13 @@ def _select_best_function_candidate(attempts: list[dict[str, Any]]) -> dict[str,
     return scored[0][2]
 
 
-def _select_best_binary_candidate(attempts: list[dict[str, Any]]) -> dict[str, Any] | None:
+def _select_best_binary_candidate(
+    attempts: list[dict[str, Any]],
+) -> dict[str, Any] | None:
     successes = [
-        attempt for attempt in attempts if not attempt.get("error") and attempt.get("functions")
+        attempt
+        for attempt in attempts
+        if not attempt.get("error") and attempt.get("functions")
     ]
     if not successes:
         return None
@@ -1681,7 +1767,9 @@ def _build_function_quality_details(
     expected_calls=None,
 ) -> dict[str, Any]:
     backends: list[dict[str, Any]] = []
-    selected_backend = str(selected.get("decompiler") or "") if isinstance(selected, dict) else ""
+    selected_backend = (
+        str(selected.get("decompiler") or "") if isinstance(selected, dict) else ""
+    )
     selected_score = 0
     for attempt in attempts:
         decompiler = str(attempt.get("decompiler") or "")
@@ -1724,7 +1812,9 @@ def _build_binary_quality_details(
     selected: dict[str, Any] | None,
 ) -> dict[str, Any]:
     backends: list[dict[str, Any]] = []
-    selected_backend = str(selected.get("decompiler") or "") if isinstance(selected, dict) else ""
+    selected_backend = (
+        str(selected.get("decompiler") or "") if isinstance(selected, dict) else ""
+    )
     selected_score = 0
     for attempt in attempts:
         decompiler = str(attempt.get("decompiler") or "")
@@ -1771,7 +1861,11 @@ def _parse_numeric_token(value: str | int | None) -> int | None:
     if not text:
         return None
     try:
-        return int(text, 16) if text.startswith("0x") or text.startswith("-0x") else int(text, 10)
+        return (
+            int(text, 16)
+            if text.startswith("0x") or text.startswith("-0x")
+            else int(text, 10)
+        )
     except ValueError:
         return None
 
@@ -1799,7 +1893,9 @@ def _pretty_symbol_name(name: str) -> str:
     return symbol
 
 
-def _load_disasm_context(binary_path: str) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
+def _load_disasm_context(
+    binary_path: str,
+) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
     instruction_map: dict[str, dict[str, Any]] = {}
     symbol_map: dict[str, str] = {}
     try:
@@ -1816,7 +1912,9 @@ def _load_disasm_context(binary_path: str) -> tuple[dict[str, dict[str, Any]], d
             normalized_lines.append(copied)
         for index, line in enumerate(normalized_lines):
             next_addr = (
-                normalized_lines[index + 1]["addr"] if index + 1 < len(normalized_lines) else ""
+                normalized_lines[index + 1]["addr"]
+                if index + 1 < len(normalized_lines)
+                else ""
             )
             line["next_addr"] = next_addr
             instruction_map[line["addr"]] = line
@@ -2009,7 +2107,9 @@ def _stack_frame_payload(
     }
 
 
-def _stack_signature(stack_frame: dict[str, Any] | None, stack_vars: list[dict] | None) -> str:
+def _stack_signature(
+    stack_frame: dict[str, Any] | None, stack_vars: list[dict] | None
+) -> str:
     payload = _stack_frame_payload(stack_frame, stack_vars)
     if not payload:
         return ""
@@ -2193,7 +2293,9 @@ def _decompiler_target_support(
     supports = entry.get("supports") or builtin_policy.get("supports") or {}
     if isinstance(supports, dict):
         formats = [
-            str(item).strip().lower() for item in supports.get("formats", []) if str(item).strip()
+            str(item).strip().lower()
+            for item in supports.get("formats", [])
+            if str(item).strip()
         ]
         if formats and fmt not in formats:
             return False, f"format {fmt} non déclaré pour ce backend"
@@ -2205,7 +2307,9 @@ def _decompiler_target_support(
         if architectures and arch != "unknown" and arch not in architectures:
             return False, f"architecture {arch} non déclarée pour ce backend"
         bitnesses = [
-            str(item).strip().lower() for item in supports.get("bitness", []) if str(item).strip()
+            str(item).strip().lower()
+            for item in supports.get("bitness", [])
+            if str(item).strip()
         ]
         if bitnesses and bitness not in bitnesses:
             return False, f"mode {bitness}-bit non déclaré pour ce backend"
@@ -2216,15 +2320,23 @@ def _decompiler_target_support(
     for excluded in excludes or []:
         if not isinstance(excluded, dict):
             continue
-        if excluded.get("format") and str(excluded.get("format")).strip().lower() != fmt:
+        if (
+            excluded.get("format")
+            and str(excluded.get("format")).strip().lower() != fmt
+        ):
             continue
         if excluded.get("arch") and str(excluded.get("arch")).strip().lower() != arch:
             continue
-        if excluded.get("bitness") and str(excluded.get("bitness")).strip().lower() != bitness:
+        if (
+            excluded.get("bitness")
+            and str(excluded.get("bitness")).strip().lower() != bitness
+        ):
             continue
         if "full" in excluded and bool(excluded.get("full")) != bool(full):
             continue
-        return False, str(excluded.get("reason") or "cible explicitement exclue pour ce backend")
+        return False, str(
+            excluded.get("reason") or "cible explicitement exclue pour ce backend"
+        )
     return True, ""
 
 
@@ -2240,9 +2352,9 @@ def _is_decompiler_available(decompiler: str, provider: str = "auto") -> bool:
     if provider == "docker":
         return _is_docker_image_available_for_decompiler(decompiler)
     # auto : local OU docker
-    return _is_decompiler_available_local(decompiler) or _is_docker_image_available_for_decompiler(
+    return _is_decompiler_available_local(
         decompiler
-    )
+    ) or _is_docker_image_available_for_decompiler(decompiler)
 
 
 def list_available_decompilers(
@@ -2268,7 +2380,8 @@ def list_available_decompilers(
         did: _is_decompiler_available_local(did) for did in all_decompilers
     }
     docker_avail: dict[str, bool] = {
-        key: _is_docker_decompiler_image_available(image) for key, image in docker_images.items()
+        key: _is_docker_decompiler_image_available(image)
+        for key, image in docker_images.items()
     }
     available: dict[str, Any] = {
         did: _is_decompiler_available(did, provider) for did in all_decompilers
@@ -2279,7 +2392,9 @@ def list_available_decompilers(
     for did in all_decompilers:
         entry = all_decompilers.get(did)
         if binary_meta:
-            supported, support_reason = _decompiler_target_support(entry, binary_meta, full=full)
+            supported, support_reason = _decompiler_target_support(
+                entry, binary_meta, full=full
+            )
             if not supported:
                 target_reasons[did] = support_reason
                 available[did] = False
@@ -2294,7 +2409,9 @@ def list_available_decompilers(
         if not has_docker_image and not local_ok:
             reasons[did] = "outil local absent et aucune image Docker configurée"
         elif has_docker_image and not docker_ok and not local_ok:
-            reasons[did] = f"image Docker absente — make decompiler-docker-build DECOMPILER={did}"
+            reasons[did] = (
+                f"image Docker absente — make decompiler-docker-build DECOMPILER={did}"
+            )
         elif not local_ok:
             reasons[did] = "outil non détecté localement (detect introuvable dans PATH)"
         elif not docker_ok:
@@ -2311,7 +2428,8 @@ def list_available_decompilers(
         "labels": _custom_decompiler_labels(),
         "reasons": reasons,
         "timeouts": {
-            did: int(all_decompilers[did].get("timeout") or 120) for did in all_decompilers
+            did: int(all_decompilers[did].get("timeout") or 120)
+            for did in all_decompilers
         },
     }
     return available
@@ -2385,7 +2503,9 @@ def _build_function_target_index(
     return name_index, addr_index
 
 
-def _resolve_function_target(binary_path: str, addr: str, func_name: str = "") -> tuple[str, str]:
+def _resolve_function_target(
+    binary_path: str, addr: str, func_name: str = ""
+) -> tuple[str, str]:
     """Résout une cible de fonction (nom → adresse ou adresse → nom) via l'index des symboles."""
     normalized_addr = _normalize_hex_addr(addr)
     wanted_name = str(func_name or "").strip()
@@ -2397,12 +2517,16 @@ def _resolve_function_target(binary_path: str, addr: str, func_name: str = "") -
         resolved = name_index.get(_normalize_symbol_lookup_name(wanted_name))
         if resolved:
             normalized_addr = resolved["addr"]
-            wanted_name = resolved.get("raw_name") or resolved.get("name") or wanted_name
+            wanted_name = (
+                resolved.get("raw_name") or resolved.get("name") or wanted_name
+            )
 
     if normalized_addr:
         resolved = addr_index.get(normalized_addr)
         if resolved and not wanted_name:
-            wanted_name = resolved.get("raw_name") or resolved.get("name") or wanted_name
+            wanted_name = (
+                resolved.get("raw_name") or resolved.get("name") or wanted_name
+            )
 
     return normalized_addr or _normalize_hex_addr(addr), wanted_name
 
@@ -2420,7 +2544,9 @@ def decompile_function(
     """Décompile une fonction. decompiler='' → sélection automatique parmi les outils disponibles."""
     provider = _normalize_provider(provider)
     binary_meta = _target_metadata(binary_path)
-    resolved_addr, resolved_func_name = _resolve_function_target(binary_path, addr, func_name)
+    resolved_addr, resolved_func_name = _resolve_function_target(
+        binary_path, addr, func_name
+    )
     addr = resolved_addr or addr
     func_name = resolved_func_name or func_name
     base: dict[str, Any] = {"addr": addr, "code": "", "error": None}
@@ -2464,7 +2590,9 @@ def decompile_function(
     )
     cached = _read_cache(_key, _cdir)
     if cached is not None:
-        if not cached.get("error") and not isinstance(cached.get("score"), (int, float)):
+        if not cached.get("error") and not isinstance(
+            cached.get("score"), (int, float)
+        ):
             cached["score"] = _score_decompile_code(cached.get("code", ""))["score"]
         return cached
 
@@ -2484,7 +2612,9 @@ def decompile_function(
         notes = _collect_annotation_notes(raw_code, ann_map, annotation_comments)
         if notes:
             result["annotations"] = notes
-        typed_struct_notes = _collect_typed_struct_notes(raw_code, typed_struct_note_catalog)
+        typed_struct_notes = _collect_typed_struct_notes(
+            raw_code, typed_struct_note_catalog
+        )
         if typed_struct_notes:
             result["typed_structs"] = typed_struct_notes
         if stack_frame_data:
@@ -2496,7 +2626,9 @@ def decompile_function(
         if not out.get("error"):
             if not isinstance(out.get("score"), (int, float)):
                 raw_score = _score_decompile_code(out.get("code", ""))["score"]
-                did = _normalize_decompiler_id(str(out.get("decompiler") or decompiler or ""))
+                did = _normalize_decompiler_id(
+                    str(out.get("decompiler") or decompiler or "")
+                )
                 _entry = _load_decompilers().get(did) or {}
                 _bias_raw = (
                     _entry.get("quality_bias")
@@ -2546,7 +2678,9 @@ def decompile_function(
             func_name=func_name,
             full=False,
         )
-        if local_result.get("error") and "commande locale" in str(local_result.get("error", "")):
+        if local_result.get("error") and "commande locale" in str(
+            local_result.get("error", "")
+        ):
             return _run_custom_decompiler_in_docker(
                 candidate,
                 binary_path,
@@ -2576,17 +2710,26 @@ def decompile_function(
             attempt.setdefault("decompiler", candidate)
             return attempt
         except Exception as exc:
-            return {"addr": addr, "code": "", "error": str(exc), "decompiler": candidate}
+            return {
+                "addr": addr,
+                "code": "",
+                "error": str(exc),
+                "decompiler": candidate,
+            }
 
     # Lance tous les décompilateurs en parallèle puis retient le meilleur score.
     attempts: list[dict[str, Any]] = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(candidates) or 1) as pool:
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=len(candidates) or 1
+    ) as pool:
         futures = {pool.submit(_run_candidate_safe, c): c for c in candidates}
         for future in concurrent.futures.as_completed(futures):
             r = future.result()
             attempts.append(r)
             if r.get("error"):
-                _log.warning("%s failed (%s), fallback", futures[future], r.get("error"))
+                _log.warning(
+                    "%s failed (%s), fallback", futures[future], r.get("error")
+                )
     best = _select_best_function_candidate(attempts)
     if best is None:
         if not candidates:
@@ -2594,7 +2737,9 @@ def decompile_function(
                 f"Aucun décompilateur compatible disponible pour {binary_meta.get('format')}/{binary_meta.get('arch')}"
             )
         return _postprocess(base)
-    best["quality_details"] = _build_function_quality_details(attempts, best, expected_calls)
+    best["quality_details"] = _build_function_quality_details(
+        attempts, best, expected_calls
+    )
     return _postprocess_and_cache(best)
 
 
@@ -2628,7 +2773,9 @@ def decompile_binary(
             return _run_custom_decompiler(candidate, binary_path, full=True)
         # provider == "auto" : local d'abord, Docker en fallback si pas de commande locale
         local_result = _run_custom_decompiler(candidate, binary_path, full=True)
-        if local_result.get("error") and "commande locale" in str(local_result.get("error", "")):
+        if local_result.get("error") and "commande locale" in str(
+            local_result.get("error", "")
+        ):
             return _run_custom_decompiler_in_docker(candidate, binary_path, full=True)
         return local_result
 
@@ -2659,13 +2806,19 @@ def decompile_binary(
 
     # Lance tous les décompilateurs en parallèle puis retient le meilleur score.
     attempts: list[dict[str, Any]] = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(bin_candidates) or 1) as pool:
-        futures = {pool.submit(_run_binary_candidate_safe, c): c for c in bin_candidates}
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=len(bin_candidates) or 1
+    ) as pool:
+        futures = {
+            pool.submit(_run_binary_candidate_safe, c): c for c in bin_candidates
+        }
         for future in concurrent.futures.as_completed(futures):
             r = future.result()
             attempts.append(r)
             if r.get("error"):
-                _log.warning("%s binary failed (%s), fallback", futures[future], r.get("error"))
+                _log.warning(
+                    "%s binary failed (%s), fallback", futures[future], r.get("error")
+                )
     best = _select_best_binary_candidate(attempts)
     if best is None:
         if not bin_candidates:

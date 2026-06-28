@@ -52,7 +52,7 @@ def _get_plt_addr(binary_path: str, fn_name: str) -> str | None:
     # plt_map : {"0x401020": "printf@plt", ...}
     fn_at_plt = fn_name + "@plt"
     for addr, name in plt_map.items():
-        if name == fn_at_plt or name == fn_name:
+        if name in (fn_at_plt, fn_name):
             return addr
     return None
 
@@ -185,7 +185,9 @@ def find_callsites(binary_path: str, fn_name: str) -> dict:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Find callsites for an imported function")
+    parser = argparse.ArgumentParser(
+        description="Find callsites for an imported function"
+    )
     parser.add_argument("--binary", required=True, help="Path to binary")
     parser.add_argument("--function", required=True, help="Imported function name")
     args = parser.parse_args()

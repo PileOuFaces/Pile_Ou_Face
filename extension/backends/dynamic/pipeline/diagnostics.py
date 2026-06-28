@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from backends.dynamic.pipeline.stack_model import (
     _bytes_to_hex,
@@ -12,13 +12,23 @@ from backends.dynamic.pipeline.stack_model import (
     _parse_int,
 )
 
-
 CONTROL_FLOW_MNEMONICS = {"ret", "jmp", "call"}
 
-_WIN_NAMES = frozenset({
-    "win", "pwn", "pwn_func", "get_flag", "getflag", "shell", "print_flag",
-    "cat_flag", "exploit", "victory", "flag",
-})
+_WIN_NAMES = frozenset(
+    {
+        "win",
+        "pwn",
+        "pwn_func",
+        "get_flag",
+        "getflag",
+        "shell",
+        "print_flag",
+        "cat_flag",
+        "exploit",
+        "victory",
+        "flag",
+    }
+)
 
 
 def _is_win_addr(addr: int | None, meta: dict) -> bool:
@@ -41,8 +51,8 @@ def build_diagnostics(
     snapshots: list[dict],
     analysis_by_step: dict[str, dict],
     meta: dict,
-    disasm_lines: Optional[list[dict]] = None,
-    crash: Optional[dict] = None,
+    disasm_lines: list[dict] | None = None,
+    crash: dict | None = None,
 ) -> list[dict]:
     """Build deterministic crash/error diagnostics from trace enrichment."""
     diagnostics: list[dict] = []
@@ -108,7 +118,9 @@ def _diagnose_overflow(
     meta: dict,
     step: int,
 ) -> list[dict]:
-    overflow = analysis.get("overflow") if isinstance(analysis.get("overflow"), dict) else {}
+    overflow = (
+        analysis.get("overflow") if isinstance(analysis.get("overflow"), dict) else {}
+    )
     if not _overflow_has_runtime_evidence(analysis):
         return []
 
@@ -194,14 +206,20 @@ def _diagnose_control_slots(
             continue
 
         key = f"{function_name}:{slot_kind}:{addr:x}"
-        if slot_kind == "return_address" and _is_code_address(value, code_ranges) and not _looks_like_user_pattern(value):
+        if (
+            slot_kind == "return_address"
+            and _is_code_address(value, code_ranges)
+            and not _looks_like_user_pattern(value)
+        ):
             initial_control_values.setdefault(key, value)
         if slot_kind == "saved_bp" and not _looks_like_user_pattern(value):
             initial_control_values.setdefault(key, value)
 
         initial = initial_control_values.get(key)
         changed = initial is not None and value != initial
-        invalid_ret = slot_kind == "return_address" and not _is_code_address(value, code_ranges)
+        invalid_ret = slot_kind == "return_address" and not _is_code_address(
+            value, code_ranges
+        )
         pattern = _looks_like_user_pattern(value)
         slot_write_signal = _slot_has_write_signal(slot, analysis)
         overflow_signal = _overflow_reaches(analysis, slot_kind)
@@ -286,23 +304,27 @@ def _diagnose_invalid_control_flow(
                 for name in ("rip", "eip", "rsp", "esp", "rbp", "ebp")
                 if after_regs.get(name) is not None
             }
-            return [_clean_diag({
-                "severity": severity,
-                "kind": kind,
-                "step": step,
-                "function": _function_name(snapshot, analysis),
-                "instructionAddress": _instruction_address(snapshot),
-                "responsibleInstructionAddress": _instruction_address(snapshot),
-                "message": msg,
-                "slot": _slot_for_invalid_flow(analysis, target),
-                "before": _hex(before_ip),
-                "after": _hex(target),
-                "bytes": bytes_hex,
-                "probableSource": _probable_source(snapshot, meta),
-                "payloadOffset": _payload_offset(meta, bytes_hex),
-                "confidence": conf,
-                "registers": regs_inner,
-            })]
+            return [
+                _clean_diag(
+                    {
+                        "severity": severity,
+                        "kind": kind,
+                        "step": step,
+                        "function": _function_name(snapshot, analysis),
+                        "instructionAddress": _instruction_address(snapshot),
+                        "responsibleInstructionAddress": _instruction_address(snapshot),
+                        "message": msg,
+                        "slot": _slot_for_invalid_flow(analysis, target),
+                        "before": _hex(before_ip),
+                        "after": _hex(target),
+                        "bytes": bytes_hex,
+                        "probableSource": _probable_source(snapshot, meta),
+                        "payloadOffset": _payload_offset(meta, bytes_hex),
+                        "confidence": conf,
+                        "registers": regs_inner,
+                    }
+                )
+            ]
         return []
 
     regs = {
@@ -334,7 +356,7 @@ def _diagnose_invalid_control_flow(
 
 def _diagnose_crash(
     *,
-    crash: Optional[dict],
+    crash: dict | None,
     analysis_by_step: dict[str, dict],
     meta: dict,
     code_ranges: list[tuple[int, int]],
@@ -345,33 +367,61 @@ def _diagnose_crash(
     if step is None or step <= 0:
         return []
     analysis = (
-        analysis_by_step.get(str(step))
-        if isinstance(analysis_by_step, dict)
-        else None
+        analysis_by_step.get(str(step)) if isinstance(analysis_by_step, dict) else None
     )
     if not isinstance(analysis, dict):
         return []
     crash_type = str(crash.get("type") or "").strip().lower()
     instruction_text = str(crash.get("instructionText") or "").strip().lower()
-    registers = crash.get("registers") if isinstance(crash.get("registers"), dict) else {}
-    ip_name = "eip" if "eip" in registers or _parse_int(crash.get("eip")) is not None else "rip"
+    registers = (
+        crash.get("registers") if isinstance(crash.get("registers"), dict) else {}
+    )
+    ip_name = (
+        "eip"
+        if "eip" in registers or _parse_int(crash.get("eip")) is not None
+        else "rip"
+    )
     ip_value = _parse_int(crash.get(ip_name) or registers.get(ip_name))
-    slot = crash.get("suspectOverwrittenSlot") if isinstance(crash.get("suspectOverwrittenSlot"), dict) else None
-    slot_kind = str(slot.get("kind") or "").strip().lower() if isinstance(slot, dict) else ""
-    function_meta = analysis.get("function") if isinstance(analysis.get("function"), dict) else {}
+    slot = (
+        crash.get("suspectOverwrittenSlot")
+        if isinstance(crash.get("suspectOverwrittenSlot"), dict)
+        else None
+    )
+    slot_kind = (
+        str(slot.get("kind") or "").strip().lower() if isinstance(slot, dict) else ""
+    )
+    function_meta = (
+        analysis.get("function") if isinstance(analysis.get("function"), dict) else {}
+    )
     classification = str(crash.get("classification") or "").strip().lower()
 
     if classification == "ret2win_success":
         kind = "ret2win_success"
         severity = "success"
         confidence = 0.99
-        ret_target = str(crash.get("retTarget") or crash.get("memoryAddress") or crash.get(ip_name) or "").strip() or None
+        ret_target = (
+            str(
+                crash.get("retTarget")
+                or crash.get("memoryAddress")
+                or crash.get(ip_name)
+                or ""
+            ).strip()
+            or None
+        )
         message = f"Acces a la fonction cible ({ret_target or 'adresse inconnue'}) via detournement de l'adresse de retour"
     elif classification == "control_hijack":
         kind = "control_hijack"
         severity = "warning"
         confidence = 0.92
-        ret_target = str(crash.get("retTarget") or crash.get("memoryAddress") or crash.get(ip_name) or "").strip() or None
+        ret_target = (
+            str(
+                crash.get("retTarget")
+                or crash.get("memoryAddress")
+                or crash.get(ip_name)
+                or ""
+            ).strip()
+            or None
+        )
         message = f"Adresse de retour detournee vers une zone executable ({ret_target or 'adresse inconnue'})"
     elif classification == "fatal_crash":
         kind = "fatal_crash"
@@ -397,13 +447,23 @@ def _diagnose_crash(
         message = str(crash.get("reason") or "Crash runtime Unicorn.").strip()
 
     bytes_hex = str(crash.get("suspectBytes") or "").strip()
-    if not bytes_hex and ip_value is not None and kind in ("invalid_control_flow", "fatal_crash"):
+    if (
+        not bytes_hex
+        and ip_value is not None
+        and kind in ("invalid_control_flow", "fatal_crash")
+    ):
         bytes_hex = _value_bytes_hex(ip_value, _word_size(meta))
 
     after_value = (
         str(crash.get("retTarget") or "").strip() or None
         if classification in ("ret2win_success", "control_hijack")
-        else str(crash.get("memoryAddress") or crash.get(ip_name) or registers.get(ip_name) or "").strip() or None
+        else str(
+            crash.get("memoryAddress")
+            or crash.get(ip_name)
+            or registers.get(ip_name)
+            or ""
+        ).strip()
+        or None
     )
 
     diag = {
@@ -412,19 +472,24 @@ def _diagnose_crash(
         "classification": classification or None,
         "step": step,
         "function": str(
-            crash.get("function")
-            or function_meta.get("name")
-            or ""
+            crash.get("function") or function_meta.get("name") or ""
         ).strip()
         or None,
-        "instructionAddress": str(crash.get("instructionAddress") or "").strip() or None,
-        "responsibleInstructionAddress": str(crash.get("instructionAddress") or "").strip() or None,
+        "instructionAddress": str(crash.get("instructionAddress") or "").strip()
+        or None,
+        "responsibleInstructionAddress": str(
+            crash.get("instructionAddress") or ""
+        ).strip()
+        or None,
         "message": message,
         "slot": slot,
         "before": None,
         "after": after_value,
         "bytes": bytes_hex,
-        "probableSource": str(crash.get("probableSource") or _probable_source({}, meta)).strip() or None,
+        "probableSource": str(
+            crash.get("probableSource") or _probable_source({}, meta)
+        ).strip()
+        or None,
         "payloadOffset": crash.get("payloadOffset"),
         "confidence": confidence,
         "registers": registers,
@@ -443,12 +508,14 @@ def _slot_corruption_diag(
     meta: dict,
     step: int,
     slot_kind: str,
-    before: Optional[str] = None,
+    before: str | None = None,
     confidence: float = 0.8,
 ) -> dict:
     slot = _slot_for_kind(analysis, slot_kind)
     after = _slot_value(slot, analysis, slot_kind)
-    bytes_hex = str(slot.get("bytesHex") or "").strip() if isinstance(slot, dict) else ""
+    bytes_hex = (
+        str(slot.get("bytesHex") or "").strip() if isinstance(slot, dict) else ""
+    )
     if not bytes_hex and after:
         bytes_hex = _value_bytes_hex(_parse_int(after), _word_size(meta))
     before_value = before or _initial_slot_value(analysis, slot_kind)
@@ -508,13 +575,13 @@ def _merge_ranges(ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
     return merged
 
 
-def _is_code_address(value: Optional[int], ranges: list[tuple[int, int]]) -> bool:
+def _is_code_address(value: int | None, ranges: list[tuple[int, int]]) -> bool:
     if value is None:
         return False
     return any(start <= value < end for start, end in ranges)
 
 
-def _looks_like_user_pattern(value: Optional[int]) -> bool:
+def _looks_like_user_pattern(value: int | None) -> bool:
     if value is None:
         return False
     masked = value & 0xFFFFFFFFFFFFFFFF
@@ -551,24 +618,28 @@ def _slot_for_kind(analysis: dict, kind: str) -> dict:
     return {}
 
 
-def _slot_value(slot: dict, analysis: dict, slot_kind: str) -> Optional[str]:
+def _slot_value(slot: dict, analysis: dict, slot_kind: str) -> str | None:
     if isinstance(slot, dict):
         for key in ("valueHex", "rawValue", "valueDisplay"):
             value = str(slot.get(key) or "").strip()
             if value.startswith("0x"):
                 return value
-    control = analysis.get("control") if isinstance(analysis.get("control"), dict) else {}
+    control = (
+        analysis.get("control") if isinstance(analysis.get("control"), dict) else {}
+    )
     key = "retValue" if slot_kind == "return_address" else "savedBpValue"
     value = str(control.get(key) or "").strip()
     return value or None
 
 
-def _slot_address(slot: dict, analysis: dict, slot_kind: str) -> Optional[str]:
+def _slot_address(slot: dict, analysis: dict, slot_kind: str) -> str | None:
     if isinstance(slot, dict):
         value = str(slot.get("start") or slot.get("address") or "").strip()
         if value:
             return value
-    control = analysis.get("control") if isinstance(analysis.get("control"), dict) else {}
+    control = (
+        analysis.get("control") if isinstance(analysis.get("control"), dict) else {}
+    )
     key = "retAddrAddr" if slot_kind == "return_address" else "savedBpAddr"
     value = str(control.get(key) or "").strip()
     return value or None
@@ -588,7 +659,7 @@ def _control_slot_payload(slot: dict, analysis: dict, slot_kind: str) -> dict:
     }
 
 
-def _slot_for_invalid_flow(analysis: dict, target: int) -> Optional[dict]:
+def _slot_for_invalid_flow(analysis: dict, target: int) -> dict | None:
     ret_slot = _slot_for_kind(analysis, "return_address")
     ret_value = _parse_int(_slot_value(ret_slot, analysis, "return_address"))
     if ret_value == target:
@@ -596,7 +667,7 @@ def _slot_for_invalid_flow(analysis: dict, target: int) -> Optional[dict]:
     return None
 
 
-def _buffer_slot(analysis: dict) -> Optional[dict]:
+def _buffer_slot(analysis: dict) -> dict | None:
     buffer = analysis.get("buffer") if isinstance(analysis.get("buffer"), dict) else {}
     if not buffer:
         return None
@@ -620,7 +691,9 @@ def _slot_has_write_signal(slot: dict, analysis: dict) -> bool:
 
 
 def _overflow_reaches(analysis: dict, slot_kind: str) -> bool:
-    overflow = analysis.get("overflow") if isinstance(analysis.get("overflow"), dict) else {}
+    overflow = (
+        analysis.get("overflow") if isinstance(analysis.get("overflow"), dict) else {}
+    )
     reached = {str(value) for value in overflow.get("reached") or []}
     return bool(_overflow_has_runtime_evidence(analysis) and slot_kind in reached)
 
@@ -636,7 +709,9 @@ def _analysis_has_writes(analysis: Any) -> bool:
 
 
 def _overflow_has_runtime_evidence(analysis: dict) -> bool:
-    overflow = analysis.get("overflow") if isinstance(analysis.get("overflow"), dict) else {}
+    overflow = (
+        analysis.get("overflow") if isinstance(analysis.get("overflow"), dict) else {}
+    )
     if not overflow.get("active"):
         return False
     progress = _parse_int(overflow.get("progressBytes"))
@@ -657,7 +732,11 @@ def _write_crosses_buffer(analysis: dict) -> bool:
         if addr is None:
             continue
         end = addr + size
-        if addr < buffer_end and end > buffer_end and (buffer_start is None or end > buffer_start):
+        if (
+            addr < buffer_end
+            and end > buffer_end
+            and (buffer_start is None or end > buffer_start)
+        ):
             return True
     return False
 
@@ -670,13 +749,13 @@ def _write_bytes(writes: list[dict]) -> str:
     return ""
 
 
-def _initial_slot_value(analysis: dict, slot_kind: str) -> Optional[str]:
+def _initial_slot_value(analysis: dict, slot_kind: str) -> str | None:
     # Current analysis has no historical field yet; this hook keeps the output schema stable.
     del analysis, slot_kind
     return None
 
 
-def _payload_offset(meta: dict, bytes_hex: Optional[str]) -> Optional[int]:
+def _payload_offset(meta: dict, bytes_hex: str | None) -> int | None:
     target = _parse_bytes_any(bytes_hex)
     if not target:
         return None
@@ -706,9 +785,16 @@ def _parse_bytes_any(raw: Any) -> list[int]:
     compact = text.replace(" ", "").replace("\n", "").replace("\t", "")
     if compact.startswith("0x"):
         compact = compact[2:]
-    if len(compact) % 2 == 0 and compact and all(ch in "0123456789abcdefABCDEF" for ch in compact):
+    if (
+        len(compact) % 2 == 0
+        and compact
+        and all(ch in "0123456789abcdefABCDEF" for ch in compact)
+    ):
         try:
-            return [int(compact[index : index + 2], 16) for index in range(0, len(compact), 2)]
+            return [
+                int(compact[index : index + 2], 16)
+                for index in range(0, len(compact), 2)
+            ]
         except ValueError:
             return []
     return _parse_hex_bytes(raw)
@@ -737,9 +823,14 @@ def _probable_source(snapshot: dict, meta: dict) -> str:
     input_meta = meta.get("input") if isinstance(meta.get("input"), dict) else {}
     input_mode = str(input_meta.get("mode") or "").strip().lower()
     symbol = _external_symbol(snapshot)
-    target = str(meta.get("payload_target") or input_meta.get("targetMode") or "").lower()
+    target = str(
+        meta.get("payload_target") or input_meta.get("targetMode") or ""
+    ).lower()
 
-    if symbol in {"fscanf", "__isoc99_fscanf", "__isoc23_fscanf", "fgetc", "fgets"} and input_mode == "file":
+    if (
+        symbol in {"fscanf", "__isoc99_fscanf", "__isoc23_fscanf", "fgetc", "fgets"}
+        and input_mode == "file"
+    ):
         return "file"
     if symbol in {"read", "gets", "fgets", "scanf", "__isoc99_scanf", "__isoc23_scanf"}:
         return "stdin"
@@ -755,7 +846,9 @@ def _probable_source(snapshot: dict, meta: dict) -> str:
 
 
 def _external_symbol(snapshot: dict) -> str:
-    effects = snapshot.get("effects") if isinstance(snapshot.get("effects"), dict) else {}
+    effects = (
+        snapshot.get("effects") if isinstance(snapshot.get("effects"), dict) else {}
+    )
     symbol = str(effects.get("external_symbol") or "").split("@", 1)[0]
     for prefix in ("__isoc99_", "__isoc23_"):
         if symbol.startswith(prefix):
@@ -764,7 +857,11 @@ def _external_symbol(snapshot: dict) -> str:
 
 
 def _instruction_mnemonic(snapshot: dict) -> str:
-    instruction = snapshot.get("instruction") if isinstance(snapshot.get("instruction"), dict) else {}
+    instruction = (
+        snapshot.get("instruction")
+        if isinstance(snapshot.get("instruction"), dict)
+        else {}
+    )
     mnemonic = str(instruction.get("mnemonic") or "").strip().lower()
     if mnemonic:
         return mnemonic
@@ -772,20 +869,26 @@ def _instruction_mnemonic(snapshot: dict) -> str:
     return text.split(None, 1)[0].lower() if text else ""
 
 
-def _instruction_address(snapshot: dict) -> Optional[str]:
-    instruction = snapshot.get("instruction") if isinstance(snapshot.get("instruction"), dict) else {}
+def _instruction_address(snapshot: dict) -> str | None:
+    instruction = (
+        snapshot.get("instruction")
+        if isinstance(snapshot.get("instruction"), dict)
+        else {}
+    )
     addr = _parse_int(instruction.get("address"))
     if addr is None:
         addr = _parse_int(snapshot.get("rip")) or _parse_int(snapshot.get("eip"))
     return _hex(addr)
 
 
-def _responsible_instruction_address(snapshot: dict) -> Optional[str]:
+def _responsible_instruction_address(snapshot: dict) -> str | None:
     return _instruction_address(snapshot)
 
 
-def _function_name(snapshot: dict, analysis: dict) -> Optional[str]:
-    function = analysis.get("function") if isinstance(analysis.get("function"), dict) else {}
+def _function_name(snapshot: dict, analysis: dict) -> str | None:
+    function = (
+        analysis.get("function") if isinstance(analysis.get("function"), dict) else {}
+    )
     name = str(function.get("name") or snapshot.get("func") or "").strip()
     return name or None
 
@@ -793,7 +896,11 @@ def _function_name(snapshot: dict, analysis: dict) -> Optional[str]:
 def _register_map(snapshot: dict, stage: str) -> dict[str, int]:
     cpu = snapshot.get("cpu") if isinstance(snapshot.get("cpu"), dict) else {}
     stage_data = cpu.get(stage) if isinstance(cpu.get(stage), dict) else {}
-    registers = stage_data.get("registers") if isinstance(stage_data.get("registers"), dict) else {}
+    registers = (
+        stage_data.get("registers")
+        if isinstance(stage_data.get("registers"), dict)
+        else {}
+    )
     out = {}
     for key, value in registers.items():
         parsed = _parse_int(value)
@@ -810,7 +917,7 @@ def _word_size(meta: dict) -> int:
     return 4 if arch == 32 else 8
 
 
-def _value_bytes_hex(value: Optional[int], word_size: int) -> str:
+def _value_bytes_hex(value: int | None, word_size: int) -> str:
     if value is None:
         return ""
     width = 4 if word_size == 4 else 8
@@ -850,8 +957,14 @@ def _dedupe_diagnostics(diagnostics: list[dict]) -> list[dict]:
         if previous is None:
             selected[key] = diag
             continue
-        previous_score = (order.get(previous.get("severity"), 9), -float(previous.get("confidence") or 0))
-        next_score = (order.get(diag.get("severity"), 9), -float(diag.get("confidence") or 0))
+        previous_score = (
+            order.get(previous.get("severity"), 9),
+            -float(previous.get("confidence") or 0),
+        )
+        next_score = (
+            order.get(diag.get("severity"), 9),
+            -float(diag.get("confidence") or 0),
+        )
         if next_score < previous_score:
             selected[key] = _merge_diagnostic(diag, previous)
         else:
@@ -872,15 +985,25 @@ def _merge_diagnostic(primary: dict, fallback: dict) -> dict:
         if key not in merged or merged.get(key) in (None, "", []):
             merged[key] = value
     primary_slot = merged.get("slot") if isinstance(merged.get("slot"), dict) else {}
-    fallback_slot = fallback.get("slot") if isinstance(fallback.get("slot"), dict) else {}
+    fallback_slot = (
+        fallback.get("slot") if isinstance(fallback.get("slot"), dict) else {}
+    )
     if primary_slot or fallback_slot:
         slot = dict(fallback_slot)
-        slot.update({key: value for key, value in primary_slot.items() if value not in (None, "")})
+        slot.update(
+            {
+                key: value
+                for key, value in primary_slot.items()
+                if value not in (None, "")
+            }
+        )
         merged["slot"] = slot
     return merged
 
 
-def _attach_to_analysis(analysis_by_step: dict[str, dict], diagnostics: list[dict]) -> None:
+def _attach_to_analysis(
+    analysis_by_step: dict[str, dict], diagnostics: list[dict]
+) -> None:
     if not isinstance(analysis_by_step, dict):
         return
     for diag in diagnostics:

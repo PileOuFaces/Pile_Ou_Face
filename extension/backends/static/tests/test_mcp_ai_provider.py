@@ -86,7 +86,9 @@ def test_anthropic_call_uses_http(monkeypatch):
     ).encode()
     mock_response.__enter__ = lambda s: s
     mock_response.__exit__ = MagicMock(return_value=False)
-    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=None: mock_response)
+    monkeypatch.setattr(
+        urllib.request, "urlopen", lambda req, timeout=None: mock_response
+    )
     with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-ant-test"}, clear=False):
         result = call_provider("anthropic", "What is this?", "some context", None)
         assert result == "test response"
@@ -104,7 +106,9 @@ def test_anthropic_usage_is_normalized(monkeypatch):
     ).encode()
     mock_response.__enter__ = lambda s: s
     mock_response.__exit__ = MagicMock(return_value=False)
-    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=None: mock_response)
+    monkeypatch.setattr(
+        urllib.request, "urlopen", lambda req, timeout=None: mock_response
+    )
     with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-ant-test"}, clear=False):
         result = call_provider_result("anthropic", "Prompt", "Context", None)
     assert result["usage"] == {
@@ -133,7 +137,9 @@ def test_openai_compatible_usage_is_normalized(monkeypatch):
     ).encode()
     mock_response.__enter__ = lambda s: s
     mock_response.__exit__ = MagicMock(return_value=False)
-    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=None: mock_response)
+    monkeypatch.setattr(
+        urllib.request, "urlopen", lambda req, timeout=None: mock_response
+    )
     with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=False):
         result = call_provider_result("openai", "Prompt", "Context", "gpt-4o")
     assert result["text"] == "done"
@@ -156,7 +162,9 @@ def test_gemini_usage_is_normalized(monkeypatch):
     ).encode()
     mock_response.__enter__ = lambda s: s
     mock_response.__exit__ = MagicMock(return_value=False)
-    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=None: mock_response)
+    monkeypatch.setattr(
+        urllib.request, "urlopen", lambda req, timeout=None: mock_response
+    )
     with patch.dict(os.environ, {"GEMINI_API_KEY": "test"}, clear=False):
         result = call_provider_result("gemini", "Prompt", "Context", "gemini-2.5-flash")
     assert result["text"] == "done"
@@ -313,10 +321,14 @@ def test_anthropic_streams_text_and_usage(monkeypatch):
     response = StreamingResponse(
         [
             ("event: message_start\n"),
-            ('data: {"type":"message_start","message":{"usage":{"input_tokens":14}}}\n'),
+            (
+                'data: {"type":"message_start","message":{"usage":{"input_tokens":14}}}\n'
+            ),
             "\n",
             "event: content_block_delta\n",
-            ('data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Salut"}}\n'),
+            (
+                'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Salut"}}\n'
+            ),
             "\n",
             "event: message_delta\n",
             ('data: {"type":"message_delta","usage":{"output_tokens":3}}\n'),
@@ -402,5 +414,7 @@ def test_openai_model_list_excludes_non_chat_models(monkeypatch):
     ).encode()
     mock_response.__enter__ = lambda s: s
     mock_response.__exit__ = MagicMock(return_value=False)
-    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=None: mock_response)
+    monkeypatch.setattr(
+        urllib.request, "urlopen", lambda req, timeout=None: mock_response
+    )
     assert _fetch_models("openai", "sk-test") == ["gpt-5"]

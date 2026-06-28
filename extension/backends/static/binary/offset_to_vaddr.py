@@ -86,7 +86,11 @@ def offset_to_vaddr_pe(binary_path: str, file_offset: int) -> int | None:
             if raw_size == 0:
                 continue
             if raw_offset <= file_offset < raw_offset + raw_size:
-                return int(image_base) + int(sec.virtual_address) + (file_offset - int(raw_offset))
+                return (
+                    int(image_base)
+                    + int(sec.virtual_address)
+                    + (file_offset - int(raw_offset))
+                )
     except Exception:
         pass
     return None
@@ -121,17 +125,16 @@ def main() -> int:
     import argparse
     import json
 
-    parser = argparse.ArgumentParser(description="Convert file offset to virtual address")
+    parser = argparse.ArgumentParser(
+        description="Convert file offset to virtual address"
+    )
     parser.add_argument("--binary", required=True, help="Binary path")
     parser.add_argument("--offset", required=True, help="File offset (hex or decimal)")
     parser.add_argument("--json", action="store_true", help="Output JSON")
     args = parser.parse_args()
 
     off_str = args.offset.strip().lower()
-    if off_str.startswith("0x"):
-        file_offset = int(off_str[2:], 16)
-    else:
-        file_offset = int(off_str)
+    file_offset = int(off_str[2:], 16) if off_str.startswith("0x") else int(off_str)
 
     vaddr = offset_to_vaddr(args.binary, file_offset)
     if args.json:

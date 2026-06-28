@@ -15,8 +15,8 @@ def extract_dwarf_info(binary: str) -> dict:
         return {"error": f"Binary not found: {binary}"}
 
     try:
-        from elftools.elf.elffile import ELFFile
         from elftools.common.exceptions import ELFError
+        from elftools.elf.elffile import ELFFile
     except ImportError:
         return {"error": "pyelftools is not installed. Run: pip install pyelftools"}
 

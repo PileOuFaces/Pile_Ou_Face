@@ -13,9 +13,8 @@ plusieurs backends et de rendre l'ajout d'une nouvelle ISA plus localise.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import re
-from typing import Optional
+from dataclasses import dataclass, field
 
 try:
     import capstone
@@ -279,13 +278,15 @@ class ArchAdapter:
     sp_registers: tuple[str, ...] = ()
     fp_registers: tuple[str, ...] = ()
     lr_registers: tuple[str, ...] = ()
-    support: dict[str, FeatureSupport] | None = field(default=None, compare=False, hash=False)
+    support: dict[str, FeatureSupport] | None = field(
+        default=None, compare=False, hash=False
+    )
 
     def matches_prologue(
         self,
         text: str,
         custom_preludes: list[tuple[str, str]] | None = None,
-    ) -> Optional[str]:
+    ) -> str | None:
         source = (text or "").strip()
         for pattern, name in custom_preludes or []:
             if re.search(pattern, source, re.IGNORECASE):
@@ -312,9 +313,7 @@ class ArchAdapter:
             return True
         if self.family == "arm" and mnem in {"ldm", "ldmia", "ldmfd"} and "pc" in ops:
             return True
-        if self.family == "mips" and mnem == "jr" and ops in {"ra", "$ra"}:
-            return True
-        return False
+        return bool(self.family == "mips" and mnem == "jr" and ops in {"ra", "$ra"})
 
     def is_unconditional_jump_mnemonic(self, mnemonic: str) -> bool:
         return mnemonic in self.unconditional_jump_mnemonics
@@ -322,7 +321,9 @@ class ArchAdapter:
     def is_conditional_branch_mnemonic(self, mnemonic: str) -> bool:
         if mnemonic in self.conditional_branch_mnemonics:
             return True
-        return any(mnemonic.startswith(prefix) for prefix in self.conditional_branch_prefixes)
+        return any(
+            mnemonic.startswith(prefix) for prefix in self.conditional_branch_prefixes
+        )
 
     def classify_code_ref_mnemonic(self, mnemonic: str) -> str | None:
         if self.is_return_mnemonic(mnemonic):
@@ -398,13 +399,17 @@ X86_ADAPTER = ArchAdapter(
     fp_registers=("rbp", "ebp"),
     support={
         "disasm": FeatureSupport("full", "Capstone x86/x64"),
-        "discover_functions": FeatureSupport("full", "Prologues, calls, thunks and tail-calls"),
+        "discover_functions": FeatureSupport(
+            "full", "Prologues, calls, thunks and tail-calls"
+        ),
         "cfg": FeatureSupport(
             "full", "Calls, jumps, conditional branches, returns and x86 jump tables"
         ),
         "xrefs": FeatureSupport("full", "Code refs and common RIP-relative/data refs"),
         "call_graph": FeatureSupport("full", "Direct calls and ELF/Mach-O stubs"),
-        "stack_frame": FeatureSupport("full", "Frame-pointer and frame-pointer-less x86/x64"),
+        "stack_frame": FeatureSupport(
+            "full", "Frame-pointer and frame-pointer-less x86/x64"
+        ),
         "calling_convention": FeatureSupport(
             "full", "cdecl/stdcall/fastcall/thiscall and SysV/Win64 heuristics"
         ),
@@ -431,7 +436,9 @@ ARM64_ADAPTER = ArchAdapter(
         "discover_functions": FeatureSupport(
             "full", "AArch64 prologues, BL targets and LR returns"
         ),
-        "cfg": FeatureSupport("full", "BL/B/BR/CBZ/TBZ/RET and common jump-table setup"),
+        "cfg": FeatureSupport(
+            "full", "BL/B/BR/CBZ/TBZ/RET and common jump-table setup"
+        ),
         "xrefs": FeatureSupport("full", "Code refs and ADR/ADRP/LDR/STR data refs"),
         "call_graph": FeatureSupport("full", "Direct BL calls and Mach-O stubs"),
         "stack_frame": FeatureSupport("full", "x29/sp tracking and register args"),
@@ -458,7 +465,9 @@ ARM32_ADAPTER = ArchAdapter(
         "discover_functions": FeatureSupport(
             "partial", "BL targets, push-lr prologues and LR returns"
         ),
-        "cfg": FeatureSupport("partial", "Direct branches/calls and LR return patterns"),
+        "cfg": FeatureSupport(
+            "partial", "Direct branches/calls and LR return patterns"
+        ),
         "xrefs": FeatureSupport("partial", "Code refs and common LDR/STR data refs"),
         "call_graph": FeatureSupport("partial", "Direct BL/BLX calls"),
         "stack_frame": FeatureSupport("partial", "SP/FP anchors and register args"),
@@ -494,7 +503,10 @@ MIPS_ADAPTER = ArchAdapter(
     ),
     return_mnemonics=frozenset({"eret"}),
     prologue_patterns=(
-        (rf"\b(?:addiu|daddiu)\s+\$?sp\s*,\s*\$?sp\s*,\s*{_SIGNED_IMMEDIATE_RE}\b", "addiu sp"),
+        (
+            rf"\b(?:addiu|daddiu)\s+\$?sp\s*,\s*\$?sp\s*,\s*{_SIGNED_IMMEDIATE_RE}\b",
+            "addiu sp",
+        ),
     ),
     data_ref_mnemonics=GENERIC_DATA_REF_MNEMONICS,
     pc_registers=("pc",),
@@ -544,7 +556,20 @@ SPARC_ADAPTER = ArchAdapter(
     call_mnemonics=frozenset({"call"}),
     unconditional_jump_mnemonics=frozenset({"ba", "b,a", "jmp"}),
     conditional_branch_mnemonics=frozenset(
-        {"be", "bne", "bg", "ble", "bge", "bl", "bgu", "bleu", "bpos", "bneg", "bvc", "bvs"}
+        {
+            "be",
+            "bne",
+            "bg",
+            "ble",
+            "bge",
+            "bl",
+            "bgu",
+            "bleu",
+            "bpos",
+            "bneg",
+            "bvc",
+            "bvs",
+        }
     ),
     return_mnemonics=frozenset({"ret", "retl", "rett"}),
     prologue_patterns=((r"\bsave\s+%?sp\s*,", "save sp"),),
@@ -582,7 +607,9 @@ RISCV_ADAPTER = ArchAdapter(
         }
     ),
     return_mnemonics=frozenset({"ret", "mret", "sret", "uret"}),
-    prologue_patterns=((rf"\baddi(?:w)?\s+sp\s*,\s*sp\s*,\s*{_SIGNED_IMMEDIATE_RE}\b", "addi sp"),),
+    prologue_patterns=(
+        (rf"\baddi(?:w)?\s+sp\s*,\s*sp\s*,\s*{_SIGNED_IMMEDIATE_RE}\b", "addi sp"),
+    ),
     data_ref_mnemonics=GENERIC_DATA_REF_MNEMONICS,
     pc_registers=("pc",),
     sp_registers=("sp",),
@@ -597,7 +624,19 @@ BPF_ADAPTER = ArchAdapter(
     call_mnemonics=frozenset({"call"}),
     unconditional_jump_mnemonics=frozenset({"ja", "goto"}),
     conditional_branch_mnemonics=frozenset(
-        {"jeq", "jgt", "jge", "jlt", "jle", "jset", "jne", "jsgt", "jsge", "jslt", "jsle"}
+        {
+            "jeq",
+            "jgt",
+            "jge",
+            "jlt",
+            "jle",
+            "jset",
+            "jne",
+            "jsgt",
+            "jsge",
+            "jslt",
+            "jsle",
+        }
     ),
     return_mnemonics=frozenset({"exit"}),
     prologue_patterns=(),
@@ -667,7 +706,9 @@ TRICORE_ADAPTER = ArchAdapter(
     display_name="TriCore",
     call_mnemonics=frozenset({"call", "calla", "fcall"}),
     unconditional_jump_mnemonics=frozenset({"j", "ja", "ji"}),
-    conditional_branch_mnemonics=frozenset({"jeq", "jne", "jge", "jlt", "jgt", "jle", "jnz", "jz"}),
+    conditional_branch_mnemonics=frozenset(
+        {"jeq", "jne", "jge", "jlt", "jgt", "jle", "jnz", "jz"}
+    ),
     return_mnemonics=frozenset({"ret", "rfe", "fret"}),
     prologue_patterns=(),
     data_ref_mnemonics=GENERIC_DATA_REF_MNEMONICS,
@@ -687,7 +728,8 @@ GENERIC_ADAPTER = ArchAdapter(
     data_ref_mnemonics=frozenset(),
     support={
         feature: FeatureSupport(
-            "disasm-only" if feature == "disasm" else "unsupported", "No ISA semantics table"
+            "disasm-only" if feature == "disasm" else "unsupported",
+            "No ISA semantics table",
         )
         for feature in FEATURES
     },
@@ -723,15 +765,19 @@ for _adapter in _PARTIAL_SEMANTIC_ADAPTERS.values():
                 "partial", "Direct call/branch mnemonics and lightweight prologues"
             ),
             "cfg": FeatureSupport(
-                "partial", "Direct branches/calls/returns; advanced switch recovery may be absent"
+                "partial",
+                "Direct branches/calls/returns; advanced switch recovery may be absent",
             ),
-            "xrefs": FeatureSupport("partial", "Direct code refs and common absolute data refs"),
+            "xrefs": FeatureSupport(
+                "partial", "Direct code refs and common absolute data refs"
+            ),
             "call_graph": FeatureSupport("partial", "Direct calls only"),
             "stack_frame": FeatureSupport(
                 "partial", "ABI register args and common SP/FP stack access forms"
             ),
             "calling_convention": FeatureSupport(
-                "partial", "Known ABI and argument registers; no deep per-function inference"
+                "partial",
+                "Known ABI and argument registers; no deep per-function inference",
             ),
         },
     )
@@ -757,7 +803,9 @@ def iter_supported_adapters() -> tuple[ArchAdapter, ...]:
     return SUPPORTED_ADAPTERS
 
 
-def get_feature_support(adapter_or_key: ArchAdapter | str, feature: str) -> FeatureSupport:
+def get_feature_support(
+    adapter_or_key: ArchAdapter | str, feature: str
+) -> FeatureSupport:
     adapter = (
         adapter_or_key
         if isinstance(adapter_or_key, ArchAdapter)
@@ -1021,16 +1069,70 @@ def get_raw_arch_info(raw_arch: str, endian: str | None = None) -> ArchInfo | No
             display_name="AArch64",
         )
     raw_specs: dict[str, tuple[str, int | None, int, int, str, str, bool, str]] = {
-        "mips32": ("MIPS", _cs_mode("MIPS32"), 32, 4, "MIPS", "MIPS32", True, "mips_o32"),
-        "mips64": ("MIPS", _cs_mode("MIPS64"), 64, 8, "MIPS64", "MIPS64", True, "mips_n64"),
-        "ppc32": ("PPC", _cs_mode("32"), 32, 4, "PowerPC", "PowerPC", True, "ppc32_sysv"),
-        "ppc64": ("PPC", _cs_mode("64"), 64, 8, "PowerPC64", "PowerPC64", True, "ppc64_elfv2"),
+        "mips32": (
+            "MIPS",
+            _cs_mode("MIPS32"),
+            32,
+            4,
+            "MIPS",
+            "MIPS32",
+            True,
+            "mips_o32",
+        ),
+        "mips64": (
+            "MIPS",
+            _cs_mode("MIPS64"),
+            64,
+            8,
+            "MIPS64",
+            "MIPS64",
+            True,
+            "mips_n64",
+        ),
+        "ppc32": (
+            "PPC",
+            _cs_mode("32"),
+            32,
+            4,
+            "PowerPC",
+            "PowerPC",
+            True,
+            "ppc32_sysv",
+        ),
+        "ppc64": (
+            "PPC",
+            _cs_mode("64"),
+            64,
+            8,
+            "PowerPC64",
+            "PowerPC64",
+            True,
+            "ppc64_elfv2",
+        ),
         "sparc": ("SPARC", _cs_mode(), 32, 4, "SPARC", "SPARC", True, "sparc"),
-        "sparcv9": ("SPARC", _cs_mode("V9"), 64, 8, "SPARCV9", "SPARCV9", True, "sparc"),
+        "sparcv9": (
+            "SPARC",
+            _cs_mode("V9"),
+            64,
+            8,
+            "SPARCV9",
+            "SPARCV9",
+            True,
+            "sparc",
+        ),
         "sysz": ("SYSZ", _cs_mode(), 64, 8, "SystemZ", "SystemZ", False, "sysz"),
         "xcore": ("XCORE", _cs_mode(), 32, 4, "XCore", "XCore", False, "generic"),
         "m68k": ("M68K", _cs_mode("M68K_000"), 32, 4, "M68K", "M68K", True, "generic"),
-        "m680x": ("M680X", _cs_mode("M680X_6800"), 16, 2, "M680X", "M680X", False, "generic"),
+        "m680x": (
+            "M680X",
+            _cs_mode("M680X_6800"),
+            16,
+            2,
+            "M680X",
+            "M680X",
+            False,
+            "generic",
+        ),
         "tms320c64x": (
             "TMS320C64X",
             _cs_mode(),
@@ -1052,10 +1154,37 @@ def get_raw_arch_info(raw_arch: str, endian: str | None = None) -> ArchInfo | No
             False,
             "generic",
         ),
-        "wasm": ("WASM", _cs_mode(), 32, 4, "WebAssembly", "WebAssembly", False, "generic"),
+        "wasm": (
+            "WASM",
+            _cs_mode(),
+            32,
+            4,
+            "WebAssembly",
+            "WebAssembly",
+            False,
+            "generic",
+        ),
         "bpf": ("BPF", _cs_mode("BPF_EXTENDED"), 64, 8, "BPF", "BPF", False, "generic"),
-        "riscv32": ("RISCV", _cs_mode("RISCV32"), 32, 4, "RISC-V32", "RISC-V32", False, "riscv"),
-        "riscv64": ("RISCV", _cs_mode("RISCV64"), 64, 8, "RISC-V64", "RISC-V64", False, "riscv"),
+        "riscv32": (
+            "RISCV",
+            _cs_mode("RISCV32"),
+            32,
+            4,
+            "RISC-V32",
+            "RISC-V32",
+            False,
+            "riscv",
+        ),
+        "riscv64": (
+            "RISCV",
+            _cs_mode("RISCV64"),
+            64,
+            8,
+            "RISC-V64",
+            "RISC-V64",
+            False,
+            "riscv",
+        ),
         "sh": ("SH", _cs_mode("SH2"), 32, 4, "SuperH", "SuperH", False, "generic"),
         "sh4": ("SH", _cs_mode("SH4"), 32, 4, "SuperH4", "SuperH4", False, "generic"),
         "tricore": (
@@ -1071,10 +1200,21 @@ def get_raw_arch_info(raw_arch: str, endian: str | None = None) -> ArchInfo | No
     }
     spec = raw_specs.get(kind)
     if spec:
-        arch_name, base_mode, bits, ptr_size, display_name, raw_name, endian_aware, abi = spec
+        (
+            arch_name,
+            base_mode,
+            bits,
+            ptr_size,
+            display_name,
+            raw_name,
+            endian_aware,
+            abi,
+        ) = spec
         if base_mode is None:
             return None
-        cs_mode = _apply_endian_mode(base_mode, normalized_endian, allow_big_endian=endian_aware)
+        cs_mode = _apply_endian_mode(
+            base_mode, normalized_endian, allow_big_endian=endian_aware
+        )
         resolved_endian = normalized_endian if endian_aware else "little"
         return _arch_info(
             key=kind,
@@ -1162,7 +1302,9 @@ def _detect_arch_from_machine_name(
     elif "BPF" in normalized:
         candidates.append("bpf")
     elif normalized == "RISCV":
-        candidates.extend(["riscv32", "riscv64"] if bits == 32 else ["riscv64", "riscv32"])
+        candidates.extend(
+            ["riscv32", "riscv64"] if bits == 32 else ["riscv64", "riscv32"]
+        )
     elif normalized in {"SH", "SH3", "SH3DSP", "SH4", "SH5"}:
         candidates.append("sh4" if "4" in normalized else "sh")
     elif normalized == "TRICORE":
@@ -1302,7 +1444,16 @@ def detect_binary_arch(binary) -> ArchInfo | None:
                 getattr(capstone, "CS_MODE_32", None),
             )
             return ArchInfo(
-                "x86_32", 32, 4, "cdecl32", "i386", cs_arch, cs_mode, X86_ADAPTER, "macho", cpu_name
+                "x86_32",
+                32,
+                4,
+                "cdecl32",
+                "i386",
+                cs_arch,
+                cs_mode,
+                X86_ADAPTER,
+                "macho",
+                cpu_name,
             )
         if cpu_name == "ARM64":
             cs_arch, cs_mode = _capstone_tuple(
@@ -1327,7 +1478,16 @@ def detect_binary_arch(binary) -> ArchInfo | None:
                 getattr(capstone, "CS_MODE_ARM", None),
             )
             return ArchInfo(
-                "arm32", 32, 4, "aapcs32", "arm", cs_arch, cs_mode, ARM32_ADAPTER, "macho", cpu_name
+                "arm32",
+                32,
+                4,
+                "aapcs32",
+                "arm",
+                cs_arch,
+                cs_mode,
+                ARM32_ADAPTER,
+                "macho",
+                cpu_name,
             )
         fallback = _detect_arch_from_machine_name(cpu_name, format_kind="macho")
         if fallback is not None:

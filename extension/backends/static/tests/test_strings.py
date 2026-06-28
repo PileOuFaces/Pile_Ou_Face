@@ -101,7 +101,11 @@ class TestExtractStrings(unittest.TestCase):
 
     @unittest.skipUnless(_LIEF_AVAILABLE, "lief not installed")
     def test_section_filter_elf(self):
-        binary = Path(__file__).parent.parent.parent.parent / "examples" / "demo_push_ret.elf"
+        binary = (
+            Path(__file__).parent.parent.parent.parent
+            / "examples"
+            / "demo_push_ret.elf"
+        )
         if not binary.exists():
             self.skipTest("demo_push_ret.elf absent")
         all_s = extract_strings(str(binary), section=None)
@@ -116,6 +120,7 @@ class TestExtractStringsSystemVaddr(unittest.TestCase):
     def test_system_returns_hex_addresses(self):
         """Toutes les adresses doivent être au format 0x<hex>."""
         import subprocess
+
         from backends.static.search.strings import extract_strings_system
 
         # Vérifier que strings est disponible
@@ -130,7 +135,8 @@ class TestExtractStringsSystemVaddr(unittest.TestCase):
             for entry in result:
                 addr = entry.get("addr", "")
                 self.assertTrue(
-                    addr.startswith("0x"), f"addr devrait commencer par '0x', reçu: {addr!r}"
+                    addr.startswith("0x"),
+                    f"addr devrait commencer par '0x', reçu: {addr!r}",
                 )
                 self.assertEqual(entry.get("encoding"), "utf-8")
 
@@ -147,11 +153,18 @@ class TestExtractStringsSystemVaddr(unittest.TestCase):
         except (OSError, subprocess.TimeoutExpired):
             self.skipTest("commande strings non disponible")
 
-        binary = Path(__file__).parent.parent.parent.parent / "examples" / "demo_push_ret.elf"
+        binary = (
+            Path(__file__).parent.parent.parent.parent
+            / "examples"
+            / "demo_push_ret.elf"
+        )
         if not binary.exists():
             self.skipTest("demo_push_ret.elf absent")
 
-        from backends.static.search.strings import extract_strings, extract_strings_system
+        from backends.static.search.strings import (
+            extract_strings,
+            extract_strings_system,
+        )
 
         py_strings = extract_strings(str(binary), min_len=4)
         sys_strings = extract_strings_system(str(binary), min_len=4)

@@ -9,7 +9,6 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Optional
 
 # Allow running as a script directly (not only via `python -m`)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
@@ -120,9 +119,12 @@ def _get_code_bytes(binary, start_addr: int) -> tuple[bytes, int] | None:
                 return bytes(sec.content)[start_addr - va :], start_addr
         return None
 
-    if lief and isinstance(binary, lief.ELF.Binary):
-        sections = list(binary.sections)
-    elif lief and isinstance(binary, lief.MachO.Binary):
+    if (
+        lief
+        and isinstance(binary, lief.ELF.Binary)
+        or lief
+        and isinstance(binary, lief.MachO.Binary)
+    ):
         sections = list(binary.sections)
 
     for sec in sections:
@@ -137,12 +139,16 @@ def _cache_key(func_addr: int) -> str:
     return f"0x{func_addr:x}"
 
 
-def _parse_int(value: str) -> Optional[int]:
+def _parse_int(value: str) -> int | None:
     value = str(value).strip().lower()
     if not value:
         return None
     try:
-        return int(value, 16) if value.startswith("0x") or value.startswith("-0x") else int(value)
+        return (
+            int(value, 16)
+            if value.startswith("0x") or value.startswith("-0x")
+            else int(value)
+        )
     except ValueError:
         return None
 
@@ -169,7 +175,9 @@ def _canonical_frame_base(base_reg: str) -> str:
     return normalized
 
 
-def _stack_arg_start_offset(base_reg: str, arch_family: str, ptr_size: int, abi_name: str) -> int:
+def _stack_arg_start_offset(
+    base_reg: str, arch_family: str, ptr_size: int, abi_name: str
+) -> int:
     base = _canonical_frame_base(base_reg)
     if base in {"rbp", "ebp", "rsp", "esp"}:
         if abi_name == "win64":
@@ -445,13 +453,17 @@ def _update_arm64_stack_adjust_state(
     return stack_adjust, stack_adjust_known
 
 
-def _update_stack_adjust(stack_adjust: int, ins, arch_family: str, ptr_size: int) -> int:
+def _update_stack_adjust(
+    stack_adjust: int, ins, arch_family: str, ptr_size: int
+) -> int:
     """Met à jour l'ajustement courant du stack pointer depuis l'entrée de fonction."""
     mnem = ins.mnemonic.lower()
     op_str = ins.op_str.lower()
 
     if arch_family == "x86":
-        updated, _known = _update_x86_stack_adjust_state(stack_adjust, True, ins, ptr_size)
+        updated, _known = _update_x86_stack_adjust_state(
+            stack_adjust, True, ins, ptr_size
+        )
         return updated
 
     if arch_family == "arm64":
@@ -471,7 +483,9 @@ def _update_stack_adjust(stack_adjust: int, ins, arch_family: str, ptr_size: int
             reg_count = _register_list_count(op_str)
             if reg_count:
                 return stack_adjust + (reg_count * ptr_size)
-        if mnem in {"ldmia", "ldm"} and (op_str.startswith("sp!") or op_str.startswith("sp,")):
+        if mnem in {"ldmia", "ldm"} and (
+            op_str.startswith("sp!") or op_str.startswith("sp,")
+        ):
             reg_count = _register_list_count(op_str)
             if reg_count:
                 return max(0, stack_adjust - (reg_count * ptr_size))
@@ -489,14 +503,20 @@ def _update_stack_adjust(stack_adjust: int, ins, arch_family: str, ptr_size: int
         if mnem in {"addi", "addiw"} and op_str.startswith("sp, sp"):
             imm = _parse_int(op_str.split(",")[-1].strip())
             if imm is not None:
-                return stack_adjust + abs(imm) if imm < 0 else max(0, stack_adjust - imm)
+                return (
+                    stack_adjust + abs(imm) if imm < 0 else max(0, stack_adjust - imm)
+                )
         return stack_adjust
 
     if arch_family == "mips":
-        if mnem in {"addiu", "addi", "daddiu"} and re.match(r"\$?sp\s*,\s*\$?sp\s*,", op_str):
+        if mnem in {"addiu", "addi", "daddiu"} and re.match(
+            r"\$?sp\s*,\s*\$?sp\s*,", op_str
+        ):
             imm = _parse_int(op_str.split(",")[-1].strip())
             if imm is not None:
-                return stack_adjust + abs(imm) if imm < 0 else max(0, stack_adjust - imm)
+                return (
+                    stack_adjust + abs(imm) if imm < 0 else max(0, stack_adjust - imm)
+                )
         return stack_adjust
 
     if arch_family == "ppc":
@@ -509,7 +529,9 @@ def _update_stack_adjust(stack_adjust: int, ins, arch_family: str, ptr_size: int
         if mnem in {"addi", "addis"} and re.match(r"r?1\s*,\s*r?1\s*,", op_str):
             imm = _parse_int(op_str.split(",")[-1].strip())
             if imm is not None:
-                return stack_adjust + abs(imm) if imm < 0 else max(0, stack_adjust - imm)
+                return (
+                    stack_adjust + abs(imm) if imm < 0 else max(0, stack_adjust - imm)
+                )
         return stack_adjust
 
     if arch_family == "sparc":
@@ -546,7 +568,11 @@ def _is_register_arg_used(instrs: list, reg: str) -> bool:
 def _infer_register_args(
     instrs: list, abi_name: str, ptr_size: int, arch_info: ArchInfo | None = None
 ) -> list[dict]:
-    regs = arch_info.arg_registers if arch_info is not None else ABI_ARG_REGISTERS.get(abi_name, ())
+    regs = (
+        arch_info.arg_registers
+        if arch_info is not None
+        else ABI_ARG_REGISTERS.get(abi_name, ())
+    )
     args = []
     for reg in regs:
         if not _is_register_arg_used(instrs, reg):
@@ -620,7 +646,10 @@ def analyse_stack_frame(binary_path: str, func_addr: int) -> dict:
     try:
         with DisasmCache(default_cache_path(binary_path)) as cache:
             cached = cache.get_stack_frame(binary_path, cache_addr)
-            if cached is not None and cached.get("version") == STACK_FRAME_CACHE_VERSION:
+            if (
+                cached is not None
+                and cached.get("version") == STACK_FRAME_CACHE_VERSION
+            ):
                 return cached
     except Exception:
         pass
@@ -685,7 +714,9 @@ def analyse_stack_frame(binary_path: str, func_addr: int) -> dict:
                 stack_adjust, stack_adjust_known, ins
             )
         else:
-            stack_adjust = _update_stack_adjust(stack_adjust, ins, arch_family, ptr_size)
+            stack_adjust = _update_stack_adjust(
+                stack_adjust, ins, arch_family, ptr_size
+            )
         frame_size = max(frame_size, stack_adjust)
         frame_anchor = _extract_frame_pointer_anchor(ins, arch_family, stack_adjust)
         if frame_anchor:
@@ -768,7 +799,8 @@ def analyse_stack_frame(binary_path: str, func_addr: int) -> dict:
             stack_args.append(item)
 
     result["vars"] = sorted(
-        vars_list, key=lambda value: value["offset"] if value["offset"] is not None else 0
+        vars_list,
+        key=lambda value: value["offset"] if value["offset"] is not None else 0,
     )
     result["args"] = args_list + sorted(
         stack_args,
@@ -788,14 +820,22 @@ def main() -> int:
     """CLI entry point."""
     parser = argparse.ArgumentParser(description="Stack frame analyser")
     parser.add_argument("--binary", required=True, help="Binary path (ELF, Mach-O, PE)")
-    parser.add_argument("--addr", required=True, help="Function address (hex or decimal)")
+    parser.add_argument(
+        "--addr", required=True, help="Function address (hex or decimal)"
+    )
     args = parser.parse_args()
 
     if not lief:
-        print(json.dumps({"error": "lief not installed. Install with: pip install lief"}))
+        print(
+            json.dumps({"error": "lief not installed. Install with: pip install lief"})
+        )
         return 1
     if not capstone:
-        print(json.dumps({"error": "capstone not installed. Install with: pip install capstone"}))
+        print(
+            json.dumps(
+                {"error": "capstone not installed. Install with: pip install capstone"}
+            )
+        )
         return 1
 
     try:

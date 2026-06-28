@@ -10,13 +10,16 @@ import sys
 
 from backends.shared.log import configure_logging, get_logger
 from backends.shared.utils import addr_to_int
+from backends.static.binary.arch import (
+    detect_binary_arch_from_path,
+    iter_supported_adapters,
+)
 from backends.static.disasm.cfg import (
     _extract_jump_target,
     _extract_symbol_from_operand,
     _get_mnemonic,
     build_cfg,
 )
-from backends.static.binary.arch import detect_binary_arch_from_path, iter_supported_adapters
 
 logger = get_logger(__name__)
 
@@ -182,7 +185,9 @@ def build_call_graph(
     if binary_path:
         plt_map = resolve_plt_symbols(binary_path)
         if plt_map:
-            logger.debug("PLT map: %d stubs resolved from %s", len(plt_map), binary_path)
+            logger.debug(
+                "PLT map: %d stubs resolved from %s", len(plt_map), binary_path
+            )
 
     line_by_addr = {}
     if lines:
@@ -193,7 +198,9 @@ def build_call_graph(
 
     block_map = {b["addr"]: b for b in cfg.get("blocks", [])}
 
-    detected_arch_info = detect_binary_arch_from_path(binary_path) if binary_path else None
+    detected_arch_info = (
+        detect_binary_arch_from_path(binary_path) if binary_path else None
+    )
     call_adapters = (
         (detected_arch_info.adapter,)
         if detected_arch_info is not None
@@ -269,7 +276,9 @@ def build_call_graph(
         # 3. Symboles statiques (symboles ELF/Mach-O)
         return addr_to_name(to_addr)
 
-    GENERIC_SYMBOLS = frozenset({"__mh_execute_header", "__mh_dylib_header", "__mh_bundle_header"})
+    GENERIC_SYMBOLS = frozenset(
+        {"__mh_execute_header", "__mh_dylib_header", "__mh_bundle_header"}
+    )
 
     def find_caller(addr: str) -> str:
         a = addr_to_int(addr)
@@ -317,7 +326,7 @@ def _load_symbols_from_arg(symbols_arg: str | None) -> list[dict]:
     if symbols_arg == "-":
         symbols = json.load(sys.stdin)
     else:
-        with open(symbols_arg, "r", encoding="utf-8") as f:
+        with open(symbols_arg, encoding="utf-8") as f:
             symbols = json.load(f)
     if not isinstance(symbols, list):
         symbols = symbols.get("symbols", symbols) if isinstance(symbols, dict) else []
@@ -330,8 +339,8 @@ def _load_cached_analysis(
     cache_db: str | None = None,
     arch_hint: str | None = None,
 ) -> tuple[dict | None, list[dict] | None]:
-    from backends.static.cache.cache import DisasmCache, default_cache_path
     from backends.static.binary.symbols import extract_symbols
+    from backends.static.cache.cache import DisasmCache, default_cache_path
 
     cache_path = cache_db or default_cache_path(binary_path)
     with DisasmCache(cache_path) as cache:
@@ -353,7 +362,9 @@ def _load_cached_analysis(
 
 def main() -> int:
     """Point d'entrée CLI : construit le graphe d'appels à partir du CFG et des symboles."""
-    parser = argparse.ArgumentParser(description="Build call graph from CFG and symbols")
+    parser = argparse.ArgumentParser(
+        description="Build call graph from CFG and symbols"
+    )
     parser.add_argument("--mapping", required=True, help="Path to disasm mapping JSON")
     parser.add_argument("--symbols", help="Path to symbols JSON or '-' for stdin")
     parser.add_argument("--binary", help="Binary path for cache/PLT resolution")
@@ -370,7 +381,7 @@ def main() -> int:
         logger.error("Mapping file not found: %s", args.mapping)
         return 1
 
-    with open(args.mapping, "r", encoding="utf-8") as f:
+    with open(args.mapping, encoding="utf-8") as f:
         data = json.load(f)
     lines = data.get("lines", [])
     binary_path = args.binary or data.get("binary")
@@ -388,7 +399,9 @@ def main() -> int:
     if cfg is None:
         cfg = build_cfg(lines, binary_path=binary_path, arch_hint=arch_hint)
 
-    symbols = _load_symbols_from_arg(args.symbols) if args.symbols else (cached_symbols or [])
+    symbols = (
+        _load_symbols_from_arg(args.symbols) if args.symbols else (cached_symbols or [])
+    )
 
     call_graph = build_call_graph(cfg, symbols, lines=lines, binary_path=binary_path)
     out = json.dumps(call_graph, indent=2)

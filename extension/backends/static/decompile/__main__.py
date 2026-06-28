@@ -12,9 +12,9 @@ import sys
 from pathlib import Path
 
 from backends.static.decompile.decompile import (
-    list_available_decompilers,
     decompile_binary,
     decompile_function,
+    list_available_decompilers,
 )
 
 parser = argparse.ArgumentParser(

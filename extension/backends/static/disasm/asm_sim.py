@@ -253,7 +253,9 @@ def parse_program(lines: list[tuple[int, str]]) -> tuple[list[dict], dict[str, i
             tok_index += 1
         if tok_index >= len(tokens):
             continue
-        program.append({"instr": instr_text, "line": line_number, "tokens": tokens[tok_index:]})
+        program.append(
+            {"instr": instr_text, "line": line_number, "tokens": tokens[tok_index:]}
+        )
     return program, labels
 
 
@@ -351,12 +353,14 @@ def simulate(program: list[dict], labels: dict[str, int]) -> list[dict]:
             if lhs is not None and rhs is not None:
                 zero_flag = lhs == rhs
                 handled = True
-        elif op in {"je", "jz"} and len(tokens) >= 2 and zero_flag:
-            target = labels.get(tokens[1], -1)
-            if target >= 0:
-                pc = target
-                jumped = True
-        elif op in {"jne", "jnz"} and len(tokens) >= 2 and not zero_flag:
+        elif (
+            op in {"je", "jz"}
+            and len(tokens) >= 2
+            and zero_flag
+            or op in {"jne", "jnz"}
+            and len(tokens) >= 2
+            and not zero_flag
+        ):
             target = labels.get(tokens[1], -1)
             if target >= 0:
                 pc = target
@@ -408,7 +412,7 @@ def main() -> int:
     if not os.path.exists(args.input):
         raise SystemExit(f"input.asm introuvable: {args.input}")
 
-    with open(args.input, "r", encoding="utf-8") as handle:
+    with open(args.input, encoding="utf-8") as handle:
         raw_lines = handle.readlines()
 
     lines = [(idx + 1, line) for idx, line in enumerate(raw_lines)]

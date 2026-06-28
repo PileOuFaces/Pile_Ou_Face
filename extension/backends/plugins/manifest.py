@@ -224,7 +224,9 @@ def load_plugin_manifest(path: str | Path) -> PluginManifest:
         ),
         distribution=PluginDistribution(
             encrypted=_optional_bool(dict(distribution_raw or {}), "encrypted"),
-            bundle_format=_optional_string(dict(distribution_raw or {}), "bundle_format"),
+            bundle_format=_optional_string(
+                dict(distribution_raw or {}), "bundle_format"
+            ),
             hmac_sha256=_optional_string(dict(distribution_raw or {}), "hmac_sha256"),
         ),
         licensing=PluginLicensing(
@@ -233,8 +235,12 @@ def load_plugin_manifest(path: str | Path) -> PluginManifest:
             status=_optional_string(dict(licensing_raw or {}), "status") or "unlocked",
             message=_optional_string(dict(licensing_raw or {}), "message"),
             public_key=_optional_string(dict(licensing_raw or {}), "public_key"),
-            public_key_path=_optional_string(dict(licensing_raw or {}), "public_key_path"),
-            license_filename=_optional_string(dict(licensing_raw or {}), "license_filename"),
+            public_key_path=_optional_string(
+                dict(licensing_raw or {}), "public_key_path"
+            ),
+            license_filename=_optional_string(
+                dict(licensing_raw or {}), "license_filename"
+            ),
         ),
         entrypoints=PluginEntrypoints(
             python=python_entrypoint,

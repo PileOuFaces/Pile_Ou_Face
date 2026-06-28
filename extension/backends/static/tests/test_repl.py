@@ -1,7 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Tests for the repl.py script executor."""
 
-import subprocess, json, os, base64
+import base64
+import json
+import os
+import subprocess
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 PYTHON = os.path.join(ROOT, "backends", ".venv", "bin", "python3")

@@ -10,15 +10,15 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backends.shared.exceptions import (
-    PileOuFaceError,
+    AnalysisError,
     BinaryError,
     BinaryNotFoundError,
     BinaryParseError,
-    DisassemblyError,
-    CacheError,
     CacheCorruptedError,
-    AnalysisError,
+    CacheError,
     CFGError,
+    DisassemblyError,
+    PileOuFaceError,
     XrefError,
 )
 
@@ -95,6 +95,7 @@ class TestCacheExceptions(unittest.TestCase):
 
     def test_corrupted_db_raises_cache_corrupted_error(self):
         import tempfile
+
         from backends.static.cache.cache import DisasmCache
 
         # Créer un fichier SQLite corrompu

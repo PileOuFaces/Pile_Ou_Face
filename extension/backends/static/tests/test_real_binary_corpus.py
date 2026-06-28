@@ -43,15 +43,21 @@ def _lief_and_capstone_available() -> bool:
 
 def _write_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
-def _function_name_for_addr(addr: str, expected_functions: dict[str, str]) -> str | None:
+def _function_name_for_addr(
+    addr: str, expected_functions: dict[str, str]
+) -> str | None:
     try:
         value = int(str(addr), 16)
     except (TypeError, ValueError):
         return None
-    starts = sorted((int(func_addr, 16), name) for name, func_addr in expected_functions.items())
+    starts = sorted(
+        (int(func_addr, 16), name) for name, func_addr in expected_functions.items()
+    )
     for index, (start, name) in enumerate(starts):
         end = starts[index + 1][0] if index + 1 < len(starts) else 1 << 128
         if start <= value < end:
@@ -59,7 +65,9 @@ def _function_name_for_addr(addr: str, expected_functions: dict[str, str]) -> st
     return None
 
 
-def _named_cfg_call_edges(cfg: dict, expected_functions: dict[str, str]) -> set[tuple[str, str]]:
+def _named_cfg_call_edges(
+    cfg: dict, expected_functions: dict[str, str]
+) -> set[tuple[str, str]]:
     addr_to_name = {addr.lower(): name for name, addr in expected_functions.items()}
     named_edges: set[tuple[str, str]] = set()
     for edge in cfg.get("edges", []):
@@ -95,7 +103,9 @@ class TestRealBinaryCorpus(unittest.TestCase):
     def _collect_case_metrics(self, item: CorpusBinary) -> dict:
         lines = disassemble_with_capstone(str(item.binary_path))
         expected = set(item.expected_functions.values())
-        discovered = discover_functions(lines or [], set(), binary_path=str(item.binary_path))
+        discovered = discover_functions(
+            lines or [], set(), binary_path=str(item.binary_path)
+        )
         discovery = evaluate_function_discovery(discovered, expected)
 
         with warnings.catch_warnings():
@@ -176,7 +186,9 @@ class TestRealBinaryCorpus(unittest.TestCase):
                 )
                 metrics = evaluate_function_discovery(discovered, expected)
 
-                min_recall = 0.6 if item.spec.stripped or item.spec.opt != "-O0" else 0.8
+                min_recall = (
+                    0.6 if item.spec.stripped or item.spec.opt != "-O0" else 0.8
+                )
                 self.assertGreaterEqual(metrics["recall"], min_recall, metrics)
                 self.assertGreaterEqual(metrics["precision"], 0.5, metrics)
                 self.assertEqual(metrics["overlap_count"], 0, metrics)
@@ -249,7 +261,9 @@ class TestRealBinaryCorpus(unittest.TestCase):
                     str(item.binary_path),
                     int(item.expected_functions["pof_stacky"], 16),
                 )
-                self.assertEqual(data["func_addr"], item.expected_functions["pof_stacky"].lower())
+                self.assertEqual(
+                    data["func_addr"], item.expected_functions["pof_stacky"].lower()
+                )
                 self.assertIn("frame_size", data)
                 self.assertIn("vars", data)
                 self.assertIn("args", data)

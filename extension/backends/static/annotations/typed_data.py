@@ -34,7 +34,8 @@ import json
 import os
 import struct
 import sys
-from typing import Callable, Literal
+from collections.abc import Callable
+from typing import Literal
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
@@ -49,7 +50,15 @@ except ImportError:
     lief = None
     _LIEF_AVAILABLE = False
 
-_EXEC_SECTION_NAMES = {".text", ".init", ".fini", ".plt", ".plt.got", ".plt.sec", "__text"}
+_EXEC_SECTION_NAMES = {
+    ".text",
+    ".init",
+    ".fini",
+    ".plt",
+    ".plt.got",
+    ".plt.sec",
+    "__text",
+}
 _SHF_EXECINSTR = 0x4
 
 
@@ -69,7 +78,9 @@ def _detect_endian_and_ptr_size(binary) -> tuple[Literal["little", "big"], int]:
                 "big" if ("MSB" in data_name or "BIG" in data_name) else "little"
             )
             identity_class = getattr(binary.header, "identity_class", None)
-            class_name = getattr(identity_class, "name", str(identity_class or "")).upper()
+            class_name = getattr(
+                identity_class, "name", str(identity_class or "")
+            ).upper()
             ptr_size = 8 if "64" in class_name else 4
             return endian, ptr_size
         if isinstance(binary, lief.MachO.Binary):
@@ -122,7 +133,9 @@ def _get_section_entry(binary, section_name: str):
         return None
 
 
-def _get_section_data(binary, section_name: str) -> tuple[bytes, int] | tuple[None, None]:
+def _get_section_data(
+    binary, section_name: str
+) -> tuple[bytes, int] | tuple[None, None]:
     try:
         section = _get_section_entry(binary, section_name)
         if section is None:
@@ -147,10 +160,14 @@ def _raw_data_result(
 ) -> dict | None:
     if section_name not in (None, "", "raw"):
         return None
-    raw_arch_info = get_raw_arch_info(str(raw_arch or ""), raw_endian) if raw_arch else None
+    raw_arch_info = (
+        get_raw_arch_info(str(raw_arch or ""), raw_endian) if raw_arch else None
+    )
     raw_endian_value = str(getattr(raw_arch_info, "endian", endian) or endian)
     raw_ptr_size = int(getattr(raw_arch_info, "ptr_size", ptr_size) or ptr_size)
-    raw_bits = int(getattr(raw_arch_info, "bits", raw_ptr_size * 8) or (raw_ptr_size * 8))
+    raw_bits = int(
+        getattr(raw_arch_info, "bits", raw_ptr_size * 8) or (raw_ptr_size * 8)
+    )
     raw_arch_name = (
         str(
             getattr(raw_arch_info, "raw_name", "")
@@ -180,9 +197,13 @@ def _raw_data_result(
 
     base = _parse_int_literal(raw_base_addr, 0)
     if type_ == "auto":
-        entries, total = _decode_auto(data, base, page, page_size, raw_ptr_size, raw_endian_value)
+        entries, total = _decode_auto(
+            data, base, page, page_size, raw_ptr_size, raw_endian_value
+        )
     elif type_ in _DECODERS:
-        entries, total = _decode_typed(data, base, type_, page, page_size, raw_endian_value)
+        entries, total = _decode_typed(
+            data, base, type_, page, page_size, raw_endian_value
+        )
     elif type_ == "str":
         strings = _scan_strings(data, 4)
         all_str = [
@@ -198,7 +219,9 @@ def _raw_data_result(
         total = len(all_str)
         entries = all_str[page * page_size : (page + 1) * page_size]
     elif type_ == "ptr":
-        ptrs = _scan_pointers(data, base, len(data) + 0x10000000, raw_ptr_size, raw_endian_value)
+        ptrs = _scan_pointers(
+            data, base, len(data) + 0x10000000, raw_ptr_size, raw_endian_value
+        )
         all_ptr = [
             {
                 "offset": off,
@@ -273,7 +296,9 @@ def _resolve_struct_location(
         candidates = [_get_section_entry(binary, requested_section)]
     else:
         try:
-            candidates = [section for section in binary.sections if _is_data_section(section)]
+            candidates = [
+                section for section in binary.sections if _is_data_section(section)
+            ]
         except Exception:
             candidates = []
 
@@ -288,7 +313,9 @@ def _resolve_struct_location(
         if not data:
             continue
         if base <= addr < base + len(data):
-            return str(getattr(section, "name", "") or requested_section or ""), addr - base
+            return str(
+                getattr(section, "name", "") or requested_section or ""
+            ), addr - base
 
     if requested_section:
         raise ValueError(
@@ -301,7 +328,9 @@ def _hex_bytes(data: bytes) -> str:
     return " ".join(f"{b:02x}" for b in data)
 
 
-def _decode_u8(data: bytes, i: int, endian: Literal["little", "big"] = "little") -> tuple[str, str]:
+def _decode_u8(
+    data: bytes, i: int, endian: Literal["little", "big"] = "little"
+) -> tuple[str, str]:
     return str(data[i]), "u8"
 
 
@@ -526,7 +555,10 @@ def _decode_struct_scalar(
 
 def _format_enum_value(field: dict, raw_value: int) -> str:
     enum_values = field.get("enum_values") or []
-    exact = next((entry for entry in enum_values if int(entry.get("value", 0)) == raw_value), None)
+    exact = next(
+        (entry for entry in enum_values if int(entry.get("value", 0)) == raw_value),
+        None,
+    )
     if exact:
         return f"{exact.get('name')} ({raw_value})"
     if raw_value > 0:
@@ -567,7 +599,7 @@ def _decode_compound_value(
             nested_field, blob[start:end], ptr_size, definitions, depth + 1, endian
         )
         preview_fields.append(f"{nested_field.get('name')}={decoded}")
-    suffix = ", ..." if len((layout.get("fields") or [])) > len(visible_fields) else ""
+    suffix = ", ..." if len(layout.get("fields") or []) > len(visible_fields) else ""
     return f"{layout.get('kind')} {field['type']} {{ " + ", ".join(
         preview_fields
     ) + suffix + " }", str(layout.get("kind") or field["type_kind"])
@@ -607,7 +639,9 @@ def _decode_struct_field_value(
         for index in range(field["array_len"]):
             start = index * field["elem_size"]
             end = start + field["elem_size"]
-            scalar, _ = _decode_struct_scalar(blob[start:end], field["tag"], ptr_size, endian)
+            scalar, _ = _decode_struct_scalar(
+                blob[start:end], field["tag"], ptr_size, endian
+            )
             values.append(scalar)
         preview = ", ".join(values[:8])
         if len(values) > 8:
@@ -748,7 +782,9 @@ def get_typed_data(
         arch_info = None
     bits = int(getattr(arch_info, "bits", ptr_size * 8) or (ptr_size * 8))
     arch = str(getattr(arch_info, "key", "") or "")
-    context_fields = _typed_context_fields(endian=endian, ptr_size=ptr_size, bits=bits, arch=arch)
+    context_fields = _typed_context_fields(
+        endian=endian, ptr_size=ptr_size, bits=bits, arch=arch
+    )
 
     all_sections = _get_sections(binary)
     if not all_sections:
@@ -869,7 +905,9 @@ def get_typed_data(
         }
 
     if type_ == "auto":
-        entries, total = _decode_auto(data, base or 0, page, page_size, ptr_size, endian)
+        entries, total = _decode_auto(
+            data, base or 0, page, page_size, ptr_size, endian
+        )
     elif type_ in _DECODERS:
         entries, total = _decode_typed(data, base or 0, type_, page, page_size, endian)
     elif type_ == "str":
@@ -951,7 +989,9 @@ def main() -> int:
     except Exception:
         struct_offset = 0
     try:
-        struct_addr = int(str(args.struct_addr), 0) if args.struct_addr is not None else None
+        struct_addr = (
+            int(str(args.struct_addr), 0) if args.struct_addr is not None else None
+        )
     except Exception:
         struct_addr = None
     print(

@@ -16,32 +16,33 @@ if str(ROOT) not in sys.path:
 from unittest.mock import patch
 
 from backends.mcp.ollama_bridge import (
-    _build_system_prompt,
+    OllamaToolsUnsupportedError,
     _auto_tool_fallback,
+    _build_system_prompt,
     _coerce_tool_arguments,
-    _detect_tool_intent,
     _default_server_cmd,
+    _detect_tool_intent,
     _extract_binary_candidate,
     _extract_user_request,
+    _looks_like_noop_response,
     _normalize_tool_call_arguments,
+    _prompt_likely_needs_tools,
     _resolve_binary_from_prompt,
+    _resolve_requested_tool_name,
     _select_mcp_tools_for_prompt,
     _strip_passive_binary_context,
-    _looks_like_noop_response,
-    _prompt_likely_needs_tools,
-    _resolve_requested_tool_name,
     mcp_tool_to_ollama_tool,
-    OllamaToolsUnsupportedError,
-    run_agent_once,
-    parse_args,
     ollama_chat,
+    parse_args,
+    run_agent_once,
 )
 
 
 class _StreamingResponse:
     def __init__(self, chunks):
         self._lines = [
-            (json.dumps(chunk, ensure_ascii=False) + "\n").encode("utf-8") for chunk in chunks
+            (json.dumps(chunk, ensure_ascii=False) + "\n").encode("utf-8")
+            for chunk in chunks
         ]
 
     def __enter__(self):
@@ -110,7 +111,9 @@ class TestOllamaBridgeHelpers(unittest.TestCase):
         self.assertEqual(_coerce_tool_arguments(args), args)
 
     def test_coerce_tool_arguments_from_json_string(self):
-        parsed = _coerce_tool_arguments('{"binary_path": "/tmp/a.elf", "addr": "0x401000"}')
+        parsed = _coerce_tool_arguments(
+            '{"binary_path": "/tmp/a.elf", "addr": "0x401000"}'
+        )
         self.assertEqual(parsed["binary_path"], "/tmp/a.elf")
         self.assertEqual(parsed["addr"], "0x401000")
 
@@ -127,18 +130,24 @@ class TestOllamaBridgeHelpers(unittest.TestCase):
 
     def test_looks_like_noop_response(self):
         self.assertTrue(_looks_like_noop_response("Please provide a request."))
-        self.assertTrue(_looks_like_noop_response("Please provide a file or a request."))
+        self.assertTrue(
+            _looks_like_noop_response("Please provide a file or a request.")
+        )
         self.assertTrue(
             _looks_like_noop_response(
                 "I still need a file or a specific request to use the available tools."
             )
         )
-        self.assertFalse(_looks_like_noop_response("Voici les 5 premieres instructions..."))
+        self.assertFalse(
+            _looks_like_noop_response("Voici les 5 premieres instructions...")
+        )
 
     def test_prompt_likely_needs_tools(self):
         self.assertTrue(_prompt_likely_needs_tools("Analyse demo_analysis.elf"))
         self.assertTrue(_prompt_likely_needs_tools("disassemble ce binaire"))
-        self.assertTrue(_prompt_likely_needs_tools("donne le code asm de vuln_demo.elf"))
+        self.assertTrue(
+            _prompt_likely_needs_tools("donne le code asm de vuln_demo.elf")
+        )
         self.assertFalse(_prompt_likely_needs_tools("dis moi bonjour"))
 
     def test_extract_user_request_ignores_passive_binary_context(self):
@@ -222,7 +231,12 @@ class TestOllamaBridgeHelpers(unittest.TestCase):
 
     def test_resolve_binary_from_prompt_via_find_files_hint(self):
         client = self._FakeFindClient(
-            [{"path": "/repo/examples/vuln_demo.elf", "relative_path": "examples/vuln_demo.elf"}]
+            [
+                {
+                    "path": "/repo/examples/vuln_demo.elf",
+                    "relative_path": "examples/vuln_demo.elf",
+                }
+            ]
         )
         out = _resolve_binary_from_prompt(client, "le fichier c'est vul_demo")
         self.assertEqual(out, "/repo/examples/vuln_demo.elf")
@@ -230,7 +244,12 @@ class TestOllamaBridgeHelpers(unittest.TestCase):
 
     def test_normalize_tool_call_arguments_adds_binary_and_default_max_lines(self):
         client = self._FakeFindClient(
-            [{"path": "/repo/examples/vuln_demo.elf", "relative_path": "examples/vuln_demo.elf"}]
+            [
+                {
+                    "path": "/repo/examples/vuln_demo.elf",
+                    "relative_path": "examples/vuln_demo.elf",
+                }
+            ]
         )
         normalized = _normalize_tool_call_arguments(
             client,
@@ -249,7 +268,9 @@ class TestOllamaBridgeHelpers(unittest.TestCase):
             {"name": "get_binary_info"},
             {"name": "capa_scan"},
         ]
-        selected = _select_mcp_tools_for_prompt(tools, "donne le code asm de vuln_demo.elf")
+        selected = _select_mcp_tools_for_prompt(
+            tools, "donne le code asm de vuln_demo.elf"
+        )
         names = {tool["name"] for tool in selected}
         self.assertIn("disassemble", names)
         self.assertIn("find_files", names)
@@ -258,7 +279,9 @@ class TestOllamaBridgeHelpers(unittest.TestCase):
     def test_select_mcp_tools_for_prompt_general_chat_returns_no_tools(self):
         tools = [{"name": "get_binary_info"}, {"name": "disassemble"}]
         self.assertEqual(
-            _select_mcp_tools_for_prompt(tools, "fait moi un message long avec 200 mots"),
+            _select_mcp_tools_for_prompt(
+                tools, "fait moi un message long avec 200 mots"
+            ),
             [],
         )
 
@@ -441,9 +464,15 @@ class TestRunAgentOnce(unittest.TestCase):
     def test_run_agent_once_returns_dict_with_response_and_tool_calls(self):
         client = self._AgentFakeClient(tools=[], tool_results={})
         fake_response = {
-            "message": {"role": "assistant", "content": "Voici l'analyse.", "tool_calls": None}
+            "message": {
+                "role": "assistant",
+                "content": "Voici l'analyse.",
+                "tool_calls": None,
+            }
         }
-        with patch("backends.mcp.ollama_bridge._ollama_chat", return_value=fake_response):
+        with patch(
+            "backends.mcp.ollama_bridge._ollama_chat", return_value=fake_response
+        ):
             result = run_agent_once(
                 client=client,
                 base_url="http://localhost:11434",
@@ -512,7 +541,9 @@ class TestRunAgentOnce(unittest.TestCase):
         captured_tools = []
         captured_messages = []
 
-        def fake_ollama_chat(base_url, model, messages, tools, timeout_s, on_token=None):
+        def fake_ollama_chat(
+            base_url, model, messages, tools, timeout_s, on_token=None
+        ):
             captured_tools.extend(tools)
             captured_messages.extend(messages)
             return {
@@ -547,15 +578,25 @@ class TestRunAgentOnce(unittest.TestCase):
 
     def test_run_agent_once_tracks_successful_tool_call(self):
         tool_results = {
-            "disassemble": {"content": [{"text": "push rbp\nmov rbp, rsp"}], "isError": False}
+            "disassemble": {
+                "content": [{"text": "push rbp\nmov rbp, rsp"}],
+                "isError": False,
+            }
         }
-        client = self._AgentFakeClient(tools=[self._DISASM_TOOL], tool_results=tool_results)
+        client = self._AgentFakeClient(
+            tools=[self._DISASM_TOOL], tool_results=tool_results
+        )
         step1 = {
             "message": {
                 "role": "assistant",
                 "content": "",
                 "tool_calls": [
-                    {"function": {"name": "disassemble", "arguments": {"binary_path": "demo.elf"}}}
+                    {
+                        "function": {
+                            "name": "disassemble",
+                            "arguments": {"binary_path": "demo.elf"},
+                        }
+                    }
                 ],
             }
         }
@@ -566,7 +607,9 @@ class TestRunAgentOnce(unittest.TestCase):
                 "tool_calls": [],
             }
         }
-        with patch("backends.mcp.ollama_bridge._ollama_chat", side_effect=[step1, step2]):
+        with patch(
+            "backends.mcp.ollama_bridge._ollama_chat", side_effect=[step1, step2]
+        ):
             result = run_agent_once(
                 client=client,
                 base_url="http://localhost:11434",
@@ -602,7 +645,9 @@ class TestRunAgentOnce(unittest.TestCase):
         events = []
         call_count = 0
 
-        def fake_ollama_chat(base_url, model, messages, tools, timeout_s, on_token=None):
+        def fake_ollama_chat(
+            base_url, model, messages, tools, timeout_s, on_token=None
+        ):
             nonlocal call_count
             call_count += 1
             if call_count <= 2:
@@ -663,7 +708,9 @@ class TestRunAgentOnce(unittest.TestCase):
                 "structuredContent": {"ok": False, "error": "file not found"},
             }
         }
-        client = self._AgentFakeClient(tools=[self._DISASM_TOOL], tool_results=tool_results)
+        client = self._AgentFakeClient(
+            tools=[self._DISASM_TOOL], tool_results=tool_results
+        )
         step1 = {
             "message": {
                 "role": "assistant",
@@ -685,7 +732,9 @@ class TestRunAgentOnce(unittest.TestCase):
                 "tool_calls": [],
             }
         }
-        with patch("backends.mcp.ollama_bridge._ollama_chat", side_effect=[step1, step2]):
+        with patch(
+            "backends.mcp.ollama_bridge._ollama_chat", side_effect=[step1, step2]
+        ):
             result = run_agent_once(
                 client=client,
                 base_url="http://localhost:11434",
@@ -699,20 +748,37 @@ class TestRunAgentOnce(unittest.TestCase):
 
     def test_run_agent_once_on_event_called_for_each_tool(self):
         """on_event callback receives tool_call and tool_result events in order."""
-        tool_results = {"disassemble": {"content": [{"text": "push rbp"}], "isError": False}}
-        client = self._AgentFakeClient(tools=[self._DISASM_TOOL], tool_results=tool_results)
+        tool_results = {
+            "disassemble": {"content": [{"text": "push rbp"}], "isError": False}
+        }
+        client = self._AgentFakeClient(
+            tools=[self._DISASM_TOOL], tool_results=tool_results
+        )
         events = []
         step1 = {
             "message": {
                 "role": "assistant",
                 "content": "",
                 "tool_calls": [
-                    {"function": {"name": "disassemble", "arguments": {"binary_path": "demo.elf"}}}
+                    {
+                        "function": {
+                            "name": "disassemble",
+                            "arguments": {"binary_path": "demo.elf"},
+                        }
+                    }
                 ],
             }
         }
-        step2 = {"message": {"role": "assistant", "content": "Analyse complète.", "tool_calls": []}}
-        with patch("backends.mcp.ollama_bridge._ollama_chat", side_effect=[step1, step2]):
+        step2 = {
+            "message": {
+                "role": "assistant",
+                "content": "Analyse complète.",
+                "tool_calls": [],
+            }
+        }
+        with patch(
+            "backends.mcp.ollama_bridge._ollama_chat", side_effect=[step1, step2]
+        ):
             run_agent_once(
                 client=client,
                 base_url="http://localhost:11434",
@@ -750,13 +816,31 @@ class TestRunAgentOnce(unittest.TestCase):
                 "role": "assistant",
                 "content": "",
                 "tool_calls": [
-                    {"function": {"name": "disassemble", "arguments": {"binary_path": "a.elf"}}},
-                    {"function": {"name": "get_symbols", "arguments": {"binary_path": "a.elf"}}},
+                    {
+                        "function": {
+                            "name": "disassemble",
+                            "arguments": {"binary_path": "a.elf"},
+                        }
+                    },
+                    {
+                        "function": {
+                            "name": "get_symbols",
+                            "arguments": {"binary_path": "a.elf"},
+                        }
+                    },
                 ],
             }
         }
-        step2 = {"message": {"role": "assistant", "content": "Analyse complète.", "tool_calls": []}}
-        with patch("backends.mcp.ollama_bridge._ollama_chat", side_effect=[step1, step2]):
+        step2 = {
+            "message": {
+                "role": "assistant",
+                "content": "Analyse complète.",
+                "tool_calls": [],
+            }
+        }
+        with patch(
+            "backends.mcp.ollama_bridge._ollama_chat", side_effect=[step1, step2]
+        ):
             result = run_agent_once(
                 client=client,
                 base_url="http://localhost:11434",
@@ -800,7 +884,9 @@ class TestOllamaToolsUnsupportedPath(unittest.TestCase):
             return {}
 
     def test_unsupported_tools_returns_dict_with_empty_tool_calls(self):
-        client = self._NoToolClient(binary_info={"ok": True, "format": "ELF", "arch": "x86_64"})
+        client = self._NoToolClient(
+            binary_info={"ok": True, "format": "ELF", "arch": "x86_64"}
+        )
         final_resp = {
             "message": {
                 "role": "assistant",
@@ -857,18 +943,28 @@ class TestOllamaToolsUnsupportedPath(unittest.TestCase):
 
     def test_unsupported_tools_injects_prefetch_into_user_message(self):
         """Binary data pre-fetched by _auto_tool_fallback is injected into the prompt."""
-        client = self._NoToolClient(binary_info={"ok": True, "format": "PE", "arch": "x86"})
+        client = self._NoToolClient(
+            binary_info={"ok": True, "format": "PE", "arch": "x86"}
+        )
         call_log = []
 
-        def fake_ollama_chat(base_url, model, messages, tools, timeout_s, on_token=None):
+        def fake_ollama_chat(
+            base_url, model, messages, tools, timeout_s, on_token=None
+        ):
             call_log.append(messages[:])
             if len(call_log) == 1:
                 raise OllamaToolsUnsupportedError("no tools")
             return {
-                "message": {"role": "assistant", "content": "C'est un PE x86.", "tool_calls": []}
+                "message": {
+                    "role": "assistant",
+                    "content": "C'est un PE x86.",
+                    "tool_calls": [],
+                }
             }
 
-        with patch("backends.mcp.ollama_bridge._ollama_chat", side_effect=fake_ollama_chat):
+        with patch(
+            "backends.mcp.ollama_bridge._ollama_chat", side_effect=fake_ollama_chat
+        ):
             run_agent_once(
                 client=client,
                 base_url="http://localhost:11434",
@@ -884,7 +980,9 @@ class TestOllamaToolsUnsupportedPath(unittest.TestCase):
         self.assertIn("rapport sur demo.exe", user_msg["content"])
 
     def test_non_streaming_retry_emits_exact_response_once(self):
-        client = self._NoToolClient(binary_info={"ok": True, "format": "PE", "arch": "x86"})
+        client = self._NoToolClient(
+            binary_info={"ok": True, "format": "PE", "arch": "x86"}
+        )
         full_response = "Ligne 1\n\n  Ligne 2"
         events = []
         final_resp = {

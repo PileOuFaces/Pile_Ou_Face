@@ -8,7 +8,6 @@ from pathlib import Path
 
 from backends.shared.utils import build_offset_to_vaddr
 
-
 SUPPORTED_ENCODINGS = ("auto", "utf-8", "utf-16-le", "utf-16-be")
 
 
@@ -88,7 +87,9 @@ def extract_strings(
     data_slice, offset_base = loaded
     offset_map = build_offset_to_vaddr(binary_path)
 
-    selected_encodings = ("utf-8", "utf-16-le", "utf-16-be") if encoding == "auto" else (encoding,)
+    selected_encodings = (
+        ("utf-8", "utf-16-le", "utf-16-be") if encoding == "auto" else (encoding,)
+    )
 
     merged: list[dict] = []
     seen: set[tuple[str, str, str]] = set()
@@ -193,7 +194,9 @@ def main() -> int:
     else:
         strings = extract_strings_system(args.binary, min_len=args.min_len)
         if not strings:
-            strings = extract_strings(args.binary, min_len=args.min_len, encoding=args.encoding)
+            strings = extract_strings(
+                args.binary, min_len=args.min_len, encoding=args.encoding
+            )
 
     out = json.dumps(strings, indent=2, ensure_ascii=False)
 

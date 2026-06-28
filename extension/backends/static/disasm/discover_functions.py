@@ -7,10 +7,12 @@ import re
 import struct
 from collections import deque
 from dataclasses import dataclass
-from typing import Optional
 
+from backends.shared.log import configure_logging, get_logger
 from backends.shared.utils import (
     addr_to_int as _addr_to_int,
+)
+from backends.shared.utils import (
     normalize_addr as _normalize_addr,
 )
 from backends.static.binary.arch import (
@@ -19,8 +21,6 @@ from backends.static.binary.arch import (
     iter_supported_adapters,
 )
 from backends.static.disasm.cfg import _extract_jump_target, _get_mnemonic
-
-from backends.shared.log import configure_logging, get_logger
 
 logger = get_logger(__name__)
 
@@ -169,7 +169,7 @@ def _matches_prologue(
     text: str,
     custom_preludes: list[tuple[str, str]] | None = None,
     adapters: tuple[ArchAdapter, ...] | None = None,
-) -> Optional[str]:
+) -> str | None:
     """Vérifie si l'instruction ressemble à un prologue de fonction."""
     t = text.strip()
     for pattern, name in custom_preludes or []:
@@ -241,18 +241,19 @@ def _is_conditional_branch_mnemonic(mnem: str) -> bool:
 def _is_return_like(line: dict, adapters: tuple[ArchAdapter, ...]) -> bool:
     mnem = _line_mnemonic(line)
     operands = _line_operands(line)
-    if mnem in RETURN_MNEMONICS or any(
-        adapter.is_return_instruction(mnem, operands) for adapter in adapters
-    ):
-        return True
-    return False
+    return bool(
+        mnem in RETURN_MNEMONICS
+        or any(adapter.is_return_instruction(mnem, operands) for adapter in adapters)
+    )
 
 
 def _is_call_mnemonic(mnem: str, adapters: tuple[ArchAdapter, ...]) -> bool:
     return any(adapter.is_call_mnemonic(mnem) for adapter in adapters)
 
 
-def _is_unconditional_jump_mnemonic(mnem: str, adapters: tuple[ArchAdapter, ...]) -> bool:
+def _is_unconditional_jump_mnemonic(
+    mnem: str, adapters: tuple[ArchAdapter, ...]
+) -> bool:
     return any(adapter.is_unconditional_jump_mnemonic(mnem) for adapter in adapters)
 
 
@@ -269,7 +270,11 @@ def _looks_like_thunk_start(line: dict, adapters: tuple[ArchAdapter, ...]) -> bo
         return False
     if any(token in operands for token in ("@plt", "@got", ".plt", ".got")):
         return True
-    return "[" in operands and "]" in operands and any(base in operands for base in ("rip", "eip"))
+    return (
+        "[" in operands
+        and "]" in operands
+        and any(base in operands for base in ("rip", "eip"))
+    )
 
 
 def _split_operands(operands: str) -> list[str]:
@@ -308,7 +313,9 @@ def _extract_written_register(line: dict) -> tuple[str, int, bool]:
     return dst, _addr_to_int(target) if target else 0, False
 
 
-def _is_register_jump(line: dict, expected_reg: str, adapters: tuple[ArchAdapter, ...]) -> bool:
+def _is_register_jump(
+    line: dict, expected_reg: str, adapters: tuple[ArchAdapter, ...]
+) -> bool:
     mnem = _line_mnemonic(line)
     if not _is_unconditional_jump_mnemonic(mnem, adapters):
         return False
@@ -320,7 +327,9 @@ def _is_register_jump(line: dict, expected_reg: str, adapters: tuple[ArchAdapter
     return _normalize_register_token(operands[0]) == expected_reg
 
 
-def _meaningful_line_indexes(lines: list[dict], start_idx: int, lookahead: int = 4) -> list[int]:
+def _meaningful_line_indexes(
+    lines: list[dict], start_idx: int, lookahead: int = 4
+) -> list[int]:
     indexes: list[int] = []
     for idx in range(start_idx, min(len(lines), start_idx + 1 + lookahead)):
         text = _line_text(lines[idx])
@@ -354,7 +363,9 @@ def _find_thunk_dispatch(
         return ThunkDispatch(
             start_idx=start_idx,
             dispatch_idx=base_idx,
-            reason="trampoline" if _extract_direct_target_int(base_line) else "plt_stub",
+            reason="trampoline"
+            if _extract_direct_target_int(base_line)
+            else "plt_stub",
             target_int=_extract_direct_target_int(base_line),
             pattern="jump",
         )
@@ -390,7 +401,9 @@ def _find_thunk_dispatch(
             return ThunkDispatch(
                 start_idx=start_idx,
                 dispatch_idx=idx,
-                reason="plt_stub" if current_indirect or not current_target else "trampoline",
+                reason="plt_stub"
+                if current_indirect or not current_target
+                else "trampoline",
                 target_int=current_target,
                 pattern="register_jump",
             )
@@ -465,7 +478,9 @@ def _has_epilogue_before(lines: list[dict], idx: int) -> bool:
             return True
         if mnem == "mov" and ("rsp, rbp" in operands or "esp, ebp" in operands):
             return True
-        if mnem == "add" and ("rsp" in operands or "esp" in operands or operands.startswith("sp,")):
+        if mnem == "add" and (
+            "rsp" in operands or "esp" in operands or operands.startswith("sp,")
+        ):
             return True
         if mnem == "ldp" and "x29" in operands and "x30" in operands:
             return True
@@ -701,7 +716,9 @@ def _resolve_candidate_overlaps(
                 inner_priority = _candidate_priority(inner_record)
                 inner_protected = _candidate_is_protected(inner_record)
 
-                nested_in_coverage = bool(outer_coverage) and inner_start in outer_coverage
+                nested_in_coverage = (
+                    bool(outer_coverage) and inner_start in outer_coverage
+                )
                 inner_subset = (
                     bool(inner_coverage)
                     and bool(outer_coverage)
@@ -709,7 +726,11 @@ def _resolve_candidate_overlaps(
                 )
                 inner_nested = nested_in_coverage or inner_subset
 
-                if inner_nested and not inner_protected and outer_priority >= inner_priority + 15:
+                if (
+                    inner_nested
+                    and not inner_protected
+                    and outer_priority >= inner_priority + 15
+                ):
                     del accepted[inner_start]
                     removed = True
                     break
@@ -763,7 +784,9 @@ def _scan_heuristic_starts(
     }
 
     sorted_known = sorted(known | set(hint_reasons))
-    gap_ranges = [(sorted_known[i], sorted_known[i + 1]) for i in range(len(sorted_known) - 1)]
+    gap_ranges = [
+        (sorted_known[i], sorted_known[i + 1]) for i in range(len(sorted_known) - 1)
+    ]
 
     for i, line in enumerate(lines):
         addr = line.get("addr", "")
@@ -786,11 +809,11 @@ def _scan_heuristic_starts(
         if ((prologue or thunk_start) and can_start) or in_hint:
             if addr_int in flirt_map:
                 confidence = "confirmed"
-            elif in_hint:
-                confidence = "high"
-            elif thunk_start:
-                confidence = "high"
-            elif prologue in ("endbr64", "push rbp", "push ebp", "stp"):
+            elif (
+                in_hint
+                or thunk_start
+                or prologue in ("endbr64", "push rbp", "push ebp", "stp")
+            ):
                 confidence = "high"
             else:
                 confidence = "medium"
@@ -799,12 +822,18 @@ def _scan_heuristic_starts(
                 if addr_int in flirt_map
                 else (
                     hint_reasons.get(addr_int)
-                    or (thunk_dispatch.reason if thunk_dispatch else prologue or "prologue")
+                    or (
+                        thunk_dispatch.reason
+                        if thunk_dispatch
+                        else prologue or "prologue"
+                    )
                 )
             )
             thunk_target = 0
             if thunk_dispatch:
-                thunk_target = _resolve_thunk_target(addr_int, lines, line_index_by_addr, adapters)
+                thunk_target = _resolve_thunk_target(
+                    addr_int, lines, line_index_by_addr, adapters
+                )
             _record_candidate(
                 discovered,
                 addr_int,
@@ -829,7 +858,9 @@ def _scan_heuristic_starts(
             continue
 
         mnem = _line_mnemonic(line)
-        if _is_return_like(line, adapters) or _is_unconditional_jump_mnemonic(mnem, adapters):
+        if _is_return_like(line, adapters) or _is_unconditional_jump_mnemonic(
+            mnem, adapters
+        ):
             prev_was_terminator = True
         elif _is_filler(text):
             pass
@@ -851,15 +882,19 @@ def _walk_seed_functions(
     custom_preludes: list[tuple[str, str]] | None = None,
 ) -> dict[int, set[int]]:
     """Parcourt récursivement le code à partir de seeds et découvre des cibles d'appels."""
-    line_by_addr = {_addr_to_int(line.get("addr", "")): line for line in lines if line.get("addr")}
+    line_by_addr = {
+        _addr_to_int(line.get("addr", "")): line for line in lines if line.get("addr")
+    }
     line_index_by_addr = {
         _addr_to_int(line.get("addr", "")): idx
         for idx, line in enumerate(lines)
         if line.get("addr")
     }
-    sorted_addrs = [_addr_to_int(line.get("addr", "")) for line in lines if line.get("addr")]
+    sorted_addrs = [
+        _addr_to_int(line.get("addr", "")) for line in lines if line.get("addr")
+    ]
     next_addr: dict[int, int] = {}
-    for cur, nxt in zip(sorted_addrs, sorted_addrs[1:]):
+    for cur, nxt in zip(sorted_addrs, sorted_addrs[1:], strict=False):
         next_addr[cur] = nxt
 
     queued = deque(addr for addr in sorted(analysis_seeds) if addr in line_by_addr)
@@ -901,7 +936,9 @@ def _walk_seed_functions(
                         else None
                     )
                     resolved_target = (
-                        _resolve_thunk_target(target_int, lines, line_index_by_addr, adapters)
+                        _resolve_thunk_target(
+                            target_int, lines, line_index_by_addr, adapters
+                        )
                         if thunk_dispatch
                         else 0
                     )
@@ -966,7 +1003,9 @@ def _walk_seed_functions(
                             lines, line_index_by_addr.get(target_int, -1), adapters
                         )
                         resolved_target = (
-                            _resolve_thunk_target(target_int, lines, line_index_by_addr, adapters)
+                            _resolve_thunk_target(
+                                target_int, lines, line_index_by_addr, adapters
+                            )
                             if target_dispatch
                             else 0
                         )
@@ -990,7 +1029,9 @@ def _walk_seed_functions(
                             reason="tail_call",
                             kind="thunk"
                             if target_dispatch
-                            else _kind_for("tail_call", line_by_addr[target_int], adapters),
+                            else _kind_for(
+                                "tail_call", line_by_addr[target_int], adapters
+                            ),
                             confidence_score=_confidence_score_for(
                                 target_int,
                                 confidence,
@@ -1084,11 +1125,14 @@ def evaluate_function_discovery(
 ) -> dict:
     """Calcule des métriques de précision/rappel pour un corpus synthétique."""
     expected = {_addr_to_int(addr) for addr in expected_addrs if _addr_to_int(addr)}
-    known = {_addr_to_int(addr) for addr in (known_addrs or set()) if _addr_to_int(addr)}
+    known = {
+        _addr_to_int(addr) for addr in (known_addrs or set()) if _addr_to_int(addr)
+    }
     found = {
         _addr_to_int(fn.get("addr", ""))
         for fn in discovered
-        if _addr_to_int(fn.get("addr", "")) and _addr_to_int(fn.get("addr", "")) not in known
+        if _addr_to_int(fn.get("addr", ""))
+        and _addr_to_int(fn.get("addr", "")) not in known
     }
 
     true_positive = sorted(found & expected)
@@ -1116,7 +1160,9 @@ def evaluate_function_discovery(
             previous = interval
 
     precision = (
-        round(len(true_positive) / len(found), 3) if found else (1.0 if not expected else 0.0)
+        round(len(true_positive) / len(found), 3)
+        if found
+        else (1.0 if not expected else 0.0)
     )
     recall = round(len(true_positive) / len(expected), 3) if expected else 1.0
 
@@ -1172,7 +1218,9 @@ def discover_functions(
 
     analysis_seeds = set(hint_reasons)
     analysis_seeds.update(heuristic_candidates)
-    first_addr = _addr_to_int(lines[0].get("addr", "")) if lines and lines[0].get("addr") else 0
+    first_addr = (
+        _addr_to_int(lines[0].get("addr", "")) if lines and lines[0].get("addr") else 0
+    )
     if first_addr:
         analysis_seeds.add(first_addr)
 
@@ -1200,7 +1248,9 @@ def discover_functions(
         result.append(dict(record))
 
     all_starts = sorted(
-        set(known) | set(hint_reasons) | {addr_int for addr_int, _ in candidates.items()}
+        set(known)
+        | set(hint_reasons)
+        | {addr_int for addr_int, _ in candidates.items()}
     )
     for fn in result:
         fn_addr = _addr_to_int(fn["addr"])
@@ -1233,7 +1283,7 @@ def _load_expected_addrs(raw: str) -> list[str]:
         pass
 
     if os.path.exists(raw):
-        with open(raw, "r", encoding="utf-8") as handle:
+        with open(raw, encoding="utf-8") as handle:
             parsed = json.load(handle)
         if isinstance(parsed, list):
             return [str(item) for item in parsed if str(item).strip()]
@@ -1271,7 +1321,7 @@ def main() -> int:
         logger.error("Mapping file not found: %s", args.mapping)
         return 1
 
-    with open(args.mapping, "r", encoding="utf-8") as f:
+    with open(args.mapping, encoding="utf-8") as f:
         data = json.load(f)
 
     lines = data.get("lines", [])

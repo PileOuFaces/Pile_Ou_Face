@@ -12,12 +12,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backends.static.disasm.asm_sim import (
-    trim_line,
-    tokenize,
+    main,
     parse_int64,
     parse_program,
     simulate,
-    main,
+    tokenize,
+    trim_line,
 )
 
 

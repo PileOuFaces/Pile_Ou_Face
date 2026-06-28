@@ -293,13 +293,17 @@ class TestStructs(unittest.TestCase):
         self.assertIsNone(field["array_dims"])
 
     def test_regular_pointer_tag_is_ptr_not_fn_ptr(self):
-        definitions = parse_struct_definitions("typedef struct S { void *buf; uint32_t len; } S;")
+        definitions = parse_struct_definitions(
+            "typedef struct S { void *buf; uint32_t len; } S;"
+        )
         layout = compute_struct_layout(definitions, "S", 8)
         self.assertEqual(layout["fields"][0]["tag"], "ptr")
         self.assertNotEqual(layout["fields"][0]["tag"], "fn_ptr")
 
     def test_double_pointer_field(self):
-        definitions = parse_struct_definitions("typedef struct S { char **argv; int argc; } S;")
+        definitions = parse_struct_definitions(
+            "typedef struct S { char **argv; int argc; } S;"
+        )
         field = definitions["S"]["fields"][0]
         self.assertEqual(field["pointer_level"], 2)
         layout = compute_struct_layout(definitions, "S", 8)
@@ -321,7 +325,9 @@ class TestStructs(unittest.TestCase):
 
     def test_error_bitfield_rejected(self):
         with self.assertRaises(ValueError):
-            parse_struct_definitions("typedef struct Bits { uint32_t flags : 3; } Bits;")
+            parse_struct_definitions(
+                "typedef struct Bits { uint32_t flags : 3; } Bits;"
+            )
 
     def test_error_field_missing_name(self):
         with self.assertRaises(ValueError):

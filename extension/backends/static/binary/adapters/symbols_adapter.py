@@ -64,7 +64,15 @@ def _from_lief(binary_path: str) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
 
-    def add_record(name: str, addr: Any, size: Any, kind: str, binding: str, section: str, source: str) -> None:
+    def add_record(
+        name: str,
+        addr: Any,
+        size: Any,
+        kind: str,
+        binding: str,
+        section: str,
+        source: str,
+    ) -> None:
         clean_name = str(name or "").strip()
         if not clean_name:
             return
@@ -73,19 +81,24 @@ def _from_lief(binary_path: str) -> list[dict[str, Any]]:
         if key in seen:
             return
         seen.add(key)
-        records.append({
-            "name": clean_name,
-            "addr": addr_hex,
-            "size": int(size) if isinstance(size, int) and size > 0 else None,
-            "kind": _symbol_kind(kind),
-            "binding": binding or "",
-            "section": section or "",
-            "source": source,
-        })
+        records.append(
+            {
+                "name": clean_name,
+                "addr": addr_hex,
+                "size": int(size) if isinstance(size, int) and size > 0 else None,
+                "kind": _symbol_kind(kind),
+                "binding": binding or "",
+                "section": section or "",
+                "source": source,
+            }
+        )
 
     try:
         if isinstance(binary, lief.ELF.Binary):
-            for table_name, symbols in (("symtab", binary.symtab_symbols), ("dynsym", binary.dynamic_symbols)):
+            for table_name, symbols in (
+                ("symtab", binary.symtab_symbols),
+                ("dynsym", binary.dynamic_symbols),
+            ):
                 for sym in symbols:
                     section = _elf_section_name(binary, getattr(sym, "shndx", 0))
                     add_record(
@@ -110,9 +123,25 @@ def _from_lief(binary_path: str) -> list[dict[str, Any]]:
                 )
         elif isinstance(binary, lief.PE.Binary):
             for func in getattr(binary, "exported_functions", []):
-                add_record(func.name, getattr(func, "address", 0), None, "FUNC", "GLOBAL", "", "LIEF/exports")
+                add_record(
+                    func.name,
+                    getattr(func, "address", 0),
+                    None,
+                    "FUNC",
+                    "GLOBAL",
+                    "",
+                    "LIEF/exports",
+                )
             for func in getattr(binary, "imported_functions", []):
-                add_record(func.name, getattr(func, "iat_address", 0), None, "UND", "IMPORT", "", "LIEF/imports")
+                add_record(
+                    func.name,
+                    getattr(func, "iat_address", 0),
+                    None,
+                    "UND",
+                    "IMPORT",
+                    "",
+                    "LIEF/imports",
+                )
     except Exception:
         return records
 
@@ -122,15 +151,17 @@ def _from_lief(binary_path: str) -> list[dict[str, Any]]:
 def _from_existing_helper(binary_path: str) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for sym in extract_symbols(binary_path, defined_only=False):
-        records.append({
-            "name": str(sym.get("name") or ""),
-            "addr": str(sym.get("addr") or "0x0"),
-            "size": sym.get("size"),
-            "kind": _symbol_kind(str(sym.get("type") or "")),
-            "binding": "",
-            "section": "",
-            "source": sym.get("source") or "symbols.py",
-        })
+        records.append(
+            {
+                "name": str(sym.get("name") or ""),
+                "addr": str(sym.get("addr") or "0x0"),
+                "size": sym.get("size"),
+                "kind": _symbol_kind(str(sym.get("type") or "")),
+                "binding": "",
+                "section": "",
+                "source": sym.get("source") or "symbols.py",
+            }
+        )
     return records
 
 
@@ -141,4 +172,10 @@ def load_symbols(binary_path: str) -> list[dict[str, Any]]:
     records = _from_lief(binary_path)
     if not records:
         records = _from_existing_helper(binary_path)
-    return sorted(records, key=lambda item: (int(str(item.get("addr") or "0x0"), 16), item.get("name") or ""))
+    return sorted(
+        records,
+        key=lambda item: (
+            int(str(item.get("addr") or "0x0"), 16),
+            item.get("name") or "",
+        ),
+    )

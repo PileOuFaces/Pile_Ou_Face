@@ -2,19 +2,26 @@
 import argparse
 import json
 import sys
+
 from backends.static.compile.compile import compile_source, list_available_compilers
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Moteur de compilation multi-toolchain")
+    parser = argparse.ArgumentParser(
+        description="Moteur de compilation multi-toolchain"
+    )
     parser.add_argument("--src", help="Fichier source à compiler")
     parser.add_argument("--lang", help="Langage source (c, cpp, rust, go)")
     parser.add_argument("--target", help="Target (elf-x64, pe-x64, macho-arm64, ...)")
     parser.add_argument("--output", help="Chemin du binaire de sortie (optionnel)")
     parser.add_argument(
-        "--flags", default="[]", help='Flags extra encodés en JSON (ex: \'["-O2","-g"]\')'
+        "--flags",
+        default="[]",
+        help='Flags extra encodés en JSON (ex: \'["-O2","-g"]\')',
     )
-    parser.add_argument("--list", action="store_true", help="Liste les toolchains disponibles")
+    parser.add_argument(
+        "--list", action="store_true", help="Liste les toolchains disponibles"
+    )
     args = parser.parse_args()
 
     if args.list:

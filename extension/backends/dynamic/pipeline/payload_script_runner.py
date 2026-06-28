@@ -11,15 +11,16 @@ import io
 import json
 import os
 import re
-import signal
 import shutil
+import signal
 import socket
 import subprocess
 import sys
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from types import ModuleType, SimpleNamespace
-from typing import Any, Iterable, Optional
+from typing import Any
 
 try:
     from backends.static.binary.symbols import extract_symbols
@@ -171,7 +172,13 @@ def _flatten_value(value: Any, word_size: int, endian: str) -> bytes:
     raise TypeError(f"Unsupported flat() item: {type(value).__name__}")
 
 
-def flat(*items: Any, word_size: int = 8, endian: str = "little", filler: bytes = b"\x00", length: Optional[int] = None) -> bytes:
+def flat(
+    *items: Any,
+    word_size: int = 8,
+    endian: str = "little",
+    filler: bytes = b"\x00",
+    length: int | None = None,
+) -> bytes:
     word_size = _normalize_word_size(word_size, fallback=word_size)
     if len(items) == 1 and isinstance(items[0], dict):
         mapping = items[0]
@@ -227,11 +234,7 @@ class FakeELF:
         self.sym = self.symbols
         self.plt: dict[str, int] = {}
         self.got: dict[str, int] = {}
-        self.functions = {
-            name: addr
-            for name, addr in self.symbols.items()
-            if addr
-        }
+        self.functions = {name: addr for name, addr in self.symbols.items() if addr}
 
     def __fspath__(self) -> str:
         return self.path
@@ -255,7 +258,7 @@ class FakeROP:
     def __init__(self, *_args: Any, **_kwargs: Any) -> None:
         self._items: list[Any] = []
 
-    def raw(self, value: Any) -> "FakeROP":
+    def raw(self, value: Any) -> FakeROP:
         self._items.append(value)
         return self
 
@@ -339,8 +342,8 @@ def _load_elf_symbols(binary_path: str) -> dict[str, int]:
 def _normalize_process_arg(value: Any) -> str:
     if isinstance(value, FakeELF):
         return value.path
-    if hasattr(value, "path") and isinstance(getattr(value, "path"), str):
-        return str(getattr(value, "path"))
+    if hasattr(value, "path") and isinstance(value.path, str):
+        return str(value.path)
     if isinstance(value, bytes):
         return value.decode("latin1", errors="ignore")
     return str(value)
@@ -353,8 +356,8 @@ class FakeTube:
         self,
         state: RunnerState,
         kind: str,
-        process_index: Optional[int] = None,
-        process_args: Optional[list[str]] = None,
+        process_index: int | None = None,
+        process_args: list[str] | None = None,
         remote_target: str = "",
     ) -> None:
         self._state = state
@@ -408,7 +411,9 @@ class FakeTube:
         return self._capture("sendafter", payload, delimiter=delimiter)
 
     def sendlineafter(self, delimiter: Any, payload: Any) -> int:
-        return self._capture("sendlineafter", payload, delimiter=delimiter, newline=True)
+        return self._capture(
+            "sendlineafter", payload, delimiter=delimiter, newline=True
+        )
 
     def write(self, payload: Any) -> int:
         return self._capture("write", payload)
@@ -434,7 +439,7 @@ class FakeTube:
     def can_recv(self, *_args: Any, **_kwargs: Any) -> bool:
         return False
 
-    def __enter__(self) -> "FakeTube":  # pragma: no cover - trivial
+    def __enter__(self) -> FakeTube:  # pragma: no cover - trivial
         return self
 
     def __exit__(self, *_exc: Any) -> None:  # pragma: no cover - trivial
@@ -456,7 +461,9 @@ def _payload_record(kind: str, data: bytes) -> dict[str, Any]:
 
 def _make_fake_pwn(state: RunnerState) -> ModuleType:
     module = ModuleType("pwn")
-    context = SimpleNamespace(arch="amd64", bits=64, endian="little", binary=None, log_level="info")
+    context = SimpleNamespace(
+        arch="amd64", bits=64, endian="little", binary=None, log_level="info"
+    )
 
     def _default_word_size() -> int:
         bits = int(getattr(context, "bits", 64) or 64)
@@ -494,17 +501,27 @@ def _make_fake_pwn(state: RunnerState) -> ModuleType:
         return lambda value, *args, **kwargs: _pack(
             value,
             width,
-            str(kwargs.get("endian") or getattr(context, "endian", "little")).lower() == "big" and "big" or "little",
+            str(kwargs.get("endian") or getattr(context, "endian", "little")).lower()
+            == "big"
+            and "big"
+            or "little",
         )
 
     def _flat(*items: Any, **kwargs: Any) -> bytes:
         return flat(
             *items,
             word_size=_normalize_word_size(
-                kwargs.get("word_size") or kwargs.get("word_size_bits", 0) or _default_word_size(),
+                kwargs.get("word_size")
+                or kwargs.get("word_size_bits", 0)
+                or _default_word_size(),
                 fallback=_default_word_size(),
             ),
-            endian=str(kwargs.get("endian") or getattr(context, "endian", "little")).lower() == "big" and "big" or "little",
+            endian=str(
+                kwargs.get("endian") or getattr(context, "endian", "little")
+            ).lower()
+            == "big"
+            and "big"
+            or "little",
             filler=_coerce_bytes(kwargs.get("filler", b"\x00")),
             length=kwargs.get("length"),
         )
@@ -535,8 +552,13 @@ def _make_fake_pwn(state: RunnerState) -> ModuleType:
     module.p64 = _pack_fn(8)
     module.pack = lambda value, word_size=None, **kwargs: _pack(
         value,
-        _normalize_word_size(word_size or _default_word_size(), fallback=_default_word_size()),
-        "big" if str(kwargs.get("endian") or getattr(context, "endian", "little")).lower() == "big" else "little",
+        _normalize_word_size(
+            word_size or _default_word_size(), fallback=_default_word_size()
+        ),
+        "big"
+        if str(kwargs.get("endian") or getattr(context, "endian", "little")).lower()
+        == "big"
+        else "little",
     )
     module.flat = _flat
     module.fit = _fit
@@ -547,7 +569,9 @@ def _make_fake_pwn(state: RunnerState) -> ModuleType:
     module.pause = _pause
     module.sleep = lambda *_a, **_k: None
     module.asm = lambda *_a, **_k: b""
-    module.packing = SimpleNamespace(p8=module.p8, p16=module.p16, p32=module.p32, p64=module.p64)
+    module.packing = SimpleNamespace(
+        p8=module.p8, p16=module.p16, p32=module.p32, p64=module.p64
+    )
     module.__all__ = [
         "ELF",
         "ROP",
@@ -622,8 +646,20 @@ def _patched_runtime(fake_pwn: ModuleType, source_file_name: str) -> Any:
     patch_attr(subprocess, "check_output", blocked_process)
     patch_attr(socket, "socket", blocked_socket)
     patch_attr(socket, "create_connection", blocked_socket)
-    patch_attr(os, "system", lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("os.system bloque pendant l'analyse pwntools")))
-    patch_attr(os, "popen", lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("os.popen bloque pendant l'analyse pwntools")))
+    patch_attr(
+        os,
+        "system",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            RuntimeError("os.system bloque pendant l'analyse pwntools")
+        ),
+    )
+    patch_attr(
+        os,
+        "popen",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            RuntimeError("os.popen bloque pendant l'analyse pwntools")
+        ),
+    )
     patch_attr(time, "sleep", lambda *_a, **_k: None)
     patch_attr(builtins, "input", lambda *_a, **_k: "")
 
@@ -647,7 +683,7 @@ def analyze_script_text(
     *,
     source_file_name: str = "payload.py",
     timeout_seconds: float = 2.0,
-    script_args: Optional[list[str]] = None,
+    script_args: list[str] | None = None,
     script_root: str = "",
 ) -> dict[str, Any]:
     state = RunnerState(source_file_name=source_file_name)
@@ -690,7 +726,11 @@ def analyze_script_text(
 
     with _runtime_context():
         try:
-            with contextlib.redirect_stdout(stdout_buffer), contextlib.redirect_stderr(stderr_buffer), _script_timeout(timeout_seconds):
+            with (
+                contextlib.redirect_stdout(stdout_buffer),
+                contextlib.redirect_stderr(stderr_buffer),
+                _script_timeout(timeout_seconds),
+            ):
                 exec(code, namespace, namespace)
         except Exception as exc:
             ok = False
@@ -723,19 +763,34 @@ def analyze_script_text(
 
 def _read_script(args: argparse.Namespace) -> tuple[str, str]:
     if args.script_file:
-        with open(args.script_file, "r", encoding="utf-8") as handle:
+        with open(args.script_file, encoding="utf-8") as handle:
             return handle.read(), args.source_name or os.path.basename(args.script_file)
     data = sys.stdin.read()
     return data, args.source_name or "payload.py"
 
 
-def main(argv: Optional[list[str]] = None) -> int:
-    parser = argparse.ArgumentParser(description="Analyse un script pwntools et extrait les payloads envoyes.")
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Analyse un script pwntools et extrait les payloads envoyes."
+    )
     parser.add_argument("--script-file", default="", help="Chemin du script a analyser")
-    parser.add_argument("--source-name", default="", help="Nom source a exposer dans le resultat")
-    parser.add_argument("--script-root", default="", help="Repertoire de resolution pour les chemins relatifs du script")
-    parser.add_argument("--script-arg", action="append", default=[], help="Argument supplementaire expose dans sys.argv")
-    parser.add_argument("--timeout-seconds", type=float, default=2.0, help="Timeout d'execution interne")
+    parser.add_argument(
+        "--source-name", default="", help="Nom source a exposer dans le resultat"
+    )
+    parser.add_argument(
+        "--script-root",
+        default="",
+        help="Repertoire de resolution pour les chemins relatifs du script",
+    )
+    parser.add_argument(
+        "--script-arg",
+        action="append",
+        default=[],
+        help="Argument supplementaire expose dans sys.argv",
+    )
+    parser.add_argument(
+        "--timeout-seconds", type=float, default=2.0, help="Timeout d'execution interne"
+    )
     args = parser.parse_args(argv)
 
     script_text, source_name = _read_script(args)

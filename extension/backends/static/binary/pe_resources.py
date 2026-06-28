@@ -21,6 +21,7 @@ from __future__ import annotations
 __mcp_enabled__ = True
 
 import argparse
+import contextlib
 import json
 import os
 import sys
@@ -64,10 +65,10 @@ def _decode_rt_string(data: bytes) -> dict:
         length = int.from_bytes(data[pos : pos + 2], "little")
         pos += 2
         if length > 0 and pos + length * 2 <= len(data):
-            try:
-                strings.append(data[pos : pos + length * 2].decode("utf-16-le", errors="replace"))
-            except Exception:
-                pass
+            with contextlib.suppress(Exception):
+                strings.append(
+                    data[pos : pos + length * 2].decode("utf-16-le", errors="replace")
+                )
             pos += length * 2
     return {"strings": strings}
 
@@ -162,7 +163,13 @@ def get_pe_resources(binary_path: str) -> dict:
 
     root = getattr(binary, "resources", None)
     if root is None:
-        return {"format": "PE", "resources": [], "count": 0, "error": None, "applicable": True}
+        return {
+            "format": "PE",
+            "resources": [],
+            "count": 0,
+            "error": None,
+            "applicable": True,
+        }
 
     resources = []
     try:

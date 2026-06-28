@@ -24,15 +24,15 @@ if str(ROOT) not in sys.path:
 
 from backends.static.annotations.annotations import AnnotationStore
 from backends.static.cache.cache import DisasmCache
+from backends.static.cache.cache_admin import db_stats, list_binaries, purge_binary
 from backends.static.disasm.cfg import build_cfg, build_cfg_for_function
+from backends.static.disasm.xrefs import build_xref_map
 from backends.static.export.export import (
     export_cfg_dot,
     export_strings_csv,
     export_symbols_csv,
     export_xrefs_json,
 )
-from backends.static.cache.cache_admin import db_stats, list_binaries, purge_binary
-from backends.static.disasm.xrefs import build_xref_map
 
 # ---------------------------------------------------------------------------
 # Fixtures réutilisables
@@ -206,7 +206,9 @@ class TestCachePipeline(unittest.TestCase):
             cache.save_disasm(self._binary_path, DISASM_LINES)
             cache.save_symbols(self._binary_path, SYMBOLS)
             cache.save_strings(self._binary_path, STRINGS)
-            cache.save_annotation(self._binary_path, "0x401000", "comment", "entry of func_a")
+            cache.save_annotation(
+                self._binary_path, "0x401000", "comment", "entry of func_a"
+            )
             cache.save_annotation(self._binary_path, "0x401000", "rename", "func_a")
 
             disasm = cache.get_disasm(self._binary_path)
@@ -269,7 +271,9 @@ class TestAnnotationPipeline(unittest.TestCase):
             store.comment("0x401020", "else branch — argc != 0")
 
             # Vérification en session
-            self.assertEqual(store.get_comment("0x401000"), "entry point — vérifie argc")
+            self.assertEqual(
+                store.get_comment("0x401000"), "entry point — vérifie argc"
+            )
             self.assertEqual(store.get_name("0x401000"), "check_args")
             self.assertEqual(len(store.list()), 3)
 
