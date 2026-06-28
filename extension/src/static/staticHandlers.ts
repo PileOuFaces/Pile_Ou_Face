@@ -28,7 +28,8 @@ const {
 const AUTH_STRICT_LICENSE_ENV = 'BINHOST_DISABLE_LICENSE_FALLBACK';
 
 function staticHandlers(config) {
-  const { root, panel, context, logChannel } = config;
+  const { root, panel, context, logChannel, storageDir, globalDir } = config;
+  const extensionPath = context?.extensionPath || root;
   const getSavedSettings = () => {
     try {
       return context?.globalState?.get('pof-settings', {}) || {};
@@ -45,25 +46,21 @@ function staticHandlers(config) {
       projectRoot: root,
     });
   };
-  const getWorkspacePofRoot = () => path.join(root, '.pile-ou-face');
-  const hasWorkspacePofRoot = () => {
-    try {
-      return fs.existsSync(getWorkspacePofRoot());
-    } catch (_) {
-      return false;
-    }
-  };
   const getHostArtifactRoot = (kind) => {
     const normalizedKind = String(kind || '').trim();
-    if (hasWorkspacePofRoot()) return path.join(getWorkspacePofRoot(), normalizedKind);
-    return path.join(os.homedir(), '.pile-ou-face', normalizedKind);
+    const baseDir = storageDir || path.join(root, '.pile-ou-face');
+    const base = normalizedKind ? path.join(baseDir, normalizedKind) : baseDir;
+    try {
+      if (!fs.existsSync(base)) fs.mkdirSync(base, { recursive: true });
+    } catch (_) {}
+    return base;
   };
   const buildPythonEnv = () => {
     const settings = getSavedSettings();
     const localPaths = settings.decompilerLocalPaths && typeof settings.decompilerLocalPaths === 'object'
       ? settings.decompilerLocalPaths
       : {};
-    const env = buildRuntimeEnv(root);
+    const env = buildRuntimeEnv(root, storageDir);
     const ghidraPath = String(localPaths.ghidra || '').trim();
     if (ghidraPath) env.GHIDRA_INSTALL_DIR = ghidraPath;
     return env;
@@ -100,7 +97,7 @@ function staticHandlers(config) {
   const runPython = (argsWithScript, { timeout = 60000, maxBuffer = 4 * 1024 * 1024 } = {}) =>
     new Promise((resolve, reject) => {
       const [scriptRelPath, ...rest] = argsWithScript;
-      const scriptPath = path.join(root, scriptRelPath);
+      const scriptPath = path.join(extensionPath, scriptRelPath);
       cp.execFile(getPythonExecutable(), [scriptPath, ...rest], {
         encoding: 'utf8', cwd: root, maxBuffer, timeout, env: buildPythonEnv(),
       }, (err, stdout, stderr) => {
@@ -110,6 +107,10 @@ function staticHandlers(config) {
 
   const buildPluginRuntimeEnv = async () => {
     const base = buildPythonEnv();
+    // Injecter le dossier plugins du workspace storage pour que Python le découvre.
+    if (storageDir) {
+      base['BINHOST_PLUGIN_PATH'] = path.join(storageDir, 'plugins');
+    }
     let hasOnlineKeys = false;
     try {
       const authSvc = AuthService.getInstance(
@@ -138,13 +139,23 @@ function staticHandlers(config) {
       base[AUTH_STRICT_LICENSE_ENV] = '1';
     } else {
       // Pas de clés en ligne : vérifier la présence de fichiers licence offline signés.
-      const licenseDir = path.join(root, '.pile-ou-face', 'licenses');
+      // On cherche dans storageDir/licenses ET dans ~/.pile-ou-face/licenses (même
+      // logique que le runtime Python : default_license_search_paths).
+      const licenseDirs = [
+        ...(storageDir ? [path.join(storageDir, 'licenses')] : []),
+        path.join(os.homedir(), '.pile-ou-face', 'licenses'),
+      ];
       let hasOfflineLicenses = false;
-      try {
-        const files = fs.readdirSync(licenseDir);
-        hasOfflineLicenses = files.some((f) => String(f).endsWith('.license.json'));
-      } catch (_e) {
-        // Répertoire absent → pas de licences offline.
+      for (const licenseDir of licenseDirs) {
+        try {
+          const files = fs.readdirSync(licenseDir);
+          if (files.some((f) => String(f).endsWith('.license.json'))) {
+            hasOfflineLicenses = true;
+            break;
+          }
+        } catch (_e) {
+          // Répertoire absent → continuer.
+        }
       }
 
       if (!hasOfflineLicenses) {
@@ -179,7 +190,7 @@ function staticHandlers(config) {
   const runPluginRuntime = async (runtimeArgs, options = {}) => {
     const pluginEnv = await buildPluginRuntimeEnv();
     const { timeout = 60000, maxBuffer = 4 * 1024 * 1024 } = options;
-    const scriptPath = path.join(root, 'backends/plugins/runtime.py');
+    const scriptPath = path.join(extensionPath, 'backends/plugins/runtime.py');
     const { stdout } = await new Promise((resolve, reject) => {
       cp.execFile(getPythonExecutable(), [
         scriptPath,
@@ -345,7 +356,7 @@ function staticHandlers(config) {
     hubOpenPluginDirectory: async (message = {}) => {
       const requestedScope = String(message.scope || 'user').trim() === 'workspace' ? 'workspace' : 'user';
       const pluginDir = getHostArtifactRoot('plugins');
-      const scope = hasWorkspacePofRoot() ? 'workspace' : requestedScope;
+      const scope = storageDir ? 'workspace' : requestedScope;
       try {
         await fs.promises.mkdir(pluginDir, { recursive: true });
         await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(pluginDir));
@@ -386,7 +397,7 @@ function staticHandlers(config) {
     },
     hubInstallPlugin: async (message = {}) => {
       const requestedScope = String(message.scope || 'user').trim() === 'workspace' ? 'workspace' : 'user';
-      const selectedScope = hasWorkspacePofRoot() ? 'workspace' : requestedScope;
+      const selectedScope = (storageDir || fs.existsSync(path.join(root, '.pile-ou-face'))) ? 'workspace' : requestedScope;
       try {
         const picked = await vscode.window.showOpenDialog({
           canSelectFiles: true,
@@ -523,7 +534,7 @@ function staticHandlers(config) {
         });
         return;
       }
-      const scriptPath = path.join(root, 'backends/mcp/ollama_bridge.py');
+      const scriptPath = path.join(extensionPath, 'backends/mcp/ollama_bridge.py');
       const args = [
         scriptPath,
         '--base-url', baseUrl,
@@ -783,7 +794,7 @@ function staticHandlers(config) {
     },
     hubLoadDecompile: async (message) => {
       const { binaryPath, addr, funcName, full, decompiler, provider } = message;
-      const decompilersJsonPath = path.join(root, '.pile-ou-face', 'decompilers.json');
+      const decompilersJsonPath = storageDir ? path.join(storageDir, 'decompilers.json') : '';
 
       // Build base args (annotation injection preserved)
       const buildArgs = (targetDecompiler) => {
@@ -798,8 +809,8 @@ function staticHandlers(config) {
           .update(absPath)
           .update(fs.existsSync(absPath) ? String(fs.statSync(absPath).mtimeMs) : '')
           .digest('hex').slice(0, 16);
-        const annPath = path.join(root, '.pile-ou-face', 'annotations', `${annHash}.json`);
-        if (fs.existsSync(annPath)) args.push('--annotations-json', annPath);
+        const annPath = storageDir ? path.join(storageDir, 'annotations', `${annHash}.json`) : '';
+        if (annPath && fs.existsSync(annPath)) args.push('--annotations-json', annPath);
         return args;
       };
 

@@ -1,0 +1,80 @@
+[tool.mypy]
+python_version = "3.11"
+strict = false
+warn_unreachable = true
+show_error_codes = true
+ignore_missing_imports = true
+warn_return_any = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = false
+exclude = [
+    "static/tests/",
+    "venv/",
+    "\\.venv/",
+]
+
+# lief ships incomplete stubs — suppress attr/assignment errors in lief-heavy modules
+[[tool.mypy.overrides]]
+module = ["backends.static.*"]
+ignore_errors = true
+
+[tool.ruff]
+# Version Python cible (pour les règles de modernisation)
+target-version = "py311"
+
+# Longueur de ligne (88 = défaut de Black)
+line-length = 88
+
+# Dossiers à ignorer
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+]
+
+[tool.ruff.lint]
+# Règles à activer
+select = [
+    "E",      # Erreurs de style pycodestyle
+    "F",      # Erreurs Pyflakes (variables non utilisées, etc.)
+    "I",      # Tri des imports (isort)
+    "B",      # Bugs potentiels (flake8-bugbear)
+    "UP",     # Modernisation syntaxe (pyupgrade)
+    "SIM",    # Simplifications possibles
+]
+
+# Règles à ignorer
+ignore = [
+    "E501",   # Ligne trop longue (géré par le formatter)
+    "SIM115", # Ouvrir les fichiers avec un context manager (trop de faux positifs)
+    "SIM117", # Combiner les with imbriqués (style subjectif)
+    "SIM105", # Utiliser contextlib.suppress (style subjectif)
+    "SIM108", # Ternaire vs if/else (lisibilité subjective)
+    "SIM102", # if imbriqués → if combiné (lisibilité subjective)
+    "B905",   # zip() sans strict= (Python 3.9 legacy)
+]
+
+# Règles que --fix peut corriger automatiquement
+fixable = ["ALL"]
+
+[tool.ruff.lint.per-file-ignores]
+# Fichiers de tests — imports optionnels et sys.path hacks intentionnels
+"**/tests/*.py" = ["E402", "F401", "E741"]
+# Scripts d'entrée avec sys.path avant imports (intentionnel)
+"**/run_pipeline.py" = ["E402"]
+"mcp_server.py" = ["E402"]
+"mcp/server.py" = ["E402"]
+"plugins/install_plugin.py" = ["E402"]
+"plugins/runtime.py" = ["E402"]
+"static/annotations/annotations.py" = ["E402"]
+
+[tool.ruff.format]
+# Style des guillemets (comme Black)
+quote-style = "double"
+
+# Indentation (comme Black)
+indent-style = "space"

@@ -1,0 +1,8 @@
+# Outils de qualité de code (dev uniquement, pas requis en runtime)
+coverage>=7.6
+pytest>=8.0
+ruff>=0.15.17
+mypy>=1.0
+pre-commit>=4.0
+bandit>=1.8
+pip-audit>=2.7

@@ -11,6 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const cp = require('child_process');
 const { getDisasmScript, getXrefsScript } = require('../shared/paths');
+const { getExtensionPath } = require('../shared/utils');
 
 /**
  * @brief Enregistre les commandes statiques et retourne les subscriptions.
@@ -69,6 +70,7 @@ function buildDisasmAiPrompt({ binaryPath = '', addr = '', functionName = '', in
 function registerStaticCommands(context, deps, providers) {
   const {
     ensureTempDir,
+    storageDir,
     runCommand,
     logChannel,
   } = deps;
@@ -248,7 +250,7 @@ function registerStaticCommands(context, deps, providers) {
       vscode.window.showErrorMessage('Binaire introuvable.');
       return;
     }
-    const tempDir = ensureTempDir(root);
+    const tempDir = storageDir || ensureTempDir(root);
     const baseName = path.basename(absPath, path.extname(absPath)) || 'binary';
     const disasmPath = path.join(tempDir, `${baseName}.disasm.asm`);
     const mappingPath = path.join(tempDir, `${baseName}.disasm.mapping.json`);
@@ -269,7 +271,7 @@ function registerStaticCommands(context, deps, providers) {
         ],
         root,
         logChannel,
-        { PYTHONPATH: root }
+        { PYTHONPATH: getExtensionPath() || root }
       );
     }
     if (fs.existsSync(disasmPath)) {
@@ -294,7 +296,7 @@ function registerStaticCommands(context, deps, providers) {
       vscode.window.showErrorMessage('Binaire introuvable.');
       return;
     }
-    const tempDir = ensureTempDir(root);
+    const tempDir = storageDir || ensureTempDir(root);
     const baseName = path.basename(absPath, path.extname(absPath)) || 'binary';
     const disasmPath = path.join(tempDir, `${baseName}.disasm.asm`);
     const mappingPath = path.join(tempDir, `${baseName}.disasm.mapping.json`);
@@ -313,7 +315,7 @@ function registerStaticCommands(context, deps, providers) {
       ],
       root,
       logChannel,
-      { PYTHONPATH: root }
+      { PYTHONPATH: getExtensionPath() || root }
     );
     if (fs.existsSync(disasmPath)) {
       const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(disasmPath));

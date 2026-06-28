@@ -10,6 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const cp = require('child_process');
+const { getExtensionPath } = require('./utils');
 
 const CACHE_DIR_NAME = 'static_cache';
 const META_FILE = 'meta.json';
@@ -30,40 +31,43 @@ function getCacheKey(absPath) {
 }
 
 /**
- * Retourne le répertoire de cache pour un workspace.
+ * Retourne le répertoire de cache pour un storageDir.
  */
-function getCacheDir(root) {
-  return path.join(root, '.pile-ou-face', CACHE_DIR_NAME);
+function getCacheDir(storageDir) {
+  return path.join(storageDir, CACHE_DIR_NAME);
 }
 
-function getCacheIndexDbPath(root) {
-  return path.join(getCacheDir(root), CACHE_INDEX_DB);
+function getCacheIndexDbPath(storageDir) {
+  return path.join(getCacheDir(storageDir), CACHE_INDEX_DB);
 }
 
 function getCacheIndexScriptPath(root) {
-  return path.join(root, 'backends', 'static', 'cache', 'cache_index.py');
+  const base = getExtensionPath() || root;
+  return path.join(base, 'backends', 'static', 'cache', 'cache_index.py');
 }
 
 function detectPythonExecutable(root) {
+  const base = getExtensionPath() || root;
   const candidates = [
-    path.join(root, 'backends', '.venv', 'bin', 'python3'),
-    path.join(root, 'backends', '.venv', 'Scripts', 'python.exe'),
-    path.join(root, 'backends', '.venv', 'Scripts', 'python'),
+    path.join(base, 'backends', '.venv', 'bin', 'python3'),
+    path.join(base, 'backends', '.venv', 'Scripts', 'python.exe'),
+    path.join(base, 'backends', '.venv', 'Scripts', 'python'),
   ];
   return candidates.find((candidate) => fs.existsSync(candidate)) || 'python3';
 }
 
-function runCacheIndex(root, args, { parseJson = true } = {}) {
+function runCacheIndex(storageDir, args, { parseJson = true } = {}) {
   try {
-    const scriptPath = getCacheIndexScriptPath(root);
+    const extensionPath = getExtensionPath();
+    const scriptPath = getCacheIndexScriptPath(extensionPath);
     if (!fs.existsSync(scriptPath)) return null;
-    const pythonExe = detectPythonExecutable(root);
+    const pythonExe = detectPythonExecutable(extensionPath);
     const result = cp.spawnSync(
       pythonExe,
-      [scriptPath, '--db', getCacheIndexDbPath(root), ...args],
+      [scriptPath, '--db', getCacheIndexDbPath(storageDir), ...args],
       {
-        cwd: root,
-        env: { ...process.env, PYTHONPATH: root },
+        cwd: storageDir,
+        env: { ...process.env, PYTHONPATH: extensionPath || storageDir },
         encoding: 'utf8',
         timeout: 10000,
       }
@@ -106,16 +110,16 @@ function isCacheValid(cacheDir, key, absPath) {
 
 /**
  * Lit les données en cache. Retourne null si absent ou invalide.
- * @param {string} root - Racine du workspace
+ * @param {string} storageDir - Répertoire de stockage des artifacts
  * @param {string} absPath - Chemin absolu du binaire
  * @param {string} type - 'sections' | 'info' | 'symbols' | 'strings' | 'cfg'
  * @param {object} options - Pour strings: { minLen }
  */
-function readCache(root, absPath, type, options = {}) {
+function readCache(storageDir, absPath, type, options = {}) {
   const key = getCacheKey(absPath);
   if (!key) return null;
 
-  const cacheDir = getCacheDir(root);
+  const cacheDir = getCacheDir(storageDir);
   if (!isCacheValid(cacheDir, key, absPath)) return null;
 
   let file = type;
@@ -136,11 +140,11 @@ function readCache(root, absPath, type, options = {}) {
 /**
  * Écrit les données en cache.
  */
-function writeCache(root, absPath, type, data, options = {}) {
+function writeCache(storageDir, absPath, type, data, options = {}) {
   const key = getCacheKey(absPath);
   if (!key) return;
 
-  const cacheDir = getCacheDir(root);
+  const cacheDir = getCacheDir(storageDir);
   const keyDir = path.join(cacheDir, key);
   if (!fs.existsSync(keyDir)) {
     fs.mkdirSync(keyDir, { recursive: true });
@@ -160,9 +164,8 @@ function writeCache(root, absPath, type, data, options = {}) {
     const cachePath = path.join(keyDir, `${file}.json`);
     fs.writeFileSync(cachePath, JSON.stringify(data), 'utf8');
     const cacheStat = fs.statSync(cachePath);
-    runCacheIndex(root, [
+    runCacheIndex(storageDir, [
       'upsert',
-      '--workspace-root', path.resolve(root),
       '--cache-key', key,
       '--binary-path', path.resolve(absPath),
       '--cache-type', type,
@@ -179,18 +182,18 @@ function writeCache(root, absPath, type, data, options = {}) {
   }
 }
 
-function listIndexedCacheEntries(root) {
-  const payload = runCacheIndex(root, ['list', '--workspace-root', path.resolve(root)]);
+function listIndexedCacheEntries(storageDir) {
+  const payload = runCacheIndex(storageDir, ['list']);
   return Array.isArray(payload?.entries) ? payload.entries : null;
 }
 
-function pruneIndexedCacheEntries(root) {
-  const payload = runCacheIndex(root, ['prune', '--workspace-root', path.resolve(root)]);
+function pruneIndexedCacheEntries(storageDir) {
+  const payload = runCacheIndex(storageDir, ['prune']);
   return Number(payload?.removed || 0);
 }
 
-function clearIndexedCacheEntries(root) {
-  const payload = runCacheIndex(root, ['clear', '--workspace-root', path.resolve(root)]);
+function clearIndexedCacheEntries(storageDir) {
+  const payload = runCacheIndex(storageDir, ['clear']);
   return Number(payload?.removed || 0);
 }
 

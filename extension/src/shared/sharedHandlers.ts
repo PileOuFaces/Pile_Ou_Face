@@ -12,7 +12,7 @@ const cp = require('child_process');
 const crypto = require('crypto');
 const readline = require('readline');
 const fileManager = require('./fileManager');
-const { detectPythonExecutable } = require('./utils');
+const { detectPythonExecutable, getExtensionPath } = require('./utils');
 const {
   cancelAiProcess,
   clearAiProcess,
@@ -208,10 +208,11 @@ function normalizeRawProfile(profile) {
   };
 }
 
-function getAnnotationsPath(root, binaryPath) {
+function getAnnotationsPath(root, binaryPath, storageDir?) {
   const absPath = path.isAbsolute(binaryPath) ? binaryPath : path.join(root, binaryPath);
   const hash = crypto.createHash('sha256').update(absPath).update(fs.existsSync(absPath) ? String(fs.statSync(absPath).mtimeMs) : '').digest('hex').slice(0, 16);
-  const dir = path.join(root, '.pile-ou-face', 'annotations');
+  const annotationsBase = storageDir || path.join(root, '.pile-ou-face');
+  const dir = path.join(annotationsBase, 'annotations');
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return path.join(dir, `${hash}.json`);
 }
@@ -251,6 +252,7 @@ function isEmptyAnnotationEntry(entry) {
 function sharedHandlers(ctx) {
   const {
     root,
+    storageDir,
     panel,
     context,
     getTempDir,
@@ -259,7 +261,7 @@ function sharedHandlers(ctx) {
     setRawProfile,
     clearRawProfile,
   } = ctx;
-  const getAnnPath = (binaryPath) => getAnnotationsPath(root, binaryPath);
+  const getAnnPath = (binaryPath) => getAnnotationsPath(root, binaryPath, storageDir);
 
   const forgetRecentBinary = (binaryPath) => {
     panel.webview.postMessage({ type: 'hubForgetRecentBinary', binaryPath });
@@ -675,7 +677,7 @@ function sharedHandlers(ctx) {
         try { return context?.globalState?.get('pof-settings', {}) || {}; } catch (_) { return {}; }
       };
       const pythonExe = getSavedSettings().pythonPath || detectPythonExecutable(root);
-      const script = path.join(root, 'backends', 'mcp', 'ai_provider.py');
+      const script = path.join(getExtensionPath() || root, 'backends', 'mcp', 'ai_provider.py');
       cp.execFile(pythonExe, [script, 'list'], { encoding: 'utf8', cwd: root, timeout: 15000 }, (err, stdout) => {
         if (err) {
           panel.webview.postMessage({ type: 'hubAiProvidersResult', data: { error: String(err.message || err) } });
@@ -694,7 +696,7 @@ function sharedHandlers(ctx) {
         try { return context?.globalState?.get('pof-settings', {}) || {}; } catch (_) { return {}; }
       };
       const pythonExe = getSavedSettings().pythonPath || detectPythonExecutable(root);
-      const script = path.join(root, 'backends', 'mcp', 'ai_provider.py');
+      const script = path.join(getExtensionPath() || root, 'backends', 'mcp', 'ai_provider.py');
       const args = [script, 'set', '--provider', String(message.provider || ''), '--api-key-stdin'];
       if (message.model) { args.push('--model', String(message.model)); }
       const proc = cp.execFile(pythonExe, args, { encoding: 'utf8', cwd: root, timeout: 15000 }, (err, stdout) => {
@@ -731,7 +733,7 @@ function sharedHandlers(ctx) {
         try { return context?.globalState?.get('pof-settings', {}) || {}; } catch (_) { return {}; }
       };
       const pythonExe = getSavedSettings().pythonPath || detectPythonExecutable(root);
-      const script = path.join(root, 'backends', 'mcp', 'ai_provider.py');
+      const script = path.join(getExtensionPath() || root, 'backends', 'mcp', 'ai_provider.py');
       // Test = refresh list and show current configured state
       cp.execFile(pythonExe, [script, 'list'], { encoding: 'utf8', cwd: root, timeout: 15000 }, (err, stdout) => {
         if (err) {
@@ -760,7 +762,7 @@ function sharedHandlers(ctx) {
         try { return context?.globalState?.get('pof-settings', {}) || {}; } catch (_) { return {}; }
       };
       const pythonExe = getSavedSettings().pythonPath || detectPythonExecutable(root);
-      const script = path.join(root, 'backends', 'mcp', 'ai_provider.py');
+      const script = path.join(getExtensionPath() || root, 'backends', 'mcp', 'ai_provider.py');
       cp.execFile(
         pythonExe,
         [script, 'set-default', '--provider', String(message.provider || '')],
@@ -794,7 +796,7 @@ function sharedHandlers(ctx) {
         try { return context?.globalState?.get('pof-settings', {}) || {}; } catch (_) { return {}; }
       };
       const pythonExe = getSavedSettings().pythonPath || detectPythonExecutable(root);
-      const script = path.join(root, 'backends', 'mcp', 'ai_provider.py');
+      const script = path.join(getExtensionPath() || root, 'backends', 'mcp', 'ai_provider.py');
       const provider = String(message.provider || '');
       const model = String(message.model || '');
       const displayModel = model ? `${provider}@${model}` : provider;

@@ -1,6 +1,7 @@
 .vscode/
 .vscode-test/
-test/
+front/tests/
+src/tests/
 out-test/
 .nyc_output/
 coverage/
@@ -12,3 +13,14 @@ eslint.config.*
 tsconfig*.json
 *.vsix
 **/*.map
+backends/.venv/
+backends/static/tests/
+backends/dynamic/tests/
+backends/plugins/tests/
+backends/static/cache/
+backends/**/__pycache__/
+backends/**/*.pyc
+backends/**/*.pyo
+docker/
+pyproject.toml
+Makefile

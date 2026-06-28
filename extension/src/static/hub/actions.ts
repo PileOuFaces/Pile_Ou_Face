@@ -18,10 +18,10 @@ function createActions({
   logChannel,
   fs,
   path,
+  storageDir,
+  globalDir,
   runPythonJson,
   runPythonJsonFile,
-  ensureTempDir,
-  getTempDir,
   resolvePathFromWorkspace,
   toWebviewPath,
   analysisCtx,
@@ -126,10 +126,10 @@ function createActions({
 
   // ── Rules helpers ────────────────────────────────────────────────────────────
 
-  const getRulesConfigPath = () => path.join(context.globalStorageUri.fsPath, 'rules-config.json');
+  const getRulesConfigPath = () => path.join(globalDir || context.globalStorageUri?.fsPath || '', 'rules-config.json');
 
   const ensureRulesStateDir = () => {
-    const dir = context.globalStorageUri?.fsPath || path.join(root, '.pile-ou-face');
+    const dir = globalDir || path.join(root, '.pile-ou-face');
     fs.mkdirSync(dir, { recursive: true });
     return dir;
   };
@@ -278,7 +278,7 @@ function createActions({
 
   const loadLatestTrace = () => {
     try {
-      const outputJsonPath = path.resolve(getTempDir(root), 'output.json');
+      const outputJsonPath = path.join(storageDir, 'output.json');
       if (!fs.existsSync(outputJsonPath)) return null;
       return JSON.parse(fs.readFileSync(outputJsonPath, 'utf8'));
     } catch (_) {
@@ -451,7 +451,7 @@ function createActions({
 
       const label = LABELS[tool] || tool;
       const lines = INSTALL_LINES[tool] || [
-        'Décompilateur custom : ajoutez une entrée dans .pile-ou-face/decompilers.json.',
+        'Décompilateur custom : ajoutez une entrée dans storageUri/decompilers.json.',
         'Format : {"decompilers":{"mon-outil":{"command":["mon-outil","--binary","{binary}","--addr","{addr}"]}}}',
         'Fallback Docker : make decompilers-docker-build puis relancez la décompilation.',
       ];
@@ -520,7 +520,7 @@ function createActions({
         isDirectory,
         binaryMeta,
       } = analysisCtx.resolveBinaryInputContext(message.binaryPath, message.binaryMeta || null);
-      const tempDir = ensureTempDir(root);
+      const tempDir = storageDir;
       let disasmPath = null;
       let mappingPath = null;
       if (binaryPath && exists && !isDirectory) {
@@ -863,7 +863,7 @@ function createActions({
     },
 
     hubSaveScript: async (message) => {
-      const scriptsDir = path.join(root, '.pile-ou-face', 'scripts');
+      const scriptsDir = path.join(storageDir, 'scripts');
       if (!fs.existsSync(scriptsDir)) fs.mkdirSync(scriptsDir, { recursive: true });
       const name = message.name || 'script.py';
       const filePath = path.join(scriptsDir, name);
@@ -876,7 +876,7 @@ function createActions({
         canSelectFiles: true, canSelectMany: false,
         filters: { 'Python': ['py'] },
         title: 'Charger un script Python',
-        defaultUri: vscode.Uri.file(path.join(root, '.pile-ou-face', 'scripts')),
+        defaultUri: vscode.Uri.file(path.join(storageDir, 'scripts')),
       });
       if (picked && picked[0]) {
         const content = fs.readFileSync(picked[0].fsPath, 'utf8');
@@ -933,7 +933,7 @@ function createActions({
         });
         return;
       }
-      const tempDir = ensureTempDir(root);
+      const tempDir = storageDir;
       const nonce = crypto.randomBytes(6).toString('hex');
       const tempScriptPath = path.join(tempDir, `pwntools-script-${nonce}.py`);
       fs.writeFileSync(tempScriptPath, scriptContent, 'utf8');

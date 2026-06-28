@@ -14,39 +14,51 @@ const logChannel = vscode.window.createOutputChannel('Pile ou Face');
 
 const TEMP_DIR_NAME = '.pile-ou-face';
 
-function _looksLikePublicRepoRoot(candidate) {
-  if (!candidate) return false;
-  try {
-    return fs.existsSync(path.join(candidate, 'extension', 'package.json'))
-      && fs.existsSync(path.join(candidate, 'backends'));
-  } catch (_) {
-    return false;
-  }
+// Singleton initialisé au démarrage avec context.extensionPath.
+// Sépare "où vivent les backends" (extensionPath) de "workspace utilisateur" (root).
+let _extensionPath = '';
+
+function setExtensionPath(p) {
+  _extensionPath = String(p || '').trim();
+}
+
+function getExtensionPath() {
+  return _extensionPath;
 }
 
 function resolveProjectRoot(root) {
   const value = String(root || '').trim();
   if (!value) return value;
-  const absRoot = path.resolve(value);
-  if (_looksLikePublicRepoRoot(absRoot)) return absRoot;
-
-  const directPublicChild = path.join(absRoot, 'Pile_Ou_Face');
-  if (_looksLikePublicRepoRoot(directPublicChild)) return directPublicChild;
-
+  const absValue = path.resolve(value);
+  if (fs.existsSync(path.join(absValue, 'extension', 'package.json'))) {
+    return absValue;
+  }
   try {
-    const children = fs.readdirSync(absRoot, { withFileTypes: true });
-    for (const child of children) {
-      if (!child.isDirectory()) continue;
-      const candidate = path.join(absRoot, child.name);
-      if (_looksLikePublicRepoRoot(candidate)) return candidate;
+    const entries = fs.readdirSync(absValue, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const candidate = path.join(absValue, entry.name);
+      if (fs.existsSync(path.join(candidate, 'extension', 'package.json'))) {
+        return candidate;
+      }
     }
-  } catch (_) { /* intentional */ }
+  } catch (_) {}
+  return absValue;
+}
 
-  return absRoot;
+function findGitRoot(dir) {
+  if (!dir) return dir;
+  if (fs.existsSync(path.join(dir, '.git'))) return dir;
+  try {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    const gitSubs = entries.filter(e => e.isDirectory() && fs.existsSync(path.join(dir, e.name, '.git')));
+    if (gitSubs.length === 1) return path.join(dir, gitSubs[0].name);
+  } catch (_) {}
+  return dir;
 }
 
 function getTempDir(root) {
-  return path.resolve(resolveProjectRoot(root), TEMP_DIR_NAME);
+  return path.resolve(findGitRoot(resolveProjectRoot(root)), TEMP_DIR_NAME);
 }
 
 function ensureTempDir(root) {
@@ -58,17 +70,35 @@ function ensureTempDir(root) {
   return dir;
 }
 
+// Returns '' when context.storageUri is unavailable — check before use.
+function getStorageDir(context) {
+  return String(context?.storageUri?.fsPath || '');
+}
+
+// Returns '' when context.globalStorageUri is unavailable — check before use.
+function getGlobalStorageDir(context) {
+  return String(context?.globalStorageUri?.fsPath || '');
+}
+
+function ensureStorageDir(context) {
+  const dir = getStorageDir(context);
+  if (!dir) throw new Error('[storage] context.storageUri non disponible');
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+    logChannel.appendLine(`[storage] Dossier créé: ${dir}`);
+  }
+  return dir;
+}
+
 async function ensurePythonDependencies(pythonExe, root) {
-  root = resolveProjectRoot(root);
-  const requirementsPath = fs.existsSync(path.join(root, 'requirements.txt'))
-    ? path.join(root, 'requirements.txt')
-    : path.join(root, 'backends', 'requirements.txt');
+  const backendBase = _extensionPath || path.resolve(String(root || '').trim());
+  const requirementsPath = path.join(backendBase, 'backends', 'requirements.txt');
   if (!fs.existsSync(requirementsPath)) {
     logChannel.appendLine('[pip] requirements.txt introuvable.');
     return;
   }
   if (pythonExe === 'python3' || pythonExe === 'python') {
-    const venvPath = path.join(root, 'backends', '.venv');
+    const venvPath = path.join(backendBase, 'backends', '.venv');
     if (!fs.existsSync(venvPath)) {
       logChannel.appendLine('[venv] Création du venv…');
       try {
@@ -129,11 +159,11 @@ async function ensurePythonDependencies(pythonExe, root) {
 
 function detectPythonExecutable(root, settingsPythonPath) {
   if (settingsPythonPath) return settingsPythonPath;
-  root = resolveProjectRoot(root);
+  const backendBase = _extensionPath || path.resolve(String(root || '').trim());
   const venvPaths = [
-    path.join(root, 'backends', '.venv', 'bin', 'python3'),
-    path.join(root, 'backends', '.venv', 'Scripts', 'python.exe'),
-    path.join(root, 'backends', '.venv', 'Scripts', 'python')
+    path.join(backendBase, 'backends', '.venv', 'bin', 'python3'),
+    path.join(backendBase, 'backends', '.venv', 'Scripts', 'python.exe'),
+    path.join(backendBase, 'backends', '.venv', 'Scripts', 'python')
   ];
   for (const p of venvPaths) {
     if (fs.existsSync(p)) return p;
@@ -164,10 +194,30 @@ function resolveDockerExecutable() {
   return 'docker';
 }
 
-function buildRuntimeEnv(root, extraEnv = {}) {
-  root = resolveProjectRoot(root);
-  const env = { ...process.env, ...extraEnv };
-  if (root) env.PYTHONPATH = extraEnv.PYTHONPATH || root;
+/**
+ * Build the runtime env for Python/Docker processes.
+ * Accepts two call patterns (backward-compatible):
+ *   buildRuntimeEnv(root, storageDir)           — new style: storageDir is a string path
+ *   buildRuntimeEnv(root, extraEnv)             — legacy: extraEnv is a plain object
+ *   buildRuntimeEnv(root, storageDir, extraEnv) — new style with extra overrides
+ * When storageDir is provided, injects POF_STORAGE_DIR, DECOMPILERS_CONFIG, COMPILERS_CONFIG.
+ */
+function buildRuntimeEnv(root, storageDirOrExtra, extraEnv = {}) {
+  let storageDir = '';
+  let mergedExtra = extraEnv;
+  if (typeof storageDirOrExtra === 'string') {
+    storageDir = storageDirOrExtra;
+  } else if (storageDirOrExtra && typeof storageDirOrExtra === 'object') {
+    mergedExtra = { ...storageDirOrExtra, ...extraEnv };
+  }
+  const backendBase = _extensionPath || path.resolve(String(root || '').trim());
+  const env = { ...process.env, ...mergedExtra };
+  if (storageDir) {
+    env.POF_STORAGE_DIR    = storageDir;
+    env.DECOMPILERS_CONFIG = path.join(storageDir, 'decompilers.json');
+    env.COMPILERS_CONFIG   = path.join(storageDir, 'compilers.json');
+  }
+  if (backendBase) env.PYTHONPATH = mergedExtra.PYTHONPATH || backendBase;
   const dockerExe = resolveDockerExecutable();
   if (dockerExe && dockerExe.includes(path.sep)) {
     const dockerDir = path.dirname(dockerExe);
@@ -287,6 +337,9 @@ module.exports = {
   TEMP_DIR_NAME,
   getTempDir,
   ensureTempDir,
+  getStorageDir,
+  getGlobalStorageDir,
+  ensureStorageDir,
   ensurePythonDependencies,
   detectPythonExecutable,
   resolveProjectRoot,
@@ -294,5 +347,7 @@ module.exports = {
   buildRuntimeEnv,
   check32BitToolchain,
   runCommand,
-  escapeHtml
+  escapeHtml,
+  setExtensionPath,
+  getExtensionPath,
 };

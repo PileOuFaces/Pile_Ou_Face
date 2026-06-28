@@ -10,7 +10,7 @@
  *   pileOuFace.decompilerRemove     — Supprimer un décompilateur custom
  *   pileOuFace.decompilerList       — Lister tous les décompilateurs (avec statut dispo)
  *   pileOuFace.decompilerTest       — Tester un décompilateur sur un binaire
- *   pileOuFace.decompilerOpenConfig — Ouvrir .pile-ou-face/decompilers.json dans l'éditeur
+ *   pileOuFace.decompilerOpenConfig — Ouvrir storageDir/decompilers.json dans l'éditeur
  */
 
 'use strict';
@@ -19,7 +19,7 @@ const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
 const cp = require('child_process');
-const { buildRuntimeEnv, resolveDockerExecutable } = require('../shared/utils');
+const { buildRuntimeEnv, resolveDockerExecutable, getExtensionPath } = require('../shared/utils');
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
@@ -35,12 +35,12 @@ const OUTPUT_FORMATS = [
 
 // ─── Helpers config ───────────────────────────────────────────────────────────
 
-function _configPath(root) {
-  return path.join(root, '.pile-ou-face', 'decompilers.json');
+function _configPath(storageDir) {
+  return path.join(storageDir, 'decompilers.json');
 }
 
-function _readConfig(root) {
-  const p = _configPath(root);
+function _readConfig(storageDir) {
+  const p = _configPath(storageDir);
   try {
     if (!fs.existsSync(p)) return { decompilers: {} };
     const raw = fs.readFileSync(p, 'utf8');
@@ -52,10 +52,9 @@ function _readConfig(root) {
   }
 }
 
-function _writeConfig(root, config) {
-  const dir = path.join(root, '.pile-ou-face');
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(_configPath(root), JSON.stringify(config, null, 2), 'utf8');
+function _writeConfig(storageDir, config) {
+  if (!fs.existsSync(storageDir)) fs.mkdirSync(storageDir, { recursive: true });
+  fs.writeFileSync(_configPath(storageDir), JSON.stringify(config, null, 2), 'utf8');
 }
 
 function _normalizeId(id) {
@@ -106,10 +105,11 @@ function _dockerMissingImageHint(id, image) {
 /**
  * Wizard structuré en étapes claires.
  * @param {string} root
+ * @param {string} storageDir
  * @param {string|null} editId — ID existant à modifier (null = ajout)
  */
-async function cmdDecompilerAdd(root, editId = null) {
-  const cfg = _readConfig(root);
+async function cmdDecompilerAdd(root, storageDir, editId = null) {
+  const cfg = _readConfig(storageDir);
   const isEdit = editId !== null;
   const existing = isEdit ? (cfg.decompilers[editId] || {}) : {};
 
@@ -349,7 +349,7 @@ async function cmdDecompilerAdd(root, editId = null) {
 
   if (isEdit) delete cfg.decompilers[editId];
   cfg.decompilers[id] = config;
-  _writeConfig(root, cfg);
+  _writeConfig(storageDir, cfg);
 
   // ── Auto-test silencieux ──────────────────────────────────────────────────
   // Lance --list en arrière-plan et affiche une notif quand c'est terminé.
@@ -365,8 +365,8 @@ async function cmdDecompilerAdd(root, editId = null) {
         const pythonExe = _findPythonExe(root);
         const child = cp.spawn(
           pythonExe,
-          [path.join(root, 'backends/static/decompile/decompile.py'), '--list', '--provider', 'auto'],
-          { encoding: 'utf8', cwd: root, env: buildRuntimeEnv(root) },
+          [path.join(getExtensionPath() || root, 'backends/static/decompile/decompile.py'), '--list', '--provider', 'auto'],
+          { encoding: 'utf8', cwd: root, env: buildRuntimeEnv(root, storageDir) },
         );
         let stdout = '';
         let killed = false;
@@ -399,7 +399,7 @@ async function cmdDecompilerAdd(root, editId = null) {
         `"${label || id}" ajouté — vérification trop longue (Docker lent ?). Teste manuellement.`,
         'Tester manuellement', 'OK'
       );
-      if (action === 'Tester manuellement') await cmdDecompilerTest(root, null, id);
+      if (action === 'Tester manuellement') await cmdDecompilerTest(root, storageDir, null, id);
       return;
     }
     if (!result) return; // annulé ou erreur silencieuse
@@ -416,7 +416,7 @@ async function cmdDecompilerAdd(root, editId = null) {
         `✅ "${label || id}" est prêt — disponible via ${via}.`,
         'Tester une décompilation', 'OK'
       );
-      if (action === 'Tester une décompilation') await cmdDecompilerTest(root, null, id);
+      if (action === 'Tester une décompilation') await cmdDecompilerTest(root, storageDir, null, id);
     } else {
       const why = !dockerImage
         ? 'Aucune image Docker configurée et outil non trouvé en local.'
@@ -427,8 +427,8 @@ async function cmdDecompilerAdd(root, editId = null) {
         `⚠️ "${label || id}" configuré mais non disponible. ${why}`,
         'Tester quand même', 'Ouvrir config JSON', 'OK'
       );
-      if (action === 'Tester quand même') await cmdDecompilerTest(root, null, id);
-      else if (action === 'Ouvrir config JSON') await cmdDecompilerOpenConfig(root);
+      if (action === 'Tester quand même') await cmdDecompilerTest(root, storageDir, null, id);
+      else if (action === 'Ouvrir config JSON') await cmdDecompilerOpenConfig(storageDir);
     }
   };
   _autoCheckDecompiler();
@@ -482,15 +482,15 @@ function _buildSummary(id, config, mode) {
 
 // ─── Commande : modifier ──────────────────────────────────────────────────────
 
-async function cmdDecompilerEdit(root, preselectedId = null) {
-  const cfg = _readConfig(root);
+async function cmdDecompilerEdit(root, storageDir, preselectedId = null) {
+  const cfg = _readConfig(storageDir);
   const ids = Object.keys(cfg.decompilers);
   if (ids.length === 0) {
     vscode.window.showInformationMessage('Aucun décompilateur custom à modifier.');
     return;
   }
   if (preselectedId && ids.includes(preselectedId)) {
-    await cmdDecompilerAdd(root, preselectedId);
+    await cmdDecompilerAdd(root, storageDir, preselectedId);
     return;
   }
   const picked = await vscode.window.showQuickPick(
@@ -504,13 +504,13 @@ async function cmdDecompilerEdit(root, preselectedId = null) {
     { title: 'Modifier un décompilateur custom', placeHolder: 'Choisir…' }
   );
   if (!picked) return;
-  await cmdDecompilerAdd(root, picked.value);
+  await cmdDecompilerAdd(root, storageDir, picked.value);
 }
 
 // ─── Commande : supprimer ─────────────────────────────────────────────────────
 
-async function cmdDecompilerRemove(root, preselectedId = null) {
-  const cfg = _readConfig(root);
+async function cmdDecompilerRemove(root, storageDir, preselectedId = null) {
+  const cfg = _readConfig(storageDir);
   const ids = Object.keys(cfg.decompilers).filter(id => !id.startsWith('_'));
   if (ids.length === 0) {
     vscode.window.showInformationMessage('Aucun décompilateur configuré.');
@@ -525,7 +525,7 @@ async function cmdDecompilerRemove(root, preselectedId = null) {
     );
     if (confirmDirect !== 'Supprimer') return;
     delete cfg.decompilers[preselectedId];
-    _writeConfig(root, cfg);
+    _writeConfig(storageDir, cfg);
     vscode.window.showInformationMessage(`Décompilateur "${direct.label || preselectedId}" supprimé.`);
     return;
   }
@@ -548,16 +548,16 @@ async function cmdDecompilerRemove(root, preselectedId = null) {
   );
   if (confirm !== 'Supprimer') return;
   delete cfg.decompilers[picked.description];
-  _writeConfig(root, cfg);
+  _writeConfig(storageDir, cfg);
   vscode.window.showInformationMessage(`Décompilateur "${picked.label}" supprimé.`);
 }
 
 // ─── Commande : ouvrir config JSON ───────────────────────────────────────────
 
-async function cmdDecompilerOpenConfig(root) {
-  const p = _configPath(root);
+async function cmdDecompilerOpenConfig(storageDir) {
+  const p = _configPath(storageDir);
   if (!fs.existsSync(p)) {
-    _writeConfig(root, {
+    _writeConfig(storageDir, {
       decompilers: {
         '_example': {
           label: 'Mon outil (exemple)',
@@ -612,7 +612,7 @@ async function cmdDecompilerList(root, runPython, logChannel) {
 
 // ─── Commande : tester ────────────────────────────────────────────────────────
 
-async function cmdDecompilerTest(root, runPython, preselectedId = null) {
+async function cmdDecompilerTest(root, storageDir, runPython, preselectedId = null) {
   // 1. Récupérer la liste
   let decompilerData = {};
   if (runPython) {
@@ -715,14 +715,14 @@ async function cmdDecompilerTest(root, runPython, preselectedId = null) {
       progress.report({ message: testMode });
       try {
         const pythonExe = _findPythonExe(root);
-        const scriptPath = path.join(root, 'backends/static/decompile/decompile.py');
+        const scriptPath = path.join(getExtensionPath() || root, 'backends/static/decompile/decompile.py');
         const args = [scriptPath, '--binary', binaryPath, '--decompiler', targetId, '--provider', providerChoice.value];
         if (modeChoice.value === 'full') {
           args.push('--full');
         } else {
           args.push('--addr', addr);
         }
-        const result = await _runPythonDirect(pythonExe, args, root, 120000);
+        const result = await _runPythonDirect(pythonExe, args, root, 120000, storageDir);
         if (result.error) {
           const provider = result.provider || providerChoice.value;
           const rawError = String(result.error || '');
@@ -751,9 +751,10 @@ async function cmdDecompilerTest(root, runPython, preselectedId = null) {
 // ─── Helpers exécution Python ─────────────────────────────────────────────────
 
 function _findPythonExe(root) {
+  const base = getExtensionPath() || root;
   const candidates = [
-    path.join(root, 'backends', '.venv', 'bin', 'python3'),
-    path.join(root, 'backends', '.venv', 'bin', 'python'),
+    path.join(base, 'backends', '.venv', 'bin', 'python3'),
+    path.join(base, 'backends', '.venv', 'bin', 'python'),
     'python3',
     'python',
   ];
@@ -764,11 +765,11 @@ function _findPythonExe(root) {
   return 'python3';
 }
 
-function _runPythonDirect(pythonExe, args, root, timeout = 60000) {
+function _runPythonDirect(pythonExe, args, root, timeout = 60000, storageDir = '') {
   return new Promise((resolve, reject) => {
     cp.execFile(
       pythonExe, args,
-      { encoding: 'utf8', cwd: root, timeout, maxBuffer: 8 * 1024 * 1024, env: buildRuntimeEnv(root) },
+      { encoding: 'utf8', cwd: root, timeout, maxBuffer: 8 * 1024 * 1024, env: buildRuntimeEnv(root, storageDir) },
       (err, stdout, stderr) => {
         if (err && !stdout) { err.stderr = stderr; reject(err); return; }
         try {
@@ -783,16 +784,16 @@ function _runPythonDirect(pythonExe, args, root, timeout = 60000) {
 
 // ─── Enregistrement ───────────────────────────────────────────────────────────
 
-function registerDecompilerCommands(context, deps, root) {
+function registerDecompilerCommands(context, deps, root, storageDir) {
   const { runPython, logChannel } = deps;
   const subs = [];
 
-  subs.push(vscode.commands.registerCommand('pileOuFace.decompilerAdd',        () => cmdDecompilerAdd(root)));
-  subs.push(vscode.commands.registerCommand('pileOuFace.decompilerEdit',       (preselectedId) => cmdDecompilerEdit(root, preselectedId || null)));
-  subs.push(vscode.commands.registerCommand('pileOuFace.decompilerRemove',     (preselectedId) => cmdDecompilerRemove(root, preselectedId || null)));
-  subs.push(vscode.commands.registerCommand('pileOuFace.decompilerOpenConfig', () => cmdDecompilerOpenConfig(root)));
+  subs.push(vscode.commands.registerCommand('pileOuFace.decompilerAdd',        () => cmdDecompilerAdd(root, storageDir)));
+  subs.push(vscode.commands.registerCommand('pileOuFace.decompilerEdit',       (preselectedId) => cmdDecompilerEdit(root, storageDir, preselectedId || null)));
+  subs.push(vscode.commands.registerCommand('pileOuFace.decompilerRemove',     (preselectedId) => cmdDecompilerRemove(root, storageDir, preselectedId || null)));
+  subs.push(vscode.commands.registerCommand('pileOuFace.decompilerOpenConfig', () => cmdDecompilerOpenConfig(storageDir)));
   subs.push(vscode.commands.registerCommand('pileOuFace.decompilerList',       () => cmdDecompilerList(root, runPython, logChannel)));
-  subs.push(vscode.commands.registerCommand('pileOuFace.decompilerTest',       (preselectedId) => cmdDecompilerTest(root, runPython, preselectedId || null)));
+  subs.push(vscode.commands.registerCommand('pileOuFace.decompilerTest',       (preselectedId) => cmdDecompilerTest(root, storageDir, runPython, preselectedId || null)));
 
   return subs;
 }
