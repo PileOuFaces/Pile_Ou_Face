@@ -780,7 +780,7 @@ function createHub(config) {
           hostPath = resolvePathFromWorkspace(String(file.hostPath || '').trim());
           if (!hostPath || !fs.existsSync(hostPath)) throw new Error(`Fichier payload introuvable: ${hostPath}`);
         } else {
-          const dir = ensureTempDir(root);
+          const dir = storageDir || ensureTempDir(root);
           hostPath = path.join(dir, `dynamic-input-${Date.now()}-${Math.random().toString(16).slice(2)}.txt`);
           fs.writeFileSync(hostPath, String(file.inlineContent || ''), 'utf8');
         }
@@ -815,7 +815,7 @@ function createHub(config) {
         mappingPath,
         baseName,
       }) => {
-        const discoveredPath = artifacts?.discoveredPath || path.join(ensureTempDir(root), `${baseName}.discovered.json`);
+        const discoveredPath = artifacts?.discoveredPath || path.join(storageDir || ensureTempDir(root), `${baseName}.discovered.json`);
         if (fs.existsSync(discoveredPath)) return discoveredPath;
         if (!fs.existsSync(mappingPath)) return null;
         const discScript = getDiscoverFunctionsScript(root);
@@ -830,7 +830,7 @@ function createHub(config) {
       };
       const loadLatestTrace = () => {
         try {
-          const outputJsonPath = path.resolve(getTempDir(root), 'output.json');
+          const outputJsonPath = path.resolve(storageDir || getTempDir(root), 'output.json');
           if (!fs.existsSync(outputJsonPath)) return null;
           return JSON.parse(fs.readFileSync(outputJsonPath, 'utf8'));
         } catch (_) {
@@ -1038,7 +1038,7 @@ function createHub(config) {
       const captureBinaryOnly = payload.captureBinaryOnly !== false;
 
       try {
-        const tempDir = ensureTempDir(root);
+        const tempDir = storageDir || ensureTempDir(root);
         const { canonicalJsonPath, isolatedJsonPath } = traceHistoryHandlers.buildTraceRunArtifacts(tempDir, traceRunId);
         logChannel.appendLine(`[temp] Sortie trace #${traceRunId}: ${isolatedJsonPath}`);
 
