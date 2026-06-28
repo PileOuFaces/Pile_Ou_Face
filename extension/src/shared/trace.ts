@@ -345,14 +345,14 @@ function normalizeTraceData(data, jsonPath = '') {
   return trace;
 }
 
-function resolveOutputJsonPath() {
+function resolveOutputJsonPath(storageDir?) {
   const folders = vscode.workspace.workspaceFolders;
   if (!folders || folders.length === 0) {
     vscode.window.showErrorMessage('Aucun workspace ouvert.');
     return null;
   }
   const root = resolveProjectRoot(folders[0].uri.fsPath);
-  const tempOutput = path.join(getTempDir(root), 'output.json');
+  const tempOutput = storageDir ? path.join(storageDir, 'output.json') : path.join(getTempDir(root), 'output.json');
   if (fs.existsSync(tempOutput)) return tempOutput;
   let current = root;
   for (let i = 0; i < 4; i += 1) {

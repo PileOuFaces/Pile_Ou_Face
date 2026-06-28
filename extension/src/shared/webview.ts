@@ -38,20 +38,18 @@ function _resolvePluginAssetPath(pluginDir, manifest, relativeAssetPath) {
   return '';
 }
 
-function _getPluginSearchDirs(root, includeUserPlugins = false) {
-  const workspacePluginsDir = path.join(root, '.pile-ou-face', 'plugins');
-  if (!includeUserPlugins) return [workspacePluginsDir];
-  const homePluginsDir = path.join(os.homedir(), '.pile-ou-face', 'plugins');
-  return [...new Set([workspacePluginsDir, homePluginsDir])];
+function _getPluginSearchDirs(globalDir) {
+  if (!globalDir) return [];
+  return [path.join(globalDir, 'plugins')];
 }
 
-function loadPluginWebviews(root, options: { includeUserPlugins?: boolean; webviewResourceResolver?: (absPath: string) => string } = {}) {
-  const { includeUserPlugins = false, webviewResourceResolver } = options;
+function loadPluginWebviews(root, options: { globalDir?: string; webviewResourceResolver?: (absPath: string) => string } = {}) {
+  const { globalDir = '', webviewResourceResolver } = options;
   let styles = '';
   let panels = '';
   let scripts = '';
 
-  for (const pluginsDir of _getPluginSearchDirs(root, includeUserPlugins)) {
+  for (const pluginsDir of _getPluginSearchDirs(globalDir)) {
     if (!fs.existsSync(pluginsDir)) continue;
 
     let entries;
@@ -126,14 +124,14 @@ function getWebviewContent(webview, extensionUri) {
 }
 
 // static/hub — main static analysis hub (shell + fragments)
-function getHubContent(webview, extensionUri, initialPanel = 'dashboard', workspaceRoot = '') {
+function getHubContent(webview, extensionUri, initialPanel = 'dashboard', workspaceRoot = '', globalDir = '') {
   const read = (...parts) => fs.readFileSync(
     vscode.Uri.joinPath(extensionUri, ...parts).fsPath, 'utf8'
   );
 
   const { styles: pluginStyles, panels: pluginPanels, scripts: pluginScripts } =
-    workspaceRoot ? loadPluginWebviews(workspaceRoot, {
-      includeUserPlugins: true,
+    globalDir ? loadPluginWebviews(workspaceRoot, {
+      globalDir,
       webviewResourceResolver: (filePath) => webview.asWebviewUri(vscode.Uri.file(filePath)).toString(),
     }) : { styles: '', panels: '', scripts: '' };
 
