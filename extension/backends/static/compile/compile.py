@@ -33,10 +33,16 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+_cfg_env = os.environ.get("COMPILERS_CONFIG", "").strip()
 _COMPILERS_CONFIG = (
-    Path.cwd() / ".pile-ou-face" / "compilers.json"
+    Path(_cfg_env) if _cfg_env
+    else Path.home() / ".config" / "pile-ou-face" / "compilers.json"
 )
-_POF_DIR = Path.cwd()  # racine du projet (workspace root passé en cwd par l'extension)
+_POF_DIR = (
+    Path(os.environ.get("POF_STORAGE_DIR")).resolve()
+    if os.environ.get("POF_STORAGE_DIR")
+    else Path.home() / ".config" / "pile-ou-face"
+)
 _DOCKER_AVAILABLE_CACHE: dict[str, bool] = {}
 
 
