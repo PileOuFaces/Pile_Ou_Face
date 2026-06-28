@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // @ts-nocheck
 
+const { getExtensionPath } = require('../../shared/utils');
+
 function createAnalysisContext({
   root,
   pythonExe,

@@ -34,9 +34,9 @@ from pathlib import Path
 from typing import Any
 
 _COMPILERS_CONFIG = (
-    Path(__file__).resolve().parent.parent.parent.parent / ".pile-ou-face" / "compilers.json"
+    Path.cwd() / ".pile-ou-face" / "compilers.json"
 )
-_POF_DIR = Path(__file__).resolve().parent.parent.parent.parent
+_POF_DIR = Path.cwd()  # racine du projet (workspace root passé en cwd par l'extension)
 _DOCKER_AVAILABLE_CACHE: dict[str, bool] = {}
 
 

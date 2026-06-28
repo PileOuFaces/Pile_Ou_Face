@@ -31,8 +31,19 @@ function resolveProjectRoot(root) {
   return value ? path.resolve(value) : value;
 }
 
+function findGitRoot(dir) {
+  if (!dir) return dir;
+  if (fs.existsSync(path.join(dir, '.git'))) return dir;
+  try {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    const gitSubs = entries.filter(e => e.isDirectory() && fs.existsSync(path.join(dir, e.name, '.git')));
+    if (gitSubs.length === 1) return path.join(dir, gitSubs[0].name);
+  } catch (_) {}
+  return dir;
+}
+
 function getTempDir(root) {
-  return path.resolve(resolveProjectRoot(root), TEMP_DIR_NAME);
+  return path.resolve(findGitRoot(resolveProjectRoot(root)), TEMP_DIR_NAME);
 }
 
 function ensureTempDir(root) {

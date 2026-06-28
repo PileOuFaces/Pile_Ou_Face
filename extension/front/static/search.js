@@ -941,6 +941,266 @@ function renderPackerAnalysisHtml(analysis) {
     </div>`;
 }
 
+// ── Plugin shared helpers (globals consumed by plugin webviews) ───────────────
+function asVI(v) {
+  return (v && typeof v === 'object' ? v : {});
+}
+
+function renderVulnProofDossiers(dossiers, {
+  kindLabel = {},
+  confidenceColor = {},
+  severityColor = {},
+} = {}) {
+  if (!Array.isArray(dossiers) || dossiers.length === 0) return null;
+  const grid = document.createElement('div');
+  grid.className = 'vuln-dossier-grid';
+  const exploitClass = (level) => {
+    if (level === 'HIGH') return 'is-high';
+    if (level === 'MEDIUM') return 'is-medium';
+    return 'is-low';
+  };
+  const severityClass = (level) => {
+    if (level === 'CRITICAL') return 'is-critical';
+    if (level === 'HIGH') return 'is-high';
+    if (level === 'MEDIUM') return 'is-medium';
+    return 'is-low';
+  };
+  const makeBadge = (label, value, extraClass = '', color = '') => {
+    const badge = document.createElement('span');
+    badge.className = `vuln-dossier-badge ${extraClass}`.trim();
+    if (color) badge.style.color = color;
+    badge.textContent = `${label} ${value}`;
+    return badge;
+  };
+  dossiers.slice(0, 6).forEach((rawDossier) => {
+    const dossier = asVI(rawDossier);
+    const related = asVI(dossier.related);
+    const card = document.createElement('article');
+    card.className = 'modern-card vuln-dossier-card';
+    const head = document.createElement('div');
+    head.className = 'vuln-dossier-head';
+    const titleWrap = document.createElement('div');
+    const title = document.createElement('h4');
+    title.className = 'vuln-dossier-title';
+    title.textContent = String(dossier.function || '?');
+    const subtitle = document.createElement('p');
+    subtitle.className = 'vuln-dossier-subtitle';
+    const findingCount = Number(dossier.finding_count || 0);
+    const taintCount = Array.isArray(related.taint_flows) ? related.taint_flows.length : 0;
+    const callsiteCount = Array.isArray(related.callsites) ? related.callsites.length : 0;
+    const behaviorCount = Array.isArray(related.behavior) ? related.behavior.length : 0;
+    const antiCount = Array.isArray(related.anti_analysis) ? related.anti_analysis.length : 0;
+    subtitle.textContent = `${findingCount} signal${findingCount > 1 ? 'aux' : ''} \u00b7 ${taintCount} flux taint \u00b7 ${callsiteCount} callsite${callsiteCount > 1 ? 's' : ''} \u00b7 ${behaviorCount} behavior \u00b7 ${antiCount} anti-analysis`;
+    titleWrap.append(title, subtitle);
+    const badges = document.createElement('div');
+    badges.className = 'vuln-dossier-badges';
+    const exploitability = asVI(dossier.exploitability);
+    const exploitScore = Number(exploitability.score || 0);
+    const exploitLevel = String(exploitability.level || 'LOW');
+    const dossierKind = String(dossier.kind || '');
+    const dossierConfidence = String(dossier.confidence || '');
+    const dossierSeverity = String(dossier.severity || '');
+    badges.append(
+      makeBadge('Preuve', kindLabel[dossierKind] || dossierKind || 'Signal'),
+      makeBadge('Confiance', dossierConfidence || '?', exploitClass(dossierConfidence), confidenceColor[dossierConfidence] || ''),
+      makeBadge('Exploit', exploitScore ? `${exploitLevel} ${exploitScore}` : exploitLevel, exploitClass(exploitLevel)),
+      makeBadge('S\u00e9v\u00e9rit\u00e9', dossierSeverity || '?', severityClass(dossierSeverity), severityColor[dossierSeverity] || ''),
+    );
+    if (behaviorCount) badges.append(makeBadge('Behavior', String(behaviorCount), 'is-behavior'));
+    if (antiCount) badges.append(makeBadge('Anti-analysis', String(antiCount), 'is-anti'));
+    head.append(titleWrap, badges);
+    card.appendChild(head);
+    const relatedApis = Array.isArray(related.apis) ? related.apis.filter(Boolean) : [];
+    if (relatedApis.length) {
+      const section = document.createElement('section');
+      section.className = 'vuln-dossier-section';
+      const labelEl = document.createElement('div');
+      labelEl.className = 'vuln-dossier-label';
+      labelEl.textContent = 'APIs concern\u00e9es';
+      const row = document.createElement('div');
+      row.className = 'vuln-dossier-pill-row';
+      relatedApis.slice(0, 6).forEach((api) => {
+        const pill = document.createElement('span');
+        pill.className = 'vuln-dossier-pill';
+        pill.textContent = String(api);
+        row.appendChild(pill);
+      });
+      section.append(labelEl, row);
+      card.appendChild(section);
+    }
+    const relatedFamilies = Array.isArray(related.families) ? related.families.filter(Boolean) : [];
+    if (relatedFamilies.length) {
+      const section = document.createElement('section');
+      section.className = 'vuln-dossier-section';
+      const labelEl = document.createElement('div');
+      labelEl.className = 'vuln-dossier-label';
+      labelEl.textContent = 'Familles de techniques';
+      const row = document.createElement('div');
+      row.className = 'vuln-dossier-pill-row';
+      relatedFamilies.slice(0, 6).forEach((family) => {
+        const pill = document.createElement('span');
+        pill.className = 'vuln-dossier-pill';
+        pill.textContent = String(family);
+        row.appendChild(pill);
+      });
+      section.append(labelEl, row);
+      card.appendChild(section);
+    }
+    const drivers = Array.isArray(exploitability.drivers) ? exploitability.drivers.filter(Boolean) : [];
+    if (drivers.length) {
+      const section = document.createElement('section');
+      section.className = 'vuln-dossier-section';
+      const labelEl = document.createElement('div');
+      labelEl.className = 'vuln-dossier-label';
+      labelEl.textContent = 'Facteurs';
+      const list = document.createElement('ul');
+      list.className = 'vuln-dossier-list';
+      drivers.slice(0, 4).forEach((driver) => {
+        const item = document.createElement('li');
+        item.textContent = String(driver);
+        list.appendChild(item);
+      });
+      section.append(labelEl, list);
+      card.appendChild(section);
+    }
+    const nextSteps = Array.isArray(dossier.next_steps) ? dossier.next_steps.filter(Boolean) : [];
+    if (nextSteps.length) {
+      const section = document.createElement('section');
+      section.className = 'vuln-dossier-section';
+      const labelEl = document.createElement('div');
+      labelEl.className = 'vuln-dossier-label';
+      labelEl.textContent = '\u00c9tapes sugg\u00e9r\u00e9es';
+      const list = document.createElement('ul');
+      list.className = 'vuln-dossier-list';
+      nextSteps.slice(0, 4).forEach((step) => {
+        const item = document.createElement('li');
+        item.textContent = String(step);
+        list.appendChild(item);
+      });
+      section.append(labelEl, list);
+      card.appendChild(section);
+    }
+    const evidence = Array.isArray(dossier.evidence) ? dossier.evidence.filter((item) => item && typeof item === 'object' && item.summary) : [];
+    if (evidence.length) {
+      const section = document.createElement('section');
+      section.className = 'vuln-dossier-section';
+      const labelEl = document.createElement('div');
+      labelEl.className = 'vuln-dossier-label';
+      labelEl.textContent = 'Preuves';
+      const list = document.createElement('ul');
+      list.className = 'vuln-dossier-list';
+      evidence.slice(0, 4).forEach((entry) => {
+        const e = asVI(entry);
+        const item = document.createElement('li');
+        item.textContent = String(e.summary);
+        list.appendChild(item);
+      });
+      section.append(labelEl, list);
+      card.appendChild(section);
+    }
+    const behaviorSignals = Array.isArray(related.behavior) ? related.behavior.filter((item) => {
+      const i = asVI(item);
+      return i.category || i.evidence;
+    }) : [];
+    if (behaviorSignals.length) {
+      const section = document.createElement('section');
+      section.className = 'vuln-dossier-section';
+      const labelEl = document.createElement('div');
+      labelEl.className = 'vuln-dossier-label';
+      labelEl.textContent = 'Corr\u00e9lation Behavior';
+      const list = document.createElement('ul');
+      list.className = 'vuln-dossier-list';
+      behaviorSignals.slice(0, 3).forEach((rawSignal) => {
+        const signal = asVI(rawSignal);
+        const item = document.createElement('li');
+        const evidenceText = formatPremiumEvidence(signal.evidence, '');
+        item.textContent = `${signal.category || 'SIGNAL'}${evidenceText ? `: ${evidenceText}` : ''}`;
+        list.appendChild(item);
+      });
+      section.append(labelEl, list);
+      card.appendChild(section);
+    }
+    const antiSignals = Array.isArray(related.anti_analysis) ? related.anti_analysis.filter((item) => {
+      const i = asVI(item);
+      return i.technique || i.description;
+    }) : [];
+    if (antiSignals.length) {
+      const section = document.createElement('section');
+      section.className = 'vuln-dossier-section';
+      const labelEl = document.createElement('div');
+      labelEl.className = 'vuln-dossier-label';
+      labelEl.textContent = 'Corr\u00e9lation Anti-analysis';
+      const list = document.createElement('ul');
+      list.className = 'vuln-dossier-list';
+      antiSignals.slice(0, 3).forEach((rawSignal) => {
+        const signal = asVI(rawSignal);
+        const item = document.createElement('li');
+        item.textContent = `${signal.technique || 'SIGNAL'}${signal.description ? `: ${signal.description}` : ''}`;
+        list.appendChild(item);
+      });
+      section.append(labelEl, list);
+      card.appendChild(section);
+    }
+    const callsites = Array.isArray(related.callsites) ? related.callsites.filter((item) => {
+      const i = asVI(item);
+      return i.addr;
+    }) : [];
+    if (callsites.length) {
+      const section = document.createElement('section');
+      section.className = 'vuln-dossier-section';
+      const labelEl = document.createElement('div');
+      labelEl.className = 'vuln-dossier-label';
+      labelEl.textContent = 'Navigation rapide';
+      const links = document.createElement('div');
+      links.className = 'vuln-dossier-links';
+      callsites.slice(0, 4).forEach((rawCallsite) => {
+        const callsite = asVI(rawCallsite);
+        const wrapper = document.createElement('span');
+        const code = document.createElement('code');
+        code.className = 'addr-link';
+        const csAddr = String(callsite.addr || '');
+        code.dataset.addr = csAddr;
+        code.textContent = csAddr;
+        wrapper.appendChild(code);
+        if (callsite.line !== undefined && callsite.line !== null) wrapper.append(`:${callsite.line}`);
+        links.appendChild(wrapper);
+      });
+      section.append(labelEl, links);
+      card.appendChild(section);
+    }
+    const patchTargets = Array.isArray(related.patch_targets) ? related.patch_targets.filter((item) => {
+      const i = asVI(item);
+      return i.addr;
+    }) : [];
+    if (patchTargets.length) {
+      const section = document.createElement('section');
+      section.className = 'vuln-dossier-section';
+      const labelEl = document.createElement('div');
+      labelEl.className = 'vuln-dossier-label';
+      labelEl.textContent = 'Offsets patchables';
+      const links = document.createElement('div');
+      links.className = 'vuln-dossier-links';
+      patchTargets.slice(0, 4).forEach((rawTarget) => {
+        const target = asVI(rawTarget);
+        const wrapper = document.createElement('span');
+        const node = buildNavigableAddrNode(String(target.addr || ''));
+        wrapper.appendChild(node);
+        links.appendChild(wrapper);
+      });
+      section.append(labelEl, links);
+      card.appendChild(section);
+    }
+    if (dossier.needs_review) {
+      const review = document.createElement('p');
+      review.className = 'hint hint-warn';
+      review.textContent = 'Revue manuelle recommand\u00e9e pour confirmer le contexte r\u00e9el.';
+      card.appendChild(review);
+    }
+    grid.appendChild(card);
+  });
+  return grid;
+}
+
 function appendProofDossierSection(nodes, dossiers, {
   hintText = 'Dossiers de preuve par fonction interne. Les adresses ci-dessous sont cliquables pour naviguer dans le désassemblage.',
   kindLabel = {},

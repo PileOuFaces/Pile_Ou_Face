@@ -73,9 +73,9 @@ _LOW_LEVEL_PSEUDOC_RE = re.compile(
     flags=re.IGNORECASE,
 )
 _DECOMPILERS_CONFIG = (
-    Path(__file__).resolve().parent.parent.parent.parent / ".pile-ou-face" / "decompilers.json"
+    Path.cwd() / ".pile-ou-face" / "decompilers.json"
 )
-_POF_DIR = Path(__file__).resolve().parent.parent.parent.parent  # racine du projet
+_POF_DIR = Path.cwd()  # racine du projet (workspace root passé en cwd par l'extension)
 _DOCKER_AVAILABLE_CACHE: dict[str, bool] = {}
 _BUILTIN_TARGET_POLICIES: dict[str, dict[str, Any]] = {
     "ghidra": {
@@ -1227,7 +1227,7 @@ def _write_cache(
 
 
 _DEFAULT_CACHE_DIR = (
-    Path(__file__).resolve().parent.parent.parent / ".pile-ou-face" / "decompile_cache"
+    Path.cwd() / ".pile-ou-face" / "decompile_cache"
 )
 
 
