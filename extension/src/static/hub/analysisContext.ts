@@ -12,7 +12,7 @@ function createAnalysisContext({
   runPythonTextFile,
   resolvePathFromWorkspace,
   toWebviewPath,
-  ensureTempDir,
+  storageDir,
   getRawProfile,
   vscode,
   fs,
@@ -62,7 +62,7 @@ function createAnalysisContext({
   const getArtifactPaths = ({ binaryPath, section = '', binaryMeta = null }) => {
     const absPath = resolvePathFromWorkspace(binaryPath);
     const profile = getBinaryRuntimeProfile(absPath, binaryMeta);
-    const tempDir = ensureTempDir(root);
+    const tempDir = storageDir;
     const baseName = path.basename(absPath, path.extname(absPath)) || 'binary';
     const rawSuffix = profile.kind === 'raw'
       ? `.raw.${sanitizeArtifactToken(profile.rawConfig?.arch, 'raw')}.${sanitizeArtifactToken(profile.rawConfig?.endian || 'little')}.${sanitizeArtifactToken(String(profile.rawConfig?.baseAddr || '0x0').replace(/^0x/i, '0x'))}`
@@ -366,7 +366,7 @@ function createAnalysisContext({
 
   const buildAnalysisArtifactContext = (binaryPath, binaryMeta = null) => {
     const absPath = binaryPath ? path.resolve(root, binaryPath) : root;
-    const tempDir = ensureTempDir(root);
+    const tempDir = storageDir;
     const hasFileBinary = !!binaryPath && fs.existsSync(absPath) && !fs.statSync(absPath).isDirectory();
     const artifacts = hasFileBinary
       ? getArtifactPaths({ binaryPath: absPath, binaryMeta })
@@ -505,7 +505,7 @@ function createAnalysisContext({
       .update(fs.existsSync(absPath) ? String(fs.statSync(absPath).mtimeMs) : '')
       .digest('hex')
       .slice(0, 16);
-    return path.join(root, '.pile-ou-face', 'annotations', `${hash}.json`);
+    return path.join(storageDir, 'annotations', `${hash}.json`);
   };
 
   const loadBinarySymbols = async (binaryPath, { includeAll = false } = {}) => {
@@ -544,7 +544,7 @@ function createAnalysisContext({
     mappingPath,
     baseName,
   }) => {
-    const discoveredPath = artifacts?.discoveredPath || path.join(ensureTempDir(root), `${baseName}.discovered.json`);
+    const discoveredPath = artifacts?.discoveredPath || path.join(storageDir, `${baseName}.discovered.json`);
     if (fs.existsSync(discoveredPath)) return discoveredPath;
     if (!fs.existsSync(mappingPath)) return null;
     const discScript = getDiscoverFunctionsScript(root);
