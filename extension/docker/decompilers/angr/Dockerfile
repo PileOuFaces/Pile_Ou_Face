@@ -41,7 +41,11 @@ COPY docker/decompilers/angr/decompilers.json /opt/pof/decompilers.json
 COPY docker/decompilers/angr/decompile.py /opt/pof/decompile.py
 COPY docker/decompilers/angr/rop_build.py /opt/pof/rop_build.py
 COPY docker/decompilers/angr/test_rop_build.py /opt/pof/test_rop_build.py
-COPY docker/decompilers/angr/testdata /opt/pof/testdata
+# Compile the test binary from source (avoids committing pre-built ELFs to git)
+COPY docker/decompilers/angr/testdata/vuln.c /tmp/vuln.c
+RUN mkdir -p /opt/pof/testdata \
+    && gcc -m64 -fno-stack-protector -no-pie -o /opt/pof/testdata/vuln_x64.elf /tmp/vuln.c \
+    && rm /tmp/vuln.c
 
 # Utilisateur non-root
 RUN useradd -m -u 10001 pof
