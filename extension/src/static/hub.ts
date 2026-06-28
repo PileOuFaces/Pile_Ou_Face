@@ -263,7 +263,6 @@ function createHub(config) {
           context.extensionUri,
           vscode.Uri.file(root),
           vscode.Uri.file(storageDir || path.join(root, '.pile-ou-face')),
-          vscode.Uri.file(path.join(storageDir || path.join(root, '.pile-ou-face'), 'plugins')),
           vscode.Uri.file(globalDir || path.join(os.homedir(), '.pile-ou-face')),
           vscode.Uri.file(path.join(globalDir || path.join(os.homedir(), '.pile-ou-face'), 'plugins')),
         ],
@@ -297,7 +296,7 @@ function createHub(config) {
     // Watcher sur le fichier de config — debounce 600 ms pour éviter les doubles triggers
     let _decompilerWatchDebounce = null;
     const _decompilerConfigWatcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(storageDir || path.join(root, '.pile-ou-face'), 'decompilers.json'),
+      new vscode.RelativePattern(vscode.Uri.file(storageDir || path.join(root, '.pile-ou-face')), 'decompilers.json'),
     );
     const _onDecompilerConfigChange = () => {
       globalThis.clearTimeout(_decompilerWatchDebounce);

@@ -79,6 +79,7 @@ function _migrateFromLegacyPofDir(root, storageDir, globalDir) {
   copyDirIfExists(path.join(legacyDir, 'pfdb'),          path.join(storageDir, 'pfdb'));
   copyDirIfExists(path.join(legacyDir, 'patches'),       path.join(storageDir, 'patches'));
   copyDirIfExists(path.join(legacyDir, 'static_cache'),  path.join(storageDir, 'static_cache'));
+  copyDirIfExists(path.join(legacyDir, 'licenses'), path.join(storageDir, 'licenses'));
 
   // Plugins → globalDir
   if (globalDir) {
