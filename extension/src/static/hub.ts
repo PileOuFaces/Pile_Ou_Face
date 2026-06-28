@@ -91,6 +91,8 @@ function createHub(config) {
   const {
     context,
     logChannel,
+    storageDir,
+    globalDir,
     getTempDir,
     ensureTempDir,
     runCommand,
@@ -162,7 +164,7 @@ function createHub(config) {
     const root = resolveProjectRoot(folders[0].uri.fsPath);
     const backendRoot = getExtensionPath() || root;
     const pythonExe = detectPythonExecutable(root);
-    const pythonEnv = buildRuntimeEnv(root);
+    const pythonEnv = buildRuntimeEnv(root, storageDir);
     const getAuthServerUrl = () => {
       try {
         const authConfig = vscode.workspace.getConfiguration('pileOuFace').inspect('authServerUrl');
@@ -201,7 +203,7 @@ function createHub(config) {
         env[AUTH_STRICT_LICENSE_ENV] = '1';
       } else {
         // Pas de clés en ligne : vérifier la présence de fichiers licence offline signés.
-        const licenseDir = path.join(root, '.pile-ou-face', 'licenses');
+        const licenseDir = path.join(storageDir || path.join(root, '.pile-ou-face'), 'licenses');
         let hasOfflineLicenses = false;
         try {
           const files = fs.readdirSync(licenseDir);
@@ -260,10 +262,10 @@ function createHub(config) {
         localResourceRoots: [
           context.extensionUri,
           vscode.Uri.file(root),
-          vscode.Uri.file(path.join(root, '.pile-ou-face')),
-          vscode.Uri.file(path.join(root, '.pile-ou-face', 'plugins')),
-          vscode.Uri.file(path.join(os.homedir(), '.pile-ou-face')),
-          vscode.Uri.file(path.join(os.homedir(), '.pile-ou-face', 'plugins')),
+          vscode.Uri.file(storageDir || path.join(root, '.pile-ou-face')),
+          vscode.Uri.file(path.join(storageDir || path.join(root, '.pile-ou-face'), 'plugins')),
+          vscode.Uri.file(globalDir || path.join(os.homedir(), '.pile-ou-face')),
+          vscode.Uri.file(path.join(globalDir || path.join(os.homedir(), '.pile-ou-face'), 'plugins')),
         ],
       }
     );
@@ -274,7 +276,7 @@ function createHub(config) {
     });
 
     // ── Watcher decompilers.json — actualisation automatique du panneau ─────────
-    const _decompilersConfigPath = path.join(root, '.pile-ou-face', 'decompilers.json');
+    const _decompilersConfigPath = path.join(storageDir || path.join(root, '.pile-ou-face'), 'decompilers.json');
     const _refreshDecompilerList = async () => {
       try {
         const { stdout } = await new Promise((resolve, reject) => {
@@ -295,7 +297,7 @@ function createHub(config) {
     // Watcher sur le fichier de config — debounce 600 ms pour éviter les doubles triggers
     let _decompilerWatchDebounce = null;
     const _decompilerConfigWatcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(root, '.pile-ou-face/decompilers.json'),
+      new vscode.RelativePattern(storageDir || path.join(root, '.pile-ou-face'), 'decompilers.json'),
     );
     const _onDecompilerConfigChange = () => {
       globalThis.clearTimeout(_decompilerWatchDebounce);
@@ -366,6 +368,8 @@ function createHub(config) {
     panel.webview.html = getHubContent(panel.webview, context.extensionUri, initialPanel, root);
     const handlerCtx = {
       root,
+      storageDir,
+      globalDir,
       panel,
       context,
       getTempDir,
@@ -659,7 +663,7 @@ function createHub(config) {
     };
     // ── Module instantiation ──────────────────────────────────────────────────
     const analysisCtx = createAnalysisContext({
-      root, pythonExe, logChannel, runCommand, runPythonJson, runPythonTextFile,
+      root, storageDir, globalDir, pythonExe, logChannel, runCommand, runPythonJson, runPythonTextFile,
       resolvePathFromWorkspace, toWebviewPath, ensureTempDir, getRawProfile,
       vscode, fs, path, crypto,
       inspectBinaryInput, normalizeRawProfile, getRawArchDescriptor,
@@ -672,21 +676,21 @@ function createHub(config) {
       normalizeAddress, parseIntLiteral, symbolLookupCandidates, isMachOFormat,
     });
     const graphHandlers = createGraphRenderers({
-      panel, analysisCtx, root, runPythonJson, ensureTempDir, logChannel, vscode, fs, path,
+      panel, analysisCtx, root, storageDir, globalDir, runPythonJson, ensureTempDir, logChannel, vscode, fs, path,
       getCfgScript, getCallGraphScript, getDiscoverFunctionsScript,
     });
     const loadersHandlers = createLoaders({
-      panel, analysisCtx, root, runPythonJson, logChannel, fs, path,
+      panel, analysisCtx, root, storageDir, globalDir, runPythonJson, logChannel, fs, path,
       readCache, writeCache, getStringsScript, getSectionsScript, getXrefsScript,
     });
     const traceHistoryHandlers = createTraceHistory({
-      panel, root, ensureTempDir, readTraceJson, writeTraceJson, setViewMode,
+      panel, root, storageDir, globalDir, ensureTempDir, readTraceJson, writeTraceJson, setViewMode,
       buildSourceEnrichmentMeta, attachTraceAddressEnrichment,
       payloadTargetLabel, normalizePayloadTargetMode, openVisualizerWebview,
       vscode, fs, path, crypto,
     });
     const actionsHandlers = createActions({
-      panel, context, vscode, root, logChannel, fs, path,
+      panel, context, vscode, root, storageDir, globalDir, logChannel, fs, path,
       runPythonJson, runPythonJsonFile,
       ensureTempDir, getTempDir,
       resolvePathFromWorkspace, toWebviewPath,
@@ -884,7 +888,7 @@ function createHub(config) {
           .update(fs.existsSync(absPath) ? String(fs.statSync(absPath).mtimeMs) : '')
           .digest('hex')
           .slice(0, 16);
-        return path.join(root, '.pile-ou-face', 'annotations', `${hash}.json`);
+        return path.join(storageDir || path.join(root, '.pile-ou-face'), 'annotations', `${hash}.json`);
       };
 
       const buildRunTraceInit = async (forcedBinaryPath = '', preset = null, forcedSourcePath = '', payloadTargetMode = 'auto') => {
