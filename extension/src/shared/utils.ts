@@ -55,6 +55,24 @@ function ensureTempDir(root) {
   return dir;
 }
 
+function getStorageDir(context) {
+  return String(context?.storageUri?.fsPath || '');
+}
+
+function getGlobalStorageDir(context) {
+  return String(context?.globalStorageUri?.fsPath || '');
+}
+
+function ensureStorageDir(context) {
+  const dir = getStorageDir(context);
+  if (!dir) throw new Error('[storage] context.storageUri non disponible');
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+    logChannel.appendLine(`[storage] Dossier créé: ${dir}`);
+  }
+  return dir;
+}
+
 async function ensurePythonDependencies(pythonExe, root) {
   const backendBase = _extensionPath || path.resolve(String(root || '').trim());
   const requirementsPath = path.join(backendBase, 'backends', 'requirements.txt');
@@ -159,10 +177,22 @@ function resolveDockerExecutable() {
   return 'docker';
 }
 
-function buildRuntimeEnv(root, extraEnv = {}) {
+function buildRuntimeEnv(root, storageDirOrExtra, extraEnv = {}) {
+  let storageDir = '';
+  let mergedExtra = extraEnv;
+  if (typeof storageDirOrExtra === 'string') {
+    storageDir = storageDirOrExtra;
+  } else if (storageDirOrExtra && typeof storageDirOrExtra === 'object') {
+    mergedExtra = { ...storageDirOrExtra, ...extraEnv };
+  }
   const backendBase = _extensionPath || path.resolve(String(root || '').trim());
-  const env = { ...process.env, ...extraEnv };
-  if (backendBase) env.PYTHONPATH = extraEnv.PYTHONPATH || backendBase;
+  const env = { ...process.env, ...mergedExtra };
+  if (storageDir) {
+    env.POF_STORAGE_DIR    = storageDir;
+    env.DECOMPILERS_CONFIG = path.join(storageDir, 'decompilers.json');
+    env.COMPILERS_CONFIG   = path.join(storageDir, 'compilers.json');
+  }
+  if (backendBase) env.PYTHONPATH = mergedExtra.PYTHONPATH || backendBase;
   const dockerExe = resolveDockerExecutable();
   if (dockerExe && dockerExe.includes(path.sep)) {
     const dockerDir = path.dirname(dockerExe);
@@ -282,6 +312,9 @@ module.exports = {
   TEMP_DIR_NAME,
   getTempDir,
   ensureTempDir,
+  getStorageDir,
+  getGlobalStorageDir,
+  ensureStorageDir,
   ensurePythonDependencies,
   detectPythonExecutable,
   resolveProjectRoot,
