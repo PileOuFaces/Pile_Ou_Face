@@ -5,11 +5,20 @@ import base64
 import json
 import os
 import subprocess
+import sys
+
+import pytest
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-PYTHON = os.path.join(ROOT, "backends", ".venv", "bin", "python3")
+_venv_python = os.path.join(ROOT, "backends", ".venv", "bin", "python3")
+PYTHON = _venv_python if os.path.exists(_venv_python) else sys.executable
 REPL = os.path.join(ROOT, "backends", "static", "repl", "repl.py")
 BINARY = os.path.join(ROOT, "examples", "demo_analysis.elf")
+
+pytestmark = pytest.mark.skipif(
+    not os.path.exists(BINARY),
+    reason="demo_analysis.elf not found — run 'make demo' first",
+)
 
 
 def _run(code: str, binary: str = BINARY) -> dict:
