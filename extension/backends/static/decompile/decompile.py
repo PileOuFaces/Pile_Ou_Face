@@ -477,7 +477,12 @@ def _docker_pull_image(image_name: str) -> bool:
             _log.info("Pull réussi : %s", image_name)
             _DOCKER_AVAILABLE_CACHE[image_name] = True
             return True
-        _log.warning("docker pull %s a échoué (code %d): %s", image_name, proc.returncode, proc.stderr.strip()[-400:])
+        _log.warning(
+            "docker pull %s a échoué (code %d): %s",
+            image_name,
+            proc.returncode,
+            proc.stderr.strip()[-400:],
+        )
         return False
     except (subprocess.TimeoutExpired, OSError) as exc:
         _log.warning("docker pull %s exception: %s", image_name, exc)
@@ -1243,7 +1248,10 @@ def _run_custom_decompiler_in_docker(
                         parsed["provider"] = "docker"
                         parsed["docker_image"] = image_name
                         if proc2.returncode != 0:
-                            parsed["error"] = (proc2.stderr or "").strip()[-800:] or f"{decompiler} Docker exited with code {proc2.returncode}"
+                            parsed["error"] = (
+                                (proc2.stderr or "").strip()[-800:]
+                                or f"{decompiler} Docker exited with code {proc2.returncode}"
+                            )
                             parsed["error_type"] = "tool_error"
                         return parsed
                     parsed["error"] = _docker_missing_image_error(
@@ -1465,7 +1473,9 @@ def _docker_missing_image_error(decompiler: str, image_name: str) -> str:
         )
     else:
         lines.append(f"Pull automatique échoué pour {image_name}.")
-        lines.append(f"Vérifie ta connexion ou tente manuellement : docker pull {image_name}")
+        lines.append(
+            f"Vérifie ta connexion ou tente manuellement : docker pull {image_name}"
+        )
         lines.append(
             f"Surcharge possible avec {_docker_env_var_name_for_decompiler(normalized)}=registry/image:tag"
         )
