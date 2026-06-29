@@ -695,6 +695,38 @@ function staticHandlers(config) {
         });
       }
     },
+    hubPullDecompilerImage: async (message = {}) => {
+      const decompiler = String(message.decompiler || '').trim();
+      const image = String(message.image || '').trim();
+      if (!decompiler || !image) {
+        panel.webview.postMessage({ type: 'hubDecompilerPullDone', decompiler, ok: false, error: 'Nom de décompilateur ou image manquant' });
+        return;
+      }
+      panel.webview.postMessage({ type: 'hubDecompilerPullProgress', decompiler, line: `Pulling ${image}…`, percent: 0 });
+      let layersTotal = 0;
+      let layersDone = 0;
+      let lastError = '';
+      const proc = cp.spawn('docker', ['pull', image], { env: process.env });
+      proc.stdout.on('data', (chunk: Buffer) => {
+        for (const line of chunk.toString().split('\n').filter(Boolean)) {
+          if (/Pulling fs layer/i.test(line)) layersTotal++;
+          if (/Pull complete/i.test(line)) layersDone++;
+          const percent = layersTotal > 0 ? Math.round((layersDone / layersTotal) * 100) : null;
+          panel.webview.postMessage({ type: 'hubDecompilerPullProgress', decompiler, line: line.trim(), percent });
+        }
+      });
+      proc.stderr.on('data', (chunk: Buffer) => { lastError = chunk.toString().trim(); });
+      proc.on('close', async (code: number | null) => {
+        const ok = code === 0;
+        panel.webview.postMessage({ type: 'hubDecompilerPullDone', decompiler, ok, error: ok ? null : lastError });
+        if (ok) {
+          try {
+            const { stdout } = await runPython(['backends/static/decompile/decompile.py', '--list', '--provider', 'auto']);
+            panel.webview.postMessage({ type: 'hubDecompilerList', result: JSON.parse(stdout) });
+          } catch (_e) { /* refresh best-effort */ }
+        }
+      });
+    },
     compilerBrowseSource: async (message = {}) => {
       const lang = String(message.lang || 'c');
       const filters: Record<string, string[]> = {

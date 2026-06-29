@@ -593,6 +593,9 @@ function _renderDecompilerStatusList(available) {
     // Boutons d'actions inline dans la card — tous les décompilateurs sont dans le JSON
     const editBtn = `<button type="button" class="btn btn-secondary btn-xs decompiler-card-btn-edit" data-decompiler-edit="${id}" title="Modifier ${escapeHtml(label)}">✎ Modifier</button>`;
     const hideOrDeleteBtn = `<button type="button" class="btn btn-xs btn-danger-soft decompiler-card-btn-remove" data-decompiler-remove="${id}" title="Supprimer ${escapeHtml(label)}">✕ Supprimer</button>`;
+    const pullBtn = image && !dockerOk
+      ? `<button type="button" class="btn btn-primary btn-xs decompiler-card-btn-pull" data-decompiler-pull="${escapeHtml(id)}" data-decompiler-image="${escapeHtml(image)}" title="Télécharger ${escapeHtml(image)}">⬇ Télécharger</button>`
+      : '';
 
     return `<article class="decompiler-card${isSelected ? ' decompiler-card--selected' : ''}${isActiveSource ? ' decompiler-card--active' : ''}${avail ? '' : ' decompiler-card--disabled'}" data-select-decompiler="${id}" role="button" tabindex="0" title="Sélectionner ${escapeHtml(label)}" aria-pressed="${isActiveSource ? 'true' : 'false'}">
       <div class="decompiler-card-topline">
@@ -623,8 +626,11 @@ function _renderDecompilerStatusList(available) {
         </div>
       </div>
 
+      <div class="decompiler-card-pull-area" id="decompilerPullArea_${escapeHtml(id)}" hidden></div>
+
       ${pathBlock}
       <div class="decompiler-card-actions decompiler-card-actions--inline">
+        ${pullBtn}
         ${editBtn}
         ${hideOrDeleteBtn}
       </div>
@@ -653,6 +659,29 @@ function _renderDecompilerStatusList(available) {
       e.stopPropagation();
       const id = btn.dataset.decompilerRemove;
       vscode.postMessage({ type: 'hubExecuteCommand', command: 'pileOuFace.decompilerRemove', requestId: null, args: [id] });
+    });
+  });
+  container.querySelectorAll('[data-decompiler-pull]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = btn.dataset.decompilerPull;
+      const image = btn.dataset.decompilerImage;
+      btn.disabled = true;
+      btn.textContent = '\u23F3 T\u00E9l\u00E9chargement\u2026';
+      const area = document.getElementById('decompilerPullArea_' + id);
+      if (area) {
+        area.removeAttribute('hidden');
+        area.textContent = '';
+        const log = document.createElement('div');
+        log.className = 'decompiler-pull-log';
+        const progress = document.createElement('progress');
+        progress.className = 'decompiler-pull-progress';
+        progress.value = 0;
+        progress.max = 100;
+        area.appendChild(log);
+        area.appendChild(progress);
+      }
+      vscode.postMessage({ type: 'hubPullDecompilerImage', decompiler: id, image });
     });
   });
 }
