@@ -795,6 +795,7 @@ function staticHandlers(config) {
       // Permet au webview de déclencher une commande VS Code enregistrée
       const commandId = String(message?.command || '').trim();
       const requestId = message?.requestId || null;
+      logChannel.appendLine(`[hubExecuteCommand] received commandId=${commandId} requestId=${requestId}`);
       if (!commandId) return;
 
       const _sendResult = (status, detail = '') => {
