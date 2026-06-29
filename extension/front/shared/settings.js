@@ -484,6 +484,7 @@ function _renderDecompilerStatusList(available) {
   const reasons = meta.reasons || {};
   const dockerImages = meta.docker_images || {};
   const dockerAvail  = meta.docker_images_available || {};
+  const dockerPlatform = meta.docker_platform || {};
   const localAvail = meta.local_available || {};
   const localPaths = _settingsCache?.decompilerLocalPaths && typeof _settingsCache.decompilerLocalPaths === 'object'
     ? _settingsCache.decompilerLocalPaths
@@ -593,8 +594,9 @@ function _renderDecompilerStatusList(available) {
     // Boutons d'actions inline dans la card — tous les décompilateurs sont dans le JSON
     const editBtn = `<button type="button" class="btn btn-secondary btn-xs decompiler-card-btn-edit" data-decompiler-edit="${id}" title="Modifier ${escapeHtml(label)}">✎ Modifier</button>`;
     const hideOrDeleteBtn = `<button type="button" class="btn btn-xs btn-danger-soft decompiler-card-btn-remove" data-decompiler-remove="${id}" title="Supprimer ${escapeHtml(label)}">✕ Supprimer</button>`;
+    const platform = dockerPlatform[id] || '';
     const pullBtn = image && !dockerOk
-      ? `<button type="button" class="btn btn-primary btn-xs decompiler-card-btn-pull" data-decompiler-pull="${escapeHtml(id)}" data-decompiler-image="${escapeHtml(image)}" title="Télécharger ${escapeHtml(image)}">⬇ Télécharger</button>`
+      ? `<button type="button" class="btn btn-primary btn-xs decompiler-card-btn-pull" data-decompiler-pull="${escapeHtml(id)}" data-decompiler-image="${escapeHtml(image)}" data-decompiler-platform="${escapeHtml(platform)}" title="Télécharger ${escapeHtml(image)}">⬇ Télécharger</button>`
       : '';
 
     return `<article class="decompiler-card${isSelected ? ' decompiler-card--selected' : ''}${isActiveSource ? ' decompiler-card--active' : ''}${avail ? '' : ' decompiler-card--disabled'}" data-select-decompiler="${id}" role="button" tabindex="0" title="Sélectionner ${escapeHtml(label)}" aria-pressed="${isActiveSource ? 'true' : 'false'}">
@@ -666,6 +668,7 @@ function _renderDecompilerStatusList(available) {
       e.stopPropagation();
       const id = btn.dataset.decompilerPull;
       const image = btn.dataset.decompilerImage;
+      const platform = btn.dataset.decompilerPlatform || '';
       btn.disabled = true;
       btn.textContent = '\u23F3 T\u00E9l\u00E9chargement\u2026';
       const area = document.getElementById('decompilerPullArea_' + id);
@@ -681,7 +684,7 @@ function _renderDecompilerStatusList(available) {
         area.appendChild(log);
         area.appendChild(progress);
       }
-      vscode.postMessage({ type: 'hubPullDecompilerImage', decompiler: id, image });
+      vscode.postMessage({ type: 'hubPullDecompilerImage', decompiler: id, image, platform });
     });
   });
 }

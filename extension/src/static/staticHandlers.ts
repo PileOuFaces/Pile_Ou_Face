@@ -706,7 +706,9 @@ function staticHandlers(config) {
       let layersTotal = 0;
       let layersDone = 0;
       let lastError = '';
-      const proc = cp.spawn('docker', ['pull', image], { env: process.env });
+      const platform = String(message.platform || '').trim();
+      const pullArgs = platform ? ['pull', '--platform', platform, image] : ['pull', image];
+      const proc = cp.spawn('docker', pullArgs, { env: process.env });
       proc.stdout.on('data', (chunk: Buffer) => {
         for (const line of chunk.toString().split('\n').filter(Boolean)) {
           if (/Pulling fs layer/i.test(line)) layersTotal++;

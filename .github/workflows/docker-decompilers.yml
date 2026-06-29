@@ -159,6 +159,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/decompiler-${{ matrix.decompiler }}
           tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/develops' }}
             type=ref,event=branch
             type=ref,event=pr
             type=sha,prefix=sha-,format=short

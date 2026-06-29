@@ -21,7 +21,8 @@
         "{binary}"
       ],
       "output_format": "c",
-      "timeout": 120
+      "timeout": 120,
+      "docker_platform": "linux/amd64"
     }
   }
 }
