@@ -51,7 +51,7 @@ class TestDecompile(unittest.TestCase):
     def test_builtin_docker_image_defaults_to_per_backend_image(self):
         self.assertEqual(
             _get_decompiler_docker_image("retdec"),
-            "pile-ou-face/decompiler-retdec:latest",
+            "ghcr.io/pileoufaces/pile-ou-face/decompiler-retdec:latest",
         )
 
     def test_missing_builtin_docker_image_error_suggests_make(self):
@@ -62,10 +62,10 @@ class TestDecompile(unittest.TestCase):
         self.assertIn("POF_DECOMPILER_IMAGE_RETDEC", error)
 
     def test_builtin_docker_run_reports_missing_image_helpfully(self):
+        image = "ghcr.io/pileoufaces/pile-ou-face/decompiler-retdec:latest"
         missing_stderr = (
-            "Unable to find image 'pile-ou-face/decompiler-retdec:latest' locally\n"
-            "docker: Error response from daemon: pull access denied for pile-ou-face/decompiler-retdec, "
-            "repository does not exist or may require 'docker login': denied: requested access to the resource is denied"
+            f"Unable to find image '{image}' locally\n"
+            "docker: Error response from daemon: pull access denied"
         )
         completed = subprocess.CompletedProcess(
             args=["docker", "run"],
@@ -86,12 +86,10 @@ class TestDecompile(unittest.TestCase):
             result = _run_custom_decompiler_in_docker(
                 "retdec", "/bin/ls", addr="0x401000"
             )
-        self.assertIn(
-            "make decompiler-docker-build DECOMPILER=retdec", result.get("error", "")
-        )
-        self.assertEqual(
-            result.get("docker_image"), "pile-ou-face/decompiler-retdec:latest"
-        )
+        # Le pull automatique a été tenté (subprocess.run mocké → échec) → message d'erreur OCI
+        self.assertIn("docker pull", result.get("error", ""))
+        self.assertIn(image, result.get("error", ""))
+        self.assertEqual(result.get("docker_image"), image)
 
     def test_builtin_docker_run_uses_real_container_result_even_if_probe_is_unreliable(
         self,
@@ -126,7 +124,8 @@ class TestDecompile(unittest.TestCase):
         self.assertIsNone(result.get("error"))
         self.assertEqual(result.get("provider"), "docker")
         self.assertEqual(
-            result.get("docker_image"), "pile-ou-face/decompiler-retdec:latest"
+            result.get("docker_image"),
+            "ghcr.io/pileoufaces/pile-ou-face/decompiler-retdec:latest",
         )
         self.assertIn("return 5", result.get("code", ""))
 
