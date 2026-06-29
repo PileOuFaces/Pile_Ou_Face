@@ -42,14 +42,24 @@ RUN DPKG_ARCH=$(dpkg --print-architecture) \
 ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-current
 
 # Téléchargement et installation de Ghidra headless
-RUN mkdir -p /opt/ghidra-download \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends g++ make bison flex \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /opt/ghidra-download \
     && wget -q "${GHIDRA_URL}" -O /opt/ghidra-download/ghidra.zip \
     && unzip -q /opt/ghidra-download/ghidra.zip -d /opt/ghidra-tmp \
     && mv /opt/ghidra-tmp/ghidra_${GHIDRA_VERSION}_PUBLIC /opt/ghidra \
     && rm -rf /opt/ghidra-download /opt/ghidra-tmp
 
-# Le binaire decompile natif n'est plus nécessaire :
-# analyzeHeadless + script Jython (script.py) ne dépendent pas du protocole JVM↔natif.
+# Compiler le binaire natif decompile pour arm64 (absent du zip Ghidra officiel).
+# TARGETARCH est injecté par docker buildx ; fallback sur uname -m pour builds locaux.
+RUN if [ "${TARGETARCH}" = "arm64" ] || { [ -z "${TARGETARCH}" ] && [ "$(uname -m)" = "aarch64" ]; }; then \
+        cd /opt/ghidra/Ghidra/Features/Decompiler/src/decompile/cpp \
+        && make ghidra_opt \
+        && mkdir -p /opt/ghidra/Ghidra/Features/Decompiler/os/linux_arm_64 \
+        && cp ghidra_opt /opt/ghidra/Ghidra/Features/Decompiler/os/linux_arm_64/decompile \
+        && make clean; \
+    fi
 
 WORKDIR /app
 COPY backends /app/backends

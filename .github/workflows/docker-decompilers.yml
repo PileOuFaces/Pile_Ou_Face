@@ -178,9 +178,8 @@ jobs:
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             # PR : amd64 seulement — valide l'image sans coûter le build arm64
             echo "platforms=linux/amd64" >> "$GITHUB_OUTPUT"
-          elif [ "${{ matrix.decompiler }}" = "retdec" ] || [ "${{ matrix.decompiler }}" = "ghidra" ]; then
+          elif [ "${{ matrix.decompiler }}" = "retdec" ]; then
             # retdec : binaire pré-compilé disponible uniquement en amd64
-            # ghidra  : le zip Ghidra ne fournit pas linux_arm_64/decompile — amd64 only (Rosetta sur M-series)
             echo "platforms=linux/amd64" >> "$GITHUB_OUTPUT"
           else
             echo "platforms=linux/amd64,linux/arm64" >> "$GITHUB_OUTPUT"
@@ -248,9 +247,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        decompiler: [angr]
+        decompiler: [angr, ghidra]
         # retdec exclus : amd64-only
-        # ghidra exclus : amd64-only (pas de linux_arm_64/decompile dans le zip Ghidra)
 
     steps:
       - name: Checkout
