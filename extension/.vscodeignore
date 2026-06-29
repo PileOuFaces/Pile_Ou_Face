@@ -17,7 +17,6 @@ backends/.venv/
 backends/static/tests/
 backends/dynamic/tests/
 backends/plugins/tests/
-backends/static/cache/
 backends/**/__pycache__/
 backends/**/*.pyc
 backends/**/*.pyo

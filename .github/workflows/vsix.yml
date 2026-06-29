@@ -1,0 +1,40 @@
+name: VSIX Artifact
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'extension/**'
+      - '.github/workflows/vsix.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package VSIX
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Install dependencies
+        working-directory: extension
+        run: npm ci
+
+      - name: Package VSIX
+        working-directory: extension
+        run: npx vsce package --out pile-ou-face.vsix
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pile-ou-face-${{ github.sha }}
+          path: extension/pile-ou-face.vsix
+          retention-days: 30
