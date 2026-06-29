@@ -221,6 +221,7 @@ async function _autoCheckDecompiler(root, storageDir, id, label) {
  */
 async function _pullOciImageWithProgress(image, label) {
   let ok = false;
+  let lastError = '';
   await vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: `Téléchargement de ${label}…`, cancellable: true },
     async (progress, token) => {
@@ -235,10 +236,14 @@ async function _pullOciImageWithProgress(image, label) {
       proc.stdout.on('data', (chunk) => {
         for (const line of chunk.toString().split('\n').filter(Boolean)) {
           if (/Pulling fs layer/i.test(line)) layersTotal++;
-          if (/Pull complete/i.test(line)) { layersDone++; }
+          if (/Pull complete/i.test(line)) layersDone++;
           const pct = layersTotal > 0 ? Math.round((layersDone / layersTotal) * 100) : undefined;
           progress.report({ message: line.trim(), increment: pct });
         }
+      });
+
+      proc.stderr.on('data', (chunk) => {
+        lastError = chunk.toString().trim();
       });
 
       await new Promise((resolve) => proc.on('close', (code) => {
@@ -250,7 +255,12 @@ async function _pullOciImageWithProgress(image, label) {
   if (ok) {
     vscode.window.showInformationMessage(`Image "${image}" téléchargée avec succès.`);
   } else {
-    vscode.window.showErrorMessage(`Echec du téléchargement de "${image}". Vérifie ta connexion et les droits Docker.`);
+    const hint = /not found|manifest unknown|does not exist/i.test(lastError)
+      ? 'Image introuvable sur le registry — les images PileOuFaces ne sont peut-être pas encore publiées.'
+      : /unauthorized|denied/i.test(lastError)
+        ? 'Accès refusé — fais `docker login ghcr.io` si le registry est privé.'
+        : lastError || 'Erreur inconnue.';
+    vscode.window.showErrorMessage(`Echec du téléchargement de "${image}" : ${hint}`);
   }
   return ok;
 }
