@@ -21,7 +21,8 @@ class TestOffsetToVaddrELF(unittest.TestCase):
         self.assertIsNone(offset_to_vaddr_elf("/nonexistent/binary", 0))
 
     def test_non_elf_returns_none(self):
-        import tempfile, os
+        import os
+        import tempfile
 
         f = tempfile.NamedTemporaryFile(delete=False)
         f.write(b"MZ" + b"\x00" * 100)
@@ -48,7 +49,8 @@ class TestOffsetToVaddrELF(unittest.TestCase):
 class TestOffsetToVaddrPE(unittest.TestCase):
     def test_pe_minimal(self):
         """Test offset→vaddr sur un PE64 minimal."""
-        import tempfile, os
+        import os
+        import tempfile
 
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         from fixtures.pe_fixture import write_minimal_pe64
@@ -76,7 +78,8 @@ class TestOffsetToVaddrDispatch(unittest.TestCase):
 
     def test_pe_dispatches(self):
         """offset_to_vaddr dispatch automatique vers PE."""
-        import tempfile, os
+        import os
+        import tempfile
 
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         from fixtures.pe_fixture import write_minimal_pe64
@@ -103,7 +106,8 @@ class TestOffsetToVaddrDispatch(unittest.TestCase):
         self.assertTrue(result is None or isinstance(result, int))
 
     def test_unknown_format_returns_none(self):
-        import tempfile, os
+        import os
+        import tempfile
 
         f = tempfile.NamedTemporaryFile(delete=False)
         f.write(b"\x00" * 64)

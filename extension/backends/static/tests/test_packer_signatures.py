@@ -44,7 +44,9 @@ class TestYaraRulesSynthetic(unittest.TestCase):
 
     def test_upx_elf_synthetic(self):
         """ELF magic + UPX0 section + UPX! marker → famille UPX."""
-        data = b"\x7fELF" + b"\x00" * 100 + b"UPX0" + b"\x00" * 100 + b"UPX!" + b"\x00" * 8
+        data = (
+            b"\x7fELF" + b"\x00" * 100 + b"UPX0" + b"\x00" * 100 + b"UPX!" + b"\x00" * 8
+        )
         self.assertIn("UPX", self._scan(data))
 
     def test_upx_pe_x86_synthetic(self):
@@ -86,7 +88,14 @@ class TestYaraRulesSynthetic(unittest.TestCase):
 
     def test_mpress_sections_synthetic(self):
         """MPRESS sections .MPRESS1 + .MPRESS2 → famille MPRESS."""
-        data = b"MZ" + b"\x00" * 100 + b".MPRESS1" + b"\x00" * 50 + b".MPRESS2" + b"\x00" * 100
+        data = (
+            b"MZ"
+            + b"\x00" * 100
+            + b".MPRESS1"
+            + b"\x00" * 50
+            + b".MPRESS2"
+            + b"\x00" * 100
+        )
         self.assertIn("MPRESS", self._scan(data))
 
     def test_petite_synthetic(self):
@@ -124,7 +133,9 @@ class TestYaraRulesSynthetic(unittest.TestCase):
     def test_no_match_on_clean_bytes(self):
         """Bytes propres (données basse entropie uniformes) → aucune famille."""
         data = b"MZ" + b"\x41" * 1024
-        self.assertEqual(self._scan(data), [], f"Faux positif inattendu sur données uniformes")
+        self.assertEqual(
+            self._scan(data), [], "Faux positif inattendu sur données uniformes"
+        )
 
     def test_no_match_on_empty_file(self):
         """Fichier vide → aucune famille."""

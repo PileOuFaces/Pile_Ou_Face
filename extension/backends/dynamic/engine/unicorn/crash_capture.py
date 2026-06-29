@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 from __future__ import annotations
 
-from typing import Optional
-
 from .memory_mapping import _hex_opt, _read_register_dump, _read_snapshot_registers
 
 
@@ -26,17 +24,24 @@ def _build_crash_reason(kind: str, error: str, instruction_text: str = "") -> st
         return "Ecriture sur une adresse non mappee."
     return f"Erreur Unicorn: {error}"
 
+
 def _finalize_crash_report(
     collector,
     uc,
     arch_bits: int,
     error: str,
-    state: Optional[dict] = None,
-) -> Optional[dict]:
+    state: dict | None = None,
+) -> dict | None:
     crash_ctx = state.get("crash_context") if isinstance(state, dict) else None
-    last_snapshot = collector.snapshots[-1] if getattr(collector, "snapshots", None) else None
+    last_snapshot = (
+        collector.snapshots[-1] if getattr(collector, "snapshots", None) else None
+    )
     fallback_regs = _read_register_dump(uc, arch_bits)
-    snapshot_regs = _read_snapshot_registers(last_snapshot, "after") if isinstance(last_snapshot, dict) else {}
+    snapshot_regs = (
+        _read_snapshot_registers(last_snapshot, "after")
+        if isinstance(last_snapshot, dict)
+        else {}
+    )
     registers = dict(snapshot_regs or fallback_regs)
     if not registers:
         registers = fallback_regs
@@ -54,10 +59,21 @@ def _finalize_crash_report(
         instruction_text = str(last_snapshot.get("instr") or "").strip()
     if not instruction_address:
         instruction_address = registers.get(ip_name)
-    crash_type = str(
-        (crash_ctx or {}).get("type")
-        or ("unmapped_fetch" if "FETCH_UNMAPPED" in error else "unmapped_write" if "WRITE_UNMAPPED" in error else "unmapped_read" if "READ_UNMAPPED" in error else "runtime_error")
-    ).strip() or "runtime_error"
+    crash_type = (
+        str(
+            (crash_ctx or {}).get("type")
+            or (
+                "unmapped_fetch"
+                if "FETCH_UNMAPPED" in error
+                else "unmapped_write"
+                if "WRITE_UNMAPPED" in error
+                else "unmapped_read"
+                if "READ_UNMAPPED" in error
+                else "runtime_error"
+            )
+        ).strip()
+        or "runtime_error"
+    )
     fault_address = (crash_ctx or {}).get("faultAddress")
     if not fault_address and crash_type == "unmapped_fetch":
         fault_address = registers.get(ip_name)
@@ -78,13 +94,14 @@ def _finalize_crash_report(
         "unicornError": str(error or ""),
     }
 
+
 def _record_crash_context(
     state: dict,
     kind: str,
     uc_engine,
-    address: Optional[int] = None,
-    size: Optional[int] = None,
-    value: Optional[int] = None,
+    address: int | None = None,
+    size: int | None = None,
+    value: int | None = None,
 ) -> None:
     if not isinstance(state, dict):
         return
@@ -100,4 +117,3 @@ def _record_crash_context(
         "memoryAccess": kind.replace("unmapped_", ""),
         "pc": _hex_opt(pc),
     }
-

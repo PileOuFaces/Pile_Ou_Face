@@ -7,7 +7,7 @@ describe('dynamic trace session helpers', () => {
   let helpers;
 
   before(async () => {
-    const modulePath = path.resolve(__dirname, '../webview/dynamic/app/traceSession.js');
+    const modulePath = path.resolve(__dirname, '../dynamic/app/traceSession.js');
     const source = fs.readFileSync(modulePath, 'utf8');
     const dataUrl = `data:text/javascript;base64,${Buffer.from(source, 'utf8').toString('base64')}`;
     helpers = await import(dataUrl);

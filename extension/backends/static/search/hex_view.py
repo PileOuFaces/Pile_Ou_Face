@@ -17,8 +17,8 @@ try:
 except ImportError:
     lief = None
 
-from backends.static.binary.arch import detect_binary_arch, get_raw_arch_info
 from backends.shared.log import configure_logging, get_logger, make_meta
+from backends.static.binary.arch import detect_binary_arch, get_raw_arch_info
 
 logger = get_logger(__name__)
 BYTES_PER_ROW = 16
@@ -39,14 +39,22 @@ def _sections_from_binary(binary) -> list[dict]:
     src = []
     if isinstance(binary, lief.ELF.Binary):
         src = [
-            (s.name, s.file_offset, s.virtual_address, s.size) for s in binary.sections if s.size
+            (s.name, s.file_offset, s.virtual_address, s.size)
+            for s in binary.sections
+            if s.size
         ]
     elif isinstance(binary, lief.MachO.Binary):
-        src = [(s.name, s.offset, s.virtual_address, s.size) for s in binary.sections if s.size]
+        src = [
+            (s.name, s.offset, s.virtual_address, s.size)
+            for s in binary.sections
+            if s.size
+        ]
     elif isinstance(binary, lief.PE.Binary):
         ib = binary.optional_header.imagebase
         src = [
-            (s.name, s.offset, s.virtual_address + ib, s.size) for s in binary.sections if s.size
+            (s.name, s.offset, s.virtual_address + ib, s.size)
+            for s in binary.sections
+            if s.size
         ]
 
     for name, offset, vaddr, size in src:
@@ -72,15 +80,20 @@ def _inspect_binary(
         "bits": 64,
         "arch": "",
     }
-    raw_arch_info = get_raw_arch_info(str(raw_arch or ""), raw_endian) if raw_arch else None
+    raw_arch_info = (
+        get_raw_arch_info(str(raw_arch or ""), raw_endian) if raw_arch else None
+    )
     if raw_arch_info is not None:
         info["endianness"] = str(getattr(raw_arch_info, "endian", "little") or "little")
         info["ptr_size"] = int(getattr(raw_arch_info, "ptr_size", 8) or 8)
         info["bits"] = int(
-            getattr(raw_arch_info, "bits", info["ptr_size"] * 8) or (info["ptr_size"] * 8)
+            getattr(raw_arch_info, "bits", info["ptr_size"] * 8)
+            or (info["ptr_size"] * 8)
         )
         info["arch"] = str(
-            getattr(raw_arch_info, "raw_name", "") or getattr(raw_arch_info, "key", "") or ""
+            getattr(raw_arch_info, "raw_name", "")
+            or getattr(raw_arch_info, "key", "")
+            or ""
         )
     if not lief:
         return info

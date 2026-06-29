@@ -17,8 +17,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backends.static.decompile.decompile import (
-    _score_decompile_code,
     _build_function_quality_details,
+    _score_decompile_code,
 )
 
 CORPUS_DIR = Path(__file__).parent / "fixtures" / "decompile_corpus"
@@ -47,7 +47,9 @@ class TestScoreDecompileCode(unittest.TestCase):
             "matched_calls",
             "missed_calls",
         }
-        self.assertFalse(expected_keys - result["metrics"].keys(), msg="Missing metric keys")
+        self.assertFalse(
+            expected_keys - result["metrics"].keys(), msg="Missing metric keys"
+        )
 
     def test_no_quality_param(self):
         """_score_decompile_code ne doit pas accepter de paramètre 'quality'."""
@@ -77,7 +79,9 @@ class TestScoreDecompileCode(unittest.TestCase):
 
     def test_gotos_are_penalized(self):
         no_goto = "int f(int x) { if (x > 0) { return x; } return 0; }\n"
-        with_goto = "int f(int x) { goto lbl;\nlbl: if (x > 0) { return x; } return 0; }\n"
+        with_goto = (
+            "int f(int x) { goto lbl;\nlbl: if (x > 0) { return x; } return 0; }\n"
+        )
         self.assertGreater(
             _score_decompile_code(no_goto)["score"],
             _score_decompile_code(with_goto)["score"],
@@ -117,7 +121,9 @@ class TestScoreDecompileCode(unittest.TestCase):
         code = "int f(void) { malloc(8); free(NULL); return 0; }\n"
         r_no_hint = _score_decompile_code(code, expected_calls=None)
         r_matched = _score_decompile_code(code, expected_calls=["malloc", "free"])
-        r_missed = _score_decompile_code(code, expected_calls=["malloc", "free", "realloc"])
+        r_missed = _score_decompile_code(
+            code, expected_calls=["malloc", "free", "realloc"]
+        )
         self.assertGreater(r_matched["score"], r_no_hint["score"])
         self.assertGreater(r_matched["score"], r_missed["score"])
         self.assertEqual(r_matched["metrics"]["matched_calls"], 2)
@@ -229,7 +235,9 @@ class TestDecompileCorpus(unittest.TestCase):
             if s["quality"] != "bad":
                 continue
             score = _score_decompile_code(s["code"])["score"]
-            self.assertLessEqual(score, 0, msg=f"{path.name}: bad fixture scored {score} > 0")
+            self.assertLessEqual(
+                score, 0, msg=f"{path.name}: bad fixture scored {score} > 0"
+            )
 
 
 # ── Tests _build_function_quality_details ───────────────────────────────────
@@ -261,7 +269,9 @@ class TestBuildFunctionQualityDetails(unittest.TestCase):
         self.assertEqual(qd["backends"][0]["error"], "timeout")
 
     def test_successful_attempt_has_score_and_metrics(self):
-        a = self._make_attempt("tool_a", code="int32_t foo(int32_t x) { return x * 2; }\n")
+        a = self._make_attempt(
+            "tool_a", code="int32_t foo(int32_t x) { return x * 2; }\n"
+        )
         qd = _build_function_quality_details([a], a)
         entry = qd["backends"][0]
         self.assertTrue(entry["ok"])
@@ -274,7 +284,9 @@ class TestBuildFunctionQualityDetails(unittest.TestCase):
         a1 = self._make_attempt("tool_a", code=code)
         qd_no = _build_function_quality_details([a1], a1, expected_calls=None)
         a2 = self._make_attempt("tool_a", code=code)
-        qd_hit = _build_function_quality_details([a2], a2, expected_calls=["malloc", "free"])
+        qd_hit = _build_function_quality_details(
+            [a2], a2, expected_calls=["malloc", "free"]
+        )
         self.assertGreater(qd_hit["selected_score"], qd_no["selected_score"])
 
     def test_no_attempts_returns_empty_backends(self):

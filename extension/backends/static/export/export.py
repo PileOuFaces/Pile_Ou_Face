@@ -164,7 +164,9 @@ def export_cfg_dot(cfg: dict, output_path: str, graph_name: str = "CFG") -> int:
     return len(blocks)
 
 
-def _write_dot(f: TextIO, blocks: list[dict], edges: list[dict], graph_name: str) -> None:
+def _write_dot(
+    f: TextIO, blocks: list[dict], edges: list[dict], graph_name: str
+) -> None:
     node_ids: dict[str, str] = {}
 
     def _node_id(addr: str) -> str:
@@ -208,7 +210,9 @@ def main() -> int:
     """Point d'entrée CLI : exporte les résultats d'analyse en CSV/JSON/DOT."""
     import argparse
 
-    parser = argparse.ArgumentParser(description="Export static analysis results (CSV/JSON/DOT)")
+    parser = argparse.ArgumentParser(
+        description="Export static analysis results (CSV/JSON/DOT)"
+    )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     # symbols-csv
@@ -234,7 +238,7 @@ def main() -> int:
 
     args = parser.parse_args()
 
-    with open(args.input, "r", encoding="utf-8") as f:
+    with open(args.input, encoding="utf-8") as f:
         data = json.load(f)
 
     if args.cmd == "symbols-csv":

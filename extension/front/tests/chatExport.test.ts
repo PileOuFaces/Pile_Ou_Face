@@ -1,6 +1,6 @@
 const { expect } = require('chai');
 
-const chatExport = require('../webview/shared/chatExport');
+const chatExport = require('../shared/chatExport');
 
 describe('chat conversation export', () => {
   const snapshot = chatExport.buildConversationExport({

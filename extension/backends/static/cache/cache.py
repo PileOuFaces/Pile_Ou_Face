@@ -27,7 +27,7 @@ import json
 import os
 import sqlite3
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from backends.shared.exceptions import CacheCorruptedError, CacheError
 from backends.shared.log import get_logger
@@ -278,20 +278,28 @@ class DisasmCache:
         except sqlite3.OperationalError as exc:
             raise CacheError(f"Cannot open cache database: {db_path}") from exc
         except sqlite3.DatabaseError as exc:
-            raise CacheCorruptedError(f"Cache database is corrupted: {db_path}") from exc
+            raise CacheCorruptedError(
+                f"Cache database is corrupted: {db_path}"
+            ) from exc
         self._init_schema()
 
     def _init_schema(self) -> None:
         try:
             self._conn.executescript(_SCHEMA_SQL)
         except sqlite3.DatabaseError as exc:
-            raise CacheCorruptedError(f"Cache database is corrupted: {self._db_path}") from exc
+            raise CacheCorruptedError(
+                f"Cache database is corrupted: {self._db_path}"
+            ) from exc
 
         try:
-            cur = self._conn.execute("SELECT value FROM schema_meta WHERE key='version'")
+            cur = self._conn.execute(
+                "SELECT value FROM schema_meta WHERE key='version'"
+            )
             row = cur.fetchone()
         except sqlite3.DatabaseError as exc:
-            raise CacheCorruptedError(f"Cache database is corrupted: {self._db_path}") from exc
+            raise CacheCorruptedError(
+                f"Cache database is corrupted: {self._db_path}"
+            ) from exc
 
         if row is None:
             self._conn.execute(
@@ -325,13 +333,15 @@ class DisasmCache:
             )
             self._conn.commit()
         except sqlite3.DatabaseError as exc:
-            raise CacheCorruptedError(f"Cache database is corrupted: {self._db_path}") from exc
+            raise CacheCorruptedError(
+                f"Cache database is corrupted: {self._db_path}"
+            ) from exc
 
     # ------------------------------------------------------------------
     # API publique — désassemblage
     # ------------------------------------------------------------------
 
-    def get_disasm(self, binary_path: str) -> Optional[tuple[int, list[dict]]]:
+    def get_disasm(self, binary_path: str) -> tuple[int, list[dict]] | None:
         """Charge le désassemblage depuis le cache si valide.
 
         Returns:
@@ -385,7 +395,7 @@ class DisasmCache:
     # API publique — symboles
     # ------------------------------------------------------------------
 
-    def get_symbols(self, binary_path: str) -> Optional[list[dict]]:
+    def get_symbols(self, binary_path: str) -> list[dict] | None:
         """Charge les symboles depuis le cache si valide.
 
         Returns:
@@ -402,7 +412,9 @@ class DisasmCache:
         rows = cur.fetchall()
         if not rows:
             return None
-        symbols = [{"name": r["name"], "addr": r["addr"], "type": r["type"]} for r in rows]
+        symbols = [
+            {"name": r["name"], "addr": r["addr"], "type": r["type"]} for r in rows
+        ]
         return sorted(symbols, key=lambda s: _addr_sort_key(s.get("addr")))
 
     def save_symbols(self, binary_path: str, symbols: list[dict]) -> int:
@@ -419,7 +431,10 @@ class DisasmCache:
         self._conn.execute("DELETE FROM symbols WHERE binary_id=?", (binary_id,))
         self._conn.executemany(
             "INSERT INTO symbols(binary_id, name, addr, type) VALUES(?,?,?,?)",
-            [(binary_id, s.get("name", ""), s.get("addr", ""), s.get("type", "")) for s in symbols],
+            [
+                (binary_id, s.get("name", ""), s.get("addr", ""), s.get("type", ""))
+                for s in symbols
+            ],
         )
         self._conn.commit()
         logger.debug("Symbols cached: %s (%d symbols)", binary_path, len(symbols))
@@ -429,7 +444,7 @@ class DisasmCache:
     # API publique — strings
     # ------------------------------------------------------------------
 
-    def get_strings(self, binary_path: str) -> Optional[list[dict]]:
+    def get_strings(self, binary_path: str) -> list[dict] | None:
         """Charge les strings depuis le cache si valide.
 
         Returns:
@@ -446,7 +461,10 @@ class DisasmCache:
         rows = cur.fetchall()
         if not rows:
             return None
-        strings = [{"addr": r["addr"], "value": r["value"], "length": r["length"]} for r in rows]
+        strings = [
+            {"addr": r["addr"], "value": r["value"], "length": r["length"]}
+            for r in rows
+        ]
         return sorted(strings, key=lambda s: _addr_sort_key(s.get("addr")))
 
     def save_strings(self, binary_path: str, strings: list[dict]) -> int:
@@ -463,7 +481,10 @@ class DisasmCache:
         self._conn.execute("DELETE FROM strings_data WHERE binary_id=?", (binary_id,))
         self._conn.executemany(
             "INSERT INTO strings_data(binary_id, addr, value, length) VALUES(?,?,?,?)",
-            [(binary_id, s.get("addr", ""), s.get("value", ""), s.get("length")) for s in strings],
+            [
+                (binary_id, s.get("addr", ""), s.get("value", ""), s.get("length"))
+                for s in strings
+            ],
         )
         self._conn.commit()
         logger.debug("Strings cached: %s (%d strings)", binary_path, len(strings))
@@ -473,7 +494,7 @@ class DisasmCache:
     # API publique — annotations
     # ------------------------------------------------------------------
 
-    def get_annotations(self, binary_path: str, addr: Optional[str] = None) -> list[dict]:
+    def get_annotations(self, binary_path: str, addr: str | None = None) -> list[dict]:
         """Charge les annotations depuis le cache.
 
         Args:
@@ -497,9 +518,13 @@ class DisasmCache:
                 "SELECT addr, kind, value FROM annotations WHERE binary_id=? ORDER BY addr, id",
                 (binary_id,),
             )
-        return [{"addr": r["addr"], "kind": r["kind"], "value": r["value"]} for r in cur]
+        return [
+            {"addr": r["addr"], "kind": r["kind"], "value": r["value"]} for r in cur
+        ]
 
-    def save_annotation(self, binary_path: str, addr: str, kind: str, value: str) -> None:
+    def save_annotation(
+        self, binary_path: str, addr: str, kind: str, value: str
+    ) -> None:
         """Ajoute ou remplace une annotation pour une adresse.
 
         Si une annotation du même (addr, kind) existe, elle est remplacée.
@@ -521,7 +546,9 @@ class DisasmCache:
         )
         self._conn.commit()
 
-    def delete_annotation(self, binary_path: str, addr: str, kind: Optional[str] = None) -> int:
+    def delete_annotation(
+        self, binary_path: str, addr: str, kind: str | None = None
+    ) -> int:
         """Supprime les annotations pour une adresse.
 
         Args:
@@ -553,7 +580,7 @@ class DisasmCache:
     # API publique — fonctions découvertes
     # ------------------------------------------------------------------
 
-    def get_functions(self, binary_path: str) -> Optional[list[dict]]:
+    def get_functions(self, binary_path: str) -> list[dict] | None:
         row = self._get_valid_binary_row(binary_path)
         if row is None:
             return None
@@ -611,7 +638,7 @@ class DisasmCache:
     # API publique — CFG
     # ------------------------------------------------------------------
 
-    def get_cfg(self, binary_path: str, func_addr: str | None = None) -> Optional[dict]:
+    def get_cfg(self, binary_path: str, func_addr: str | None = None) -> dict | None:
         row = self._get_valid_binary_row(binary_path)
         if row is None:
             return None
@@ -775,7 +802,7 @@ class DisasmCache:
     # API publique — xrefs
     # ------------------------------------------------------------------
 
-    def get_xref_map(self, binary_path: str) -> Optional[dict]:
+    def get_xref_map(self, binary_path: str) -> dict | None:
         row = self._get_valid_binary_row(binary_path)
         if row is None:
             return None
@@ -844,7 +871,7 @@ class DisasmCache:
     # API publique — imports
     # ------------------------------------------------------------------
 
-    def get_imports_analysis(self, binary_path: str) -> Optional[dict]:
+    def get_imports_analysis(self, binary_path: str) -> dict | None:
         row = self._get_valid_binary_row(binary_path)
         if row is None:
             return None
@@ -893,14 +920,18 @@ class DisasmCache:
         return {
             "imports": imports,
             "suspicious": suspicious,
-            "score": (meta["score"] if meta is not None and meta["score"] is not None else 0),
+            "score": (
+                meta["score"] if meta is not None and meta["score"] is not None else 0
+            ),
             "error": (meta["error"] if meta is not None else None),
         }
 
     def save_imports_analysis(self, binary_path: str, analysis: dict) -> int:
         binary_id = self._ensure_binary(binary_path)
         self._conn.execute("DELETE FROM imports WHERE binary_id=?", (binary_id,))
-        self._conn.execute("DELETE FROM import_findings WHERE binary_id=?", (binary_id,))
+        self._conn.execute(
+            "DELETE FROM import_findings WHERE binary_id=?", (binary_id,)
+        )
         self._conn.execute(
             "DELETE FROM import_analysis_meta WHERE binary_id=?",
             (binary_id,),
@@ -952,7 +983,7 @@ class DisasmCache:
     # API publique — stack frames
     # ------------------------------------------------------------------
 
-    def get_stack_frame(self, binary_path: str, func_addr: str) -> Optional[dict]:
+    def get_stack_frame(self, binary_path: str, func_addr: str) -> dict | None:
         row = self._get_valid_binary_row(binary_path)
         if row is None:
             return None
@@ -1015,7 +1046,9 @@ class DisasmCache:
             current_hash = compute_sha256(binary_path)
         except OSError:
             return None
-        cur = self._conn.execute("SELECT id, hash FROM binary WHERE path=?", (binary_path,))
+        cur = self._conn.execute(
+            "SELECT id, hash FROM binary WHERE path=?", (binary_path,)
+        )
         row = cur.fetchone()
         if row is None:
             return None
@@ -1028,7 +1061,9 @@ class DisasmCache:
         """Retourne binary_id existant ou crée une nouvelle entrée binary."""
         binary_path = os.path.abspath(binary_path)
         binary_hash = compute_sha256(binary_path)
-        cur = self._conn.execute("SELECT id, hash FROM binary WHERE path=?", (binary_path,))
+        cur = self._conn.execute(
+            "SELECT id, hash FROM binary WHERE path=?", (binary_path,)
+        )
         row = cur.fetchone()
         if row is not None and row["hash"] == binary_hash:
             return int(row["id"])
@@ -1045,7 +1080,9 @@ class DisasmCache:
 
     def invalidate(self, binary_path: str) -> None:
         """Supprime l'entrée cache pour un binaire."""
-        self._conn.execute("DELETE FROM binary WHERE path=?", (os.path.abspath(binary_path),))
+        self._conn.execute(
+            "DELETE FROM binary WHERE path=?", (os.path.abspath(binary_path),)
+        )
         self._conn.commit()
 
     def _invalidate_binary(self, binary_id: int) -> None:
@@ -1081,7 +1118,7 @@ class DisasmCache:
     def close(self) -> None:
         self._conn.close()
 
-    def __enter__(self) -> "DisasmCache":
+    def __enter__(self) -> DisasmCache:
         return self
 
     def __exit__(self, *_: object) -> None:

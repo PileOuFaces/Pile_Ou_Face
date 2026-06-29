@@ -259,7 +259,9 @@ def _collect_function_addrs(binary) -> list[int]:
     return addrs
 
 
-def analyze_calling_conventions(binary_path: str, addrs: list[int] | None = None) -> dict:
+def analyze_calling_conventions(
+    binary_path: str, addrs: list[int] | None = None
+) -> dict:
     """Analyse les conventions d'appel d'un binaire.
 
     Args:
@@ -333,7 +335,11 @@ def main() -> int:
         try:
             addrs = [int(a.strip(), 16) for a in args.addrs.split(",") if a.strip()]
         except ValueError as exc:
-            result = {"error": f"Adresses invalides : {exc}", "arch": None, "conventions": {}}
+            result = {
+                "error": f"Adresses invalides : {exc}",
+                "arch": None,
+                "conventions": {},
+            }
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 1
 

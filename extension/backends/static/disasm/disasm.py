@@ -8,12 +8,13 @@ Alternative robuste à objdump (pas de regex fragiles, pas de subprocess).
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Optional
 
 from backends.shared.exceptions import (
     BinaryNotFoundError,
@@ -21,7 +22,12 @@ from backends.shared.exceptions import (
     DisassemblyError,
 )
 from backends.shared.log import configure_logging, get_logger, make_meta
-from backends.shared.utils import normalize_addr as _normalize_addr, parse_addr as _addr_to_int
+from backends.shared.utils import normalize_addr as _normalize_addr
+from backends.shared.utils import parse_addr as _addr_to_int
+from backends.static.annotations.typed_struct_refs import (
+    build_typed_struct_index,
+    collect_typed_struct_hints,
+)
 from backends.static.binary.arch import (
     detect_binary_arch,
     get_feature_support_matrix,
@@ -29,10 +35,6 @@ from backends.static.binary.arch import (
     iter_supported_adapters,
 )
 from backends.static.binary.symbols import extract_symbols
-from backends.static.annotations.typed_struct_refs import (
-    build_typed_struct_index,
-    collect_typed_struct_hints,
-)
 
 logger = get_logger(__name__)
 
@@ -60,10 +62,8 @@ def _emit_progress(
         percent = int(round((current / max(total, 1)) * 100))
     if percent is not None:
         payload["percent"] = max(0, min(100, int(percent)))
-    try:
+    with contextlib.suppress(Exception):
         progress_callback(payload)
-    except Exception:
-        pass
 
 
 try:
@@ -83,7 +83,9 @@ def _get_arch_mode(binary: lief.Binary) -> tuple[int, int] | None:
     return info.capstone_tuple if info else None
 
 
-def _get_raw_arch_mode(raw_arch: str, raw_endian: str | None = None) -> tuple[int, int] | None:
+def _get_raw_arch_mode(
+    raw_arch: str, raw_endian: str | None = None
+) -> tuple[int, int] | None:
     """Retourne (capstone_arch, capstone_mode) pour un blob brut."""
     info = get_raw_arch_info(raw_arch, raw_endian)
     return info.capstone_tuple if info else None
@@ -380,7 +382,9 @@ def disassemble_raw_blob(
         md.detail = True
         md.skipdata = True
     except Exception as exc:
-        raise DisassemblyError(f"Failed to initialize raw disassembler: {raw_arch}") from exc
+        raise DisassemblyError(
+            f"Failed to initialize raw disassembler: {raw_arch}"
+        ) from exc
 
     lines = []
     next_report_percent = 15
@@ -489,7 +493,9 @@ def _canonicalize_memory_location(text: str) -> str:
         if not offset_text:
             return f"[{base}]"
         try:
-            offset = int(offset_text, 16) if "0x" in offset_text else int(offset_text, 10)
+            offset = (
+                int(offset_text, 16) if "0x" in offset_text else int(offset_text, 10)
+            )
         except ValueError:
             return ""
         if offset == 0:
@@ -505,7 +511,11 @@ def _canonicalize_memory_location(text: str) -> str:
         if not sign or not offset_text:
             return f"[{base}]"
         try:
-            offset = int(offset_text, 16) if offset_text.startswith("0x") else int(offset_text, 10)
+            offset = (
+                int(offset_text, 16)
+                if offset_text.startswith("0x")
+                else int(offset_text, 10)
+            )
         except ValueError:
             return ""
         if sign == "-":
@@ -623,7 +633,8 @@ def _extract_typed_struct_hints(
     text: str, typed_struct_index: dict[str, object] | None
 ) -> list[dict]:
     addresses = [
-        _normalize_addr(match.group(0)) for match in re.finditer(r"0x[0-9a-fA-F]+", str(text or ""))
+        _normalize_addr(match.group(0))
+        for match in re.finditer(r"0x[0-9a-fA-F]+", str(text or ""))
     ]
     return collect_typed_struct_hints(typed_struct_index, addresses)
 
@@ -774,7 +785,7 @@ _BRANCH_MNEMONICS = _label_target_mnemonics()
 def _apply_labels(
     lines: list[dict],
     label_map: dict[int, str],
-    line_map: Optional[dict] = None,
+    line_map: dict | None = None,
     *,
     comment_map: dict[int, str] | None = None,
     function_ranges: list[tuple[int, int | None, dict]] | None = None,
@@ -783,7 +794,9 @@ def _apply_labels(
 ) -> list[str]:
     """Return formatted ASM lines with function context, labels, comments and optional DWARF info."""
     output = []
-    prev_src: tuple[str, int] | None = None  # (file, line) of the last emitted source comment
+    prev_src: tuple[str, int] | None = (
+        None  # (file, line) of the last emitted source comment
+    )
     comment_map = comment_map or {}
     function_ranges = function_ranges or []
     stack_frames = stack_frames or {}
@@ -832,10 +845,13 @@ def _apply_labels(
 
         if current_function is not None:
             func_addr = _normalize_addr(current_function.get("addr", ""))
-            stack_hints = _extract_stack_hints_from_frame(op_str, stack_frames.get(func_addr))
+            stack_hints = _extract_stack_hints_from_frame(
+                op_str, stack_frames.get(func_addr)
+            )
             if stack_hints:
                 hint_str = ", ".join(
-                    f"{hint['kind']} {hint['name']} @ {hint['location']}" for hint in stack_hints
+                    f"{hint['kind']} {hint['name']} @ {hint['location']}"
+                    for hint in stack_hints
                 )
                 comment_parts.append(hint_str)
         typed_struct_hints = _extract_typed_struct_hints(text, typed_struct_index)
@@ -866,14 +882,14 @@ def _write_disasm_outputs(
     lines: list[dict],
     binary_path: str,
     output_asm: str,
-    output_mapping: Optional[str],
+    output_mapping: str | None,
     *,
     label_map: dict[int, str] | None = None,
     comment_map: dict[int, str] | None = None,
     function_ranges: list[tuple[int, int | None, dict]] | None = None,
     stack_frames: dict[str, dict] | None = None,
     typed_struct_index: dict[str, object] | None = None,
-    line_map: Optional[dict] = None,
+    line_map: dict | None = None,
     progress_callback: Callable[[dict], None] | None = None,
     raw_profile: dict | None = None,
 ) -> dict:
@@ -883,7 +899,9 @@ def _write_disasm_outputs(
     function_ranges = function_ranges or []
     stack_frames = stack_frames or {}
 
-    _emit_progress(progress_callback, "format", "Formatage du désassemblage", percent=90)
+    _emit_progress(
+        progress_callback, "format", "Formatage du désassemblage", percent=90
+    )
     if (
         label_map
         or comment_map
@@ -921,7 +939,9 @@ def _write_disasm_outputs(
             addr_int = _addr_to_int(line.get("addr"))
             current_function = _find_function_context(function_ranges, addr_int)
             function_addr = (
-                _normalize_addr(current_function.get("addr", "")) if current_function else ""
+                _normalize_addr(current_function.get("addr", ""))
+                if current_function
+                else ""
             )
             function_name = ""
             if current_function:
@@ -944,7 +964,9 @@ def _write_disasm_outputs(
                     "mnemonic": line.get("mnemonic", ""),
                     "operands": line.get("operands", ""),
                     "label": label_map.get(addr_int) if addr_int is not None else None,
-                    "comment": comment_map.get(addr_int) if addr_int is not None else None,
+                    "comment": comment_map.get(addr_int)
+                    if addr_int is not None
+                    else None,
                     "function_addr": function_addr or None,
                     "function_name": function_name or None,
                     "stack_hints": stack_hints,
@@ -956,7 +978,9 @@ def _write_disasm_outputs(
             addr_int = _addr_to_int(line.get("addr"))
             current_function = _find_function_context(function_ranges, addr_int)
             function_addr = (
-                _normalize_addr(current_function.get("addr", "")) if current_function else ""
+                _normalize_addr(current_function.get("addr", ""))
+                if current_function
+                else ""
             )
             function_name = ""
             if current_function:
@@ -979,7 +1003,9 @@ def _write_disasm_outputs(
                     "mnemonic": line.get("mnemonic", ""),
                     "operands": line.get("operands", ""),
                     "label": label_map.get(addr_int) if addr_int is not None else None,
-                    "comment": comment_map.get(addr_int) if addr_int is not None else None,
+                    "comment": comment_map.get(addr_int)
+                    if addr_int is not None
+                    else None,
                     "function_addr": function_addr or None,
                     "function_name": function_name or None,
                     "stack_hints": stack_hints,
@@ -1023,16 +1049,16 @@ def _write_disasm_outputs(
 def disassemble(
     binary_path: str,
     output_asm: str,
-    output_mapping: Optional[str] = None,
+    output_mapping: str | None = None,
     syntax: str = "intel",
-    section: Optional[str] = None,
-    arch: Optional[str] = None,  # Gardé pour compatibilité, ignoré (lief auto-détecte)
-    raw_arch: Optional[str] = None,
-    raw_base_addr: Optional[str] = None,
-    raw_endian: Optional[str] = None,
-    annotations_json: Optional[str] = None,
+    section: str | None = None,
+    arch: str | None = None,  # Gardé pour compatibilité, ignoré (lief auto-détecte)
+    raw_arch: str | None = None,
+    raw_base_addr: str | None = None,
+    raw_endian: str | None = None,
+    annotations_json: str | None = None,
     dwarf_lines: bool = False,
-    cache_db_path: Optional[str] = None,
+    cache_db_path: str | None = None,
     progress_callback: Callable[[dict], None] | None = None,
 ) -> dict | None:
     """Désassemble un binaire, écrit le .asm et optionnellement un JSON de mapping.
@@ -1068,11 +1094,13 @@ def disassemble(
         return None
 
     # Charger le mapping DWARF ligne → source si demandé
-    line_map: Optional[dict] = None
+    line_map: dict | None = None
     if dwarf_lines and not raw_arch:
         from backends.static.binary.dwarf import extract_line_mapping
 
-        _emit_progress(progress_callback, "dwarf", "Chargement des lignes DWARF", percent=88)
+        _emit_progress(
+            progress_callback, "dwarf", "Chargement des lignes DWARF", percent=88
+        )
         line_map = extract_line_mapping(binary_path) or None
 
     context = _load_disasm_context(
@@ -1109,14 +1137,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Static disassembly (Capstone + LIEF)")
     parser.add_argument("--binary", required=True, help="Binary path (ELF, Mach-O, PE)")
     parser.add_argument("--output", required=True, help="Output .asm path")
-    parser.add_argument("--output-mapping", help="Output JSON mapping addr->line (for navigation)")
+    parser.add_argument(
+        "--output-mapping", help="Output JSON mapping addr->line (for navigation)"
+    )
     parser.add_argument(
         "--syntax",
         default="intel",
         choices=["intel", "att"],
         help="Syntax: intel (att not supported by capstone)",
     )
-    parser.add_argument("--section", help="Section to disassemble (e.g. .text, __TEXT,__text)")
+    parser.add_argument(
+        "--section", help="Section to disassemble (e.g. .text, __TEXT,__text)"
+    )
     parser.add_argument("--arch", help="Architecture (ignored, auto-detected by lief)")
     parser.add_argument(
         "--raw-arch",
@@ -1144,7 +1176,9 @@ def main() -> int:
     parser.add_argument(
         "--cache-db", help="SQLite cache path (.pfdb). Use 'auto' for default location."
     )
-    parser.add_argument("--no-cache", action="store_true", help="Disable cache (always recompute)")
+    parser.add_argument(
+        "--no-cache", action="store_true", help="Disable cache (always recompute)"
+    )
     parser.add_argument(
         "--progress",
         action="store_true",
@@ -1174,7 +1208,9 @@ def main() -> int:
     if args.progress:
 
         def _cli_progress(payload: dict) -> None:
-            sys.stderr.write(PROGRESS_PREFIX + json.dumps(payload, ensure_ascii=False) + "\n")
+            sys.stderr.write(
+                PROGRESS_PREFIX + json.dumps(payload, ensure_ascii=False) + "\n"
+            )
             sys.stderr.flush()
 
         progress_callback = _cli_progress
@@ -1189,14 +1225,19 @@ def main() -> int:
             if hit is not None:
                 _, cached_lines = hit
                 logger.debug("Cache hit — skipping disassembly")
-                _emit_progress(progress_callback, "cache", "Cache SQLite trouvé", percent=20)
+                _emit_progress(
+                    progress_callback, "cache", "Cache SQLite trouvé", percent=20
+                )
                 ann_json = getattr(args, "annotations_json", None)
                 cached_line_map = None
                 if getattr(args, "dwarf_lines", False):
                     from backends.static.binary.dwarf import extract_line_mapping
 
                     _emit_progress(
-                        progress_callback, "dwarf", "Chargement des lignes DWARF", percent=70
+                        progress_callback,
+                        "dwarf",
+                        "Chargement des lignes DWARF",
+                        percent=70,
                     )
                     cached_line_map = extract_line_mapping(args.binary) or None
                 context = _load_disasm_context(
@@ -1241,7 +1282,10 @@ def main() -> int:
                 return 1
             cache.save_disasm(args.binary, result["lines"])
             _emit_progress(
-                progress_callback, "cache", "Résultat enregistré dans le cache SQLite", percent=100
+                progress_callback,
+                "cache",
+                "Résultat enregistré dans le cache SQLite",
+                percent=100,
             )
             print(
                 f"Disassembly written to {args.output} ({len(result['lines'])} instructions) [cached]"
@@ -1268,7 +1312,9 @@ def main() -> int:
         return 1
 
     if result is None:
-        logger.error("Disassembly failed. Check binary format and architecture support.")
+        logger.error(
+            "Disassembly failed. Check binary format and architecture support."
+        )
         return 1
 
     print(f"Disassembly written to {args.output} ({len(result['lines'])} instructions)")

@@ -7,7 +7,6 @@ import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Optional
 
 ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(ROOT) not in sys.path:
@@ -23,14 +22,14 @@ class FakeEngine:
     name = "fake"
 
     def __init__(self) -> None:
-        self.seen_binary_path: Optional[str] = None
+        self.seen_binary_path: str | None = None
         self.seen_code: bytes = b""
 
     def trace_binary(
         self,
         code_bytes: bytes,
         config: TraceConfigLike,
-        binary_path: Optional[str],
+        binary_path: str | None,
     ) -> dict:
         self.seen_code = code_bytes
         self.seen_binary_path = binary_path
@@ -41,7 +40,6 @@ class FakeEngine:
 
 
 class TestDynamicEngineContract(unittest.TestCase):
-
     def test_pipeline_accepts_execution_engine_contract(self):
         with TemporaryDirectory() as tmp:
             binary = Path(tmp) / "sample.bin"

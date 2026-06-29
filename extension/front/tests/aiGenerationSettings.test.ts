@@ -1,6 +1,6 @@
 const { expect } = require('chai');
 
-const generationSettings = require('../webview/shared/aiGenerationSettings');
+const generationSettings = require('../shared/aiGenerationSettings');
 
 describe('AI generation settings', () => {
   it('normalizes supported generation values', () => {

@@ -128,7 +128,9 @@ def _build_packer_analysis(binary_path: str, format_name: str) -> dict[str, Any]
         high_regions = high_entropy_regions(binary_path, threshold=7.2, window=512)[:3]
 
     imports_data = analyze_imports(binary_path)
-    imports_list = imports_data.get("imports", []) if isinstance(imports_data, dict) else []
+    imports_list = (
+        imports_data.get("imports", []) if isinstance(imports_data, dict) else []
+    )
     import_names = {
         str(function).strip().lower()
         for dll in imports_list
@@ -194,7 +196,9 @@ def _build_packer_analysis(binary_path: str, format_name: str) -> dict[str, Any]
             and section_ent >= 7.25
             and int(section.get("size") or 0) >= 1024
         ):
-            reasons.append("entropie section élevée (compression/chiffrement plausible)")
+            reasons.append(
+                "entropie section élevée (compression/chiffrement plausible)"
+            )
             section_score += 14
 
         if (
@@ -215,7 +219,8 @@ def _build_packer_analysis(binary_path: str, format_name: str) -> dict[str, Any]
                 "name": section_name or "<unnamed>",
                 "type": section.get("type") or "UNKNOWN",
                 "size": int(section.get("size") or 0),
-                "size_hex": section.get("size_hex") or f"0x{int(section.get('size') or 0):x}",
+                "size_hex": section.get("size_hex")
+                or f"0x{int(section.get('size') or 0):x}",
                 "offset_hex": entropy_entry.get("offset_hex")
                 or f"0x{int(section.get('offset') or 0):x}",
                 "entropy": round(float(section_ent), 4)
@@ -249,7 +254,8 @@ def _build_packer_analysis(binary_path: str, format_name: str) -> dict[str, Any]
 
     dynamic_hints = sorted(import_names & _DYNAMIC_PACKER_IMPORT_HINTS)
     if dynamic_hints and (
-        suspicious_sections or (isinstance(global_entropy, (int, float)) and global_entropy >= 6.8)
+        suspicious_sections
+        or (isinstance(global_entropy, (int, float)) and global_entropy >= 6.8)
     ):
         score += 10
         signals.append(
@@ -285,7 +291,9 @@ def _build_packer_analysis(binary_path: str, format_name: str) -> dict[str, Any]
 
     import_count = len(import_names)
     packer_named_sections = sum(
-        1 for section in suspicious_sections if _family_from_section_name(section.get("name") or "")
+        1
+        for section in suspicious_sections
+        if _family_from_section_name(section.get("name") or "")
     )
     versionish_resources = 0
     if resources_data:
@@ -312,7 +320,12 @@ def _build_packer_analysis(binary_path: str, format_name: str) -> dict[str, Any]
                 "detail": "Imports nombreux et ressources standard, ce qui réduit la probabilité d'un stub de packing minimal.",
             }
         )
-    elif score >= 18 and import_count >= 28 and not dynamic_hints and packer_named_sections == 0:
+    elif (
+        score >= 18
+        and import_count >= 28
+        and not dynamic_hints
+        and packer_named_sections == 0
+    ):
         score = max(0, score - 8)
         signals.append(
             {
@@ -330,7 +343,9 @@ def _build_packer_analysis(binary_path: str, format_name: str) -> dict[str, Any]
         yara_by_family.setdefault(match["family"], []).append(match["rule"])
     for yara_family, rules in yara_by_family.items():
         family_scores[yara_family] = family_scores.get(yara_family, 0) + 40
-        family_reasons.setdefault(yara_family, []).append(f"signature(s) YARA ({', '.join(rules)})")
+        family_reasons.setdefault(yara_family, []).append(
+            f"signature(s) YARA ({', '.join(rules)})"
+        )
         score += 30
         signals.append(
             {
@@ -344,7 +359,9 @@ def _build_packer_analysis(binary_path: str, format_name: str) -> dict[str, Any]
     score = min(100, score)
     verdict, summary = _packer_verdict(score)
     families: list[dict[str, Any]] = []
-    for family, family_score in sorted(family_scores.items(), key=lambda item: (-item[1], item[0])):
+    for family, family_score in sorted(
+        family_scores.items(), key=lambda item: (-item[1], item[0])
+    ):
         families.append(
             {
                 "name": family,
@@ -365,7 +382,9 @@ def _build_packer_analysis(binary_path: str, format_name: str) -> dict[str, Any]
         "suspicious_sections": suspicious_sections,
         "high_entropy_regions": high_regions,
         "import_count": import_count,
-        "resource_count": resources_data.get("count") if isinstance(resources_data, dict) else None,
+        "resource_count": resources_data.get("count")
+        if isinstance(resources_data, dict)
+        else None,
         "suspected_family": suspected_family,
         "families": families,
         "yara_matches": yara_matches,
@@ -468,16 +487,26 @@ def extract_binary_info(binary_path: str) -> dict:
         info["bits"] = (
             str(arch_info.bits)
             if arch_info is not None
-            else ("64" if binary.header.identity_class == lief.ELF.Header.CLASS.ELF64 else "32")
+            else (
+                "64"
+                if binary.header.identity_class == lief.ELF.Header.CLASS.ELF64
+                else "32"
+            )
         )
         info["arch"] = (
-            arch_info.raw_name if arch_info is not None else binary.header.machine_type.name.lower()
+            arch_info.raw_name
+            if arch_info is not None
+            else binary.header.machine_type.name.lower()
         )
         info["endianness"] = arch_info.endian if arch_info is not None else "little"
 
         # Stripped: vérifier s'il y a des symboles
         sym_count = len(
-            [s for s in binary.symtab_symbols if s.name and s.type == lief.ELF.Symbol.TYPE.FUNC]
+            [
+                s
+                for s in binary.symtab_symbols
+                if s.name and s.type == lief.ELF.Symbol.TYPE.FUNC
+            ]
         )
         info["stripped"] = "oui" if sym_count <= 1 else "non"
 
@@ -498,12 +527,16 @@ def extract_binary_info(binary_path: str) -> dict:
             else ("64" if binary.header.is_64bit else "32")
         )
         info["arch"] = (
-            arch_info.raw_name if arch_info is not None else binary.header.cpu_type.name.lower()
+            arch_info.raw_name
+            if arch_info is not None
+            else binary.header.cpu_type.name.lower()
         )
         info["endianness"] = arch_info.endian if arch_info is not None else "little"
 
         # Stripped: vérifier symboles
-        sym_count = len([s for s in binary.symbols if s.name and not s.name.startswith("_mh_")])
+        sym_count = len(
+            [s for s in binary.symbols if s.name and not s.name.startswith("_mh_")]
+        )
         info["stripped"] = "oui" if sym_count <= 1 else "non"
 
     # PE
@@ -515,7 +548,9 @@ def extract_binary_info(binary_path: str) -> dict:
 
         machine = binary.header.machine
         info["bits"] = str(arch_info.bits) if arch_info is not None else "?"
-        info["arch"] = arch_info.raw_name if arch_info is not None else machine.name.lower()
+        info["arch"] = (
+            arch_info.raw_name if arch_info is not None else machine.name.lower()
+        )
         info["endianness"] = arch_info.endian if arch_info is not None else "little"
 
         # Stripped: vérifier exports

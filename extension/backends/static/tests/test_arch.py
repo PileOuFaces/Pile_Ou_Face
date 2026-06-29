@@ -125,8 +125,12 @@ class TestArchAdapters(unittest.TestCase):
 
     def test_extended_adapters_recognize_operand_based_returns(self):
         self.assertTrue(arch_module.ARM32_ADAPTER.is_return_instruction("bx", "lr"))
-        self.assertTrue(arch_module.ARM32_ADAPTER.is_return_instruction("pop", "{r4, pc}"))
-        self.assertTrue(arch_module.ARM32_ADAPTER.is_return_instruction("ldmia", "sp!, {r4, pc}"))
+        self.assertTrue(
+            arch_module.ARM32_ADAPTER.is_return_instruction("pop", "{r4, pc}")
+        )
+        self.assertTrue(
+            arch_module.ARM32_ADAPTER.is_return_instruction("ldmia", "sp!, {r4, pc}")
+        )
         self.assertTrue(arch_module.MIPS_ADAPTER.is_return_instruction("jr", "$ra"))
         self.assertFalse(arch_module.MIPS_ADAPTER.is_return_instruction("jr", "$t9"))
 
@@ -217,7 +221,9 @@ class TestDetectBinaryArch(unittest.TestCase):
         fake_lief = self._fake_lief()
         fake_capstone = self._fake_capstone()
         binary = fake_lief.PE.Binary()
-        binary.header = types.SimpleNamespace(machine=fake_lief.PE.Header.MACHINE_TYPES.AMD64)
+        binary.header = types.SimpleNamespace(
+            machine=fake_lief.PE.Header.MACHINE_TYPES.AMD64
+        )
 
         with (
             mock.patch.object(arch_module, "lief", fake_lief),

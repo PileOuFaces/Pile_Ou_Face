@@ -18,7 +18,6 @@ from backends.static.disasm.asm_sim import (
     trim_line,
 )
 
-
 # ── trim_line ────────────────────────────────────────────────────────────────
 
 

@@ -7,7 +7,7 @@ import hmac as _hmac
 import json
 import os
 from dataclasses import dataclass, field
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -77,7 +77,9 @@ def evaluate_plugin_license(
 ) -> PluginLicenseEvaluation:
     env_map = env or os.environ
     # Priorité 1 : content_key injectée par l'extension via variable d'environnement
-    _env_var = "POF_CONTENT_KEY_" + manifest.plugin_id.upper().replace("-", "_").replace(".", "_")
+    _env_var = "POF_CONTENT_KEY_" + manifest.plugin_id.upper().replace(
+        "-", "_"
+    ).replace(".", "_")
     _env_key = str(env_map.get(_env_var, "") or "").strip()
     if _env_key:
         return PluginLicenseEvaluation(
@@ -93,7 +95,9 @@ def evaluate_plugin_license(
 
     licensing = manifest.licensing
     if licensing.required is not True:
-        return PluginLicenseEvaluation(status="unlocked", message=licensing.message or "")
+        return PluginLicenseEvaluation(
+            status="unlocked", message=licensing.message or ""
+        )
 
     if _env_flag_enabled(env_map.get(_DISABLE_LICENSE_FALLBACK_ENV)):
         return PluginLicenseEvaluation(
@@ -293,7 +297,11 @@ def _resolve_public_key(manifest: PluginManifest) -> tuple[Path | None, str]:
 
 
 def _canonicalize_license_payload(payload: dict[str, Any]) -> bytes:
-    filtered = {key: payload[key] for key in sorted(payload.keys()) if key not in SIGNATURE_FIELDS}
+    filtered = {
+        key: payload[key]
+        for key in sorted(payload.keys())
+        if key not in SIGNATURE_FIELDS
+    }
     return json.dumps(
         filtered,
         sort_keys=True,
@@ -311,10 +319,14 @@ def _verify_license_signature_pure(
     """Vérifie signature RSA-PSS ou RSA-PKCS1v15 via cryptography (pas d'openssl subprocess)."""
     from cryptography.hazmat.primitives import (
         hashes as _crypto_hashes,
+    )
+    from cryptography.hazmat.primitives import (
         serialization as _crypto_serial,
     )
     from cryptography.hazmat.primitives.asymmetric import padding as _asym_padding
-    from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey as _RSAPublicKey
+    from cryptography.hazmat.primitives.asymmetric.rsa import (
+        RSAPublicKey as _RSAPublicKey,
+    )
 
     try:
         sig = base64.b64decode(signature_b64, validate=True)
@@ -367,7 +379,7 @@ def _last_verified_path(plugin_id: str, base_dir: Path) -> Path:
 def _hmac_last_verified(ts: str, plugin_id: str, key_material: bytes) -> str:
     import hmac as _hmac_mod
 
-    msg = f"{ts}|{plugin_id}".encode("utf-8")
+    msg = f"{ts}|{plugin_id}".encode()
     return _hmac_mod.new(key_material, msg, hashlib.sha256).hexdigest()
 
 
@@ -376,15 +388,19 @@ def compute_key_material() -> bytes:
     import platform
     import uuid as _uuid
 
-    raw = "|".join([platform.system(), platform.machine(), platform.node(), hex(_uuid.getnode())])
-    return _hmac.new(_KEY_MATERIAL_CONTEXT, raw.encode("utf-8"), hashlib.sha256).digest()
+    raw = "|".join(
+        [platform.system(), platform.machine(), platform.node(), hex(_uuid.getnode())]
+    )
+    return _hmac.new(
+        _KEY_MATERIAL_CONTEXT, raw.encode("utf-8"), hashlib.sha256
+    ).digest()
 
 
 def _write_last_verified(plugin_id: str, base_dir: Path) -> None:
     """Writes the timestamp of the last successful verification."""
     try:
         km = compute_key_material()
-        ts = datetime.now(timezone.utc).isoformat()
+        ts = datetime.now(UTC).isoformat()
         mac = _hmac_last_verified(ts, plugin_id, km)
         data = {"ts": ts, "plugin_id": plugin_id, "hmac": mac}
         path = _last_verified_path(plugin_id, base_dir)
@@ -427,7 +443,7 @@ def _check_clock_skew(plugin_id: str, base_dir: Path) -> tuple[str | None, str]:
     last_ts = _parse_datetime(ts_raw)
     if last_ts is None:
         return None, ""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if now < last_ts - _CLOCK_TOLERANCE:
         return "clock_tampered", "Horloge système modifiée. Licence verrouillée."
     return None, ""
@@ -440,7 +456,7 @@ def _check_issued_at_seal(issued_at: str) -> tuple[bool, str]:
     moment = _parse_datetime(issued_at)
     if moment is None:
         return True, ""  # format inconnu → pas de rejet
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if moment > now + _ISSUED_AT_TOLERANCE:
         return False, "Licence invalide : date d'émission dans le futur."
     return True, ""
@@ -455,12 +471,15 @@ def _check_expiry_with_grace(expires_at: str) -> tuple[str | None, str]:
     moment = _parse_datetime(expires_at)
     if moment is None:
         return None, ""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if now <= moment:
         return None, ""
     if now <= moment + _GRACE_PERIOD:
         days_left = (_GRACE_PERIOD - (now - moment)).days + 1
-        return "grace", f"Licence expirée. Période de grâce : {days_left} jour(s) restant(s)."
+        return (
+            "grace",
+            f"Licence expirée. Période de grâce : {days_left} jour(s) restant(s).",
+        )
     return "expired", "La licence a expiré."
 
 
@@ -476,7 +495,7 @@ def _parse_datetime(value: str) -> datetime | None:
             parsed = datetime.strptime(raw, "%Y-%m-%d")
         except ValueError:
             return None
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)

@@ -171,7 +171,9 @@ def _eval_enum_expr(expr: str, symbols: dict[str, int]) -> int:
             if node.id not in symbols:
                 raise ValueError(f"Identifiant d'enum inconnu: {node.id}")
             return int(symbols[node.id])
-        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub, ast.Invert)):
+        if isinstance(node, ast.UnaryOp) and isinstance(
+            node.op, (ast.UAdd, ast.USub, ast.Invert)
+        ):
             value = visit(node.operand)
             if isinstance(node.op, ast.UAdd):
                 return +value
@@ -249,7 +251,9 @@ def parse_struct_definitions(source_text: str) -> dict[str, dict[str, Any]]:
                 continue
             fields.append(_parse_field(candidate))
         if not fields:
-            raise ValueError(f"Le type {kind} {struct_name} ne contient aucun champ reconnu.")
+            raise ValueError(
+                f"Le type {kind} {struct_name} ne contient aucun champ reconnu."
+            )
         definitions[struct_name] = {
             "name": struct_name,
             "kind": kind,
@@ -282,7 +286,7 @@ def load_struct_store(workspace_root: str | None = None) -> dict[str, Any]:
     if not os.path.isfile(store_path):
         return {"source": "", "definitions": {}}
     try:
-        with open(store_path, "r", encoding="utf-8") as fh:
+        with open(store_path, encoding="utf-8") as fh:
             payload = json.load(fh)
     except Exception:
         return {"source": "", "definitions": {}}
@@ -310,7 +314,9 @@ def list_struct_store(workspace_root: str | None = None) -> dict[str, Any]:
     return {"structs": structs, "source": store["source"], "error": None}
 
 
-def save_struct_source(source_text: str, workspace_root: str | None = None) -> dict[str, Any]:
+def save_struct_source(
+    source_text: str, workspace_root: str | None = None
+) -> dict[str, Any]:
     """Save C-style struct/union/enum definitions to .pile-ou-face/structs.json so they can be applied to binary data."""
     definitions = parse_struct_definitions(source_text)
     store_path = get_struct_store_path(workspace_root)
@@ -405,12 +411,11 @@ def compute_struct_layout(
                 elem_align = ptr_size
                 tag = "fn_ptr" if field_kind == "fn_ptr" else "ptr"
                 resolved_kind = "pointer"
-            elif named_definition and str(named_definition.get("kind") or "") == "enum":
-                elem_size = 4
-                elem_align = 4
-                tag = "enum"
-                resolved_kind = "enum"
-            elif field_kind == "enum":
+            elif (
+                named_definition
+                and str(named_definition.get("kind") or "") == "enum"
+                or field_kind == "enum"
+            ):
                 elem_size = 4
                 elem_align = 4
                 tag = "enum"
@@ -434,7 +439,9 @@ def compute_struct_layout(
             count = array_len or 1
             field_align = elem_align
             field_size = elem_size * count
-            field_offset = 0 if definition_kind == "union" else _align_up(offset, field_align)
+            field_offset = (
+                0 if definition_kind == "union" else _align_up(offset, field_align)
+            )
             fields_out.append(
                 {
                     "name": field["name"],
@@ -477,7 +484,7 @@ def compute_struct_layout(
 
 def _load_source_text(args: argparse.Namespace) -> str:
     if args.source_file:
-        with open(args.source_file, "r", encoding="utf-8") as fh:
+        with open(args.source_file, encoding="utf-8") as fh:
             return fh.read()
     return args.source_text or ""
 

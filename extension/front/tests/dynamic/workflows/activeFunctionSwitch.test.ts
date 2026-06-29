@@ -10,7 +10,7 @@ describe('dynamic/workflows active function switch', () => {
   let buildStackWorkspaceModel: Function;
 
   before(async () => {
-    const modulePath = path.resolve(__dirname, '../../../webview/dynamic/app/stackWorkspaceCore.js');
+    const modulePath = path.resolve(__dirname, '../../../dynamic/app/stackWorkspaceCore.js');
     ({ buildStackWorkspaceModel } = await import(pathToFileURL(modulePath).href));
   });
 

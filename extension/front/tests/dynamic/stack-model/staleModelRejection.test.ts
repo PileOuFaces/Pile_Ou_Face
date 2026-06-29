@@ -11,7 +11,7 @@ describe('dynamic/stack-model stale model rejection workflows', () => {
   let buildStackWorkspaceModel: Function;
 
   before(async () => {
-    const modulePath = path.resolve(__dirname, '../../../webview/dynamic/app/stackWorkspaceCore.js');
+    const modulePath = path.resolve(__dirname, '../../../dynamic/app/stackWorkspaceCore.js');
     ({ buildStackWorkspaceModel } = await import(pathToFileURL(modulePath).href));
   });
 

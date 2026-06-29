@@ -17,82 +17,78 @@ import os
 import re
 import shutil
 import subprocess
-from typing import Dict, List, Optional
 
 try:
-    from unicorn import Uc, UcError
     from unicorn import (
         UC_ARCH_X86,
-        UC_MODE_32,
-        UC_MODE_64,
         UC_HOOK_CODE,
         UC_HOOK_INSN,
         UC_HOOK_INTR,
-        UC_HOOK_MEM_READ,
-        UC_HOOK_MEM_WRITE,
-        UC_HOOK_MEM_READ_UNMAPPED,
-        UC_HOOK_MEM_WRITE_UNMAPPED,
         UC_HOOK_MEM_FETCH_UNMAPPED,
+        UC_HOOK_MEM_READ,
+        UC_HOOK_MEM_READ_UNMAPPED,
+        UC_HOOK_MEM_WRITE,
+        UC_HOOK_MEM_WRITE_UNMAPPED,
+        UC_MODE_32,
+        UC_MODE_64,
         UC_PROT_ALL,
+        Uc,
+        UcError,
     )
     from unicorn.x86_const import (
         UC_X86_INS_SYSCALL,
         UC_X86_REG_EAX,
+        UC_X86_REG_R8,
+        UC_X86_REG_R9,
         UC_X86_REG_RAX,
         UC_X86_REG_RCX,
         UC_X86_REG_RDI,
-        UC_X86_REG_R8,
-        UC_X86_REG_R9,
-        UC_X86_REG_RSI,
         UC_X86_REG_RDX,
+        UC_X86_REG_RSI,
     )
 except ImportError as exc:  # pragma: no cover
     raise SystemExit("Unicorn is required. Install with: pip install unicorn") from exc
 
-from .config import TraceConfig
+import contextlib
+
 from .argv_stdin import (
-    _consume_stream_literal,
-    _consume_stream_token,
     _consume_stdin_bytes,
     _consume_stdin_line,
-    _consume_stdin_literal,
-    _consume_stdin_token,
+    _consume_stream_literal,
+    _consume_stream_token,
     _iterate_scanf_tokens,
     _skip_stream_whitespace,
-    _skip_stdin_whitespace,
+)
+from .config import TraceConfig
+from .crash_capture import (
+    _finalize_crash_report,
+    _record_crash_context,
 )
 from .elf import parse_elf_header, parse_program_headers, read_c_string
 from .hooks import SnapshotCollector
 from .io import is_elf, load_code
-from .crash_capture import (
-    _build_crash_reason,
-    _finalize_crash_report,
-    _record_crash_context,
-)
 from .memory_mapping import (
     _bytes_to_hex,
     _copy_c_string,
     _copy_n_bytes,
-    _hex_opt,
     _in_capture_ranges,
     _infer_call_target_from_return,
     _memset_bytes,
     _read_c_string_bytes,
     _read_c_string_from_memory,
-    _read_register_dump,
-    _read_snapshot_registers,
     _read_word,
     _safe_read_bytes,
     _strlen_at,
     _virtual_alloc,
 )
-from .regs import get_pc_sp, get_reg_order, get_rbp
+from .regs import get_pc_sp, get_rbp, get_reg_order
 from .resolve import addr2line_map, resolve_symbol_addr
 from .stack import align_up, build_initial_stack, init_stack, inject_stack_payload
 from .syscalls import ReadSyscallEmulator
 
 _FAKE_GETPID = 1337
 _FAKE_GETUID = 1000
+
 
 def _render_simple_printf_bytes(format_bytes: bytes) -> bytes:
     if b"%" not in format_bytes:
@@ -115,7 +111,8 @@ def _render_simple_printf_bytes(format_bytes: bytes) -> bytes:
         return format_bytes
     return bytes(out)
 
-def _strcasecmp_at(uc, lhs: int, rhs: int) -> Optional[int]:
+
+def _strcasecmp_at(uc, lhs: int, rhs: int) -> int | None:
     left = _read_c_string_from_memory(uc, lhs)
     right = _read_c_string_from_memory(uc, rhs)
     if left is None or right is None:
@@ -126,9 +123,10 @@ def _strcasecmp_at(uc, lhs: int, rhs: int) -> Optional[int]:
         return 0
     return -1 if a < b else 1
 
+
 def _strcmp_at(
-    uc, lhs: int, rhs: int, max_len: int = 0x20000, limit: Optional[int] = None
-) -> Optional[int]:
+    uc, lhs: int, rhs: int, max_len: int = 0x20000, limit: int | None = None
+) -> int | None:
     if lhs == 0 or rhs == 0:
         return None
     i = 0
@@ -147,6 +145,7 @@ def _strcmp_at(
         return None
     return None
 
+
 def _simulate_scanf_call(
     uc,
     arg_reader,
@@ -154,7 +153,7 @@ def _simulate_scanf_call(
     format_arg_index: int,
     data_key: str = "stdin_data",
     pos_key: str = "stdin_pos",
-) -> Optional[int]:
+) -> int | None:
     fmt_addr = arg_reader(format_arg_index)
     if fmt_addr is None:
         return None
@@ -218,11 +217,12 @@ def _simulate_scanf_call(
 
     return assignments
 
+
 def _begin_external_event(
     state: dict,
     instruction_addr: int,
-    symbol_name: Optional[str],
-    call_target: Optional[int],
+    symbol_name: str | None,
+    call_target: int | None,
 ) -> None:
     state["current_external_event"] = {
         "instruction_addr": int(instruction_addr),
@@ -233,11 +233,12 @@ def _begin_external_event(
         "writes": [],
     }
 
+
 def _record_external_access(
     state: dict,
     kind: str,
-    addr: Optional[int],
-    size: Optional[int],
+    addr: int | None,
+    size: int | None,
     data: bytes | None = None,
 ) -> None:
     event = state.get("current_external_event")
@@ -255,6 +256,7 @@ def _record_external_access(
     if isinstance(bucket, list):
         bucket.append(entry)
 
+
 def _commit_external_event(state: dict, simulated: bool) -> None:
     event = state.pop("current_external_event", None)
     if not isinstance(event, dict):
@@ -268,7 +270,8 @@ def _commit_external_event(state: dict, simulated: bool) -> None:
         return
     events_by_addr.setdefault(instruction_addr, []).append(event)
 
-def _symbol_key(symbol_name: Optional[str]) -> Optional[str]:
+
+def _symbol_key(symbol_name: str | None) -> str | None:
     if not symbol_name:
         return None
     plain = symbol_name.split("@", 1)[0]
@@ -280,13 +283,14 @@ def _symbol_key(symbol_name: Optional[str]) -> Optional[str]:
         plain = plain[len("__GI_") :]
     return plain
 
+
 def _read_call_arg(
     uc,
     arch_bits: int,
     index: int,
     stack_base: int,
     word_size: int,
-) -> Optional[int]:
+) -> int | None:
     if arch_bits == 64:
         reg_order = [
             UC_X86_REG_RDI,
@@ -305,16 +309,16 @@ def _read_call_arg(
         return None
     return _read_word(uc, stack_base + (index * word_size), word_size)
 
+
 def _virtual_file_warnings(state: dict) -> list:
     warnings = state.setdefault("virtual_file_warnings", [])
     return warnings if isinstance(warnings, list) else []
 
+
 def _open_virtual_file(state: dict, guest_path: str) -> int:
     files = state.get("virtual_files", {})
     if guest_path not in files:
-        _virtual_file_warnings(state).append(
-            f"virtual file not declared: {guest_path}"
-        )
+        _virtual_file_warnings(state).append(f"virtual file not declared: {guest_path}")
         return 0
     handles = state.setdefault("virtual_file_handles", {})
     next_id = int(state.get("virtual_file_next_handle", 0xF1000000))
@@ -327,13 +331,15 @@ def _open_virtual_file(state: dict, guest_path: str) -> int:
     }
     return next_id
 
-def _get_virtual_file_handle(state: dict, handle_id: Optional[int]) -> Optional[dict]:
+
+def _get_virtual_file_handle(state: dict, handle_id: int | None) -> dict | None:
     if handle_id is None:
         return None
     handle = state.get("virtual_file_handles", {}).get(int(handle_id))
     if not handle or handle.get("closed"):
         return None
     return handle
+
 
 def _consume_virtual_file_line(handle: dict, limit: int) -> bytes:
     if limit <= 0:
@@ -350,7 +356,8 @@ def _consume_virtual_file_line(handle: dict, limit: int) -> bytes:
     handle["pos"] = end
     return chunk
 
-def _simulate_virtual_fscanf(uc, arg_reader, state: dict) -> Optional[int]:
+
+def _simulate_virtual_fscanf(uc, arg_reader, state: dict) -> int | None:
     fp = arg_reader(0)
     handle = _get_virtual_file_handle(state, fp)
     if handle is None:
@@ -368,19 +375,20 @@ def _simulate_virtual_fscanf(uc, arg_reader, state: dict) -> Optional[int]:
     handle["pos"] = int(state.get("file_pos", handle.get("pos", 0)))
     return assigned
 
+
 def _simulate_symbol_with_args(
     uc,
     arch_bits: int,
-    symbol_name: Optional[str],
+    symbol_name: str | None,
     stack_base: int,
     word_size: int,
     state: dict,
-) -> Optional[int]:
+) -> int | None:
     key = _symbol_key(symbol_name)
     if not key:
         return None
 
-    def arg(i: int) -> Optional[int]:
+    def arg(i: int) -> int | None:
         return _read_call_arg(uc, arch_bits, i, stack_base, word_size)
 
     def mark() -> None:
@@ -432,9 +440,7 @@ def _simulate_symbol_with_args(
             return None
         mark()
         return (
-            1
-            if int(handle.get("pos", 0)) >= len(bytes(handle.get("data", b"")))
-            else 0
+            1 if int(handle.get("pos", 0)) >= len(bytes(handle.get("data", b""))) else 0
         )
 
     if key in {"fclose"}:
@@ -570,10 +576,7 @@ def _simulate_symbol_with_args(
         if fmt_bytes is None:
             return None
         rendered = _render_simple_printf_bytes(fmt_bytes)
-        if n is None:
-            write_limit = len(rendered) + 1
-        else:
-            write_limit = min(max(0, int(n)), 0x20000)
+        write_limit = len(rendered) + 1 if n is None else min(max(0, int(n)), 131072)
         payload = b""
         if write_limit > 0:
             payload = rendered[: max(0, write_limit - 1)] + b"\x00"
@@ -742,43 +745,44 @@ def _simulate_symbol_with_args(
         return 1
 
     if key in {"exit", "_exit", "abort", "__stack_chk_fail"}:
-        try:
+        with contextlib.suppress(UcError):
             uc.emu_stop()
-        except UcError:
-            pass
         mark()
         return 0
 
     return None
 
+
 def _simulate_external_call(
     uc,
     arch_bits: int,
-    symbol_name: Optional[str],
+    symbol_name: str | None,
     ret_slot_addr: int,
     word_size: int,
     state: dict,
-) -> Optional[int]:
+) -> int | None:
     # Post-call context (fallback path): args are after return address on 32-bit.
     stack_base = ret_slot_addr + (word_size if arch_bits == 32 else 0)
     return _simulate_symbol_with_args(
         uc, arch_bits, symbol_name, stack_base, word_size, state
     )
 
+
 def _simulate_external_call_precall(
     uc,
     arch_bits: int,
-    symbol_name: Optional[str],
+    symbol_name: str | None,
     sp: int,
     word_size: int,
     state: dict,
-) -> Optional[int]:
+) -> int | None:
     # Pre-call context: stack args start at current SP (32-bit).
     return _simulate_symbol_with_args(uc, arch_bits, symbol_name, sp, word_size, state)
 
+
 def _find_return_slot(
-    uc, sp: int, word_size: int, capture_ranges: Optional[List[tuple]]
-) -> Optional[tuple]:
+    uc, sp: int, word_size: int, capture_ranges: list[tuple] | None
+) -> tuple | None:
     max_scan_words = 16
     for idx in range(max_scan_words):
         slot_addr = sp + (idx * word_size)
@@ -794,7 +798,8 @@ def _find_return_slot(
         return ret_addr, slot_addr
     return None
 
-def _load_plt_symbols(binary_path: Optional[str], base_adjust: int) -> Dict[int, str]:
+
+def _load_plt_symbols(binary_path: str | None, base_adjust: int) -> dict[int, str]:
     if not binary_path or not shutil.which("objdump"):
         return {}
     try:
@@ -809,7 +814,7 @@ def _load_plt_symbols(binary_path: Optional[str], base_adjust: int) -> Dict[int,
     if result.returncode != 0:
         return {}
 
-    plt_symbols: Dict[int, str] = {}
+    plt_symbols: dict[int, str] = {}
     pattern = re.compile(r"^\s*([0-9a-fA-F]+)\s+<([^>]+)@plt(?:\.sec)?>:")
     for line in result.stdout.splitlines():
         match = pattern.match(line)
@@ -822,12 +827,13 @@ def _load_plt_symbols(binary_path: Optional[str], base_adjust: int) -> Dict[int,
         plt_symbols[addr] = match.group(2)
     return plt_symbols
 
+
 def _install_external_fetch_skip_hook(
     uc,
     config: TraceConfig,
     arch_bits: int,
-    plt_symbols: Optional[Dict[int, str]] = None,
-    shared_state: Optional[dict] = None,
+    plt_symbols: dict[int, str] | None = None,
+    shared_state: dict | None = None,
 ) -> dict:
     """Skip external/libc calls (pre-call for PLT, fallback on unmapped fetch)."""
     pc_reg, sp_reg = get_pc_sp(arch_bits)
@@ -1002,9 +1008,7 @@ def _install_external_fetch_skip_hook(
         user_data["crash_context"] = None
         return True
 
-    def _hook_mem_read_unmapped(
-        uc_engine, _access, address, size, value, user_data
-    ):
+    def _hook_mem_read_unmapped(uc_engine, _access, address, size, value, user_data):
         _record_crash_context(
             user_data,
             "unmapped_read",
@@ -1015,9 +1019,7 @@ def _install_external_fetch_skip_hook(
         )
         return False
 
-    def _hook_mem_write_unmapped(
-        uc_engine, _access, address, size, value, user_data
-    ):
+    def _hook_mem_write_unmapped(uc_engine, _access, address, size, value, user_data):
         _record_crash_context(
             user_data,
             "unmapped_write",
@@ -1034,17 +1036,19 @@ def _install_external_fetch_skip_hook(
     uc.hook_add(UC_HOOK_MEM_WRITE_UNMAPPED, _hook_mem_write_unmapped, state)
     return state
 
-def _is_main_symbol(symbol: Optional[str]) -> bool:
+
+def _is_main_symbol(symbol: str | None) -> bool:
     if not symbol:
         return False
     s = symbol.strip()
     return s in {"main", "_main"}
 
+
 def _prepare_main_entry_context(
     uc,
     arch_bits: int,
     sp_reg: int,
-    symbol: Optional[str],
+    symbol: str | None,
     argc: int,
     argv_ptr: int,
     envp_ptr: int,
@@ -1084,13 +1088,15 @@ def _prepare_main_entry_context(
     )
     uc.reg_write(sp_reg, new_sp)
 
+
 # --- Raw binary tracing -----------------------------------------------------
 # Trace un blob brut: mappe le code, initialise la pile, installe les hooks,
 # exécute Unicorn, puis retourne snapshots + meta.
 
+
 def trace_raw(
-    code_bytes: bytes, config: TraceConfig, binary_path: Optional[str] = None
-) -> Dict[str, object]:
+    code_bytes: bytes, config: TraceConfig, binary_path: str | None = None
+) -> dict[str, object]:
     """@brief Trace un blob brut (raw) ou Mach-O.
     @param code_bytes Code machine a emuler.
     @param config Configuration de trace.
@@ -1223,7 +1229,7 @@ def trace_raw(
             config.stop_addr = stop_addr
 
     # Lancer l'émulation jusqu'à la fin du blob (ou erreur).
-    error: Optional[str] = None
+    error: str | None = None
     try:
         end_addr = load_base + len(code_bytes)
         uc.emu_start(start_addr, end_addr)
@@ -1273,13 +1279,15 @@ def trace_raw(
         },
     }
 
+
 # --- ELF tracing -------------------------------------------------------------
 # Trace un ELF: parse header, mappe segments, charge l'interpréteur (si besoin),
 # construit argv/auxv, exécute Unicorn, puis enrichit via addr2line.
 
+
 def trace_elf(
-    code_bytes: bytes, config: TraceConfig, binary_path: Optional[str]
-) -> Dict[str, object]:
+    code_bytes: bytes, config: TraceConfig, binary_path: str | None
+) -> dict[str, object]:
     """@brief Trace un binaire ELF.
     @param code_bytes Bytes ELF.
     @param config Configuration de trace.
@@ -1353,7 +1361,7 @@ def trace_elf(
         effective_interp_base = 0xF7000000
 
     # Plages du binaire principal uniquement (exclut ld-linux, libc) pour filtrer les snapshots.
-    binary_ranges: Optional[List[tuple]] = None
+    binary_ranges: list[tuple] | None = None
     if config.capture_ranges is not None:
         binary_ranges = [
             (base + ph["vaddr"], base + ph["vaddr"] + ph["memsz"])
@@ -1502,7 +1510,7 @@ def trace_elf(
         )
     end_addr = 0xFFFFFFFF if config.arch_bits == 32 else 0xFFFFFFFFFFFFFFFF
     # Lance l'émulation; tente fallback sur l'interpréteur si l'entry échoue.
-    error: Optional[str] = None
+    error: str | None = None
     try:
         uc.emu_start(start_addr, end_addr)
     except UcError as exc:
@@ -1586,9 +1594,10 @@ def trace_elf(
         },
     }
 
+
 def trace_binary(
-    code_bytes: bytes, config: TraceConfig, binary_path: Optional[str]
-) -> Dict[str, object]:
+    code_bytes: bytes, config: TraceConfig, binary_path: str | None
+) -> dict[str, object]:
     """@brief Selectionne la trace ELF ou raw/Mach-O.
     @param code_bytes Bytes du binaire.
     @param config Configuration de trace.

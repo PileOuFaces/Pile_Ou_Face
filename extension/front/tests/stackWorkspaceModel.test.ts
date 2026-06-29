@@ -8,8 +8,8 @@ describe('stackWorkspaceModel', () => {
   let resolveModelForFunctionSelection;
 
   before(async () => {
-    const coreModulePath = path.resolve(__dirname, '../webview/dynamic/app/stackWorkspaceCore.js');
-    const debugModulePath = path.resolve(__dirname, '../webview/dynamic/app/stackWorkspaceDebug.js');
+    const coreModulePath = path.resolve(__dirname, '../dynamic/app/stackWorkspaceCore.js');
+    const debugModulePath = path.resolve(__dirname, '../dynamic/app/stackWorkspaceDebug.js');
     ({ buildStackWorkspaceModel } = await import(pathToFileURL(coreModulePath).href));
     ({ resolveModelForFunction, resolveModelForFunctionSelection } = await import(pathToFileURL(debugModulePath).href));
   });
@@ -2890,7 +2890,7 @@ describe('stackWorkspaceModel', () => {
     let isInternalSymbol;
 
     before(async () => {
-      const modulePath = path.resolve(__dirname, '../webview/dynamic/app/stackWorkspaceCore.js');
+      const modulePath = path.resolve(__dirname, '../dynamic/app/stackWorkspaceCore.js');
       ({ buildFunctionList, isInternalSymbol } = await import(pathToFileURL(modulePath).href));
     });
 

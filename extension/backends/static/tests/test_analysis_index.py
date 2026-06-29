@@ -15,8 +15,8 @@ from backends.static.cache.cache import DisasmCache
 from backends.static.tests.util import compile_minimal_elf
 
 try:
-    import lief as _lief
     import capstone as _capstone
+    import lief as _lief
 
     _DISASM_AVAILABLE = True
 except ImportError:
@@ -33,7 +33,9 @@ class TestAnalysisIndex(unittest.TestCase):
                 self.skipTest("gcc non disponible")
 
             cache_db = tmp_path / "analysis.pfdb"
-            result = build_analysis_index(str(binary), cache_db=str(cache_db), force=True)
+            result = build_analysis_index(
+                str(binary), cache_db=str(cache_db), force=True
+            )
 
             self.assertEqual(result["binary"], str(binary))
             self.assertEqual(result["cache_db"], str(cache_db))

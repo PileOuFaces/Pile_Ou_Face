@@ -13,7 +13,9 @@ from backends.static.binary.binary_metadata_model import emit_binary_metadata_js
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Build normalized binary metadata JSON")
+    parser = argparse.ArgumentParser(
+        description="Build normalized binary metadata JSON"
+    )
     parser.add_argument("binary", help="Path to ELF/Mach-O/PE binary")
     args = parser.parse_args(argv)
     sys.stdout.write(emit_binary_metadata_json(args.binary))

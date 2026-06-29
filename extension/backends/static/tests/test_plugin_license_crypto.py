@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 from __future__ import annotations
+
 import base64
 import contextlib
 import json
 import os
 import tempfile
 import unittest
+from datetime import UTC
 from pathlib import Path
 from unittest import mock
 
@@ -52,7 +54,9 @@ class TestVerifyLicenseSignatureCryptography(unittest.TestCase):
 
         payload = b'{"plugin_id":"test","licensee":"Alice"}'
         sig_b64 = _sign_payload_pss(self.private_key, payload)
-        ok, msg = _verify_license_signature_pure(None, self.public_pem, payload, sig_b64)
+        ok, msg = _verify_license_signature_pure(
+            None, self.public_pem, payload, sig_b64
+        )
         self.assertTrue(ok)
         self.assertEqual(msg, "")
 
@@ -68,7 +72,9 @@ class TestVerifyLicenseSignatureCryptography(unittest.TestCase):
     def test_invalid_base64_signature_rejected(self):
         from backends.plugins.license import _verify_license_signature_pure
 
-        ok, _ = _verify_license_signature_pure(None, self.public_pem, b"payload", "!!!notbase64!!!")
+        ok, _ = _verify_license_signature_pure(
+            None, self.public_pem, b"payload", "!!!notbase64!!!"
+        )
         self.assertFalse(ok)
 
     def test_no_public_key_rejected(self):
@@ -80,8 +86,9 @@ class TestVerifyLicenseSignatureCryptography(unittest.TestCase):
 
 class TestUnwrapContentKeyAesGcm(unittest.TestCase):
     def test_content_key_plain_returned_directly(self):
-        from backends.plugins.license import _unwrap_content_key
         import os
+
+        from backends.plugins.license import _unwrap_content_key
 
         original = base64.b64encode(os.urandom(32)).decode()
         payload = {"content_key": original}
@@ -91,19 +98,21 @@ class TestUnwrapContentKeyAesGcm(unittest.TestCase):
 
 class TestIssuedAtSeal(unittest.TestCase):
     def test_issued_at_in_future_beyond_tolerance_rejected(self):
-        from backends.plugins.license import _check_issued_at_seal
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta
 
-        future = (datetime.now(timezone.utc) + timedelta(hours=48)).isoformat()
+        from backends.plugins.license import _check_issued_at_seal
+
+        future = (datetime.now(UTC) + timedelta(hours=48)).isoformat()
         ok, msg = _check_issued_at_seal(future)
         self.assertFalse(ok)
         self.assertIn("futur", msg.lower())
 
     def test_issued_at_within_tolerance_accepted(self):
-        from backends.plugins.license import _check_issued_at_seal
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta
 
-        slight_future = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat()
+        from backends.plugins.license import _check_issued_at_seal
+
+        slight_future = (datetime.now(UTC) + timedelta(minutes=30)).isoformat()
         ok, _ = _check_issued_at_seal(slight_future)
         self.assertTrue(ok)
 
@@ -114,36 +123,40 @@ class TestIssuedAtSeal(unittest.TestCase):
         self.assertTrue(ok)
 
     def test_issued_at_past_accepted(self):
-        from backends.plugins.license import _check_issued_at_seal
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta
 
-        past = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        from backends.plugins.license import _check_issued_at_seal
+
+        past = (datetime.now(UTC) - timedelta(days=30)).isoformat()
         ok, _ = _check_issued_at_seal(past)
         self.assertTrue(ok)
 
 
 class TestGracePeriod(unittest.TestCase):
     def test_expires_yesterday_is_grace(self):
-        from backends.plugins.license import _check_expiry_with_grace
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta
 
-        yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        from backends.plugins.license import _check_expiry_with_grace
+
+        yesterday = (datetime.now(UTC) - timedelta(days=1)).isoformat()
         status, _ = _check_expiry_with_grace(yesterday)
         self.assertEqual(status, "grace")
 
     def test_expires_8_days_ago_is_expired(self):
-        from backends.plugins.license import _check_expiry_with_grace
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta
 
-        old = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat()
+        from backends.plugins.license import _check_expiry_with_grace
+
+        old = (datetime.now(UTC) - timedelta(days=8)).isoformat()
         status, _ = _check_expiry_with_grace(old)
         self.assertEqual(status, "expired")
 
     def test_not_yet_expired_is_none(self):
-        from backends.plugins.license import _check_expiry_with_grace
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta
 
-        future = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+        from backends.plugins.license import _check_expiry_with_grace
+
+        future = (datetime.now(UTC) + timedelta(days=30)).isoformat()
         status, _ = _check_expiry_with_grace(future)
         self.assertIsNone(status)
 
@@ -157,30 +170,36 @@ class TestGracePeriod(unittest.TestCase):
 class TestLastVerifiedAntiClock(unittest.TestCase):
     def test_write_and_read_last_verified(self):
         import tempfile
-        from unittest import mock
         from pathlib import Path
-        from backends.plugins.license import _write_last_verified, _check_clock_skew
+        from unittest import mock
 
-        with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch(
+        from backends.plugins.license import _check_clock_skew, _write_last_verified
+
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch(
                 "backends.plugins.license.compute_key_material", return_value=b"A" * 32
-            ):
-                _write_last_verified("pof.test", Path(tmp))
-                status, _ = _check_clock_skew("pof.test", Path(tmp))
-                self.assertIsNone(status)  # clock ok
+            ),
+        ):
+            _write_last_verified("pof.test", Path(tmp))
+            status, _ = _check_clock_skew("pof.test", Path(tmp))
+            self.assertIsNone(status)  # clock ok
 
     def test_clock_rolled_back_detected(self):
-        import tempfile
         import json
-        from unittest import mock
-        from datetime import datetime, timezone, timedelta
+        import tempfile
+        from datetime import datetime, timedelta
         from pathlib import Path
+        from unittest import mock
+
         from backends.plugins.license import _check_clock_skew, _hmac_last_verified
 
         with tempfile.TemporaryDirectory() as tmp:
             km = b"B" * 32
-            with mock.patch("backends.plugins.license.compute_key_material", return_value=km):
-                future_ts = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+            with mock.patch(
+                "backends.plugins.license.compute_key_material", return_value=km
+            ):
+                future_ts = (datetime.now(UTC) + timedelta(hours=2)).isoformat()
                 plugin_id = "pof.test"
                 data = {
                     "ts": future_ts,
@@ -195,6 +214,7 @@ class TestLastVerifiedAntiClock(unittest.TestCase):
     def test_corrupted_last_verified_ignored(self):
         import tempfile
         from pathlib import Path
+
         from backends.plugins.license import _check_clock_skew
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -204,15 +224,16 @@ class TestLastVerifiedAntiClock(unittest.TestCase):
             self.assertIsNone(status)  # no false lock
 
     def test_hmac_mismatch_file_ignored(self):
-        import tempfile
         import json
-        from unittest import mock
-        from datetime import datetime, timezone
+        import tempfile
+        from datetime import datetime
         from pathlib import Path
+        from unittest import mock
+
         from backends.plugins.license import _check_clock_skew
 
         with tempfile.TemporaryDirectory() as tmp:
-            ts = datetime.now(timezone.utc).isoformat()
+            ts = datetime.now(UTC).isoformat()
             data = {"ts": ts, "plugin_id": "pof.test", "hmac": "badhmacsignature"}
             lv_path = Path(tmp) / ".last_verified_pof_test"
             lv_path.write_text(json.dumps(data), encoding="utf-8")
@@ -225,9 +246,10 @@ class TestLastVerifiedAntiClock(unittest.TestCase):
 
 class TestPayloadHmac(unittest.TestCase):
     def test_hmac_valid_accepted(self):
-        import hmac as _hmac_mod
         import hashlib
+        import hmac as _hmac_mod
         import os
+
         from backends.plugins.runtime import _verify_payload_hmac
 
         content_key = "dGVzdGtleTE="  # base64 of "testkey1"
@@ -238,6 +260,7 @@ class TestPayloadHmac(unittest.TestCase):
 
     def test_hmac_mismatch_rejected(self):
         import os
+
         from backends.plugins.runtime import _verify_payload_hmac
 
         data = os.urandom(64)
@@ -259,13 +282,14 @@ class TestHmacSha256InLicense(unittest.TestCase):
         import tempfile
         from pathlib import Path
         from unittest import mock
+
         from backends.plugins.license import evaluate_plugin_license
         from backends.plugins.manifest import (
-            PluginManifest,
             PluginDistribution,
             PluginEntrypoints,
             PluginHostRequirements,
             PluginLicensing,
+            PluginManifest,
         )
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -314,7 +338,10 @@ class TestHmacSha256InLicense(unittest.TestCase):
                     return_value=(True, ""),
                 ),
                 mock.patch("backends.plugins.license._write_last_verified"),
-                mock.patch("backends.plugins.license._check_clock_skew", return_value=(None, "")),
+                mock.patch(
+                    "backends.plugins.license._check_clock_skew",
+                    return_value=(None, ""),
+                ),
             ):
                 return evaluate_plugin_license(manifest, search_paths=[tmp_path])
 
@@ -340,6 +367,7 @@ class TestRuntimeAesGcmDecryption(unittest.TestCase):
         import hashlib as _hashlib
         import io
         import zipfile as _zipfile
+
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
         buf = io.BytesIO()
@@ -362,16 +390,18 @@ class TestRuntimeAesGcmDecryption(unittest.TestCase):
         }
         meta_dir = bundle_dir / "metadata"
         meta_dir.mkdir()
-        (meta_dir / "encryption.json").write_text(json.dumps(encryption_meta), encoding="utf-8")
+        (meta_dir / "encryption.json").write_text(
+            json.dumps(encryption_meta), encoding="utf-8"
+        )
         return bundle_dir
 
     def _make_manifest(self, bundle_dir: Path):
         from backends.plugins.manifest import (
-            PluginManifest,
             PluginDistribution,
             PluginEntrypoints,
             PluginHostRequirements,
             PluginLicensing,
+            PluginManifest,
         )
 
         return PluginManifest(
@@ -392,8 +422,9 @@ class TestRuntimeAesGcmDecryption(unittest.TestCase):
 
     def test_aes_gcm_bundle_decrypts_successfully(self):
         from unittest import mock
-        from backends.plugins.runtime import _resolve_effective_plugin_root
+
         from backends.plugins.license import PluginLicenseEvaluation
+        from backends.plugins.runtime import _resolve_effective_plugin_root
 
         content_key = base64.b64encode(os.urandom(32)).decode()
 
@@ -401,17 +432,21 @@ class TestRuntimeAesGcmDecryption(unittest.TestCase):
             tmp_path = Path(tmp)
             bundle_dir = self._make_gcm_bundle(tmp_path, content_key)
             manifest = self._make_manifest(bundle_dir)
-            evaluation = PluginLicenseEvaluation(status="unlocked", content_key=content_key)
+            evaluation = PluginLicenseEvaluation(
+                status="unlocked", content_key=content_key
+            )
             with mock.patch(
-                "backends.plugins.runtime.evaluate_plugin_license", return_value=evaluation
+                "backends.plugins.runtime.evaluate_plugin_license",
+                return_value=evaluation,
             ):
                 plugin_root = _resolve_effective_plugin_root(manifest)
             assert (plugin_root / "manifest.json").exists()
 
     def test_aes_gcm_tampered_ciphertext_raises(self):
         from unittest import mock
-        from backends.plugins.runtime import _resolve_effective_plugin_root
+
         from backends.plugins.license import PluginLicenseEvaluation
+        from backends.plugins.runtime import _resolve_effective_plugin_root
 
         content_key = base64.b64encode(os.urandom(32)).decode()
 
@@ -423,12 +458,17 @@ class TestRuntimeAesGcmDecryption(unittest.TestCase):
             data[0] ^= 0xFF
             enc_path.write_bytes(bytes(data))
             manifest = self._make_manifest(bundle_dir)
-            evaluation = PluginLicenseEvaluation(status="unlocked", content_key=content_key)
-            with mock.patch(
-                "backends.plugins.runtime.evaluate_plugin_license", return_value=evaluation
+            evaluation = PluginLicenseEvaluation(
+                status="unlocked", content_key=content_key
+            )
+            with (
+                mock.patch(
+                    "backends.plugins.runtime.evaluate_plugin_license",
+                    return_value=evaluation,
+                ),
+                self.assertRaises(RuntimeError),
             ):
-                with self.assertRaises(RuntimeError):
-                    _resolve_effective_plugin_root(manifest)
+                _resolve_effective_plugin_root(manifest)
 
 
 # ---------------------------------------------------------------------------
@@ -440,14 +480,20 @@ class _LicenseEvalBase(unittest.TestCase):
     """Helpers shared by security tests for evaluate_plugin_license."""
 
     def _make_manifest(
-        self, tmp_path, *, plugin_id="pof.test", required=True, public_pem="", license_filename=""
+        self,
+        tmp_path,
+        *,
+        plugin_id="pof.test",
+        required=True,
+        public_pem="",
+        license_filename="",
     ):
         from backends.plugins.manifest import (
-            PluginManifest,
             PluginDistribution,
             PluginEntrypoints,
             PluginHostRequirements,
             PluginLicensing,
+            PluginManifest,
         )
 
         manifest_path = tmp_path / "manifest.json"
@@ -523,7 +569,9 @@ class TestEvaluatePluginLicenseSecurityPaths(_LicenseEvalBase):
         with tempfile.TemporaryDirectory() as tmp:
             manifest = self._make_manifest(Path(tmp))
             result = evaluate_plugin_license(
-                manifest, env={"POF_CONTENT_KEY_POF_TEST": "mycontentkey"}, search_paths=[]
+                manifest,
+                env={"POF_CONTENT_KEY_POF_TEST": "mycontentkey"},
+                search_paths=[],
             )
         self.assertEqual(result.status, "active")
         self.assertEqual(result.content_key, "mycontentkey")
@@ -534,7 +582,9 @@ class TestEvaluatePluginLicenseSecurityPaths(_LicenseEvalBase):
         from backends.plugins.license import evaluate_plugin_license
 
         with tempfile.TemporaryDirectory() as tmp:
-            manifest = self._make_manifest(Path(tmp), plugin_id="pof.vulnerability-audit-pro")
+            manifest = self._make_manifest(
+                Path(tmp), plugin_id="pof.vulnerability-audit-pro"
+            )
             result = evaluate_plugin_license(
                 manifest,
                 env={"POF_CONTENT_KEY_POF_VULNERABILITY_AUDIT_PRO": "secretkey"},
@@ -610,9 +660,13 @@ class TestEvaluatePluginLicenseSecurityPaths(_LicenseEvalBase):
             tmp_path = Path(tmp)
             license_dir = tmp_path / "licenses"
             license_dir.mkdir()
-            (license_dir / "pof.test.license.json").write_text("not valid json{{", encoding="utf-8")
+            (license_dir / "pof.test.license.json").write_text(
+                "not valid json{{", encoding="utf-8"
+            )
             manifest = self._make_manifest(tmp_path, public_pem="placeholder")
-            result = evaluate_plugin_license(manifest, env={}, search_paths=[license_dir])
+            result = evaluate_plugin_license(
+                manifest, env={}, search_paths=[license_dir]
+            )
         self.assertEqual(result.status, "locked")
         self.assertIn("illisible", result.message.lower())
 
@@ -628,7 +682,9 @@ class TestEvaluatePluginLicenseSecurityPaths(_LicenseEvalBase):
                 '["not", "a", "dict"]', encoding="utf-8"
             )
             manifest = self._make_manifest(tmp_path, public_pem="placeholder")
-            result = evaluate_plugin_license(manifest, env={}, search_paths=[license_dir])
+            result = evaluate_plugin_license(
+                manifest, env={}, search_paths=[license_dir]
+            )
         self.assertEqual(result.status, "locked")
 
     def test_plugin_id_mismatch_returns_locked(self):
@@ -650,7 +706,9 @@ class TestEvaluatePluginLicenseSecurityPaths(_LicenseEvalBase):
                 encoding="utf-8",
             )
             manifest = self._make_manifest(tmp_path, public_pem="placeholder")
-            result = evaluate_plugin_license(manifest, env={}, search_paths=[license_dir])
+            result = evaluate_plugin_license(
+                manifest, env={}, search_paths=[license_dir]
+            )
         self.assertEqual(result.status, "locked")
         self.assertIn("correspond", result.message.lower())
 
@@ -667,7 +725,9 @@ class TestEvaluatePluginLicenseSecurityPaths(_LicenseEvalBase):
                 encoding="utf-8",
             )
             manifest = self._make_manifest(tmp_path, public_pem="placeholder")
-            result = evaluate_plugin_license(manifest, env={}, search_paths=[license_dir])
+            result = evaluate_plugin_license(
+                manifest, env={}, search_paths=[license_dir]
+            )
         self.assertEqual(result.status, "locked")
         self.assertIn("signature", result.message.lower())
 
@@ -679,7 +739,8 @@ class TestEvaluatePluginLicenseSecurityPaths(_LicenseEvalBase):
         public_pem = (
             private_key.public_key()
             .public_bytes(
-                serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+                serialization.Encoding.PEM,
+                serialization.PublicFormat.SubjectPublicKeyInfo,
             )
             .decode()
         )
@@ -689,7 +750,9 @@ class TestEvaluatePluginLicenseSecurityPaths(_LicenseEvalBase):
             license_dir.mkdir()
             self._write_license(license_dir)  # dummy sig = base64.b64encode(b"dummy")
             manifest = self._make_manifest(tmp_path, public_pem=public_pem)
-            result = evaluate_plugin_license(manifest, env={}, search_paths=[license_dir])
+            result = evaluate_plugin_license(
+                manifest, env={}, search_paths=[license_dir]
+            )
         self.assertEqual(result.status, "locked")
 
     def test_valid_license_returns_unlocked_with_content_key_and_features(self):
@@ -706,7 +769,9 @@ class TestEvaluatePluginLicenseSecurityPaths(_LicenseEvalBase):
             )
             manifest = self._make_manifest(tmp_path, public_pem="placeholder")
             with self._sig_clock_mocks():
-                result = evaluate_plugin_license(manifest, env={}, search_paths=[license_dir])
+                result = evaluate_plugin_license(
+                    manifest, env={}, search_paths=[license_dir]
+                )
         self.assertEqual(result.status, "unlocked")
         self.assertEqual(result.content_key, expected_key)
         self.assertEqual(result.features, ["feat.a", "feat.b"])
@@ -714,10 +779,11 @@ class TestEvaluatePluginLicenseSecurityPaths(_LicenseEvalBase):
 
     def test_expired_license_returns_expired_with_empty_content_key(self):
         """License expired > 7 days ago → status=expired, content_key=''."""
-        from backends.plugins.license import evaluate_plugin_license
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta
 
-        old = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+        from backends.plugins.license import evaluate_plugin_license
+
+        old = (datetime.now(UTC) - timedelta(days=10)).isoformat()
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             license_dir = tmp_path / "licenses"
@@ -725,35 +791,43 @@ class TestEvaluatePluginLicenseSecurityPaths(_LicenseEvalBase):
             self._write_license(license_dir, expires_at=old)
             manifest = self._make_manifest(tmp_path, public_pem="placeholder")
             with self._sig_clock_mocks():
-                result = evaluate_plugin_license(manifest, env={}, search_paths=[license_dir])
+                result = evaluate_plugin_license(
+                    manifest, env={}, search_paths=[license_dir]
+                )
         self.assertEqual(result.status, "expired")
         self.assertEqual(result.content_key, "")
         self.assertTrue(result.verified)  # signature was valid
 
     def test_grace_period_returns_grace_status_with_content_key(self):
         """License expired 1 day ago → status=grace, content_key still provided."""
-        from backends.plugins.license import evaluate_plugin_license
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta
 
-        yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        from backends.plugins.license import evaluate_plugin_license
+
+        yesterday = (datetime.now(UTC) - timedelta(days=1)).isoformat()
         expected_key = base64.b64encode(b"C" * 32).decode()
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             license_dir = tmp_path / "licenses"
             license_dir.mkdir()
-            self._write_license(license_dir, expires_at=yesterday, content_key=expected_key)
+            self._write_license(
+                license_dir, expires_at=yesterday, content_key=expected_key
+            )
             manifest = self._make_manifest(tmp_path, public_pem="placeholder")
             with self._sig_clock_mocks():
-                result = evaluate_plugin_license(manifest, env={}, search_paths=[license_dir])
+                result = evaluate_plugin_license(
+                    manifest, env={}, search_paths=[license_dir]
+                )
         self.assertEqual(result.status, "grace")
         self.assertEqual(result.content_key, expected_key)
 
     def test_issued_at_in_future_returns_locked(self):
         """issued_at 48h in future → locked (seal check)."""
-        from backends.plugins.license import evaluate_plugin_license
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta
 
-        future = (datetime.now(timezone.utc) + timedelta(hours=48)).isoformat()
+        from backends.plugins.license import evaluate_plugin_license
+
+        future = (datetime.now(UTC) + timedelta(hours=48)).isoformat()
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             license_dir = tmp_path / "licenses"
@@ -765,9 +839,14 @@ class TestEvaluatePluginLicenseSecurityPaths(_LicenseEvalBase):
                     "backends.plugins.license._verify_license_signature_pure",
                     return_value=(True, ""),
                 ),
-                mock.patch("backends.plugins.license._check_clock_skew", return_value=(None, "")),
+                mock.patch(
+                    "backends.plugins.license._check_clock_skew",
+                    return_value=(None, ""),
+                ),
             ):
-                result = evaluate_plugin_license(manifest, env={}, search_paths=[license_dir])
+                result = evaluate_plugin_license(
+                    manifest, env={}, search_paths=[license_dir]
+                )
         self.assertEqual(result.status, "locked")
         self.assertIn("futur", result.message.lower())
 
@@ -782,7 +861,9 @@ class TestEvaluatePluginLicenseSecurityPaths(_LicenseEvalBase):
             self._write_license(license_dir, features=["  ", "valid.feature", ""])
             manifest = self._make_manifest(tmp_path, public_pem="placeholder")
             with self._sig_clock_mocks():
-                result = evaluate_plugin_license(manifest, env={}, search_paths=[license_dir])
+                result = evaluate_plugin_license(
+                    manifest, env={}, search_paths=[license_dir]
+                )
         self.assertEqual(result.features, ["valid.feature"])
 
     def test_content_key_absent_in_license_returns_empty(self):
@@ -796,7 +877,9 @@ class TestEvaluatePluginLicenseSecurityPaths(_LicenseEvalBase):
             self._write_license(license_dir, content_key="")
             manifest = self._make_manifest(tmp_path, public_pem="placeholder")
             with self._sig_clock_mocks():
-                result = evaluate_plugin_license(manifest, env={}, search_paths=[license_dir])
+                result = evaluate_plugin_license(
+                    manifest, env={}, search_paths=[license_dir]
+                )
         self.assertEqual(result.content_key, "")
 
     def test_clock_tampered_returns_clock_tampered_status(self):
@@ -819,7 +902,9 @@ class TestEvaluatePluginLicenseSecurityPaths(_LicenseEvalBase):
                     return_value=("clock_tampered", "Horloge modifiée."),
                 ),
             ):
-                result = evaluate_plugin_license(manifest, env={}, search_paths=[license_dir])
+                result = evaluate_plugin_license(
+                    manifest, env={}, search_paths=[license_dir]
+                )
         self.assertEqual(result.status, "clock_tampered")
 
 
@@ -835,7 +920,8 @@ class TestVerifyLicenseSignaturePureEdgeCases(unittest.TestCase):
         self.public_pem = (
             private_key.public_key()
             .public_bytes(
-                serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+                serialization.Encoding.PEM,
+                serialization.PublicFormat.SubjectPublicKeyInfo,
             )
             .decode()
         )
@@ -847,7 +933,9 @@ class TestVerifyLicenseSignaturePureEdgeCases(unittest.TestCase):
         payload = b'{"plugin_id":"pof.test","licensee":"Alice"}'
         sig = self.private_key.sign(payload, padding.PKCS1v15(), hashes.SHA256())
         sig_b64 = base64.b64encode(sig).decode()
-        ok, msg = _verify_license_signature_pure(None, self.public_pem, payload, sig_b64)
+        ok, msg = _verify_license_signature_pure(
+            None, self.public_pem, payload, sig_b64
+        )
         self.assertTrue(ok)
         self.assertEqual(msg, "")
 
@@ -859,7 +947,9 @@ class TestVerifyLicenseSignaturePureEdgeCases(unittest.TestCase):
         payload = b'{"plugin_id":"pof.test"}'
         sig = other_key.sign(
             payload,
-            padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH
+            ),
             hashes.SHA256(),
         )
         sig_b64 = base64.b64encode(sig).decode()
@@ -870,25 +960,33 @@ class TestVerifyLicenseSignaturePureEdgeCases(unittest.TestCase):
         """Invalid PEM content → False with 'invalide' in message."""
         from backends.plugins.license import _verify_license_signature_pure
 
-        garbage_pem = "-----BEGIN PUBLIC KEY-----\ngarbage==\n-----END PUBLIC KEY-----\n"
-        ok, msg = _verify_license_signature_pure(None, garbage_pem, b"payload", "aGVsbG8=")
+        garbage_pem = (
+            "-----BEGIN PUBLIC KEY-----\ngarbage==\n-----END PUBLIC KEY-----\n"
+        )
+        ok, msg = _verify_license_signature_pure(
+            None, garbage_pem, b"payload", "aGVsbG8="
+        )
         self.assertFalse(ok)
         self.assertIn("invalide", msg.lower())
 
     def test_non_rsa_ec_key_rejected(self):
         """EC public key (not RSA) → False with 'rsa' in message."""
-        from backends.plugins.license import _verify_license_signature_pure
         from cryptography.hazmat.primitives.asymmetric import ec
+
+        from backends.plugins.license import _verify_license_signature_pure
 
         ec_key = ec.generate_private_key(ec.SECP256R1())
         ec_pub_pem = (
             ec_key.public_key()
             .public_bytes(
-                serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+                serialization.Encoding.PEM,
+                serialization.PublicFormat.SubjectPublicKeyInfo,
             )
             .decode()
         )
-        ok, msg = _verify_license_signature_pure(None, ec_pub_pem, b"payload", "aGVsbG8=")
+        ok, msg = _verify_license_signature_pure(
+            None, ec_pub_pem, b"payload", "aGVsbG8="
+        )
         self.assertFalse(ok)
         self.assertIn("rsa", msg.lower())
 
@@ -899,7 +997,9 @@ class TestVerifyLicenseSignaturePureEdgeCases(unittest.TestCase):
         payload = b'{"plugin_id":"pof.test"}'
         sig = self.private_key.sign(
             payload,
-            padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH
+            ),
             hashes.SHA256(),
         )
         sig_b64 = base64.b64encode(sig).decode()
@@ -929,33 +1029,33 @@ class TestVerifyLicenseSignaturePureEdgeCases(unittest.TestCase):
 class TestParseDatetimeEdgeCases(unittest.TestCase):
     def test_date_only_format_parsed_as_utc_midnight(self):
         """'2025-06-01' → UTC midnight datetime."""
+
         from backends.plugins.license import _parse_datetime
-        from datetime import timezone
 
         result = _parse_datetime("2025-06-01")
         assert result is not None
         self.assertEqual(result.year, 2025)
         self.assertEqual(result.month, 6)
         self.assertEqual(result.day, 1)
-        self.assertEqual(result.tzinfo, timezone.utc)
+        self.assertEqual(result.tzinfo, UTC)
 
     def test_z_suffix_parsed_as_utc(self):
         """'2025-01-01T00:00:00Z' → UTC datetime."""
+
         from backends.plugins.license import _parse_datetime
-        from datetime import timezone
 
         result = _parse_datetime("2025-01-01T00:00:00Z")
         assert result is not None
-        self.assertEqual(result.tzinfo, timezone.utc)
+        self.assertEqual(result.tzinfo, UTC)
 
     def test_naive_datetime_assumed_utc(self):
         """'2025-01-01T12:00:00' (no tz) → UTC."""
+
         from backends.plugins.license import _parse_datetime
-        from datetime import timezone
 
         result = _parse_datetime("2025-01-01T12:00:00")
         assert result is not None
-        self.assertEqual(result.tzinfo, timezone.utc)
+        self.assertEqual(result.tzinfo, UTC)
         self.assertEqual(result.hour, 12)
 
     def test_empty_string_returns_none(self):
@@ -982,37 +1082,41 @@ class TestParseDatetimeEdgeCases(unittest.TestCase):
 class TestGracePeriodBoundaryEdgeCases(unittest.TestCase):
     def test_not_yet_expired_returns_none(self):
         """expires_at one second in the future → not expired (None)."""
-        from backends.plugins.license import _check_expiry_with_grace
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta
 
-        future = (datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat()
+        from backends.plugins.license import _check_expiry_with_grace
+
+        future = (datetime.now(UTC) + timedelta(seconds=1)).isoformat()
         status, _ = _check_expiry_with_grace(future)
         self.assertIsNone(status)
 
     def test_one_second_past_expiry_is_grace(self):
         """expires_at one second ago → grace period."""
-        from backends.plugins.license import _check_expiry_with_grace
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta
 
-        just_expired = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+        from backends.plugins.license import _check_expiry_with_grace
+
+        just_expired = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
         status, _ = _check_expiry_with_grace(just_expired)
         self.assertEqual(status, "grace")
 
     def test_six_days_past_expiry_is_still_grace(self):
         """expires_at 6 days ago → grace."""
-        from backends.plugins.license import _check_expiry_with_grace
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta
 
-        six_days_ago = (datetime.now(timezone.utc) - timedelta(days=6)).isoformat()
+        from backends.plugins.license import _check_expiry_with_grace
+
+        six_days_ago = (datetime.now(UTC) - timedelta(days=6)).isoformat()
         status, _ = _check_expiry_with_grace(six_days_ago)
         self.assertEqual(status, "grace")
 
     def test_past_grace_period_is_expired(self):
         """expires_at 7 days + 1 second ago → expired (past grace period)."""
-        from backends.plugins.license import _check_expiry_with_grace
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta
 
-        past_grace = (datetime.now(timezone.utc) - timedelta(days=7, seconds=1)).isoformat()
+        from backends.plugins.license import _check_expiry_with_grace
+
+        past_grace = (datetime.now(UTC) - timedelta(days=7, seconds=1)).isoformat()
         status, _ = _check_expiry_with_grace(past_grace)
         self.assertEqual(status, "expired")
 
@@ -1025,10 +1129,11 @@ class TestGracePeriodBoundaryEdgeCases(unittest.TestCase):
 
     def test_grace_message_includes_days_remaining(self):
         """Grace message mentions how many days are left."""
-        from backends.plugins.license import _check_expiry_with_grace
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta
 
-        three_days_ago = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+        from backends.plugins.license import _check_expiry_with_grace
+
+        three_days_ago = (datetime.now(UTC) - timedelta(days=3)).isoformat()
         status, msg = _check_expiry_with_grace(three_days_ago)
         self.assertEqual(status, "grace")
         self.assertIn("jour", msg.lower())
@@ -1042,19 +1147,21 @@ class TestGracePeriodBoundaryEdgeCases(unittest.TestCase):
 class TestIssuedAtSealEdgeCases(unittest.TestCase):
     def test_within_tolerance_is_accepted(self):
         """issued_at 23h 59m in the future → within 24h tolerance → accepted."""
-        from backends.plugins.license import _check_issued_at_seal
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta
 
-        within = (datetime.now(timezone.utc) + timedelta(hours=23, minutes=59)).isoformat()
+        from backends.plugins.license import _check_issued_at_seal
+
+        within = (datetime.now(UTC) + timedelta(hours=23, minutes=59)).isoformat()
         ok, _ = _check_issued_at_seal(within)
         self.assertTrue(ok)
 
     def test_beyond_tolerance_is_rejected(self):
         """issued_at 25h in the future → beyond 24h tolerance → rejected."""
-        from backends.plugins.license import _check_issued_at_seal
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta
 
-        beyond = (datetime.now(timezone.utc) + timedelta(hours=25)).isoformat()
+        from backends.plugins.license import _check_issued_at_seal
+
+        beyond = (datetime.now(UTC) + timedelta(hours=25)).isoformat()
         ok, msg = _check_issued_at_seal(beyond)
         self.assertFalse(ok)
         self.assertIn("futur", msg.lower())
@@ -1107,14 +1214,20 @@ class TestEnvFlagEnabled(unittest.TestCase):
 
 class TestInstallLicenseSecurity(unittest.TestCase):
     def test_source_file_not_found_raises(self):
-        from backends.plugins.install_license import install_license, PluginLicenseInstallError
+        from backends.plugins.install_license import (
+            PluginLicenseInstallError,
+            install_license,
+        )
 
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(PluginLicenseInstallError):
                 install_license(Path(tmp) / "nonexistent.json", Path(tmp) / "licenses")
 
     def test_invalid_json_raises(self):
-        from backends.plugins.install_license import install_license, PluginLicenseInstallError
+        from backends.plugins.install_license import (
+            PluginLicenseInstallError,
+            install_license,
+        )
 
         with tempfile.TemporaryDirectory() as tmp:
             src = Path(tmp) / "bad.json"
@@ -1123,7 +1236,10 @@ class TestInstallLicenseSecurity(unittest.TestCase):
                 install_license(src, Path(tmp) / "licenses")
 
     def test_missing_plugin_id_raises(self):
-        from backends.plugins.install_license import install_license, PluginLicenseInstallError
+        from backends.plugins.install_license import (
+            PluginLicenseInstallError,
+            install_license,
+        )
 
         with tempfile.TemporaryDirectory() as tmp:
             src = Path(tmp) / "license.json"
@@ -1133,7 +1249,10 @@ class TestInstallLicenseSecurity(unittest.TestCase):
             self.assertIn("plugin_id", str(ctx.exception))
 
     def test_missing_signature_raises(self):
-        from backends.plugins.install_license import install_license, PluginLicenseInstallError
+        from backends.plugins.install_license import (
+            PluginLicenseInstallError,
+            install_license,
+        )
 
         with tempfile.TemporaryDirectory() as tmp:
             src = Path(tmp) / "license.json"
@@ -1143,7 +1262,10 @@ class TestInstallLicenseSecurity(unittest.TestCase):
             self.assertIn("signature", str(ctx.exception))
 
     def test_non_dict_json_raises(self):
-        from backends.plugins.install_license import install_license, PluginLicenseInstallError
+        from backends.plugins.install_license import (
+            PluginLicenseInstallError,
+            install_license,
+        )
 
         with tempfile.TemporaryDirectory() as tmp:
             src = Path(tmp) / "license.json"
@@ -1197,7 +1319,9 @@ class TestDefaultLicenseSearchPathsEdgeCases(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             extra = Path(tmp) / "extra-licenses"
             env = {"BINHOST_LICENSE_PATH": str(extra)}
-            paths = default_license_search_paths(cwd="/tmp/project", home="/tmp/home", env=env)
+            paths = default_license_search_paths(
+                cwd="/tmp/project", home="/tmp/home", env=env
+            )
         self.assertIn(extra, paths)
 
     def test_multiple_extra_paths_via_os_pathsep(self):
@@ -1208,7 +1332,9 @@ class TestDefaultLicenseSearchPathsEdgeCases(unittest.TestCase):
             dir_a = Path(tmp) / "dir_a"
             dir_b = Path(tmp) / "dir_b"
             env = {"BINHOST_LICENSE_PATH": f"{dir_a}{os.pathsep}{dir_b}"}
-            paths = default_license_search_paths(cwd="/tmp/project", home="/tmp/home", env=env)
+            paths = default_license_search_paths(
+                cwd="/tmp/project", home="/tmp/home", env=env
+            )
         self.assertIn(dir_a, paths)
         self.assertIn(dir_b, paths)
 
@@ -1219,7 +1345,9 @@ class TestDefaultLicenseSearchPathsEdgeCases(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp) / "home"
             cwd = Path(tmp) / "project"
-            extra = home / ".pile-ou-face" / "licenses"  # same as default when no workspace
+            extra = (
+                home / ".pile-ou-face" / "licenses"
+            )  # same as default when no workspace
             env = {"BINHOST_LICENSE_PATH": f"{extra}{os.pathsep}{extra}"}
             paths = default_license_search_paths(cwd=cwd, home=home, env=env)
         path_strs = [str(p) for p in paths]

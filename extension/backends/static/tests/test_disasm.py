@@ -19,12 +19,11 @@ from backends.static.disasm.disasm import (
     disassemble,
     disassemble_with_capstone,
 )
-
 from backends.static.tests.util import compile_minimal_elf
 
 try:
-    import lief as _lief
     import capstone as _capstone
+    import lief as _lief
 
     _LIEF_AVAILABLE = True
 except ImportError:
@@ -253,7 +252,9 @@ class TestDisassemble(unittest.TestCase):
             )
             self.assertEqual(r2.returncode, 0, msg=r2.stderr)
             self.assertIn("[cached]", r2.stdout)
-            self.assertEqual(out1.read_text(encoding="utf-8"), out2.read_text(encoding="utf-8"))
+            self.assertEqual(
+                out1.read_text(encoding="utf-8"), out2.read_text(encoding="utf-8")
+            )
 
     def test_raw_blob_disassembly(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -315,7 +316,11 @@ class TestDisasmEnrichmentFormatting(unittest.TestCase):
                 label_map={0x401000: "entry_main"},
                 comment_map={0x401000: "bootstrap"},
                 function_ranges=[
-                    (0x401000, 0x401020, {"addr": "0x401000", "name": "entry_main", "size": 0x20})
+                    (
+                        0x401000,
+                        0x401020,
+                        {"addr": "0x401000", "name": "entry_main", "size": 0x20},
+                    )
                 ],
                 stack_frames={
                     "0x401000": {
@@ -364,7 +369,11 @@ class TestDisasmEnrichmentFormatting(unittest.TestCase):
                 str(out_asm),
                 str(out_map),
                 function_ranges=[
-                    (0x401000, 0x401010, {"addr": "0x401000", "name": "entry_main", "size": 0x10})
+                    (
+                        0x401000,
+                        0x401010,
+                        {"addr": "0x401000", "name": "entry_main", "size": 0x10},
+                    )
                 ],
                 stack_frames={
                     "0x401000": {
@@ -423,7 +432,9 @@ class TestDisasmEnrichmentFormatting(unittest.TestCase):
             asm = out_asm.read_text(encoding="utf-8")
             saved = json.loads(out_map.read_text(encoding="utf-8"))
             self.assertIn("struct Demo.magic", asm)
-            self.assertEqual(saved["lines"][0]["typed_struct_hints"][0]["label"], "Demo.magic")
+            self.assertEqual(
+                saved["lines"][0]["typed_struct_hints"][0]["label"], "Demo.magic"
+            )
 
     def test_write_outputs_match_arm_memory_stack_hints(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -451,16 +462,36 @@ class TestDisasmEnrichmentFormatting(unittest.TestCase):
                 str(out_asm),
                 str(out_map),
                 function_ranges=[
-                    (0x500000, 0x500010, {"addr": "0x500000", "name": "sub_500000", "size": 0x10}),
-                    (0x600000, 0x600010, {"addr": "0x600000", "name": "sub_600000", "size": 0x10}),
+                    (
+                        0x500000,
+                        0x500010,
+                        {"addr": "0x500000", "name": "sub_500000", "size": 0x10},
+                    ),
+                    (
+                        0x600000,
+                        0x600010,
+                        {"addr": "0x600000", "name": "sub_600000", "size": 0x10},
+                    ),
                 ],
                 stack_frames={
                     "0x500000": {
-                        "args": [{"name": "arg_saved", "location": "[x29+0x10]", "source": "auto"}],
+                        "args": [
+                            {
+                                "name": "arg_saved",
+                                "location": "[x29+0x10]",
+                                "source": "auto",
+                            }
+                        ],
                         "vars": [],
                     },
                     "0x600000": {
-                        "args": [{"name": "arg_fp", "location": "[r11+0x8]", "source": "auto"}],
+                        "args": [
+                            {
+                                "name": "arg_fp",
+                                "location": "[r11+0x8]",
+                                "source": "auto",
+                            }
+                        ],
                         "vars": [],
                     },
                 },

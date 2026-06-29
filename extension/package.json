@@ -2,7 +2,7 @@
   "name": "stack-visualizer",
   "displayName": "Pile ou Face",
   "description": "Binary reverse engineering tool for CTF: disassembly, CFG, call graph, xrefs, decompilation and annotations for ELF/PE/Mach-O binaries.",
-  "version": "0.0.1",
+  "version": "0.1.1",
   "publisher": "PileOuFaces",
   "type": "commonjs",
   "license": "AGPL-3.0-only",
@@ -25,7 +25,22 @@
     "vscode": "^1.120.0"
   },
   "categories": [
+    "Debuggers",
+    "Programming Languages",
     "Other"
+  ],
+  "icon": "media/icon-light.png",
+  "galleryBanner": {
+    "color": "#0d1117",
+    "theme": "dark"
+  },
+  "homepage": "https://github.com/PileOuFaces/Pile_Ou_Face",
+  "bugs": {
+    "url": "https://github.com/PileOuFaces/Pile_Ou_Face/issues"
+  },
+  "activationEvents": [
+    "onStartupFinished",
+    "onLanguage:asm"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -34,8 +49,8 @@
         "command": "pileOuFace.open",
         "title": "Pile ou Face",
         "icon": {
-          "light": "media/icon-light.svg",
-          "dark": "media/icon-dark.svg"
+          "light": "media/icon-light.png",
+          "dark": "media/icon-dark.png"
         }
       },
       {
@@ -187,45 +202,6 @@
         }
       ]
     },
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "pileOuFace",
-          "title": "Pile ou Face",
-          "icon": "media/icon.svg"
-        }
-      ]
-    },
-    "views": {
-      "pileOuFace": [
-        {
-          "id": "pileOuFace.launch",
-          "name": "Pile ou Face"
-        },
-        {
-          "id": "pileOuFace.symbols",
-          "name": "Symboles"
-        },
-        {
-          "id": "pileOuFace.strings",
-          "name": "Strings"
-        },
-        {
-          "id": "pileOuFace.sections",
-          "name": "Sections"
-        },
-        {
-          "id": "pileOuFace.calculator",
-          "name": "Calculatrice"
-        }
-      ]
-    },
-    "viewsWelcome": [
-      {
-        "view": "pileOuFace.launch",
-        "contents": "Outil d'analyse binaire CTF.\n\n[Ouvrir l'interface](command:pileOuFace.open)\n\n[Charger un binaire](command:pileOuFace.sidebarRefresh)"
-      }
-    ],
     "keybindings": [
       {
         "command": "pileOuFace.open",
@@ -281,9 +257,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "test": "tsx node_modules/.bin/_mocha 'test/**/*.test.ts' --ignore 'test/hubPayloadCore.test.ts' --require test/setup.ts --exit",
-    "test:watch": "tsx node_modules/.bin/_mocha 'test/**/*.test.ts' --watch --ignore 'test/hubPayloadCore.test.ts' --require test/setup.ts",
-    "test:coverage": "c8 tsx node_modules/.bin/_mocha 'test/**/*.test.ts' --ignore 'test/hubPayloadCore.test.ts' --require test/setup.ts --exit",
+    "test": "tsx node_modules/.bin/_mocha '{front/tests,src/tests}/**/*.test.ts' --ignore 'front/tests/hubPayloadCore.test.ts' --require src/tests/setup.ts --exit",
+    "test:watch": "tsx node_modules/.bin/_mocha '{front/tests,src/tests}/**/*.test.ts' --watch --ignore 'front/tests/hubPayloadCore.test.ts' --require src/tests/setup.ts",
+    "test:coverage": "c8 tsx node_modules/.bin/_mocha '{front/tests,src/tests}/**/*.test.ts' --ignore 'front/tests/hubPayloadCore.test.ts' --require src/tests/setup.ts --exit",
     "nexus:analyze": "npx gitnexus analyze ..",
     "nexus:status": "npx gitnexus status",
     "nexus:wiki": "npx gitnexus wiki .."
@@ -293,6 +269,7 @@
     "esm": false
   },
   "devDependencies": {
+    "@vscode/vsce": "^3.3.2",
     "@eslint/js": "^9.0.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "^25.9.1",

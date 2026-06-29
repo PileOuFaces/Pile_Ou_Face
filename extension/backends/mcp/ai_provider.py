@@ -1,11 +1,12 @@
 import json
-from concurrent.futures import Future, ThreadPoolExecutor
-from functools import partial
 import os
 import urllib.error
 import urllib.request
+from collections.abc import Callable, Iterator
+from concurrent.futures import Future, ThreadPoolExecutor
+from functools import partial
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any
 
 TokenCallback = Callable[[str], None]
 
@@ -97,13 +98,16 @@ def _fetch_models(name: str, api_key: str = "", base_url: str = "") -> list[str]
             ids = [
                 m
                 for m in ids
-                if any(m.startswith(p) for p in keep) and not any(marker in m for marker in exclude)
+                if any(m.startswith(p) for p in keep)
+                and not any(marker in m for marker in exclude)
             ]
         elif name == "mistral":
             ids = [
                 m
                 for m in ids
-                if not any(marker in m.lower() for marker in ("embed", "moderation", "ocr"))
+                if not any(
+                    marker in m.lower() for marker in ("embed", "moderation", "ocr")
+                )
             ]
         return sorted(ids)
 
@@ -308,7 +312,9 @@ def _anthropic_complete(
                     )
                 elif event_type == "error":
                     error = event.get("error", {})
-                    raise RuntimeError(error.get("message") or "Erreur de streaming Anthropic")
+                    raise RuntimeError(
+                        error.get("message") or "Erreur de streaming Anthropic"
+                    )
             return {
                 "text": "".join(chunks),
                 "usage": _normalize_usage(input_tokens, output_tokens),
@@ -340,7 +346,10 @@ def _openai_compatible_complete(
     payload = {
         "model": model,
         "messages": [
-            {"role": "system", "content": f"Binary analysis assistant. Context:\n{context}"},
+            {
+                "role": "system",
+                "content": f"Binary analysis assistant. Context:\n{context}",
+            },
             {"role": "user", "content": prompt},
         ],
         "stream": on_token is not None,
@@ -357,7 +366,10 @@ def _openai_compatible_complete(
     req = urllib.request.Request(
         f"{spec['base_url']}/chat/completions",
         data=json.dumps(payload).encode(),
-        headers={"Authorization": f"Bearer {api_key}", "content-type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "content-type": "application/json",
+        },
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=60) as resp:
@@ -372,7 +384,9 @@ def _openai_compatible_complete(
                 event = json.loads(payload_data)
                 if event.get("error"):
                     error = event["error"]
-                    message = error.get("message") if isinstance(error, dict) else str(error)
+                    message = (
+                        error.get("message") if isinstance(error, dict) else str(error)
+                    )
                     raise RuntimeError(message or f"Erreur de streaming {provider}")
                 choices = event.get("choices") or []
                 if choices:
@@ -447,7 +461,9 @@ def _gemini_complete(
                 event = json.loads(payload_data)
                 if event.get("error"):
                     error = event["error"]
-                    message = error.get("message") if isinstance(error, dict) else str(error)
+                    message = (
+                        error.get("message") if isinstance(error, dict) else str(error)
+                    )
                     raise RuntimeError(message or "Erreur de streaming Gemini")
                 candidates = event.get("candidates") or []
                 if candidates:
@@ -635,7 +651,9 @@ if __name__ == "__main__":
     import argparse
     import sys
 
-    parser = argparse.ArgumentParser(description="AI provider CLI helper for Pile ou Face")
+    parser = argparse.ArgumentParser(
+        description="AI provider CLI helper for Pile ou Face"
+    )
     sub = parser.add_subparsers(dest="cmd")
 
     sub.add_parser("list", help="List configured providers (JSON on stdout)")
@@ -643,10 +661,14 @@ if __name__ == "__main__":
     p_set = sub.add_parser("set", help="Save API key and model for a provider")
     p_set.add_argument("--provider", required=True)
     p_set.add_argument("--api-key", default="")
-    p_set.add_argument("--api-key-stdin", action="store_true", help="Read API key from stdin")
+    p_set.add_argument(
+        "--api-key-stdin", action="store_true", help="Read API key from stdin"
+    )
     p_set.add_argument("--model", default=None)
 
-    p_call = sub.add_parser("call", help="Call a provider with a prompt read from stdin")
+    p_call = sub.add_parser(
+        "call", help="Call a provider with a prompt read from stdin"
+    )
     p_call.add_argument("--provider", required=True)
     p_call.add_argument("--model", default=None)
     p_call.add_argument("--context", default="", help="System context / instructions")
@@ -666,7 +688,9 @@ if __name__ == "__main__":
     if args.cmd == "list":
         print(json.dumps({"ok": True, **list_providers()}))
     elif args.cmd == "set":
-        api_key = sys.stdin.readline().rstrip("\n") if args.api_key_stdin else args.api_key
+        api_key = (
+            sys.stdin.readline().rstrip("\n") if args.api_key_stdin else args.api_key
+        )
         result = set_provider_configuration(args.provider, api_key, args.model)
         print(json.dumps(result))
         if not result.get("ok"):
@@ -684,9 +708,14 @@ if __name__ == "__main__":
             print(json.dumps(event), flush=True)
 
         try:
-            on_token = lambda content: (
-                emit_event({"type": "token", "content": content}) if args.stream_output else None
-            )
+
+            def on_token(content):
+                return (
+                    emit_event({"type": "token", "content": content})
+                    if args.stream_output
+                    else None
+                )
+
             generation_options = {
                 key: value
                 for key, value in {

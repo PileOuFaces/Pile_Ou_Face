@@ -10,6 +10,8 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     lief = None
 
+import contextlib
+
 from backends.static.binary.arch import detect_binary_arch
 
 
@@ -72,7 +74,11 @@ def _is_macho_pie(binary: Any) -> bool:
 
 def _is_pe_pie(binary: Any) -> bool:
     try:
-        return bool(binary.optional_header.has(lief.PE.OptionalHeader.DLL_CHARACTERISTICS.DYNAMIC_BASE))
+        return bool(
+            binary.optional_header.has(
+                lief.PE.OptionalHeader.DLL_CHARACTERISTICS.DYNAMIC_BASE
+            )
+        )
     except Exception:
         return False
 
@@ -80,11 +86,22 @@ def _is_pe_pie(binary: Any) -> bool:
 def _stripped_from_lief(binary: Any) -> bool:
     try:
         if isinstance(binary, lief.ELF.Binary):
-            return len([s for s in binary.symtab_symbols if getattr(s, "name", "")]) <= 1
+            return (
+                len([s for s in binary.symtab_symbols if getattr(s, "name", "")]) <= 1
+            )
         if isinstance(binary, lief.MachO.Binary):
             return len([s for s in binary.symbols if getattr(s, "name", "")]) <= 1
         if isinstance(binary, lief.PE.Binary):
-            return len([f for f in getattr(binary, "exported_functions", []) if getattr(f, "name", "")]) == 0
+            return (
+                len(
+                    [
+                        f
+                        for f in getattr(binary, "exported_functions", [])
+                        if getattr(f, "name", "")
+                    ]
+                )
+                == 0
+            )
     except Exception:
         return False
     return False
@@ -114,10 +131,8 @@ def load_binary_facts(binary_path: str) -> dict[str, Any]:
         facts["arch"] = arch_info.raw_name
         facts["bits"] = arch_info.bits
 
-    try:
+    with contextlib.suppress(Exception):
         facts["entry"] = _hex(getattr(binary, "entrypoint", 0))
-    except Exception:
-        pass
 
     try:
         if isinstance(binary, lief.ELF.Binary):
@@ -127,7 +142,11 @@ def load_binary_facts(binary_path: str) -> dict[str, Any]:
             if not facts["arch"]:
                 facts["arch"] = _enum_name(binary.header.machine_type).lower()
             if facts["bits"] is None:
-                facts["bits"] = 64 if binary.header.identity_class == lief.ELF.Header.CLASS.ELF64 else 32
+                facts["bits"] = (
+                    64
+                    if binary.header.identity_class == lief.ELF.Header.CLASS.ELF64
+                    else 32
+                )
         elif isinstance(binary, lief.MachO.Binary):
             facts["format"] = "Mach-O"
             facts["base"] = _hex(_macho_base(binary))
@@ -169,7 +188,9 @@ def section_flags_by_name(binary_path: str) -> dict[str, list[str]]:
         elif isinstance(binary, lief.MachO.Binary):
             for section in binary.sections:
                 values = ["READ"]
-                segment_name = str(getattr(getattr(section, "segment", None), "name", "") or "").upper()
+                segment_name = str(
+                    getattr(getattr(section, "segment", None), "name", "") or ""
+                ).upper()
                 if "TEXT" in segment_name:
                     values.append("EXEC")
                 if "DATA" in segment_name:

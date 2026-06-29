@@ -121,7 +121,9 @@ def scan_backend_tools(
 
             for pname, param in sig.parameters.items():
                 ann = param.annotation
-                schema = _param_schema(ann) if ann is not inspect.Parameter.empty else {}
+                schema = (
+                    _param_schema(ann) if ann is not inspect.Parameter.empty else {}
+                )
                 props[pname] = schema
                 if param.default is inspect.Parameter.empty:
                     required.append(pname)

@@ -119,7 +119,9 @@ def _entry_status(
         else float(stat.st_mtime * 1000.0)
     )
     current_size = int(stat.st_size)
-    if abs(current_mtime_ms - float(binary_mtime_ms)) > 0.001 or current_size != int(binary_size):
+    if abs(current_mtime_ms - float(binary_mtime_ms)) > 0.001 or current_size != int(
+        binary_size
+    ):
         return ("stale", True)
     return ("ok", True)
 
@@ -214,7 +216,8 @@ def prune_entries(db_path: str, *, workspace_root: str) -> int:
                 to_delete.append(int(row["id"]))
         if to_delete:
             conn.executemany(
-                "DELETE FROM cache_entries WHERE id = ?", [(row_id,) for row_id in to_delete]
+                "DELETE FROM cache_entries WHERE id = ?",
+                [(row_id,) for row_id in to_delete],
             )
             conn.commit()
         return len(to_delete)
@@ -228,7 +231,9 @@ def clear_entries(db_path: str, *, workspace_root: str) -> int:
             "SELECT COUNT(*) AS n FROM cache_entries WHERE workspace_root = ?",
             (workspace_root,),
         ).fetchone()
-        conn.execute("DELETE FROM cache_entries WHERE workspace_root = ?", (workspace_root,))
+        conn.execute(
+            "DELETE FROM cache_entries WHERE workspace_root = ?", (workspace_root,)
+        )
         conn.commit()
         return int(before["n"] if before else 0)
 

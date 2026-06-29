@@ -10,18 +10,16 @@
 @details Fournit l'ordre d'affichage et l'identification PC/SP par architecture.
 """
 
-from typing import List, Tuple
-
 from unicorn.x86_const import (
-    UC_X86_REG_RAX,
-    UC_X86_REG_RBX,
-    UC_X86_REG_RCX,
-    UC_X86_REG_RDX,
-    UC_X86_REG_RSI,
-    UC_X86_REG_RDI,
-    UC_X86_REG_RBP,
-    UC_X86_REG_RSP,
-    UC_X86_REG_RIP,
+    UC_X86_REG_EAX,
+    UC_X86_REG_EBP,
+    UC_X86_REG_EBX,
+    UC_X86_REG_ECX,
+    UC_X86_REG_EDI,
+    UC_X86_REG_EDX,
+    UC_X86_REG_EIP,
+    UC_X86_REG_ESI,
+    UC_X86_REG_ESP,
     UC_X86_REG_R8,
     UC_X86_REG_R9,
     UC_X86_REG_R10,
@@ -30,18 +28,18 @@ from unicorn.x86_const import (
     UC_X86_REG_R13,
     UC_X86_REG_R14,
     UC_X86_REG_R15,
-    UC_X86_REG_EAX,
-    UC_X86_REG_EBX,
-    UC_X86_REG_ECX,
-    UC_X86_REG_EDX,
-    UC_X86_REG_ESI,
-    UC_X86_REG_EDI,
-    UC_X86_REG_EBP,
-    UC_X86_REG_ESP,
-    UC_X86_REG_EIP,
+    UC_X86_REG_RAX,
+    UC_X86_REG_RBP,
+    UC_X86_REG_RBX,
+    UC_X86_REG_RCX,
+    UC_X86_REG_RDI,
+    UC_X86_REG_RDX,
+    UC_X86_REG_RIP,
+    UC_X86_REG_RSI,
+    UC_X86_REG_RSP,
 )
 
-REG_ORDER_64: List[Tuple[str, int]] = [
+REG_ORDER_64: list[tuple[str, int]] = [
     ("rax", UC_X86_REG_RAX),
     ("rbx", UC_X86_REG_RBX),
     ("rcx", UC_X86_REG_RCX),
@@ -61,7 +59,7 @@ REG_ORDER_64: List[Tuple[str, int]] = [
     ("r15", UC_X86_REG_R15),
 ]
 
-REG_ORDER_32: List[Tuple[str, int]] = [
+REG_ORDER_32: list[tuple[str, int]] = [
     ("eax", UC_X86_REG_EAX),
     ("ebx", UC_X86_REG_EBX),
     ("ecx", UC_X86_REG_ECX),
@@ -74,7 +72,7 @@ REG_ORDER_32: List[Tuple[str, int]] = [
 ]
 
 
-def get_reg_order(arch_bits: int) -> List[Tuple[str, int]]:
+def get_reg_order(arch_bits: int) -> list[tuple[str, int]]:
     """@brief Retourne l'ordre d'affichage des registres.
     @param arch_bits Bitness CPU (32 ou 64).
     @return Liste des couples (nom, id Unicorn).

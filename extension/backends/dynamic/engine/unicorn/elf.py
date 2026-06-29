@@ -11,8 +11,6 @@
 @details Lit en-tetes ELF et program headers depuis un blob binaire.
 """
 
-from typing import List
-
 
 def read_u16(data: bytes, offset: int) -> int:
     """@brief Lit un uint16 little-endian depuis un blob.
@@ -77,7 +75,7 @@ def parse_elf_header(blob: bytes) -> dict:
     raise ValueError("Unsupported ELF class")
 
 
-def parse_program_headers(blob: bytes, header: dict) -> List[dict]:
+def parse_program_headers(blob: bytes, header: dict) -> list[dict]:
     """@brief Parse les program headers.
     @param blob Blob ELF complet.
     @param header En-tete ELF decode.

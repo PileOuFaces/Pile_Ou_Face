@@ -11,11 +11,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backends.static.binary.imports_analysis import (
-    analyze_imports,
     _compute_score,
     _extract_string_import_candidates,
     _find_suspicious,
     _group_by_dll,
+    analyze_imports,
 )
 
 
@@ -127,7 +127,9 @@ class TestFindSuspicious(unittest.TestCase):
         self.assertEqual(result, [])
 
     def test_string_candidate_extraction_normalizes_versions(self):
-        raw = _extract_string_import_candidates(b"\x00_system@@GLIBC_2.2.5\x00printf\x00")
+        raw = _extract_string_import_candidates(
+            b"\x00_system@@GLIBC_2.2.5\x00printf\x00"
+        )
         self.assertEqual(raw, [("<strings>", "_system@@GLIBC_2.2.5")])
 
 
@@ -157,7 +159,9 @@ class TestComputeScore(unittest.TestCase):
                 "description": "",
             }
         ]
-        net = [{"function": "socket", "dll": "", "category": "NETWORK", "description": ""}]
+        net = [
+            {"function": "socket", "dll": "", "category": "NETWORK", "description": ""}
+        ]
         self.assertGreater(_compute_score(inj), _compute_score(net))
 
 

@@ -208,10 +208,11 @@ function normalizeRawProfile(profile) {
   };
 }
 
-function getAnnotationsPath(root, binaryPath) {
+function getAnnotationsPath(root, binaryPath, storageDir?) {
   const absPath = path.isAbsolute(binaryPath) ? binaryPath : path.join(root, binaryPath);
   const hash = crypto.createHash('sha256').update(absPath).update(fs.existsSync(absPath) ? String(fs.statSync(absPath).mtimeMs) : '').digest('hex').slice(0, 16);
-  const dir = path.join(root, '.pile-ou-face', 'annotations');
+  const annotationsBase = storageDir || path.join(root, '.pile-ou-face');
+  const dir = path.join(annotationsBase, 'annotations');
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return path.join(dir, `${hash}.json`);
 }
@@ -251,6 +252,7 @@ function isEmptyAnnotationEntry(entry) {
 function sharedHandlers(ctx) {
   const {
     root,
+    storageDir,
     panel,
     context,
     getTempDir,
@@ -259,7 +261,7 @@ function sharedHandlers(ctx) {
     setRawProfile,
     clearRawProfile,
   } = ctx;
-  const getAnnPath = (binaryPath) => getAnnotationsPath(root, binaryPath);
+  const getAnnPath = (binaryPath) => getAnnotationsPath(root, binaryPath, storageDir);
 
   const forgetRecentBinary = (binaryPath) => {
     panel.webview.postMessage({ type: 'hubForgetRecentBinary', binaryPath });

@@ -1,44 +1,49 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 from __future__ import annotations
 
-import atexit
 import argparse
+import atexit
+import base64 as _base64
 import hashlib
 import hmac as _hmac_mod
 import importlib
 import importlib.util
+import inspect
 import json
 import os
 import sys
-import inspect
 import tempfile
 import zipfile
-import base64 as _base64
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM as _AESGCM
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM as _AESGCM
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backends.shared.log import configure_logging, get_logger
+import contextlib
+
+from backends.plugins.license import (
+    _ENV_PREFIX as _LICENSE_ENV_PREFIX,
+)
+from backends.plugins.license import (
+    default_license_search_paths,
+    evaluate_plugin_license,
+)
 from backends.plugins.manifest import (
     PluginManifest,
     PluginManifestError,
     load_plugin_manifest,
-)
-from backends.plugins.license import (
-    _ENV_PREFIX as _LICENSE_ENV_PREFIX,
-    default_license_search_paths,
-    evaluate_plugin_license,
 )
 from backends.plugins.registry import (
     PluginRecord,
     build_plugin_registry,
     get_plugin_record,
 )
+from backends.shared.log import configure_logging, get_logger
 
 _log = get_logger(__name__)
 HOST_API_VERSION = 1
@@ -60,7 +65,9 @@ def _cleanup_decrypted_plugin_cache() -> None:
 atexit.register(_cleanup_decrypted_plugin_cache)
 
 
-def _verify_payload_hmac(payload_bytes: bytes, content_key: str, expected_hex: str) -> bool:
+def _verify_payload_hmac(
+    payload_bytes: bytes, content_key: str, expected_hex: str
+) -> bool:
     """Verifies HMAC-SHA256 of the ciphertext with the content_key.
     Returns True if expected_hex is absent (backward compat).
     """
@@ -149,7 +156,8 @@ class PluginContext:
     def snapshot(self) -> dict[str, Any]:
         return {
             "analysis_enrichers": {
-                key: len(value) for key, value in sorted(self.analysis_enrichers.items())
+                key: len(value)
+                for key, value in sorted(self.analysis_enrichers.items())
             },
             "ui_panels": sorted(self.ui_panels.keys()),
             "exporters": sorted(self.exporters.keys()),
@@ -223,11 +231,15 @@ def _resolve_effective_plugin_root(
     if not payload_path.exists():
         raise RuntimeError(f"Bundle chiffré invalide: payload absent ({payload_name}).")
     if algorithm != "aes-256-gcm":
-        raise RuntimeError(f"Algorithme de chiffrement non supporté: {algorithm or 'inconnu'!r}")
+        raise RuntimeError(
+            f"Algorithme de chiffrement non supporté: {algorithm or 'inconnu'!r}"
+        )
 
     nonce_b64 = str(encryption_meta.get("nonce_b64", "") or "").strip()
     if not nonce_b64:
-        raise RuntimeError("Bundle chiffré invalide: nonce_b64 absent dans encryption.json.")
+        raise RuntimeError(
+            "Bundle chiffré invalide: nonce_b64 absent dans encryption.json."
+        )
 
     raw_ciphertext = payload_path.read_bytes()
 
@@ -244,16 +256,16 @@ def _resolve_effective_plugin_root(
         nonce = _base64.b64decode(nonce_b64)
         plaintext = _AESGCM(key).decrypt(nonce, raw_ciphertext, None)
     except Exception as exc:
-        raise RuntimeError(f"Impossible de déchiffrer le plugin avec cette licence: {exc}") from exc
+        raise RuntimeError(
+            f"Impossible de déchiffrer le plugin avec cette licence: {exc}"
+        ) from exc
 
     temp_dir: tempfile.TemporaryDirectory[str] = tempfile.TemporaryDirectory(
         prefix="pof-plugin-runtime-"
     )
     temp_root = Path(temp_dir.name)
-    try:
+    with contextlib.suppress(OSError):
         temp_root.chmod(0o700)
-    except OSError:
-        pass
     payload_zip = temp_root / "payload.zip"
     payload_zip.write_bytes(plaintext)
 
@@ -261,14 +273,14 @@ def _resolve_effective_plugin_root(
         digest = hashlib.sha256(plaintext).hexdigest()
         if digest != payload_sha256:
             temp_dir.cleanup()
-            raise RuntimeError("Le payload déchiffré ne correspond pas au checksum attendu.")
+            raise RuntimeError(
+                "Le payload déchiffré ne correspond pas au checksum attendu."
+            )
     plugin_root = temp_root / "plugin"
     with zipfile.ZipFile(payload_zip) as archive:
         archive.extractall(plugin_root)
-    try:
+    with contextlib.suppress(OSError):
         payload_zip.chmod(0o600)
-    except OSError:
-        pass
     if not (plugin_root / "manifest.json").exists():
         temp_dir.cleanup()
         raise RuntimeError("Bundle déchiffré invalide: manifest.json absent.")
@@ -305,7 +317,9 @@ def attach_plugins(
             continue
         try:
             context.current_plugin_id = record.plugin_id
-            module = _load_plugin_module(record.manifest, license_search_paths=license_search_paths)
+            module = _load_plugin_module(
+                record.manifest, license_search_paths=license_search_paths
+            )
             register = getattr(module, entrypoint.register)
             register(context)
         except Exception as exc:  # pragma: no cover - safety net
@@ -334,7 +348,11 @@ def apply_plugin_licensing(
         record.licensee = evaluation.licensee
         record.license_verified = evaluation.verified
         record.license_features = list(evaluation.features)
-        if record.state == "active" and evaluation.status not in ("unlocked", "grace", "active"):
+        if record.state == "active" and evaluation.status not in (
+            "unlocked",
+            "grace",
+            "active",
+        ):
             record.state = "locked"
             if not record.error and evaluation.message:
                 record.error = evaluation.message
@@ -447,14 +465,18 @@ def _build_registry_from_args(args: argparse.Namespace) -> list[PluginRecord]:
         else default_plugin_search_paths(cwd=Path.cwd())
     )
     disabled = [
-        item.strip() for item in str(getattr(args, "disable", "") or "").split(",") if item.strip()
+        item.strip()
+        for item in str(getattr(args, "disable", "") or "").split(",")
+        if item.strip()
     ]
     return build_plugin_registry(
         search_paths,
         host_version=str(
             getattr(args, "host_version", DEFAULT_HOST_VERSION) or DEFAULT_HOST_VERSION
         ),
-        api_version=int(getattr(args, "api_version", HOST_API_VERSION) or HOST_API_VERSION),
+        api_version=int(
+            getattr(args, "api_version", HOST_API_VERSION) or HOST_API_VERSION
+        ),
         disabled_plugin_ids=disabled,
     )
 
@@ -476,7 +498,9 @@ def collect_runtime_state(
     attach: bool = False,
 ) -> dict[str, Any]:
     effective_paths = search_paths or default_plugin_search_paths(cwd=Path.cwd())
-    effective_license_paths = license_search_paths or default_license_search_paths(cwd=Path.cwd())
+    effective_license_paths = license_search_paths or default_license_search_paths(
+        cwd=Path.cwd()
+    )
     records = build_plugin_registry(
         effective_paths,
         host_version=host_version,
@@ -512,7 +536,9 @@ def _cmd_list(args: argparse.Namespace) -> int:
         else default_plugin_search_paths(cwd=Path.cwd())
     )
     disabled = [
-        item.strip() for item in str(getattr(args, "disable", "") or "").split(",") if item.strip()
+        item.strip()
+        for item in str(getattr(args, "disable", "") or "").split(",")
+        if item.strip()
     ]
     payload = collect_runtime_state(
         host_version=args.host_version,
@@ -534,7 +560,9 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
     if record is None:
         print(
             json.dumps(
-                {"error": f"Plugin introuvable: {args.plugin_id}"}, indent=2, ensure_ascii=False
+                {"error": f"Plugin introuvable: {args.plugin_id}"},
+                indent=2,
+                ensure_ascii=False,
             )
         )
         return 1
@@ -546,9 +574,15 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     try:
         manifest = load_plugin_manifest(args.path)
     except PluginManifestError as exc:
-        print(json.dumps({"ok": False, "error": str(exc)}, indent=2, ensure_ascii=False))
+        print(
+            json.dumps({"ok": False, "error": str(exc)}, indent=2, ensure_ascii=False)
+        )
         return 1
-    print(json.dumps({"ok": True, "manifest": manifest.to_dict()}, indent=2, ensure_ascii=False))
+    print(
+        json.dumps(
+            {"ok": True, "manifest": manifest.to_dict()}, indent=2, ensure_ascii=False
+        )
+    )
     return 0
 
 
@@ -575,7 +609,9 @@ def _cmd_invoke(args: argparse.Namespace) -> int:
     try:
         payload = _load_invoke_payload(args)
     except ValueError as exc:
-        print(json.dumps({"ok": False, "error": str(exc)}, indent=2, ensure_ascii=False))
+        print(
+            json.dumps({"ok": False, "error": str(exc)}, indent=2, ensure_ascii=False)
+        )
         return 0
     license_search_paths = default_license_search_paths(cwd=Path.cwd())
     records = apply_plugin_licensing(
@@ -598,7 +634,9 @@ def _cmd_invoke(args: argparse.Namespace) -> int:
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Runtime minimal des plugins Pile Ou Face")
+    parser = argparse.ArgumentParser(
+        description="Runtime minimal des plugins Pile Ou Face"
+    )
     parser.add_argument("--host-version", default=DEFAULT_HOST_VERSION)
     parser.add_argument("--api-version", type=int, default=HOST_API_VERSION)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -615,7 +653,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     inspect_parser.add_argument("--disable", default="")
     inspect_parser.set_defaults(func=_cmd_inspect)
 
-    validate_parser = sub.add_parser("validate", help="Valider un manifest ou un dossier plugin")
+    validate_parser = sub.add_parser(
+        "validate", help="Valider un manifest ou un dossier plugin"
+    )
     validate_parser.add_argument("path")
     validate_parser.set_defaults(func=_cmd_validate)
 

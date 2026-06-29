@@ -15,7 +15,6 @@ BINARY = os.path.join(ROOT, "examples", "demo_analysis.elf")
 
 from backends.static.disasm.call_graph import build_call_graph, resolve_plt_symbols
 
-
 # ── resolve_plt_symbols ──────────────────────────────────────────────────────
 
 
@@ -88,7 +87,9 @@ class TestBuildCallGraphFallback(unittest.TestCase):
             {"addr": "0x1006", "text": "ret"},
         ]
 
-        result = build_call_graph(_make_cfg([]), symbols=[], lines=lines, binary_path=None)
+        result = build_call_graph(
+            _make_cfg([]), symbols=[], lines=lines, binary_path=None
+        )
 
         self.assertEqual(len(result["edges"]), 1)
         self.assertEqual(result["edges"][0]["from"], "0x1001")
@@ -104,7 +105,10 @@ class TestBuildCallGraphFallback(unittest.TestCase):
 
         result = build_call_graph(
             _make_cfg([]),
-            symbols=[{"addr": "0x800000", "name": "main"}, {"addr": "0x800020", "name": "callee"}],
+            symbols=[
+                {"addr": "0x800000", "name": "main"},
+                {"addr": "0x800020", "name": "callee"},
+            ],
             lines=lines,
             binary_path=None,
         )

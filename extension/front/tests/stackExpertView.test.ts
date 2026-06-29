@@ -33,7 +33,7 @@ describe('stackExpertView — buildExpertRowItems', () => {
 
     // Load stackExpertView.js — strip the dom/stackSimpleModel imports since
     // most tests use pure helpers while render tests provide stubs.
-    const modulePath = path.resolve(__dirname, '../webview/dynamic/app/stackExpertView.js');
+    const modulePath = path.resolve(__dirname, '../dynamic/app/stackExpertView.js');
     let source = fs.readFileSync(modulePath, 'utf8');
     // Replace ES imports with stubs so the data-URL import works without a bundler.
     source = source.replace(
@@ -169,7 +169,7 @@ describe('stackExpertView — buildExpertRowItems', () => {
   });
 
   it('resolves expert rendering explicitly — resolveStackPanelRenderMode', async () => {
-    const vmPath = path.resolve(__dirname, '../webview/dynamic/app/stackViewMode.js');
+    const vmPath = path.resolve(__dirname, '../dynamic/app/stackViewMode.js');
     const vmSource = fs.readFileSync(vmPath, 'utf8');
     const vmUrl = `data:text/javascript;base64,${Buffer.from(vmSource, 'utf8').toString('base64')}`;
     const vm = await import(vmUrl);
@@ -335,7 +335,7 @@ describe('stack render dispatch — simple/expert panel modes', () => {
       return 0;
     });
 
-    const modulePath = path.resolve(__dirname, '../webview/dynamic/app/stack.js');
+    const modulePath = path.resolve(__dirname, '../dynamic/app/stack.js');
     const moduleUrl = `${pathToFileURL(modulePath).href}?dispatch-test=${Date.now()}`;
     ({ renderStack } = await import(moduleUrl));
   });

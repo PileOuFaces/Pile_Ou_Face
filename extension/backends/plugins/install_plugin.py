@@ -84,7 +84,9 @@ def install_plugin(
     target_root_path = target_root_path.resolve()
     target_root_path.mkdir(parents=True, exist_ok=True)
 
-    source_root, source_kind, temp_dir = _resolve_source_root(source, workspace=workspace)
+    source_root, source_kind, temp_dir = _resolve_source_root(
+        source, workspace=workspace
+    )
     try:
         manifest = load_plugin_manifest(source_root)
         destination = target_root_path / manifest.plugin_id
@@ -114,7 +116,9 @@ def install_plugin(
 
 def _cmd_install(args: argparse.Namespace) -> int:
     try:
-        payload = install_plugin(args.source, args.target_root, workspace=args.workspace)
+        payload = install_plugin(
+            args.source, args.target_root, workspace=args.workspace
+        )
     except (PluginInstallError, PluginManifestError) as exc:
         payload = {
             "ok": False,
@@ -137,10 +141,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Installer un plugin Pile Ou Face dans un dossier plugins du host"
     )
-    parser.add_argument("--source", required=True, help="Dossier plugin extrait ou bundle .pofplug")
-    parser.add_argument("--target-root", required=True, help="Dossier cible .pile-ou-face/plugins")
     parser.add_argument(
-        "--workspace", default="", help="Racine optionnelle pour résoudre des chemins relatifs"
+        "--source", required=True, help="Dossier plugin extrait ou bundle .pofplug"
+    )
+    parser.add_argument(
+        "--target-root", required=True, help="Dossier cible .pile-ou-face/plugins"
+    )
+    parser.add_argument(
+        "--workspace",
+        default="",
+        help="Racine optionnelle pour résoudre des chemins relatifs",
     )
     parser.set_defaults(func=_cmd_install)
     return parser

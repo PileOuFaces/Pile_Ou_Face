@@ -6,7 +6,13 @@ from __future__ import annotations
 import os
 import re
 
-from backends.shared.utils import normalize_addr as _normalize_addr, parse_addr as _addr_to_int
+from backends.shared.log import configure_logging, get_logger
+from backends.shared.utils import normalize_addr as _normalize_addr
+from backends.shared.utils import parse_addr as _addr_to_int
+from backends.static.annotations.typed_struct_refs import (
+    build_typed_struct_index,
+    collect_typed_struct_hints,
+)
 from backends.static.binary.arch import (
     ArchAdapter,
     detect_binary_arch_from_path,
@@ -14,11 +20,6 @@ from backends.static.binary.arch import (
 )
 from backends.static.cache.cache import DisasmCache, default_cache_path
 from backends.static.disasm.cfg import _extract_jump_target, _get_mnemonic
-from backends.static.annotations.typed_struct_refs import (
-    build_typed_struct_index,
-    collect_typed_struct_hints,
-)
-from backends.shared.log import configure_logging, get_logger
 
 logger = get_logger(__name__)
 
@@ -30,7 +31,9 @@ def _candidate_adapters(binary_path: str | None = None) -> tuple[ArchAdapter, ..
     return tuple(iter_supported_adapters())
 
 
-def _classify_code_ref_mnemonic(mnem: str, adapters: tuple[ArchAdapter, ...]) -> str | None:
+def _classify_code_ref_mnemonic(
+    mnem: str, adapters: tuple[ArchAdapter, ...]
+) -> str | None:
     for adapter in adapters:
         kind = adapter.classify_code_ref_mnemonic(mnem)
         if kind:
@@ -100,7 +103,9 @@ def _canonicalize_memory_location(text: str) -> str:
         if not offset_text:
             return f"[{base}]"
         try:
-            offset = int(offset_text, 16) if "0x" in offset_text else int(offset_text, 10)
+            offset = (
+                int(offset_text, 16) if "0x" in offset_text else int(offset_text, 10)
+            )
         except ValueError:
             return ""
         if offset == 0:
@@ -116,7 +121,11 @@ def _canonicalize_memory_location(text: str) -> str:
         if not sign or not offset_text:
             return f"[{base}]"
         try:
-            offset = int(offset_text, 16) if offset_text.startswith("0x") else int(offset_text, 10)
+            offset = (
+                int(offset_text, 16)
+                if offset_text.startswith("0x")
+                else int(offset_text, 10)
+            )
         except ValueError:
             return ""
         if sign == "-":
@@ -134,7 +143,9 @@ def _extract_canonical_memory_locations(text: str) -> set[str]:
         value = _canonicalize_memory_location(match.group(0))
         if value:
             canonical.add(value)
-    for match in re.finditer(r"[-+]?(?:0x[0-9a-fA-F]+|\d+)\s*\(\s*[%$\w]+\s*\)", str(text or "")):
+    for match in re.finditer(
+        r"[-+]?(?:0x[0-9a-fA-F]+|\d+)\s*\(\s*[%$\w]+\s*\)", str(text or "")
+    ):
         value = _canonicalize_memory_location(match.group(0))
         if value:
             canonical.add(value)
@@ -197,9 +208,16 @@ def _symbol_name_map(symbols: list[dict]) -> dict[str, str]:
     return result
 
 
-def _resolve_function_name(fn: dict, rename_map: dict[str, str], symbol_map: dict[str, str]) -> str:
+def _resolve_function_name(
+    fn: dict, rename_map: dict[str, str], symbol_map: dict[str, str]
+) -> str:
     addr = _normalize_addr(fn.get("addr", ""))
-    return rename_map.get(addr) or str(fn.get("name") or "").strip() or symbol_map.get(addr) or addr
+    return (
+        rename_map.get(addr)
+        or str(fn.get("name") or "").strip()
+        or symbol_map.get(addr)
+        or addr
+    )
 
 
 _REGISTER_LOCATION_ALIASES: dict[str, tuple[str, ...]] = {
@@ -276,7 +294,9 @@ def _extract_stack_hints(text: str, frame: dict | None) -> list[dict]:
     return hints
 
 
-def _load_stack_frame(cache: DisasmCache, binary_path: str, func_addr: str) -> dict | None:
+def _load_stack_frame(
+    cache: DisasmCache, binary_path: str, func_addr: str
+) -> dict | None:
     frame = cache.get_stack_frame(binary_path, func_addr)
     if frame is not None:
         return frame
@@ -311,7 +331,9 @@ def _enrich_refs_with_function_context(
             func_addr = _normalize_addr(fn.get("addr", ""))
             if func_addr:
                 entry["function_addr"] = func_addr
-                entry["function_name"] = _resolve_function_name(fn, rename_map, symbol_map)
+                entry["function_name"] = _resolve_function_name(
+                    fn, rename_map, symbol_map
+                )
         enriched.append(entry)
     return enriched
 
@@ -344,7 +366,9 @@ def _enrich_refs_with_binary_context(
                     func_addr = _normalize_addr(fn.get("addr", ""))
                     if func_addr:
                         entry["function_addr"] = func_addr
-                        entry["function_name"] = _resolve_function_name(fn, rename_map, symbol_map)
+                        entry["function_name"] = _resolve_function_name(
+                            fn, rename_map, symbol_map
+                        )
                         if func_addr not in frame_cache:
                             frame_cache[func_addr] = _load_stack_frame(
                                 cache, binary_path, func_addr
@@ -357,7 +381,12 @@ def _enrich_refs_with_binary_context(
                 typed_struct_hints = collect_typed_struct_hints(
                     typed_struct_index,
                     _extract_addresses_from_text(entry.get("text", ""))
-                    + [entry.get("to_addr") or entry.get("target_addr") or entry.get("addr") or ""],
+                    + [
+                        entry.get("to_addr")
+                        or entry.get("target_addr")
+                        or entry.get("addr")
+                        or ""
+                    ],
                 )
                 if typed_struct_hints:
                     entry["typed_struct_hints"] = typed_struct_hints
@@ -374,7 +403,10 @@ def _describe_source_context(
     functions: list[dict] | None = None,
 ) -> dict | None:
     from_a = _normalize_addr(from_addr)
-    line = next((item for item in lines if _normalize_addr(item.get("addr", "")) == from_a), None)
+    line = next(
+        (item for item in lines if _normalize_addr(item.get("addr", "")) == from_a),
+        None,
+    )
     if line is None:
         return None
     context = {
@@ -382,7 +414,9 @@ def _describe_source_context(
         "text": line.get("text", ""),
         "line": line.get("line"),
     }
-    enriched = _enrich_refs_with_binary_context([context], binary_path, functions=functions)
+    enriched = _enrich_refs_with_binary_context(
+        [context], binary_path, functions=functions
+    )
     return enriched[0] if enriched else context
 
 
@@ -396,7 +430,9 @@ def _instruction_size(line: dict) -> int | None:
     raw_bytes = str(line.get("bytes") or "").strip()
     if raw_bytes:
         byte_tokens = [
-            token for token in raw_bytes.split() if re.fullmatch(r"[0-9a-fA-F]{2}", token)
+            token
+            for token in raw_bytes.split()
+            if re.fullmatch(r"[0-9a-fA-F]{2}", token)
         ]
         if byte_tokens:
             return len(byte_tokens)
@@ -668,11 +704,16 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(description="Extract xrefs for an address")
     parser.add_argument("--mapping", required=True, help="Path to disasm mapping JSON")
-    parser.add_argument("--binary", help="Binary path for function/stack context enrichment")
     parser.add_argument(
-        "--functions", help="Functions JSON path for raw/function-only context enrichment"
+        "--binary", help="Binary path for function/stack context enrichment"
     )
-    parser.add_argument("--addr", help="Target address (0xhex or hex) — required unless --mode=map")
+    parser.add_argument(
+        "--functions",
+        help="Functions JSON path for raw/function-only context enrichment",
+    )
+    parser.add_argument(
+        "--addr", help="Target address (0xhex or hex) — required unless --mode=map"
+    )
     parser.add_argument(
         "--mode",
         choices=["to", "from", "map"],
@@ -688,13 +729,13 @@ def main() -> int:
         logger.error("Mapping file not found: %s", args.mapping)
         return 1
 
-    with open(args.mapping, "r", encoding="utf-8") as f:
+    with open(args.mapping, encoding="utf-8") as f:
         data = json.load(f)
     lines = data.get("lines", [])
     binary_path = args.binary or data.get("binary")
     functions = []
     if args.functions and os.path.exists(args.functions):
-        with open(args.functions, "r", encoding="utf-8") as f:
+        with open(args.functions, encoding="utf-8") as f:
             loaded = json.load(f)
         if isinstance(loaded, list):
             functions = loaded
@@ -708,7 +749,9 @@ def main() -> int:
         logger.error("--addr is required unless --mode=map")
         return 1
     elif args.mode == "to":
-        refs = extract_xrefs(lines, args.addr, binary_path=binary_path, functions=functions)
+        refs = extract_xrefs(
+            lines, args.addr, binary_path=binary_path, functions=functions
+        )
         out = {"addr": args.addr, "mode": "to", "refs": refs}
     else:
         targets = extract_xrefs_from_addr(lines, args.addr)

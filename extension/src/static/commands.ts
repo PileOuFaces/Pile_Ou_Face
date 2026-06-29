@@ -70,6 +70,7 @@ function buildDisasmAiPrompt({ binaryPath = '', addr = '', functionName = '', in
 function registerStaticCommands(context, deps, providers) {
   const {
     ensureTempDir,
+    storageDir,
     runCommand,
     logChannel,
   } = deps;
@@ -249,7 +250,7 @@ function registerStaticCommands(context, deps, providers) {
       vscode.window.showErrorMessage('Binaire introuvable.');
       return;
     }
-    const tempDir = ensureTempDir(root);
+    const tempDir = storageDir || ensureTempDir(root);
     const baseName = path.basename(absPath, path.extname(absPath)) || 'binary';
     const disasmPath = path.join(tempDir, `${baseName}.disasm.asm`);
     const mappingPath = path.join(tempDir, `${baseName}.disasm.mapping.json`);
@@ -295,7 +296,7 @@ function registerStaticCommands(context, deps, providers) {
       vscode.window.showErrorMessage('Binaire introuvable.');
       return;
     }
-    const tempDir = ensureTempDir(root);
+    const tempDir = storageDir || ensureTempDir(root);
     const baseName = path.basename(absPath, path.extname(absPath)) || 'binary';
     const disasmPath = path.join(tempDir, `${baseName}.disasm.asm`);
     const mappingPath = path.join(tempDir, `${baseName}.disasm.mapping.json`);

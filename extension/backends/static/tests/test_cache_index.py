@@ -22,7 +22,10 @@ class TestStaticCacheIndex(unittest.TestCase):
         self.binary = Path(self.workspace_root) / "demo.elf"
         self.binary.write_bytes(b"\x7fELFdemo")
         self.cache_dir = (
-            Path(self.workspace_root) / ".pile-ou-face" / "static_cache" / "deadbeefcafebabe"
+            Path(self.workspace_root)
+            / ".pile-ou-face"
+            / "static_cache"
+            / "deadbeefcafebabe"
         )
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.cache_file = self.cache_dir / "info.json"

@@ -8,9 +8,9 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
-from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(ROOT) not in sys.path:
@@ -62,7 +62,9 @@ def _capstone_available() -> bool:
         return False
 
 
-@unittest.skipUnless(_lief_available() and _capstone_available(), "lief et capstone requis")
+@unittest.skipUnless(
+    _lief_available() and _capstone_available(), "lief et capstone requis"
+)
 class TestStackFrame(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -165,13 +167,21 @@ class TestStackFrame(unittest.TestCase):
         ]
 
         with (
-            mock.patch.object(stack_frame_module, "_get_arch_mode", return_value=(1, 1)),
-            mock.patch.object(stack_frame_module, "_detect_abi", return_value=("x86", 8, "sysv64")),
             mock.patch.object(
-                stack_frame_module, "_get_code_bytes", return_value=(b"\x90" * 32, 0x401000)
+                stack_frame_module, "_get_arch_mode", return_value=(1, 1)
             ),
             mock.patch.object(
-                stack_frame_module, "lief", mock.Mock(parse=mock.Mock(return_value=object()))
+                stack_frame_module, "_detect_abi", return_value=("x86", 8, "sysv64")
+            ),
+            mock.patch.object(
+                stack_frame_module,
+                "_get_code_bytes",
+                return_value=(b"\x90" * 32, 0x401000),
+            ),
+            mock.patch.object(
+                stack_frame_module,
+                "lief",
+                mock.Mock(parse=mock.Mock(return_value=object())),
             ),
             mock.patch.object(
                 stack_frame_module,
@@ -183,10 +193,16 @@ class TestStackFrame(unittest.TestCase):
 
         self.assertEqual(data["frame_size"], 40)
         self.assertTrue(
-            any(v["location"] == "[rsp+0x18]" and v["offset"] == -16 for v in data["vars"])
+            any(
+                v["location"] == "[rsp+0x18]" and v["offset"] == -16
+                for v in data["vars"]
+            )
         )
         self.assertTrue(
-            any(a["location"] == "[rsp+0x30]" and a["offset"] == 16 for a in data["args"])
+            any(
+                a["location"] == "[rsp+0x30]" and a["offset"] == 16
+                for a in data["args"]
+            )
         )
 
     def test_x86_stack_realignment_keeps_rsp_locals_usable(self):
@@ -208,13 +224,21 @@ class TestStackFrame(unittest.TestCase):
         ]
 
         with (
-            mock.patch.object(stack_frame_module, "_get_arch_mode", return_value=(1, 1)),
-            mock.patch.object(stack_frame_module, "_detect_abi", return_value=("x86", 8, "sysv64")),
             mock.patch.object(
-                stack_frame_module, "_get_code_bytes", return_value=(b"\x90" * 40, 0x401040)
+                stack_frame_module, "_get_arch_mode", return_value=(1, 1)
             ),
             mock.patch.object(
-                stack_frame_module, "lief", mock.Mock(parse=mock.Mock(return_value=object()))
+                stack_frame_module, "_detect_abi", return_value=("x86", 8, "sysv64")
+            ),
+            mock.patch.object(
+                stack_frame_module,
+                "_get_code_bytes",
+                return_value=(b"\x90" * 40, 0x401040),
+            ),
+            mock.patch.object(
+                stack_frame_module,
+                "lief",
+                mock.Mock(parse=mock.Mock(return_value=object())),
             ),
             mock.patch.object(
                 stack_frame_module,
@@ -226,7 +250,10 @@ class TestStackFrame(unittest.TestCase):
 
         self.assertEqual(data["frame_size"], 48)
         self.assertTrue(
-            any(v["location"] == "[rsp+0x10]" and v["offset"] == -32 for v in data["vars"])
+            any(
+                v["location"] == "[rsp+0x10]" and v["offset"] == -32
+                for v in data["vars"]
+            )
         )
 
     def test_x86_dynamic_alloca_suppresses_ambiguous_rsp_accesses(self):
@@ -249,13 +276,21 @@ class TestStackFrame(unittest.TestCase):
         ]
 
         with (
-            mock.patch.object(stack_frame_module, "_get_arch_mode", return_value=(1, 1)),
-            mock.patch.object(stack_frame_module, "_detect_abi", return_value=("x86", 8, "sysv64")),
             mock.patch.object(
-                stack_frame_module, "_get_code_bytes", return_value=(b"\x90" * 48, 0x401060)
+                stack_frame_module, "_get_arch_mode", return_value=(1, 1)
             ),
             mock.patch.object(
-                stack_frame_module, "lief", mock.Mock(parse=mock.Mock(return_value=object()))
+                stack_frame_module, "_detect_abi", return_value=("x86", 8, "sysv64")
+            ),
+            mock.patch.object(
+                stack_frame_module,
+                "_get_code_bytes",
+                return_value=(b"\x90" * 48, 0x401060),
+            ),
+            mock.patch.object(
+                stack_frame_module,
+                "lief",
+                mock.Mock(parse=mock.Mock(return_value=object())),
             ),
             mock.patch.object(
                 stack_frame_module,
@@ -268,7 +303,9 @@ class TestStackFrame(unittest.TestCase):
         self.assertFalse(any(v["location"] == "[rsp+0x18]" for v in data["vars"]))
         self.assertFalse(any(a["location"] == "[rsp+0x18]" for a in data["args"]))
         self.assertTrue(
-            any(v["location"] == "[rbp-0x8]" and v["offset"] == -8 for v in data["vars"])
+            any(
+                v["location"] == "[rbp-0x8]" and v["offset"] == -8 for v in data["vars"]
+            )
         )
 
     def test_x86_static_lea_stack_adjustment_is_tracked(self):
@@ -287,13 +324,21 @@ class TestStackFrame(unittest.TestCase):
         ]
 
         with (
-            mock.patch.object(stack_frame_module, "_get_arch_mode", return_value=(1, 1)),
-            mock.patch.object(stack_frame_module, "_detect_abi", return_value=("x86", 8, "sysv64")),
             mock.patch.object(
-                stack_frame_module, "_get_code_bytes", return_value=(b"\x90" * 32, 0x401080)
+                stack_frame_module, "_get_arch_mode", return_value=(1, 1)
             ),
             mock.patch.object(
-                stack_frame_module, "lief", mock.Mock(parse=mock.Mock(return_value=object()))
+                stack_frame_module, "_detect_abi", return_value=("x86", 8, "sysv64")
+            ),
+            mock.patch.object(
+                stack_frame_module,
+                "_get_code_bytes",
+                return_value=(b"\x90" * 32, 0x401080),
+            ),
+            mock.patch.object(
+                stack_frame_module,
+                "lief",
+                mock.Mock(parse=mock.Mock(return_value=object())),
             ),
             mock.patch.object(
                 stack_frame_module,
@@ -305,7 +350,10 @@ class TestStackFrame(unittest.TestCase):
 
         self.assertEqual(data["frame_size"], 0x30)
         self.assertTrue(
-            any(v["location"] == "[rsp+0x20]" and v["offset"] == -0x10 for v in data["vars"])
+            any(
+                v["location"] == "[rsp+0x20]" and v["offset"] == -0x10
+                for v in data["vars"]
+            )
         )
 
     def test_win64_shadow_space_is_not_treated_as_stack_args(self):
@@ -330,13 +378,21 @@ class TestStackFrame(unittest.TestCase):
         ]
 
         with (
-            mock.patch.object(stack_frame_module, "_get_arch_mode", return_value=(1, 1)),
-            mock.patch.object(stack_frame_module, "_detect_abi", return_value=("x86", 8, "win64")),
             mock.patch.object(
-                stack_frame_module, "_get_code_bytes", return_value=(b"\x90" * 32, 0x401020)
+                stack_frame_module, "_get_arch_mode", return_value=(1, 1)
             ),
             mock.patch.object(
-                stack_frame_module, "lief", mock.Mock(parse=mock.Mock(return_value=object()))
+                stack_frame_module, "_detect_abi", return_value=("x86", 8, "win64")
+            ),
+            mock.patch.object(
+                stack_frame_module,
+                "_get_code_bytes",
+                return_value=(b"\x90" * 32, 0x401020),
+            ),
+            mock.patch.object(
+                stack_frame_module,
+                "lief",
+                mock.Mock(parse=mock.Mock(return_value=object())),
             ),
             mock.patch.object(
                 stack_frame_module,
@@ -348,7 +404,10 @@ class TestStackFrame(unittest.TestCase):
 
         self.assertFalse(any(a["location"] == "[rsp+0x20]" for a in data["args"]))
         self.assertTrue(
-            any(a["location"] == "[rsp+0x48]" and a["offset"] == 0x30 for a in data["args"])
+            any(
+                a["location"] == "[rsp+0x48]" and a["offset"] == 0x30
+                for a in data["args"]
+            )
         )
 
     def test_cdecl32_frame_pointer_args_are_detected(self):
@@ -374,15 +433,21 @@ class TestStackFrame(unittest.TestCase):
         ]
 
         with (
-            mock.patch.object(stack_frame_module, "_get_arch_mode", return_value=(1, 1)),
+            mock.patch.object(
+                stack_frame_module, "_get_arch_mode", return_value=(1, 1)
+            ),
             mock.patch.object(
                 stack_frame_module, "_detect_abi", return_value=("x86", 4, "cdecl32")
             ),
             mock.patch.object(
-                stack_frame_module, "_get_code_bytes", return_value=(b"\x90" * 24, 0x402000)
+                stack_frame_module,
+                "_get_code_bytes",
+                return_value=(b"\x90" * 24, 0x402000),
             ),
             mock.patch.object(
-                stack_frame_module, "lief", mock.Mock(parse=mock.Mock(return_value=object()))
+                stack_frame_module,
+                "lief",
+                mock.Mock(parse=mock.Mock(return_value=object())),
             ),
             mock.patch.object(
                 stack_frame_module,
@@ -396,7 +461,9 @@ class TestStackFrame(unittest.TestCase):
             any(a["location"] == "[ebp+0x8]" and a["offset"] == 8 for a in data["args"])
         )
         self.assertTrue(
-            any(a["location"] == "[ebp+0xc]" and a["offset"] == 12 for a in data["args"])
+            any(
+                a["location"] == "[ebp+0xc]" and a["offset"] == 12 for a in data["args"]
+            )
         )
 
     def test_sysv64_register_aliases_are_detected(self):
@@ -420,13 +487,21 @@ class TestStackFrame(unittest.TestCase):
         ]
 
         with (
-            mock.patch.object(stack_frame_module, "_get_arch_mode", return_value=(1, 1)),
-            mock.patch.object(stack_frame_module, "_detect_abi", return_value=("x86", 8, "sysv64")),
             mock.patch.object(
-                stack_frame_module, "_get_code_bytes", return_value=(b"\x90" * 16, 0x401100)
+                stack_frame_module, "_get_arch_mode", return_value=(1, 1)
             ),
             mock.patch.object(
-                stack_frame_module, "lief", mock.Mock(parse=mock.Mock(return_value=object()))
+                stack_frame_module, "_detect_abi", return_value=("x86", 8, "sysv64")
+            ),
+            mock.patch.object(
+                stack_frame_module,
+                "_get_code_bytes",
+                return_value=(b"\x90" * 16, 0x401100),
+            ),
+            mock.patch.object(
+                stack_frame_module,
+                "lief",
+                mock.Mock(parse=mock.Mock(return_value=object())),
             ),
             mock.patch.object(
                 stack_frame_module,
@@ -436,8 +511,12 @@ class TestStackFrame(unittest.TestCase):
         ):
             data = stack_frame_module.analyse_stack_frame(self.binary, 0x401100)
 
-        self.assertTrue(any(a["location"] == "rdi" and a["source"] == "abi" for a in data["args"]))
-        self.assertTrue(any(a["location"] == "rsi" and a["source"] == "abi" for a in data["args"]))
+        self.assertTrue(
+            any(a["location"] == "rdi" and a["source"] == "abi" for a in data["args"])
+        )
+        self.assertTrue(
+            any(a["location"] == "rsi" and a["source"] == "abi" for a in data["args"])
+        )
 
     def test_arm64_register_args_and_sp_locals_are_detected(self):
         class FakeInstr:
@@ -463,15 +542,21 @@ class TestStackFrame(unittest.TestCase):
         ]
 
         with (
-            mock.patch.object(stack_frame_module, "_get_arch_mode", return_value=(1, 1)),
+            mock.patch.object(
+                stack_frame_module, "_get_arch_mode", return_value=(1, 1)
+            ),
             mock.patch.object(
                 stack_frame_module, "_detect_abi", return_value=("arm64", 8, "aapcs64")
             ),
             mock.patch.object(
-                stack_frame_module, "_get_code_bytes", return_value=(b"\x90" * 32, 0x500000)
+                stack_frame_module,
+                "_get_code_bytes",
+                return_value=(b"\x90" * 32, 0x500000),
             ),
             mock.patch.object(
-                stack_frame_module, "lief", mock.Mock(parse=mock.Mock(return_value=object()))
+                stack_frame_module,
+                "lief",
+                mock.Mock(parse=mock.Mock(return_value=object())),
             ),
             mock.patch.object(
                 stack_frame_module,
@@ -485,9 +570,14 @@ class TestStackFrame(unittest.TestCase):
         self.assertEqual(data["abi"], "aapcs64")
         self.assertEqual(data["frame_size"], 96)
         self.assertTrue(
-            any(v["location"] == "[sp+0x18]" and v["offset"] == -72 for v in data["vars"])
+            any(
+                v["location"] == "[sp+0x18]" and v["offset"] == -72
+                for v in data["vars"]
+            )
         )
-        self.assertTrue(any(a["location"] == "x0" and a["source"] == "abi" for a in data["args"]))
+        self.assertTrue(
+            any(a["location"] == "x0" and a["source"] == "abi" for a in data["args"])
+        )
 
     def test_arm64_dynamic_alloca_suppresses_ambiguous_sp_accesses(self):
         class FakeDisasm:
@@ -509,15 +599,21 @@ class TestStackFrame(unittest.TestCase):
         ]
 
         with (
-            mock.patch.object(stack_frame_module, "_get_arch_mode", return_value=(1, 1)),
+            mock.patch.object(
+                stack_frame_module, "_get_arch_mode", return_value=(1, 1)
+            ),
             mock.patch.object(
                 stack_frame_module, "_detect_abi", return_value=("arm64", 8, "aapcs64")
             ),
             mock.patch.object(
-                stack_frame_module, "_get_code_bytes", return_value=(b"\x90" * 48, 0x500040)
+                stack_frame_module,
+                "_get_code_bytes",
+                return_value=(b"\x90" * 48, 0x500040),
             ),
             mock.patch.object(
-                stack_frame_module, "lief", mock.Mock(parse=mock.Mock(return_value=object()))
+                stack_frame_module,
+                "lief",
+                mock.Mock(parse=mock.Mock(return_value=object())),
             ),
             mock.patch.object(
                 stack_frame_module,
@@ -531,7 +627,9 @@ class TestStackFrame(unittest.TestCase):
         self.assertFalse(any(v["location"] == "[sp+0x18]" for v in data["vars"]))
         self.assertFalse(any(a["location"] == "[sp+0x18]" for a in data["args"]))
         self.assertTrue(
-            any(v["location"] == "[x29-0x8]" and v["offset"] == -8 for v in data["vars"])
+            any(
+                v["location"] == "[x29-0x8]" and v["offset"] == -8 for v in data["vars"]
+            )
         )
 
     def test_arm64_restoring_sp_from_frame_pointer_recovers_known_state(self):
@@ -554,15 +652,21 @@ class TestStackFrame(unittest.TestCase):
         ]
 
         with (
-            mock.patch.object(stack_frame_module, "_get_arch_mode", return_value=(1, 1)),
+            mock.patch.object(
+                stack_frame_module, "_get_arch_mode", return_value=(1, 1)
+            ),
             mock.patch.object(
                 stack_frame_module, "_detect_abi", return_value=("arm64", 8, "aapcs64")
             ),
             mock.patch.object(
-                stack_frame_module, "_get_code_bytes", return_value=(b"\x90" * 48, 0x500060)
+                stack_frame_module,
+                "_get_code_bytes",
+                return_value=(b"\x90" * 48, 0x500060),
             ),
             mock.patch.object(
-                stack_frame_module, "lief", mock.Mock(parse=mock.Mock(return_value=object()))
+                stack_frame_module,
+                "lief",
+                mock.Mock(parse=mock.Mock(return_value=object())),
             ),
             mock.patch.object(
                 stack_frame_module,
@@ -574,7 +678,10 @@ class TestStackFrame(unittest.TestCase):
 
         self.assertEqual(data["frame_size"], 0x20)
         self.assertTrue(
-            any(v["location"] == "[sp+0x8]" and v["offset"] == -0x18 for v in data["vars"])
+            any(
+                v["location"] == "[sp+0x8]" and v["offset"] == -0x18
+                for v in data["vars"]
+            )
         )
 
     def test_arm64_w_register_aliases_are_detected(self):
@@ -598,15 +705,21 @@ class TestStackFrame(unittest.TestCase):
         ]
 
         with (
-            mock.patch.object(stack_frame_module, "_get_arch_mode", return_value=(1, 1)),
+            mock.patch.object(
+                stack_frame_module, "_get_arch_mode", return_value=(1, 1)
+            ),
             mock.patch.object(
                 stack_frame_module, "_detect_abi", return_value=("arm64", 8, "aapcs64")
             ),
             mock.patch.object(
-                stack_frame_module, "_get_code_bytes", return_value=(b"\x90" * 16, 0x500100)
+                stack_frame_module,
+                "_get_code_bytes",
+                return_value=(b"\x90" * 16, 0x500100),
             ),
             mock.patch.object(
-                stack_frame_module, "lief", mock.Mock(parse=mock.Mock(return_value=object()))
+                stack_frame_module,
+                "lief",
+                mock.Mock(parse=mock.Mock(return_value=object())),
             ),
             mock.patch.object(
                 stack_frame_module,
@@ -616,8 +729,12 @@ class TestStackFrame(unittest.TestCase):
         ):
             data = stack_frame_module.analyse_stack_frame(self.binary, 0x500100)
 
-        self.assertTrue(any(a["location"] == "x0" and a["source"] == "abi" for a in data["args"]))
-        self.assertTrue(any(a["location"] == "x1" and a["source"] == "abi" for a in data["args"]))
+        self.assertTrue(
+            any(a["location"] == "x0" and a["source"] == "abi" for a in data["args"])
+        )
+        self.assertTrue(
+            any(a["location"] == "x1" and a["source"] == "abi" for a in data["args"])
+        )
 
     def test_arm32_register_args_and_sp_locals_are_detected(self):
         class FakeInstr:
@@ -642,15 +759,21 @@ class TestStackFrame(unittest.TestCase):
         ]
 
         with (
-            mock.patch.object(stack_frame_module, "_get_arch_mode", return_value=(1, 1)),
+            mock.patch.object(
+                stack_frame_module, "_get_arch_mode", return_value=(1, 1)
+            ),
             mock.patch.object(
                 stack_frame_module, "_detect_abi", return_value=("arm", 4, "aapcs32")
             ),
             mock.patch.object(
-                stack_frame_module, "_get_code_bytes", return_value=(b"\x90" * 24, 0x600000)
+                stack_frame_module,
+                "_get_code_bytes",
+                return_value=(b"\x90" * 24, 0x600000),
             ),
             mock.patch.object(
-                stack_frame_module, "lief", mock.Mock(parse=mock.Mock(return_value=object()))
+                stack_frame_module,
+                "lief",
+                mock.Mock(parse=mock.Mock(return_value=object())),
             ),
             mock.patch.object(
                 stack_frame_module,
@@ -664,9 +787,13 @@ class TestStackFrame(unittest.TestCase):
         self.assertEqual(data["abi"], "aapcs32")
         self.assertEqual(data["frame_size"], 40)
         self.assertTrue(
-            any(v["location"] == "[sp+0x8]" and v["offset"] == -32 for v in data["vars"])
+            any(
+                v["location"] == "[sp+0x8]" and v["offset"] == -32 for v in data["vars"]
+            )
         )
-        self.assertTrue(any(a["location"] == "r0" and a["source"] == "abi" for a in data["args"]))
+        self.assertTrue(
+            any(a["location"] == "r0" and a["source"] == "abi" for a in data["args"])
+        )
 
     def test_arm32_frame_pointer_args_are_detected(self):
         class FakeInstr:
@@ -691,15 +818,21 @@ class TestStackFrame(unittest.TestCase):
         ]
 
         with (
-            mock.patch.object(stack_frame_module, "_get_arch_mode", return_value=(1, 1)),
+            mock.patch.object(
+                stack_frame_module, "_get_arch_mode", return_value=(1, 1)
+            ),
             mock.patch.object(
                 stack_frame_module, "_detect_abi", return_value=("arm", 4, "aapcs32")
             ),
             mock.patch.object(
-                stack_frame_module, "_get_code_bytes", return_value=(b"\x90" * 24, 0x600100)
+                stack_frame_module,
+                "_get_code_bytes",
+                return_value=(b"\x90" * 24, 0x600100),
             ),
             mock.patch.object(
-                stack_frame_module, "lief", mock.Mock(parse=mock.Mock(return_value=object()))
+                stack_frame_module,
+                "lief",
+                mock.Mock(parse=mock.Mock(return_value=object())),
             ),
             mock.patch.object(
                 stack_frame_module,
@@ -713,7 +846,9 @@ class TestStackFrame(unittest.TestCase):
             any(a["location"] == "[r11+0x8]" and a["offset"] == 8 for a in data["args"])
         )
         self.assertTrue(
-            any(a["location"] == "[r11+0xc]" and a["offset"] == 12 for a in data["args"])
+            any(
+                a["location"] == "[r11+0xc]" and a["offset"] == 12 for a in data["args"]
+            )
         )
 
     def test_arm64_frame_pointer_anchor_tracks_saved_area_size(self):
@@ -739,15 +874,21 @@ class TestStackFrame(unittest.TestCase):
         ]
 
         with (
-            mock.patch.object(stack_frame_module, "_get_arch_mode", return_value=(1, 1)),
+            mock.patch.object(
+                stack_frame_module, "_get_arch_mode", return_value=(1, 1)
+            ),
             mock.patch.object(
                 stack_frame_module, "_detect_abi", return_value=("arm64", 8, "aapcs64")
             ),
             mock.patch.object(
-                stack_frame_module, "_get_code_bytes", return_value=(b"\x90" * 32, 0x700000)
+                stack_frame_module,
+                "_get_code_bytes",
+                return_value=(b"\x90" * 32, 0x700000),
             ),
             mock.patch.object(
-                stack_frame_module, "lief", mock.Mock(parse=mock.Mock(return_value=object()))
+                stack_frame_module,
+                "lief",
+                mock.Mock(parse=mock.Mock(return_value=object())),
             ),
             mock.patch.object(
                 stack_frame_module,
@@ -759,7 +900,10 @@ class TestStackFrame(unittest.TestCase):
 
         self.assertFalse(any(a["location"] == "[x29+0x18]" for a in data["args"]))
         self.assertTrue(
-            any(a["location"] == "[x29+0x20]" and a["offset"] == 0x20 for a in data["args"])
+            any(
+                a["location"] == "[x29+0x20]" and a["offset"] == 0x20
+                for a in data["args"]
+            )
         )
 
     def test_arm32_frame_pointer_anchor_tracks_bias_from_fp_setup(self):
@@ -785,15 +929,21 @@ class TestStackFrame(unittest.TestCase):
         ]
 
         with (
-            mock.patch.object(stack_frame_module, "_get_arch_mode", return_value=(1, 1)),
+            mock.patch.object(
+                stack_frame_module, "_get_arch_mode", return_value=(1, 1)
+            ),
             mock.patch.object(
                 stack_frame_module, "_detect_abi", return_value=("arm", 4, "aapcs32")
             ),
             mock.patch.object(
-                stack_frame_module, "_get_code_bytes", return_value=(b"\x90" * 24, 0x700100)
+                stack_frame_module,
+                "_get_code_bytes",
+                return_value=(b"\x90" * 24, 0x700100),
             ),
             mock.patch.object(
-                stack_frame_module, "lief", mock.Mock(parse=mock.Mock(return_value=object()))
+                stack_frame_module,
+                "lief",
+                mock.Mock(parse=mock.Mock(return_value=object())),
             ),
             mock.patch.object(
                 stack_frame_module,
@@ -819,19 +969,32 @@ class TestStackFrame(unittest.TestCase):
         ]
         for op_str, family, expected in cases:
             with self.subTest(family=family):
-                self.assertEqual(stack_frame_module._parse_stack_access(op_str, family), expected)
+                self.assertEqual(
+                    stack_frame_module._parse_stack_access(op_str, family), expected
+                )
 
     def test_extended_stack_adjust_patterns_are_tracked(self):
         cases = [
-            (SimpleNamespace(mnemonic="addi", op_str="sp, sp, -0x20"), "riscv", 8, 0x20),
+            (
+                SimpleNamespace(mnemonic="addi", op_str="sp, sp, -0x20"),
+                "riscv",
+                8,
+                0x20,
+            ),
             (SimpleNamespace(mnemonic="addiu", op_str="$sp, $sp, -32"), "mips", 4, 32),
             (SimpleNamespace(mnemonic="stwu", op_str="r1, -0x30(r1)"), "ppc", 4, 0x30),
-            (SimpleNamespace(mnemonic="save", op_str="%sp, -0x60, %sp"), "sparc", 4, 0x60),
+            (
+                SimpleNamespace(mnemonic="save", op_str="%sp, -0x60, %sp"),
+                "sparc",
+                4,
+                0x60,
+            ),
         ]
         for ins, family, ptr_size, expected in cases:
             with self.subTest(family=family):
                 self.assertEqual(
-                    stack_frame_module._update_stack_adjust(0, ins, family, ptr_size), expected
+                    stack_frame_module._update_stack_adjust(0, ins, family, ptr_size),
+                    expected,
                 )
 
 

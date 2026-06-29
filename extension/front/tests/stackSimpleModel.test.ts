@@ -6,7 +6,7 @@ describe('stackSimpleModel', () => {
   let buildSimplifiedStackViewModel;
 
   before(async () => {
-    const modulePath = path.resolve(__dirname, '../webview/dynamic/app/stackSimpleModel.js');
+    const modulePath = path.resolve(__dirname, '../dynamic/app/stackSimpleModel.js');
     const source = fs.readFileSync(modulePath, 'utf8');
     const dataUrl = `data:text/javascript;base64,${Buffer.from(source, 'utf8').toString('base64')}`;
     ({ buildSimplifiedStackViewModel } = await import(dataUrl));

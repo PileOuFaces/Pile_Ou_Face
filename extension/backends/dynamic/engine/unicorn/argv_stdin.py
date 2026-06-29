@@ -3,8 +3,6 @@
 
 from __future__ import annotations
 
-from typing import List, Optional
-
 
 def _consume_stream_bytes(state: dict, data_key: str, pos_key: str, n: int) -> bytes:
     if n <= 0:
@@ -18,7 +16,9 @@ def _consume_stream_bytes(state: dict, data_key: str, pos_key: str, n: int) -> b
     return chunk
 
 
-def _consume_stream_line(state: dict, data_key: str, pos_key: str, max_len: int) -> bytes:
+def _consume_stream_line(
+    state: dict, data_key: str, pos_key: str, max_len: int
+) -> bytes:
     if max_len <= 0:
         return b""
     data = state.get(data_key, b"")
@@ -79,8 +79,8 @@ def _consume_stream_token(
     state: dict,
     data_key: str,
     pos_key: str,
-    width: Optional[int] = None,
-    scanset: Optional[str] = None,
+    width: int | None = None,
+    scanset: str | None = None,
 ) -> bytes:
     _skip_stream_whitespace(state, data_key, pos_key)
     data = state.get(data_key, b"")
@@ -101,7 +101,7 @@ def _consume_stream_token(
     return data[pos:cursor]
 
 
-def _consume_stdin_token(state: dict, width: Optional[int] = None) -> bytes:
+def _consume_stdin_token(state: dict, width: int | None = None) -> bytes:
     return _consume_stream_token(state, "stdin_data", "stdin_pos", width)
 
 
@@ -127,8 +127,8 @@ def _byte_matches_scanset(byte: int, scanset: str) -> bool:
     return not matched if invert else matched
 
 
-def _iterate_scanf_tokens(fmt: str) -> List[dict]:
-    tokens: List[dict] = []
+def _iterate_scanf_tokens(fmt: str) -> list[dict]:
+    tokens: list[dict] = []
     idx = 0
     while idx < len(fmt):
         ch = fmt[idx]

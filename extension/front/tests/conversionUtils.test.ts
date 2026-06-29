@@ -1,6 +1,6 @@
 const { expect } = require('chai');
 
-const conversionUtils = require('../webview/shared/conversionUtils.js');
+const conversionUtils = require('../shared/conversionUtils.js');
 
 describe('pwn conversion utils', () => {
   it('normalizes the supported pwn input formats', () => {
@@ -56,7 +56,7 @@ describe('pwn conversion utils', () => {
 });
 
 describe('pwn conversion controller', () => {
-  const controllerPath = require.resolve('../webview/shared/conversionController.js');
+  const controllerPath = require.resolve('../shared/conversionController.js');
   let originalWindow;
   let originalDocument;
   let copied;
@@ -148,7 +148,7 @@ describe('pwn conversion controller', () => {
   });
 
   it('copies an output value when the value itself is clicked', async () => {
-    require('../webview/shared/conversionController.js');
+    require('../shared/conversionController.js');
 
     const signed64 = global.document.getElementById('pwnConverterSigned64');
     expect(signed64.textContent).to.equal('-1');

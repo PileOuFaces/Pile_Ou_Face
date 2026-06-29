@@ -50,7 +50,9 @@ class TestBinaryPatch(unittest.TestCase):
         make_minimal_elf(self.binary)
 
     def test_patch_and_verify(self):
-        result = run_patch(["--binary", self.binary, "--offset", "0", "--bytes", "90 90 90 90"])
+        result = run_patch(
+            ["--binary", self.binary, "--offset", "0", "--bytes", "90 90 90 90"]
+        )
         self.assertTrue(result.get("ok"), msg=f"Patch failed: {result}")
         with open(self.binary, "rb") as f:
             data = f.read(4)

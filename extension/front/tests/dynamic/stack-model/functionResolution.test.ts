@@ -7,7 +7,7 @@ describe('dynamic/stack-model function resolution regressions', () => {
   let resolveModelForFunction: Function;
 
   before(async () => {
-    const modulePath = path.resolve(__dirname, '../../../webview/dynamic/app/stackWorkspaceDebug.js');
+    const modulePath = path.resolve(__dirname, '../../../dynamic/app/stackWorkspaceDebug.js');
     ({ resolveModelForFunctionSelection, resolveModelForFunction } = await import(pathToFileURL(modulePath).href));
   });
 

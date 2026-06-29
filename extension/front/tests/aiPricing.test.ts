@@ -1,6 +1,6 @@
 const { expect } = require('chai');
 
-const pricing = require('../webview/shared/aiPricing');
+const pricing = require('../shared/aiPricing');
 
 describe('AI pricing estimates', () => {
   const rules = [

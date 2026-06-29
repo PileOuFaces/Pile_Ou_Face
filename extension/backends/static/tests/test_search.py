@@ -95,7 +95,9 @@ class TestSearchInBinary(unittest.TestCase):
             path = f.name
         try:
             self.assertEqual(search_in_binary(path, "zz", mode="hex"), [])
-            self.assertEqual(search_in_binary(path, "434", mode="hex"), [])  # odd length
+            self.assertEqual(
+                search_in_binary(path, "434", mode="hex"), []
+            )  # odd length
         finally:
             Path(path).unlink(missing_ok=True)
 
@@ -203,18 +205,26 @@ class TestSearchFilters(unittest.TestCase):
         self.assertNotIn("HELLO", values)
 
     def test_case_insensitive_flag(self):
-        results = search_in_binary(self.binary, "hello", mode="text", case_sensitive=False)
+        results = search_in_binary(
+            self.binary, "hello", mode="text", case_sensitive=False
+        )
         # Doit trouver à la fois 'hello' et 'HELLO' (valeurs réelles des bytes)
         offsets = [r["offset"] for r in results]
         self.assertIn(0x100, offsets, "Manque 'hello' à 0x100")
         self.assertIn(0x10C, offsets, "Manque 'HELLO' à 0x10c")
         # value doit contenir les bytes originaux, pas le pattern lowercased
         by_offset = {r["offset"]: r for r in results}
-        self.assertEqual(by_offset[0x100]["value"], "hello", "value à 0x100 doit être 'hello'")
-        self.assertEqual(by_offset[0x10C]["value"], "HELLO", "value à 0x10c doit être 'HELLO'")
+        self.assertEqual(
+            by_offset[0x100]["value"], "hello", "value à 0x100 doit être 'hello'"
+        )
+        self.assertEqual(
+            by_offset[0x10C]["value"], "HELLO", "value à 0x10c doit être 'HELLO'"
+        )
 
     def test_offset_start_filters(self):
-        results = search_in_binary(self.binary, r"\w+", mode="regex", offset_start=0x10C)
+        results = search_in_binary(
+            self.binary, r"\w+", mode="regex", offset_start=0x10C
+        )
         for r in results:
             self.assertGreaterEqual(r["offset"], 0x10C)
 
@@ -230,7 +240,9 @@ class TestSearchFilters(unittest.TestCase):
             f.write(data)
             path = f.name
         try:
-            results = search_in_binary(path, "hello", mode="regex", case_sensitive=False)
+            results = search_in_binary(
+                path, "hello", mode="regex", case_sensitive=False
+            )
             self.assertEqual(len(results), 2)  # "Hello" et "HELLO"
         finally:
             os.unlink(path)

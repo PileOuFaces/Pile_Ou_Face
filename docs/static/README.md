@@ -12,7 +12,6 @@ Si tu dois presenter la partie statique rapidement, commence par ces fichiers :
 | [FONCTIONNALITES.md](FONCTIONNALITES.md) | Liste complete des fonctionnalites par groupe `CODE`, `DATA` et des groupes pluginises `AUDIT`, `MALWARE`, `OFFENSIF` |
 | [GUIDE_UTILISATION.md](GUIDE_UTILISATION.md) | Guide pratique : comment utiliser chaque vue et comment interpreter les resultats |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Architecture statique : webview, extension VS Code, backend Python, cache et tests |
-| [ROADMAP.md](ROADMAP.md) | Etat des features, reste a faire et ameliorations prevues |
 | [PLUGIN.md](PLUGIN.md) | Host plugin : runtime, manifest, installation, MCP, capacites du host |
 | [PLUGIN_DEV.md](PLUGIN_DEV.md) | **Guide communaute** : creer un plugin open source, format manifest, API context, best practices |
 

@@ -100,7 +100,9 @@ def _pe_exceptions(binary) -> list[dict]:
     return entries
 
 
-def _read_dwarf_int(data: bytes, offset: int, size: int, *, signed: bool = False) -> int | None:
+def _read_dwarf_int(
+    data: bytes, offset: int, size: int, *, signed: bool = False
+) -> int | None:
     if offset < 0 or size <= 0 or offset + size > len(data):
         return None
     return int.from_bytes(data[offset : offset + size], "little", signed=signed)
@@ -149,7 +151,9 @@ def _elf_dwarf_exceptions(binary) -> list[dict]:
             if is_fde:
                 pc_offset_pos = content_start + field_size
                 pc_range_pos = pc_offset_pos + field_size
-                pc_offset = _read_dwarf_int(data, pc_offset_pos, field_size, signed=True)
+                pc_offset = _read_dwarf_int(
+                    data, pc_offset_pos, field_size, signed=True
+                )
                 pc_range = _read_dwarf_int(data, pc_range_pos, field_size)
                 if pc_offset is not None and pc_range is not None:
                     pc_begin = base_addr + pc_offset_pos + pc_offset
@@ -198,7 +202,9 @@ def _macho_compact_unwind_entries(binary, section) -> list[dict]:
             continue
 
         func_start = image_base + range_start
-        flags = [f"encoding=0x{encoding:x}" if encoding is not None else "encoding=unknown"]
+        flags = [
+            f"encoding=0x{encoding:x}" if encoding is not None else "encoding=unknown"
+        ]
         handler = hex(image_base + personality) if personality else None
         if lsda:
             flags.append(f"lsda=0x{image_base + lsda:x}")
@@ -279,7 +285,13 @@ def get_exception_handlers(binary_path: str) -> dict:
         fmt, arch = "MachO", _arch_name(binary)
         entries = _macho_exceptions(binary)
 
-    return {"format": fmt, "arch": arch, "entries": entries, "count": len(entries), "error": None}
+    return {
+        "format": fmt,
+        "arch": arch,
+        "entries": entries,
+        "count": len(entries),
+        "error": None,
+    }
 
 
 def main() -> int:

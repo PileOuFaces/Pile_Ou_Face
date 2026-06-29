@@ -78,7 +78,9 @@ class TestExtractBinaryInfo(unittest.TestCase):
             write_minimal_pe64(pe_path)
             result = extract_binary_info(pe_path)
             self.assertNotIn("error", result, result.get("error", ""))
-            self.assertIn("PE", result.get("format", ""), f"format={result.get('format')}")
+            self.assertIn(
+                "PE", result.get("format", ""), f"format={result.get('format')}"
+            )
             self.assertEqual(result.get("bits"), "64")
             self.assertIn("x86", result.get("arch", ""), f"arch={result.get('arch')}")
             entry = result.get("entry", "")
@@ -108,8 +110,20 @@ class TestPackerAnalysis(unittest.TestCase):
         mock_resources,
     ):
         mock_sections.return_value = [
-            {"name": "UPX0", "type": "DATA", "size": 4096, "size_hex": "0x1000", "offset": 512},
-            {"name": "UPX1", "type": "TEXT", "size": 8192, "size_hex": "0x2000", "offset": 4608},
+            {
+                "name": "UPX0",
+                "type": "DATA",
+                "size": 4096,
+                "size_hex": "0x1000",
+                "offset": 512,
+            },
+            {
+                "name": "UPX1",
+                "type": "TEXT",
+                "size": 8192,
+                "size_hex": "0x2000",
+                "offset": 4608,
+            },
         ]
         mock_entropy.return_value = {
             "global": 7.48,
@@ -140,7 +154,9 @@ class TestPackerAnalysis(unittest.TestCase):
         self.assertTrue(any(family["name"] == "UPX" for family in analysis["families"]))
         self.assertGreaterEqual(len(analysis["suspicious_sections"]), 2)
         self.assertTrue(
-            any(signal["kind"] == "dynamic_resolution" for signal in analysis["signals"])
+            any(
+                signal["kind"] == "dynamic_resolution" for signal in analysis["signals"]
+            )
         )
 
     @patch("backends.static.binary.headers.get_pe_resources")
@@ -157,8 +173,20 @@ class TestPackerAnalysis(unittest.TestCase):
         mock_resources,
     ):
         mock_sections.return_value = [
-            {"name": ".text", "type": "TEXT", "size": 12288, "size_hex": "0x3000", "offset": 1024},
-            {"name": ".data", "type": "DATA", "size": 2048, "size_hex": "0x800", "offset": 13312},
+            {
+                "name": ".text",
+                "type": "TEXT",
+                "size": 12288,
+                "size_hex": "0x3000",
+                "offset": 1024,
+            },
+            {
+                "name": ".data",
+                "type": "DATA",
+                "size": 2048,
+                "size_hex": "0x800",
+                "offset": 13312,
+            },
         ]
         mock_entropy.return_value = {
             "global": 5.31,
@@ -174,7 +202,12 @@ class TestPackerAnalysis(unittest.TestCase):
             "imports": [
                 {
                     "dll": "kernel32.dll",
-                    "functions": ["CreateFileW", "ReadFile", "CloseHandle", "ExitProcess"],
+                    "functions": [
+                        "CreateFileW",
+                        "ReadFile",
+                        "CloseHandle",
+                        "ExitProcess",
+                    ],
                 },
                 {
                     "dll": "user32.dll",
@@ -215,8 +248,20 @@ class TestPackerAnalysis(unittest.TestCase):
         mock_resources,
     ):
         mock_sections.return_value = [
-            {"name": ".text", "type": "TEXT", "size": 65536, "size_hex": "0x10000", "offset": 1024},
-            {"name": ".rdata", "type": "DATA", "size": 8192, "size_hex": "0x2000", "offset": 66560},
+            {
+                "name": ".text",
+                "type": "TEXT",
+                "size": 65536,
+                "size_hex": "0x10000",
+                "offset": 1024,
+            },
+            {
+                "name": ".rdata",
+                "type": "DATA",
+                "size": 8192,
+                "size_hex": "0x2000",
+                "offset": 66560,
+            },
         ]
         mock_entropy.return_value = {
             "global": 6.95,
@@ -269,7 +314,9 @@ class TestPackerAnalysis(unittest.TestCase):
         self.assertLess(analysis["score"], 30)
         self.assertNotEqual(analysis["verdict"], "high")
         self.assertTrue(
-            any(signal["kind"] == "benign_layout_bias" for signal in analysis["signals"])
+            any(
+                signal["kind"] == "benign_layout_bias" for signal in analysis["signals"]
+            )
         )
 
     @patch("backends.static.binary.headers.get_pe_resources")
@@ -304,7 +351,9 @@ class TestPackerAnalysis(unittest.TestCase):
         self.assertEqual(analysis["suspected_family"], "UPX")
         self.assertGreaterEqual(analysis["score"], 30)
         self.assertIn("yara_matches", analysis)
-        self.assertEqual(analysis["yara_matches"], [{"rule": "UPX_PE_x86", "family": "UPX"}])
+        self.assertEqual(
+            analysis["yara_matches"], [{"rule": "UPX_PE_x86", "family": "UPX"}]
+        )
         self.assertNotEqual(
             analysis["verdict"], "none", "YARA match doit produire un verdict non-nul"
         )
@@ -370,8 +419,12 @@ class TestPackerAnalysis(unittest.TestCase):
         analysis = _build_packer_analysis("/tmp/fake.exe", "PE AMD64")
 
         yara_signals = [s for s in analysis["signals"] if s["kind"] == "yara_signature"]
-        self.assertEqual(len(yara_signals), 1, "Un seul signal yara_signature par famille")
-        self.assertLessEqual(analysis["score"], 30, "Un seul bonus +30 pour deux règles UPX")
+        self.assertEqual(
+            len(yara_signals), 1, "Un seul signal yara_signature par famille"
+        )
+        self.assertLessEqual(
+            analysis["score"], 30, "Un seul bonus +30 pour deux règles UPX"
+        )
         self.assertEqual(analysis["suspected_family"], "UPX")
 
 

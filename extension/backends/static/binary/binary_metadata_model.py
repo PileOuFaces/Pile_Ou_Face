@@ -11,7 +11,9 @@ from pathlib import Path
 from typing import Any
 
 from backends.static.binary.adapters.dwarf_adapter import load_dwarf_functions
-from backends.static.binary.adapters.function_ranges_adapter import build_function_ranges
+from backends.static.binary.adapters.function_ranges_adapter import (
+    build_function_ranges,
+)
 from backends.static.binary.adapters.lief_adapter import (
     load_binary_facts,
     section_flags_by_name,
@@ -40,7 +42,12 @@ def _int_or_none(value: Any) -> int | None:
 def _normalize_section(section: dict[str, Any], flags: list[str]) -> dict[str, Any]:
     return {
         "name": str(section.get("name") or ""),
-        "vaddr": _hex(section.get("vma") or section.get("vma_hex") or section.get("virtual_address") or 0),
+        "vaddr": _hex(
+            section.get("vma")
+            or section.get("vma_hex")
+            or section.get("virtual_address")
+            or 0
+        ),
         "size": int(section.get("size") or 0),
         "offset": _hex(section.get("offset") or 0),
         "kind": str(section.get("type") or section.get("kind") or "UNKNOWN"),
@@ -74,9 +81,16 @@ def build_binary_metadata_model(binary_path: str) -> dict[str, Any]:
     sections.sort(key=lambda item: (int(item["vaddr"], 16), item["name"]))
 
     symbols = load_symbols(str(path)) if path.exists() else []
-    symbols.sort(key=lambda item: (int(str(item.get("addr") or "0x0"), 16), str(item.get("name") or "")))
+    symbols.sort(
+        key=lambda item: (
+            int(str(item.get("addr") or "0x0"), 16),
+            str(item.get("name") or ""),
+        )
+    )
 
-    dwarf_functions, dwarf_error = load_dwarf_functions(str(path)) if path.exists() else ([], "binary not found")
+    dwarf_functions, dwarf_error = (
+        load_dwarf_functions(str(path)) if path.exists() else ([], "binary not found")
+    )
     if dwarf_error:
         diagnostics.append({"source": "DWARF", "message": dwarf_error})
 

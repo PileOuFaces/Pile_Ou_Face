@@ -28,7 +28,22 @@ function getExtensionPath() {
 
 function resolveProjectRoot(root) {
   const value = String(root || '').trim();
-  return value ? path.resolve(value) : value;
+  if (!value) return value;
+  const absValue = path.resolve(value);
+  if (fs.existsSync(path.join(absValue, 'extension', 'package.json'))) {
+    return absValue;
+  }
+  try {
+    const entries = fs.readdirSync(absValue, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const candidate = path.join(absValue, entry.name);
+      if (fs.existsSync(path.join(candidate, 'extension', 'package.json'))) {
+        return candidate;
+      }
+    }
+  } catch (_) {}
+  return absValue;
 }
 
 function findGitRoot(dir) {
@@ -51,6 +66,26 @@ function ensureTempDir(root) {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
     logChannel.appendLine(`[temp] Dossier créé: ${dir}`);
+  }
+  return dir;
+}
+
+// Returns '' when context.storageUri is unavailable — check before use.
+function getStorageDir(context) {
+  return String(context?.storageUri?.fsPath || '');
+}
+
+// Returns '' when context.globalStorageUri is unavailable — check before use.
+function getGlobalStorageDir(context) {
+  return String(context?.globalStorageUri?.fsPath || '');
+}
+
+function ensureStorageDir(context) {
+  const dir = getStorageDir(context);
+  if (!dir) throw new Error('[storage] context.storageUri non disponible');
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+    logChannel.appendLine(`[storage] Dossier créé: ${dir}`);
   }
   return dir;
 }
@@ -159,10 +194,30 @@ function resolveDockerExecutable() {
   return 'docker';
 }
 
-function buildRuntimeEnv(root, extraEnv = {}) {
+/**
+ * Build the runtime env for Python/Docker processes.
+ * Accepts two call patterns (backward-compatible):
+ *   buildRuntimeEnv(root, storageDir)           — new style: storageDir is a string path
+ *   buildRuntimeEnv(root, extraEnv)             — legacy: extraEnv is a plain object
+ *   buildRuntimeEnv(root, storageDir, extraEnv) — new style with extra overrides
+ * When storageDir is provided, injects POF_STORAGE_DIR, DECOMPILERS_CONFIG, COMPILERS_CONFIG.
+ */
+function buildRuntimeEnv(root, storageDirOrExtra, extraEnv = {}) {
+  let storageDir = '';
+  let mergedExtra = extraEnv;
+  if (typeof storageDirOrExtra === 'string') {
+    storageDir = storageDirOrExtra;
+  } else if (storageDirOrExtra && typeof storageDirOrExtra === 'object') {
+    mergedExtra = { ...storageDirOrExtra, ...extraEnv };
+  }
   const backendBase = _extensionPath || path.resolve(String(root || '').trim());
-  const env = { ...process.env, ...extraEnv };
-  if (backendBase) env.PYTHONPATH = extraEnv.PYTHONPATH || backendBase;
+  const env = { ...process.env, ...mergedExtra };
+  if (storageDir) {
+    env.POF_STORAGE_DIR    = storageDir;
+    env.DECOMPILERS_CONFIG = path.join(storageDir, 'decompilers.json');
+    env.COMPILERS_CONFIG   = path.join(storageDir, 'compilers.json');
+  }
+  if (backendBase) env.PYTHONPATH = mergedExtra.PYTHONPATH || backendBase;
   const dockerExe = resolveDockerExecutable();
   if (dockerExe && dockerExe.includes(path.sep)) {
     const dockerDir = path.dirname(dockerExe);
@@ -282,6 +337,9 @@ module.exports = {
   TEMP_DIR_NAME,
   getTempDir,
   ensureTempDir,
+  getStorageDir,
+  getGlobalStorageDir,
+  ensureStorageDir,
   ensurePythonDependencies,
   detectPythonExecutable,
   resolveProjectRoot,

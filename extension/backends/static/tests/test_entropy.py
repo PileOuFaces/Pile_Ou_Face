@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Tests pour backends.static.binary.entropy."""
 
-import math
 import sys
 import unittest
 from pathlib import Path
@@ -9,6 +8,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+import contextlib
 
 from backends.static.binary.entropy import (
     entropy_of_bytes,
@@ -59,7 +60,6 @@ class TestEntropyOfBytes(unittest.TestCase):
 class TestEntropyOfFile(unittest.TestCase):
     def _write_tmp(self, data: bytes) -> str:
         import tempfile
-        import os
 
         f = tempfile.NamedTemporaryFile(delete=False)
         f.write(data)
@@ -72,10 +72,8 @@ class TestEntropyOfFile(unittest.TestCase):
         import os
 
         for p in getattr(self, "_tmpfiles", []):
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(p)
-            except OSError:
-                pass
 
     def test_nonexistent_returns_error(self):
         result = entropy_of_file("/nonexistent/file.bin")
@@ -107,7 +105,6 @@ class TestEntropyOfFile(unittest.TestCase):
 class TestHighEntropyRegions(unittest.TestCase):
     def _write_tmp(self, data: bytes) -> str:
         import tempfile
-        import os
 
         f = tempfile.NamedTemporaryFile(delete=False)
         f.write(data)
@@ -120,10 +117,8 @@ class TestHighEntropyRegions(unittest.TestCase):
         import os
 
         for p in getattr(self, "_tmpfiles", []):
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(p)
-            except OSError:
-                pass
 
     def test_uniform_data_no_high_entropy(self):
         path = self._write_tmp(b"\x00" * 2048)

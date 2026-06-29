@@ -1,6 +1,6 @@
 const { expect } = require('chai');
 
-const markdown = require('../webview/shared/markdownRenderer');
+const markdown = require('../shared/markdownRenderer');
 
 describe('secure markdown renderer', () => {
   it('parses the supported block elements', () => {

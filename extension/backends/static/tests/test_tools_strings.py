@@ -10,8 +10,8 @@ ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backends.static.tests.util import compile_minimal_elf
 from backends.static.search.strings import main
+from backends.static.tests.util import compile_minimal_elf
 
 
 class TestStringsMain(unittest.TestCase):

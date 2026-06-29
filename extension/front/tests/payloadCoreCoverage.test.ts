@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 const { expect } = require("chai");
 
-const payloadCore = require("../webview/static/payloadCore");
+const payloadCore = require("../static/payloadCore");
 
 describe("webview static payloadCore", () => {
   describe("source hints", () => {

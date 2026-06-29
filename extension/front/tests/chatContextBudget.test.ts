@@ -1,6 +1,6 @@
 const { expect } = require('chai');
 
-const contextBudget = require('../webview/shared/chatContextBudget');
+const contextBudget = require('../shared/chatContextBudget');
 
 describe('chat context budget', () => {
   it('keeps the newest messages inside the configured limits', () => {

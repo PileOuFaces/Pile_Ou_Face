@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # backends/static/tests/test_exception_handlers.py
-import os
-import sys
 import json
+import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from types import SimpleNamespace
@@ -91,7 +91,9 @@ class TestExceptionHandlers(unittest.TestCase):
         fake_binary = SimpleNamespace(
             sections=[
                 SimpleNamespace(name=".text", content=[], virtual_address=0),
-                SimpleNamespace(name=".eh_frame", content=cie + fde, virtual_address=0x1000),
+                SimpleNamespace(
+                    name=".eh_frame", content=cie + fde, virtual_address=0x1000
+                ),
             ]
         )
 
@@ -116,7 +118,9 @@ class TestExceptionHandlers(unittest.TestCase):
         )
         fake_binary = SimpleNamespace(
             sections=[
-                SimpleNamespace(name=".eh_frame", content=cie + fde64, virtual_address=0x400000)
+                SimpleNamespace(
+                    name=".eh_frame", content=cie + fde64, virtual_address=0x400000
+                )
             ]
         )
 
@@ -135,7 +139,8 @@ class TestExceptionHandlers(unittest.TestCase):
             sections=[
                 SimpleNamespace(
                     name=".eh_frame",
-                    content=(0xFFFFFFFF).to_bytes(4, "little") + (24).to_bytes(8, "little"),
+                    content=(0xFFFFFFFF).to_bytes(4, "little")
+                    + (24).to_bytes(8, "little"),
                     virtual_address=0x400000,
                 )
             ]

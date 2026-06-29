@@ -1,16 +1,15 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # backends/static/tests/test_typed_data.py
-import os
-import sys
 import json
+import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from types import SimpleNamespace
 
 ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "../../.."))
 sys.path.insert(0, ROOT)
-from backends.static.tests.fixtures.make_elf import make_minimal_elf
 from backends.static.annotations.structs import parse_struct_definitions
 from backends.static.annotations.typed_data import (
     _decode_struct_entries,
@@ -19,6 +18,7 @@ from backends.static.annotations.typed_data import (
     _resolve_struct_location,
     _scan_pointers,
 )
+from backends.static.tests.fixtures.make_elf import make_minimal_elf
 
 try:
     import lief as _lief
@@ -29,9 +29,20 @@ except ImportError:
 
 
 def run_td(
-    binary, section=None, type_=None, page=None, raw_base_addr=None, raw_arch=None, raw_endian=None
+    binary,
+    section=None,
+    type_=None,
+    page=None,
+    raw_base_addr=None,
+    raw_arch=None,
+    raw_endian=None,
 ):
-    args = [sys.executable, "backends/static/annotations/typed_data.py", "--binary", binary]
+    args = [
+        sys.executable,
+        "backends/static/annotations/typed_data.py",
+        "--binary",
+        binary,
+    ]
     if section:
         args += ["--section", section]
     if type_:
@@ -105,10 +116,16 @@ class TestTypedData(unittest.TestCase):
             self.assertEqual(result.get("section"), "raw")
             self.assertEqual(result.get("base_addr"), "0x417000")
             self.assertTrue(
-                any(entry.get("decoded") == '"hello raw"' for entry in result.get("entries", []))
+                any(
+                    entry.get("decoded") == '"hello raw"'
+                    for entry in result.get("entries", [])
+                )
             )
             self.assertTrue(
-                any(entry.get("addr") == "0x417001" for entry in result.get("entries", []))
+                any(
+                    entry.get("addr") == "0x417001"
+                    for entry in result.get("entries", [])
+                )
             )
         finally:
             os.unlink(raw_path)
@@ -187,7 +204,10 @@ class TestTypedData(unittest.TestCase):
         binary = SimpleNamespace(
             sections=[
                 SimpleNamespace(
-                    name=".text", content=[0x90] * 16, virtual_address=0x401000, flags=0x4
+                    name=".text",
+                    content=[0x90] * 16,
+                    virtual_address=0x401000,
+                    flags=0x4,
                 ),
                 SimpleNamespace(
                     name=".data", content=[0x00] * 32, virtual_address=0x402000, flags=0
@@ -202,7 +222,10 @@ class TestTypedData(unittest.TestCase):
         binary = SimpleNamespace(
             sections=[
                 SimpleNamespace(
-                    name=".text", content=[0x90] * 16, virtual_address=0x401000, flags=0x4
+                    name=".text",
+                    content=[0x90] * 16,
+                    virtual_address=0x401000,
+                    flags=0x4,
                 ),
                 SimpleNamespace(
                     name=".data", content=[0x00] * 16, virtual_address=0x402000, flags=0

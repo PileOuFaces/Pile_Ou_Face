@@ -32,7 +32,9 @@ class TestRulesManager(unittest.TestCase):
         self.assertEqual(self._mgr().list_rules(), [])
 
     def test_add_yara_rule_creates_file(self):
-        rule_id = self._mgr().add_user_rule("test.yar", "rule Foo { condition: false }", "yara")
+        rule_id = self._mgr().add_user_rule(
+            "test.yar", "rule Foo { condition: false }", "yara"
+        )
         self.assertEqual(rule_id, "user:yara:test.yar")
         f = Path(self.tmpdir) / ".pile-ou-face" / "rules" / "yara" / "test.yar"
         self.assertTrue(f.exists())
@@ -106,7 +108,9 @@ class TestRulesManager(unittest.TestCase):
     def test_global_config_default_overridden_by_project(self):
         global_cfg = Path(self.tmpdir) / "global.json"
         global_cfg.write_text(
-            json.dumps({"version": 1, "rules": {"user:yara:test.yar": {"enabled": False}}}),
+            json.dumps(
+                {"version": 1, "rules": {"user:yara:test.yar": {"enabled": False}}}
+            ),
             encoding="utf-8",
         )
         mgr = self._mgr(str(global_cfg))
@@ -170,7 +174,9 @@ class TestRulesManager(unittest.TestCase):
     def test_list_rules_includes_global_and_project_scopes(self):
         mgr = self._mgr(self._global_config_path())
         mgr.add_user_rule("project_rule.yar", "rule P { condition: false }", "yara")
-        mgr.add_user_rule("global_rule.yar", "rule G { condition: false }", "yara", "global")
+        mgr.add_user_rule(
+            "global_rule.yar", "rule G { condition: false }", "yara", "global"
+        )
         listed = sorted(
             ((rule["id"], rule["scope"]) for rule in mgr.list_rules()),
             key=lambda item: item[0],
@@ -186,7 +192,9 @@ class TestRulesManager(unittest.TestCase):
     def test_toggle_global_rule_uses_global_config(self):
         global_cfg = Path(self._global_config_path())
         mgr = self._mgr(str(global_cfg))
-        mgr.add_user_rule("global_rule.yar", "rule G { condition: false }", "yara", "global")
+        mgr.add_user_rule(
+            "global_rule.yar", "rule G { condition: false }", "yara", "global"
+        )
         mgr.toggle_rule("global:yara:global_rule.yar", False)
         cfg = json.loads(global_cfg.read_text(encoding="utf-8"))
         self.assertFalse(cfg["rules"]["global:yara:global_rule.yar"]["enabled"])
@@ -196,7 +204,9 @@ class TestRulesManager(unittest.TestCase):
     def test_get_active_yara_paths_includes_global_and_project(self):
         mgr = self._mgr(self._global_config_path())
         mgr.add_user_rule("project_rule.yar", "rule P { condition: false }", "yara")
-        mgr.add_user_rule("global_rule.yar", "rule G { condition: false }", "yara", "global")
+        mgr.add_user_rule(
+            "global_rule.yar", "rule G { condition: false }", "yara", "global"
+        )
         mgr.toggle_rule("user:yara:project_rule.yar", False)
         paths = [path.name for path in mgr.get_active_yara_paths()]
         self.assertEqual(paths, ["global_rule.yar"])
@@ -204,7 +214,9 @@ class TestRulesManager(unittest.TestCase):
     def test_delete_global_rule_removes_file_and_config_entry(self):
         global_cfg = Path(self._global_config_path())
         mgr = self._mgr(str(global_cfg))
-        mgr.add_user_rule("global_rule.yar", "rule G { condition: false }", "yara", "global")
+        mgr.add_user_rule(
+            "global_rule.yar", "rule G { condition: false }", "yara", "global"
+        )
         mgr.toggle_rule("global:yara:global_rule.yar", False)
         mgr.delete_user_rule("global:yara:global_rule.yar")
         target = Path(self.tmpdir) / ".state" / "rules" / "yara" / "global_rule.yar"

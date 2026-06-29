@@ -6,7 +6,7 @@ function createGraphRenderers({
   analysisCtx,
   root,
   runPythonJson,
-  ensureTempDir,
+  storageDir,
   logChannel,
   vscode,
   fs,
@@ -191,8 +191,7 @@ function createGraphRenderers({
     hubExportCfgSvg: async (message) => {
       const svg = message.svg || '';
       if (!svg) return;
-      const tempDir = ensureTempDir(root);
-      const defaultPath = path.join(tempDir, 'cfg_export.svg');
+      const defaultPath = path.join(storageDir, 'cfg_export.svg');
       vscode.window.showSaveDialog({
         title: 'Exporter le graphe CFG en SVG',
         defaultUri: vscode.Uri.file(defaultPath),

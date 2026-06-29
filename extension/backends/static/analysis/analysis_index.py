@@ -16,12 +16,12 @@ from pathlib import Path
 from typing import Any
 
 from backends.shared.log import configure_logging, get_logger
+from backends.static.binary.imports_analysis import analyze_imports
+from backends.static.binary.symbols import extract_symbols
 from backends.static.cache.cache import DisasmCache, default_cache_path
 from backends.static.disasm.cfg import build_cfg
 from backends.static.disasm.disasm import disassemble_with_capstone
 from backends.static.disasm.discover_functions import discover_functions
-from backends.static.binary.imports_analysis import analyze_imports
-from backends.static.binary.symbols import extract_symbols
 from backends.static.disasm.xrefs import build_xref_map
 
 logger = get_logger(__name__)
@@ -174,7 +174,9 @@ def build_analysis_index(
             "blocks": len(cfg.get("blocks", [])),
             "edges": len(cfg.get("edges", [])),
             "xref_targets": len(xrefs),
-            "imports": sum(len(g.get("functions", [])) for g in imports.get("imports", [])),
+            "imports": sum(
+                len(g.get("functions", [])) for g in imports.get("imports", [])
+            ),
         },
         "errors": {
             "imports": imports.get("error"),
@@ -183,7 +185,9 @@ def build_analysis_index(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build persistent static analysis index")
+    parser = argparse.ArgumentParser(
+        description="Build persistent static analysis index"
+    )
     parser.add_argument("--binary", required=True, help="Binary path")
     parser.add_argument(
         "--cache-db",

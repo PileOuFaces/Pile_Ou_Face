@@ -1,6 +1,7 @@
 .vscode/
 .vscode-test/
-test/
+front/tests/
+src/tests/
 out-test/
 .nyc_output/
 coverage/
@@ -23,3 +24,9 @@ backends/**/*.pyo
 docker/
 pyproject.toml
 Makefile
+src/
+.coverage
+coverage.xml
+.pytest_cache/
+.ruff_cache/
+.c8rc.json

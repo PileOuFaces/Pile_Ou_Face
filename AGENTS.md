@@ -26,7 +26,7 @@ Do not assume every optional capability visible in the UI is implemented in this
 
 Before making non-trivial changes, read:
 
-- [docs/static/ROADMAP.md](docs/static/ROADMAP.md)
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 ## Public Boundary Rule
 
@@ -175,7 +175,7 @@ Rules:
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **Pile_Ou_Face** (18247 symbols, 30938 relationships, 268 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **Pile_Ou_Face** (19336 symbols, 32639 relationships, 268 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

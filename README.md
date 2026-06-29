@@ -162,7 +162,6 @@ npm run lint -C extension  # Linter
 | Document | Contenu |
 |----------|---------|
 | [docs/static/README.md](docs/static/README.md) | Documentation complète des 30+ modules d'analyse |
-| [docs/static/ROADMAP.md](docs/static/ROADMAP.md) | Roadmap et features à venir |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Vision, couches et responsabilités |
 | [docs/PLATFORMS.md](docs/PLATFORMS.md) | Compatibilité Windows/macOS/Linux |
 

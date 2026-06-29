@@ -1,0 +1,58 @@
+# Changelog
+
+## [0.1.0] - 2026-06-29
+
+Initial release.
+
+### Static Analysis
+
+- Disassembly with function banners, labels, inline comments and stack hints (ELF/PE/Mach-O, x86/x64/ARM32/ARM64/MIPS/PPC/RISC-V and more)
+- Control Flow Graph (CFG) with switch tables, multi-arch adapters and unresolved branch detection
+- Call graph with ISA adapters and fallback discovery
+- Cross-references — code refs, data refs, import callsites
+- Stack frame reconstruction (x86/x64/ARM64/ARM32 + generic fallback)
+- Function discovery — tail-calls, thunks, PLT stubs
+- Binary headers, sections, symbols, exports, imports with suspicion scoring
+- Entropy analysis and packer detection (YARA byte-pattern signatures: UPX, ASPack, MPRESS, PECompact, Petite)
+- DWARF debug info — source file and line annotations in disassembly
+- PE resources browser
+- Exception handlers (ELF `.eh_frame` DWARF64, Mach-O `__compact_unwind`)
+- Hex view with endianness and pointer-size metadata
+- String search, ROP gadget search, YARA scan (via optional plugins)
+
+### Decompilation
+
+- Multi-backend decompiler (Ghidra, RetDec, Angr via Docker)
+- Automatic quality scoring across backends with `auto` mode
+- ELF/PE/Mach-O support on x86-64 and ARM64
+
+### Annotations and Types
+
+- Function and address annotations persisted per binary
+- C struct/union/enum editor (enum class, multidimensional arrays, function pointers)
+- Typed data propagation into disassembly, xrefs and pseudo-C
+
+### Analysis
+
+- Analysis index (SQLite) — unified results cache
+- Function radar — hotspots, quick wins, entry candidates, signal clusters
+- Behavior, taint, anti-analysis, vulnerability patterns, FLIRT, CAPA, binary diff (via optional plugins)
+- MITRE ATT&CK tagging, CWE enrichment, ROP chain builder (via optional plugins)
+- Cross-analysis mode — correlates taint + behavior + ATT&CK techniques across functions
+
+### AI Assistant
+
+- Ollama integration with streaming and tool calling
+- Cloud providers: OpenAI, Anthropic, Claude, Mistral, Gemini, OpenRouter, Groq, DeepSeek
+- MCP server (stdio + HTTP transport) exposing all analysis tools to AI agents
+- Context-aware prompts from disassembly, CFG, strings, imports, search results
+- Conversation history, export (Markdown/JSON), token budget tracking, cost estimation
+
+### Other
+
+- Binary patch manager with undo/redo across sessions
+- String deobfuscation (XOR/ROT/Base64/RC4/AES-ECB, stackstrings x86-64/ARM64)
+- Python REPL with 15-function analysis API
+- Script manager with project and global rule sets
+- Multi-architecture compiler support via Docker (ELF, PE, Mach-O — GCC, Clang, Rust, Go)
+- Plugin runtime — install and manage premium analysis plugins

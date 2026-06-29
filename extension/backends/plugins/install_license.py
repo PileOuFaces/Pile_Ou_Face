@@ -20,7 +20,9 @@ def install_license(
         source_path = Path(workspace).expanduser() / source_path
     source_path = source_path.resolve()
     if not source_path.exists() or not source_path.is_file():
-        raise PluginLicenseInstallError(f"Fichier de licence introuvable: {source_path}")
+        raise PluginLicenseInstallError(
+            f"Fichier de licence introuvable: {source_path}"
+        )
 
     target_root_path = Path(target_root).expanduser()
     if not target_root_path.is_absolute() and workspace:
@@ -33,7 +35,9 @@ def install_license(
     except (OSError, json.JSONDecodeError) as exc:
         raise PluginLicenseInstallError(f"Licence JSON invalide: {exc}") from exc
     if not isinstance(payload, dict):
-        raise PluginLicenseInstallError("Le fichier de licence doit contenir un objet JSON.")
+        raise PluginLicenseInstallError(
+            "Le fichier de licence doit contenir un objet JSON."
+        )
 
     plugin_id = str(payload.get("plugin_id", "") or "").strip()
     signature = str(payload.get("signature", "") or "").strip()
@@ -55,7 +59,9 @@ def install_license(
 
 def _cmd_install(args: argparse.Namespace) -> int:
     try:
-        payload = install_license(args.source, args.target_root, workspace=args.workspace)
+        payload = install_license(
+            args.source, args.target_root, workspace=args.workspace
+        )
     except PluginLicenseInstallError as exc:
         payload = {
             "ok": False,
@@ -75,13 +81,17 @@ def _cmd_install(args: argparse.Namespace) -> int:
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Installer une licence plugin Pile Ou Face")
+    parser = argparse.ArgumentParser(
+        description="Installer une licence plugin Pile Ou Face"
+    )
     parser.add_argument("--source", required=True, help="Fichier de licence JSON signé")
     parser.add_argument(
         "--target-root", required=True, help="Dossier cible ~/.pile-ou-face/licenses"
     )
     parser.add_argument(
-        "--workspace", default="", help="Racine optionnelle pour résoudre des chemins relatifs"
+        "--workspace",
+        default="",
+        help="Racine optionnelle pour résoudre des chemins relatifs",
     )
     parser.set_defaults(func=_cmd_install)
     return parser

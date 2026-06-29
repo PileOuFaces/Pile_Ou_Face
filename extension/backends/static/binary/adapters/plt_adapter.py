@@ -43,12 +43,16 @@ def load_plt_entries(binary_path: str) -> list[dict[str, Any]]:
     plt_map = resolve_plt_symbols(binary_path)
     got_map = _got_by_name(binary_path)
     entries = []
-    for plt_addr, raw_name in sorted(plt_map.items(), key=lambda item: int(item[0], 16)):
+    for plt_addr, raw_name in sorted(
+        plt_map.items(), key=lambda item: int(item[0], 16)
+    ):
         name = str(raw_name or "").replace("@plt", "")
-        entries.append({
-            "name": name,
-            "plt_addr": plt_addr,
-            "got_addr": got_map.get(name, ""),
-            "source": "LIEF/PLT",
-        })
+        entries.append(
+            {
+                "name": name,
+                "plt_addr": plt_addr,
+                "got_addr": got_map.get(name, ""),
+                "source": "LIEF/PLT",
+            }
+        )
     return entries

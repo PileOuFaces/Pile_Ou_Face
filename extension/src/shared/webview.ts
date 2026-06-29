@@ -38,20 +38,25 @@ function _resolvePluginAssetPath(pluginDir, manifest, relativeAssetPath) {
   return '';
 }
 
-function _getPluginSearchDirs(root, includeUserPlugins = false) {
-  const workspacePluginsDir = path.join(root, '.pile-ou-face', 'plugins');
-  if (!includeUserPlugins) return [workspacePluginsDir];
-  const homePluginsDir = path.join(os.homedir(), '.pile-ou-face', 'plugins');
-  return [...new Set([workspacePluginsDir, homePluginsDir])];
+function _getPluginSearchDirs(storageDir, globalDir) {
+  const dirs: string[] = [];
+  if (storageDir) dirs.push(path.join(storageDir, 'plugins'));
+  if (globalDir) dirs.push(path.join(globalDir, 'plugins'));
+  return dirs;
 }
 
-function loadPluginWebviews(root, options: { includeUserPlugins?: boolean; webviewResourceResolver?: (absPath: string) => string } = {}) {
-  const { includeUserPlugins = false, webviewResourceResolver } = options;
+function loadPluginWebviews(root, options: { storageDir?: string; globalDir?: string; webviewResourceResolver?: (absPath: string) => string } = {}) {
+  const { storageDir = '', globalDir = '', webviewResourceResolver } = options;
   let styles = '';
   let panels = '';
   let scripts = '';
 
-  for (const pluginsDir of _getPluginSearchDirs(root, includeUserPlugins)) {
+  const rootPluginsDir = root ? path.join(root, '.pile-ou-face', 'plugins') : '';
+  const searchDirs = rootPluginsDir
+    ? [rootPluginsDir, ..._getPluginSearchDirs(storageDir, globalDir)]
+    : _getPluginSearchDirs(storageDir, globalDir);
+
+  for (const pluginsDir of searchDirs) {
     if (!fs.existsSync(pluginsDir)) continue;
 
     let entries;
@@ -126,14 +131,15 @@ function getWebviewContent(webview, extensionUri) {
 }
 
 // static/hub — main static analysis hub (shell + fragments)
-function getHubContent(webview, extensionUri, initialPanel = 'dashboard', workspaceRoot = '') {
+function getHubContent(webview, extensionUri, initialPanel = 'dashboard', workspaceRoot = '', globalDir = '', storageDir = '') {
   const read = (...parts) => fs.readFileSync(
     vscode.Uri.joinPath(extensionUri, ...parts).fsPath, 'utf8'
   );
 
   const { styles: pluginStyles, panels: pluginPanels, scripts: pluginScripts } =
-    workspaceRoot ? loadPluginWebviews(workspaceRoot, {
-      includeUserPlugins: true,
+    (storageDir || globalDir) ? loadPluginWebviews(workspaceRoot, {
+      storageDir,
+      globalDir,
       webviewResourceResolver: (filePath) => webview.asWebviewUri(vscode.Uri.file(filePath)).toString(),
     }) : { styles: '', panels: '', scripts: '' };
 

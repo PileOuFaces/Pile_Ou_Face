@@ -18,22 +18,27 @@ from pathlib import Path
 from typing import Any
 
 from backends.shared.log import configure_logging, get_logger
-from backends.shared.utils import normalize_addr, parse_addr as _addr_to_int
+from backends.shared.utils import normalize_addr
+from backends.shared.utils import parse_addr as _addr_to_int
 from backends.static.analysis.analysis_index import build_analysis_index
 from backends.static.binary.imports_analysis import analyze_imports
 from backends.static.binary.symbols import extract_symbols
 from backends.static.cache.cache import DisasmCache, default_cache_path
 from backends.static.disasm.call_graph import build_call_graph
 from backends.static.disasm.cfg import build_cfg
-from backends.static.disasm.discover_functions import discover_functions
 from backends.static.disasm.disasm import disassemble_with_capstone
+from backends.static.disasm.discover_functions import discover_functions
 from backends.static.disasm.xrefs import build_xref_map
 from backends.static.search.strings import extract_strings
 
 logger = get_logger(__name__)
 
 _NAME_BONUS_RULES = (
-    (re.compile(r"^(main|_start|start|entry)$", re.IGNORECASE), 18, "Entrée probable du binaire"),
+    (
+        re.compile(r"^(main|_start|start|entry)$", re.IGNORECASE),
+        18,
+        "Entrée probable du binaire",
+    ),
     (
         re.compile(r"(auth|login|check|verify|guard|password|token)", re.IGNORECASE),
         10,
@@ -45,12 +50,16 @@ _NAME_BONUS_RULES = (
         "Nom orienté déchiffrement ou déobfuscation",
     ),
     (
-        re.compile(r"(http|net|sock|connect|send|recv|request|upload|download)", re.IGNORECASE),
+        re.compile(
+            r"(http|net|sock|connect|send|recv|request|upload|download)", re.IGNORECASE
+        ),
         9,
         "Nom orienté réseau",
     ),
     (
-        re.compile(r"(parse|load|handle|dispatch|process|command|shell|exec)", re.IGNORECASE),
+        re.compile(
+            r"(parse|load|handle|dispatch|process|command|shell|exec)", re.IGNORECASE
+        ),
         7,
         "Nom orienté orchestration ou exécution",
     ),
@@ -61,7 +70,8 @@ _STRING_SIGNAL_RULES = (
         "network",
         "Chaîne réseau",
         re.compile(
-            r"(https?://|ftp://|api[_-]?key|user-agent|/api/|socket|connect)", re.IGNORECASE
+            r"(https?://|ftp://|api[_-]?key|user-agent|/api/|socket|connect)",
+            re.IGNORECASE,
         ),
     ),
     (
@@ -76,7 +86,8 @@ _STRING_SIGNAL_RULES = (
         "persistence",
         "Chaîne de persistance",
         re.compile(
-            r"(runonce|currentversion\\\\run|startup|service|scheduled task)", re.IGNORECASE
+            r"(runonce|currentversion\\\\run|startup|service|scheduled task)",
+            re.IGNORECASE,
         ),
     ),
     (
@@ -91,7 +102,8 @@ _STRING_SIGNAL_RULES = (
         "credential",
         "Chaîne sensible",
         re.compile(
-            r"(password|passwd|secret|token|bearer|authorization|cookie|session)", re.IGNORECASE
+            r"(password|passwd|secret|token|bearer|authorization|cookie|session)",
+            re.IGNORECASE,
         ),
     ),
     (
@@ -195,15 +207,21 @@ def _load_or_compute_functions(
     if cached:
         return cached
     known_addrs = {
-        normalize_addr(symbol.get("addr", "")) for symbol in symbols if symbol.get("addr")
+        normalize_addr(symbol.get("addr", ""))
+        for symbol in symbols
+        if symbol.get("addr")
     }
-    functions = discover_functions(lines, known_addrs=known_addrs, binary_path=binary_path)
+    functions = discover_functions(
+        lines, known_addrs=known_addrs, binary_path=binary_path
+    )
     if functions:
         cache.save_functions(binary_path, functions)
     return functions
 
 
-def _load_or_compute_cfg(cache: DisasmCache, binary_path: str, lines: list[dict]) -> dict[str, Any]:
+def _load_or_compute_cfg(
+    cache: DisasmCache, binary_path: str, lines: list[dict]
+) -> dict[str, Any]:
     cached = cache.get_cfg(binary_path)
     if cached:
         return cached
@@ -267,11 +285,19 @@ def _merge_function_catalog(
             or current.get("name") == addr
             or current.get("kind") == "import"
         ):
-            current["name"] = str(fn.get("name") or current.get("name") or addr).strip() or addr
-        current.setdefault("kind", str(fn.get("kind") or "function").strip() or "function")
-        current["confidence"] = str(fn.get("confidence") or current.get("confidence") or "").strip()
+            current["name"] = (
+                str(fn.get("name") or current.get("name") or addr).strip() or addr
+            )
+        current.setdefault(
+            "kind", str(fn.get("kind") or "function").strip() or "function"
+        )
+        current["confidence"] = str(
+            fn.get("confidence") or current.get("confidence") or ""
+        ).strip()
         current["reason"] = str(fn.get("reason") or current.get("reason") or "").strip()
-        current["confidence_score"] = fn.get("confidence_score", current.get("confidence_score"))
+        current["confidence_score"] = fn.get(
+            "confidence_score", current.get("confidence_score")
+        )
         if fn.get("size"):
             current["size"] = fn.get("size")
         merged[addr] = current
@@ -285,12 +311,17 @@ def _merge_function_catalog(
 
     catalog = list(merged.values())
     catalog.sort(
-        key=lambda item: (_addr_to_int(item.get("addr")) or 0, str(item.get("name") or ""))
+        key=lambda item: (
+            _addr_to_int(item.get("addr")) or 0,
+            str(item.get("name") or ""),
+        )
     )
     return catalog
 
 
-def _build_function_ranges(functions: list[dict]) -> list[tuple[int, int | None, dict[str, Any]]]:
+def _build_function_ranges(
+    functions: list[dict],
+) -> list[tuple[int, int | None, dict[str, Any]]]:
     ordered: list[tuple[int, dict[str, Any]]] = []
     for fn in functions:
         start = _addr_to_int(fn.get("addr"))
@@ -384,8 +415,14 @@ def _append_score_breakdown(
 
 def _confidence_level_for_entry(entry: dict[str, Any]) -> str:
     score = int(entry.get("priority_score") or 0)
-    has_signal_convergence = bool(entry.get("import_signals")) and bool(entry.get("string_signals"))
-    if score >= 60 or has_signal_convergence or int(entry.get("annotation_count") or 0) >= 2:
+    has_signal_convergence = bool(entry.get("import_signals")) and bool(
+        entry.get("string_signals")
+    )
+    if (
+        score >= 60
+        or has_signal_convergence
+        or int(entry.get("annotation_count") or 0) >= 2
+    ):
         return "HIGH"
     if score >= 36 or entry.get("import_signals") or entry.get("string_signals"):
         return "MEDIUM"
@@ -470,15 +507,25 @@ def _build_function_evidence(entry: dict[str, Any]) -> list[dict[str, Any]]:
 def _build_function_next_steps(entry: dict[str, Any]) -> list[str]:
     steps: list[str] = []
     if entry.get("import_signals"):
-        steps.append("Suivre les callsites sensibles dans le désassemblage et le call graph.")
+        steps.append(
+            "Suivre les callsites sensibles dans le désassemblage et le call graph."
+        )
     if entry.get("string_signals"):
-        steps.append("Ouvrir la chaîne corrélée dans Hex pour confirmer sa portée exacte.")
+        steps.append(
+            "Ouvrir la chaîne corrélée dans Hex pour confirmer sa portée exacte."
+        )
     if int(entry.get("block_count") or 0) >= 6:
-        steps.append("Passer par le CFG pour cartographier les branches avant la décompilation.")
+        steps.append(
+            "Passer par le CFG pour cartographier les branches avant la décompilation."
+        )
     if int(entry.get("incoming_calls") or 0) >= 3:
-        steps.append("Identifier les principaux appelants pour comprendre le rôle de pivot.")
+        steps.append(
+            "Identifier les principaux appelants pour comprendre le rôle de pivot."
+        )
     if int(entry.get("annotation_count") or 0) == 0:
-        steps.append("Ajouter une annotation locale pour capturer l'hypothèse principale.")
+        steps.append(
+            "Ajouter une annotation locale pour capturer l'hypothèse principale."
+        )
     if not steps:
         steps.append(
             "Valider rapidement en pseudo-C puis revenir aux xrefs si le contexte reste ambigu."
@@ -491,7 +538,9 @@ def _build_function_proof_dossier(entry: dict[str, Any]) -> dict[str, Any]:
     callsites = []
     for signal in entry.get("import_signals", []) or []:
         for site in signal.get("callsites", []) or []:
-            addr = normalize_addr(site.get("callsite_addr", "") or site.get("source_addr", ""))
+            addr = normalize_addr(
+                site.get("callsite_addr", "") or site.get("source_addr", "")
+            )
             if not addr:
                 continue
             callsites.append(
@@ -636,7 +685,9 @@ def build_function_radar(
 
     imported_name_to_findings: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for finding in imports.get("suspicious", []) or []:
-        imported_name_to_findings[_normalize_symbol_name(finding.get("function", ""))].append(
+        imported_name_to_findings[
+            _normalize_symbol_name(finding.get("function", ""))
+        ].append(
             {
                 "function": str(finding.get("function") or "").strip(),
                 "category": str(finding.get("category") or "").strip(),
@@ -673,7 +724,9 @@ def build_function_radar(
         if source is None:
             continue
         imported_hits = (
-            imported_name_to_findings.get(_normalize_symbol_name(edge.get("to_name", "")))
+            imported_name_to_findings.get(
+                _normalize_symbol_name(edge.get("to_name", ""))
+            )
             or imported_name_to_findings.get(_normalize_symbol_name(edge.get("to", "")))
             or []
         )
@@ -691,7 +744,8 @@ def build_function_radar(
     string_addr_map = {
         normalize_addr(entry.get("addr", "")): {
             "value": str(entry.get("value") or ""),
-            "length": int(entry.get("length") or 0) or len(str(entry.get("value") or "")),
+            "length": int(entry.get("length") or 0)
+            or len(str(entry.get("value") or "")),
         }
         for entry in strings
         if entry.get("addr")
@@ -737,7 +791,7 @@ def build_function_radar(
         if preview:
             entry["annotation_preview"].append(_preview_text(preview, max_len=48))
 
-    for addr, entry in metrics.items():
+    for _addr, entry in metrics.items():
         score = 0
         reasons: list[str] = []
         signal_tags: set[str] = set()
@@ -756,7 +810,10 @@ def build_function_radar(
             score += 22
             reasons.append("Seed binaire fort: entrypoint")
             _append_score_breakdown(
-                score_breakdown, 22, "Entrypoint", "Point d'entrée déclaré par le binaire"
+                score_breakdown,
+                22,
+                "Entrypoint",
+                "Point d'entrée déclaré par le binaire",
             )
 
         if entry["kind"] == "import" or entry["symbol_type"] == "U":
@@ -771,7 +828,9 @@ def build_function_radar(
         if incoming_bonus:
             score += incoming_bonus
             if entry["incoming_calls"] >= 3:
-                reasons.append(f"Point chaud: {entry['incoming_calls']} appels entrants")
+                reasons.append(
+                    f"Point chaud: {entry['incoming_calls']} appels entrants"
+                )
             _append_score_breakdown(
                 score_breakdown,
                 incoming_bonus,
@@ -818,25 +877,39 @@ def build_function_radar(
         if import_weight:
             score += import_weight
             categories = sorted(
-                {_make_signal_tag(signal.get("category", "")) for signal in entry["import_signals"]}
+                {
+                    _make_signal_tag(signal.get("category", ""))
+                    for signal in entry["import_signals"]
+                }
             )
             entry["import_categories"] = categories
             reasons.append(f"Appels sensibles: {', '.join(categories[:3])}")
             _append_score_breakdown(
-                score_breakdown, import_weight, "Appels sensibles", ", ".join(categories[:3])
+                score_breakdown,
+                import_weight,
+                "Appels sensibles",
+                ", ".join(categories[:3]),
             )
 
-        string_weight = min(22, len(entry["string_signals"]) * 7 + min(entry["string_refs"], 4))
+        string_weight = min(
+            22, len(entry["string_signals"]) * 7 + min(entry["string_refs"], 4)
+        )
         if string_weight:
             score += string_weight
             for signal in entry["string_signals"]:
                 signal_tags.add(_make_signal_tag(signal.get("category", "")))
             labels = sorted(
-                {_make_signal_tag(signal.get("category", "")) for signal in entry["string_signals"]}
+                {
+                    _make_signal_tag(signal.get("category", ""))
+                    for signal in entry["string_signals"]
+                }
             )
             reasons.append(f"Xrefs vers chaines parlantes: {', '.join(labels[:3])}")
             _append_score_breakdown(
-                score_breakdown, string_weight, "Chaînes parlantes", ", ".join(labels[:3])
+                score_breakdown,
+                string_weight,
+                "Chaînes parlantes",
+                ", ".join(labels[:3]),
             )
 
         if entry["annotation_count"]:
@@ -854,28 +927,42 @@ def build_function_radar(
             score += 8
             reasons.append("Convergence entre appels sensibles et données parlantes")
             _append_score_breakdown(
-                score_breakdown, 8, "Convergence", "Appels sensibles + chaînes parlantes"
+                score_breakdown,
+                8,
+                "Convergence",
+                "Appels sensibles + chaînes parlantes",
             )
 
         if entry["size"] >= 96:
             score += 6
             _append_score_breakdown(
-                score_breakdown, 6, "Fonction volumineuse", f"{entry['size']} octets estimés"
+                score_breakdown,
+                6,
+                "Fonction volumineuse",
+                f"{entry['size']} octets estimés",
             )
         elif entry["size"] >= 32:
             score += 3
             _append_score_breakdown(
-                score_breakdown, 3, "Fonction notable", f"{entry['size']} octets estimés"
+                score_breakdown,
+                3,
+                "Fonction notable",
+                f"{entry['size']} octets estimés",
             )
 
         if entry["confidence"] == "confirmed":
             score += 6
             _append_score_breakdown(
-                score_breakdown, 6, "Découverte confirmée", "Seed ou reconstruction forte"
+                score_breakdown,
+                6,
+                "Découverte confirmée",
+                "Seed ou reconstruction forte",
             )
         elif entry["confidence"] == "high":
             score += 3
-            _append_score_breakdown(score_breakdown, 3, "Découverte fiable", "Confiance high")
+            _append_score_breakdown(
+                score_breakdown, 3, "Découverte fiable", "Confiance high"
+            )
 
         score = max(0, min(100, int(score)))
         level = _priority_level(score)
@@ -893,7 +980,9 @@ def build_function_radar(
             entry["review_hint"] = "Fonction déjà bien annotée dans la session."
         elif entry["annotation_count"] == 1:
             entry["review_status"] = "in_progress"
-            entry["review_hint"] = "Une annotation existe, mais la revue reste partielle."
+            entry["review_hint"] = (
+                "Une annotation existe, mais la revue reste partielle."
+            )
         elif score >= 52:
             entry["review_status"] = "todo"
             entry["review_hint"] = "Hotspot prioritaire encore non revu."
@@ -935,7 +1024,9 @@ def build_function_radar(
         and (
             entry.get("reason") == "entrypoint"
             or re.search(
-                r"^(main|_start|start|entry)$", str(entry.get("name") or ""), re.IGNORECASE
+                r"^(main|_start|start|entry)$",
+                str(entry.get("name") or ""),
+                re.IGNORECASE,
             )
             or entry.get("incoming_calls", 0) == 0
         )
@@ -948,12 +1039,18 @@ def build_function_radar(
 
     clusters = [
         {"name": name, "count": count}
-        for name, count in sorted(cluster_counts.items(), key=lambda item: (-item[1], item[0]))
+        for name, count in sorted(
+            cluster_counts.items(), key=lambda item: (-item[1], item[0])
+        )
     ][:6]
 
     annotated_functions = sum(1 for entry in functions if entry.get("annotation_count"))
-    suspicious_import_sites = sum(len(entry.get("import_signals", [])) for entry in functions)
-    suspicious_string_sites = sum(len(entry.get("string_signals", [])) for entry in functions)
+    suspicious_import_sites = sum(
+        len(entry.get("import_signals", [])) for entry in functions
+    )
+    suspicious_string_sites = sum(
+        len(entry.get("string_signals", [])) for entry in functions
+    )
 
     return {
         "binary": binary_path,
@@ -973,7 +1070,9 @@ def build_function_radar(
         "quick_wins": quick_wins,
         "clusters": clusters,
         "proof_dossiers": [
-            entry["proof_dossiers"][0] for entry in functions if entry.get("proof_dossiers")
+            entry["proof_dossiers"][0]
+            for entry in functions
+            if entry.get("proof_dossiers")
         ][:hotspot_limit],
         "functions": functions,
         "error": None,
@@ -985,8 +1084,12 @@ def main() -> int:
         description="Build a prioritization radar for binary functions"
     )
     parser.add_argument("--binary", required=True, help="Binary path")
-    parser.add_argument("--cache-db", default=None, help="Optional SQLite cache path (.pfdb)")
-    parser.add_argument("--hotspot-limit", type=int, default=8, help="Maximum hotspots to keep")
+    parser.add_argument(
+        "--cache-db", default=None, help="Optional SQLite cache path (.pfdb)"
+    )
+    parser.add_argument(
+        "--hotspot-limit", type=int, default=8, help="Maximum hotspots to keep"
+    )
     args = parser.parse_args()
 
     configure_logging()

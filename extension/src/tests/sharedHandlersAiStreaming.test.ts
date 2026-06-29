@@ -23,7 +23,7 @@ describe('sharedHandlers AI provider streaming', () => {
         return proc;
       } },
       './fileManager': {},
-      './utils': { detectPythonExecutable: () => '/usr/bin/python3' },
+      './utils': { detectPythonExecutable: () => '/usr/bin/python3', getExtensionPath: () => '' },
       './recentBinaries': {
         getRecentBinaries: () => [],
         rememberRecentBinary: () => [],
@@ -101,7 +101,7 @@ describe('sharedHandlers AI provider streaming', () => {
       },
       child_process: { spawn: () => proc },
       './fileManager': {},
-      './utils': { detectPythonExecutable: () => '/usr/bin/python3' },
+      './utils': { detectPythonExecutable: () => '/usr/bin/python3', getExtensionPath: () => '' },
       './recentBinaries': {
         getRecentBinaries: () => [],
         rememberRecentBinary: () => [],

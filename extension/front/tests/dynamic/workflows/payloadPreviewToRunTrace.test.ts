@@ -1,6 +1,6 @@
 const { expect } = require('chai');
 
-const preview = require('../../../webview/shared/payloadPreview');
+const preview = require('../../../shared/payloadPreview');
 const payloadFixture = require('../fixtures/payloads/payload-builder-aa.json');
 
 describe('dynamic/workflows payload preview to run trace', () => {

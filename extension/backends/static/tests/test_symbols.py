@@ -70,7 +70,9 @@ class TestExtractSymbols(unittest.TestCase):
             self.assertIn("main", names)
             self.assertIn("_start", names)
             self.assertNotIn("plainword", names)
-            self.assertTrue(all(sym.get("source") == "string-reference" for sym in symbols))
+            self.assertTrue(
+                all(sym.get("source") == "string-reference" for sym in symbols)
+            )
         finally:
             os.unlink(raw_path)
 

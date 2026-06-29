@@ -81,7 +81,7 @@ def load_typed_struct_ref_store(workspace_root: str | None = None) -> dict[str, 
     if not os.path.isfile(store_path):
         return {"entries": []}
     try:
-        with open(store_path, "r", encoding="utf-8") as fh:
+        with open(store_path, encoding="utf-8") as fh:
             payload = json.load(fh)
     except Exception:
         return {"entries": []}
@@ -91,7 +91,9 @@ def load_typed_struct_ref_store(workspace_root: str | None = None) -> dict[str, 
     return {"entries": entries}
 
 
-def _write_store(entries: list[dict[str, Any]], workspace_root: str | None = None) -> None:
+def _write_store(
+    entries: list[dict[str, Any]], workspace_root: str | None = None
+) -> None:
     store_path = get_typed_struct_refs_path(workspace_root)
     os.makedirs(os.path.dirname(store_path), exist_ok=True)
     with open(store_path, "w", encoding="utf-8") as fh:
@@ -149,7 +151,9 @@ def list_typed_struct_refs(
     entries = store["entries"]
     if binary_key:
         entries = [
-            entry for entry in entries if _normalize_binary_key(entry.get("binary")) == binary_key
+            entry
+            for entry in entries
+            if _normalize_binary_key(entry.get("binary")) == binary_key
         ]
     return {"error": None, "entries": entries}
 
@@ -170,7 +174,9 @@ def _field_comment(entry: dict[str, Any], field: dict[str, Any]) -> str:
         pieces.append(f"champ {field_name}")
     if field_type:
         pieces.append(field_type)
-    addr = _normalize_addr(field.get("addr", "")) or _normalize_addr(entry.get("addr", ""))
+    addr = _normalize_addr(field.get("addr", "")) or _normalize_addr(
+        entry.get("addr", "")
+    )
     if addr:
         pieces.append(f"@ {addr}")
     return " • ".join(pieces)
@@ -229,7 +235,9 @@ def build_typed_struct_index(
     return {"entries": entries, "exact_by_addr": exact_by_addr, "ranges": struct_ranges}
 
 
-def typed_struct_signature(binary_path: str | None, workspace_root: str | None = None) -> str:
+def typed_struct_signature(
+    binary_path: str | None, workspace_root: str | None = None
+) -> str:
     entries = list_typed_struct_refs(binary_path, workspace_root).get("entries", [])
     payload = json.dumps(entries, sort_keys=True, ensure_ascii=True).encode("utf-8")
     return sha256(payload).hexdigest()[:16]
@@ -273,7 +281,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         if args.command == "save":
-            with open(args.struct_json, "r", encoding="utf-8") as fh:
+            with open(args.struct_json, encoding="utf-8") as fh:
                 applied_struct = json.load(fh)
             result = save_typed_struct_ref(args.binary, applied_struct)
         else:

@@ -11,11 +11,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sys
-import subprocess
-import shutil
 import re
-from typing import List, Optional
+import shutil
+import subprocess
+import sys
 
 # ROOT: backends/dynamic/pipeline/ -> project root (three levels up)
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -46,7 +45,7 @@ def _default_engine() -> ExecutionEngine:
     return create_engine()
 
 
-def _expand_payload_expression(text: Optional[str]) -> str:
+def _expand_payload_expression(text: str | None) -> str:
     if text is None:
         return ""
     value = text.strip()
@@ -55,7 +54,7 @@ def _expand_payload_expression(text: Optional[str]) -> str:
     if "+" not in value and "*" not in value:
         return value
     parts = [p.strip() for p in value.split("+") if p.strip()]
-    out: List[str] = []
+    out: list[str] = []
     for part in parts:
         m = re.match(r"^(.+?)\*(\d+)$", part)
         if m:
@@ -148,7 +147,9 @@ def _payload_offset_from_bytes(meta: dict, bytes_hex: str) -> int | None:
 
 def _build_code_ranges(meta: dict, disasm_lines: list[dict]) -> list[tuple[int, int]]:
     ranges: list[tuple[int, int]] = []
-    for function in meta.get("functions") if isinstance(meta.get("functions"), list) else []:
+    for function in (
+        meta.get("functions") if isinstance(meta.get("functions"), list) else []
+    ):
         if not isinstance(function, dict):
             continue
         addr = _parse_int(function.get("addr"))
@@ -173,7 +174,9 @@ def _is_code_address(value: int | None, code_ranges: list[tuple[int, int]]) -> b
 
 
 def _analysis_slot(analysis: dict, slot_kind: str) -> dict | None:
-    slots = analysis.get("frame", {}).get("slots") if isinstance(analysis, dict) else None
+    slots = (
+        analysis.get("frame", {}).get("slots") if isinstance(analysis, dict) else None
+    )
     if not isinstance(slots, list):
         return None
     for slot in slots:
@@ -188,12 +191,15 @@ def _analysis_slot(analysis: dict, slot_kind: str) -> dict | None:
 def _slot_offset_label(slot: dict) -> str | None:
     if not isinstance(slot, dict):
         return None
-    return str(
-        slot.get("offsetFromBpHex")
-        or slot.get("offset")
-        or slot.get("offsetLabel")
-        or ""
-    ).strip() or None
+    return (
+        str(
+            slot.get("offsetFromBpHex")
+            or slot.get("offset")
+            or slot.get("offsetLabel")
+            or ""
+        ).strip()
+        or None
+    )
 
 
 def _slot_address_label(slot: dict) -> str | None:
@@ -212,7 +218,9 @@ def _slot_value_text(slot: dict, analysis: dict, slot_kind: str) -> str | None:
             value = str(slot.get(key) or "").strip()
             if value:
                 return value
-    control = analysis.get("control") if isinstance(analysis.get("control"), dict) else {}
+    control = (
+        analysis.get("control") if isinstance(analysis.get("control"), dict) else {}
+    )
     if slot_kind == "return_address":
         return str(control.get("retValue") or "").strip() or None
     if slot_kind == "saved_bp":
@@ -220,15 +228,21 @@ def _slot_value_text(slot: dict, analysis: dict, slot_kind: str) -> str | None:
     return None
 
 
-def _guess_crash_slot(crash: dict, analysis: dict, meta: dict, disasm_lines: list[dict]) -> tuple[dict | None, str | None, int | None]:
+def _guess_crash_slot(
+    crash: dict, analysis: dict, meta: dict, disasm_lines: list[dict]
+) -> tuple[dict | None, str | None, int | None]:
     if not isinstance(crash, dict) or not isinstance(analysis, dict):
         return None, None, None
     code_ranges = _build_code_ranges(meta, disasm_lines)
-    registers = crash.get("registers") if isinstance(crash.get("registers"), dict) else {}
+    registers = (
+        crash.get("registers") if isinstance(crash.get("registers"), dict) else {}
+    )
     arch_bits = 32 if int(meta.get("arch_bits") or 64) == 32 else 64
     ip_name = "eip" if arch_bits == 32 else "rip"
     bp_name = "ebp" if arch_bits == 32 else "rbp"
-    ip_value = _parse_int(crash.get(ip_name) or registers.get(ip_name) or crash.get("faultAddress"))
+    ip_value = _parse_int(
+        crash.get(ip_name) or registers.get(ip_name) or crash.get("faultAddress")
+    )
     bp_value = _parse_int(crash.get(bp_name) or registers.get(bp_name))
     crash_type = str(crash.get("type") or "").strip().lower()
     instruction = str(crash.get("instructionText") or "").strip().lower()
@@ -241,7 +255,12 @@ def _guess_crash_slot(crash: dict, analysis: dict, meta: dict, disasm_lines: lis
             or instruction.startswith("ret")
             or instruction.startswith("jmp")
             or instruction.startswith("call")
-        ) and (ret_value is None or ip_value is None or ret_value == ip_value or not _is_code_address(ip_value, code_ranges)):
+        ) and (
+            ret_value is None
+            or ip_value is None
+            or ret_value == ip_value
+            or not _is_code_address(ip_value, code_ranges)
+        ):
             bytes_hex = str(ret_slot.get("bytesHex") or "").strip()
             return (
                 {
@@ -254,9 +273,19 @@ def _guess_crash_slot(crash: dict, analysis: dict, meta: dict, disasm_lines: lis
             )
 
     saved_bp_slot = _analysis_slot(analysis, "saved_bp")
-    if saved_bp_slot is not None and (instruction.startswith("leave") or crash_type in {"unmapped_read", "unmapped_write"}):
-        saved_bp_value = _parse_int(_slot_value_text(saved_bp_slot, analysis, "saved_bp"))
-        if saved_bp_value is None or bp_value is None or saved_bp_value == bp_value or not _is_code_address(bp_value, code_ranges):
+    if saved_bp_slot is not None and (
+        instruction.startswith("leave")
+        or crash_type in {"unmapped_read", "unmapped_write"}
+    ):
+        saved_bp_value = _parse_int(
+            _slot_value_text(saved_bp_slot, analysis, "saved_bp")
+        )
+        if (
+            saved_bp_value is None
+            or bp_value is None
+            or saved_bp_value == bp_value
+            or not _is_code_address(bp_value, code_ranges)
+        ):
             bytes_hex = str(saved_bp_slot.get("bytesHex") or "").strip()
             return (
                 {
@@ -278,7 +307,11 @@ def _classify_crash(
     meta: dict,
     code_ranges: list[tuple[int, int]],
 ) -> str:
-    target = ret_target if ret_target is not None else (fault_addr if fault_addr is not None else ip_after)
+    target = (
+        ret_target
+        if ret_target is not None
+        else (fault_addr if fault_addr is not None else ip_after)
+    )
     if target is None:
         return "fatal_crash"
     if _is_win_addr(target, meta):
@@ -304,7 +337,11 @@ def _build_crash_report(
         if step > 0 and isinstance(analysis_by_step, dict)
         else None
     )
-    registers = raw_crash.get("registers") if isinstance(raw_crash.get("registers"), dict) else {}
+    registers = (
+        raw_crash.get("registers")
+        if isinstance(raw_crash.get("registers"), dict)
+        else {}
+    )
     arch_bits = 32 if int(meta.get("arch_bits") or 64) == 32 else 64
     ip_name = "eip" if arch_bits == 32 else "rip"
     sp_name = "esp" if arch_bits == 32 else "rsp"
@@ -325,7 +362,9 @@ def _build_crash_report(
         meta,
         disasm_lines or [],
     )
-    crash_type = str(raw_crash.get("type") or "runtime_error").strip() or "runtime_error"
+    crash_type = (
+        str(raw_crash.get("type") or "runtime_error").strip() or "runtime_error"
+    )
     fault_address = _parse_int(raw_crash.get("faultAddress"))
     ip_after = _parse_int(raw_crash.get(ip_name) or registers.get(ip_name))
     if (
@@ -337,10 +376,16 @@ def _build_crash_report(
         return None
     # Determine what the return slot was overwritten to (for classification).
     ret_target: int | None = None
-    if suspect_slot and str(suspect_slot.get("kind") or "").strip().lower() == "return_address" and analysis:
+    if (
+        suspect_slot
+        and str(suspect_slot.get("kind") or "").strip().lower() == "return_address"
+        and analysis
+    ):
         ret_slot_data = _analysis_slot(analysis, "return_address")
         if ret_slot_data:
-            ret_target = _parse_int(_slot_value_text(ret_slot_data, analysis, "return_address"))
+            ret_target = _parse_int(
+                _slot_value_text(ret_slot_data, analysis, "return_address")
+            )
     code_ranges = _build_code_ranges(meta, disasm_lines or [])
     classification = _classify_crash(
         fault_addr=fault_address,
@@ -349,7 +394,11 @@ def _build_crash_report(
         meta=meta,
         code_ranges=code_ranges,
     )
-    function_meta = analysis.get("function") if isinstance(analysis, dict) and isinstance(analysis.get("function"), dict) else {}
+    function_meta = (
+        analysis.get("function")
+        if isinstance(analysis, dict) and isinstance(analysis.get("function"), dict)
+        else {}
+    )
     return {
         "type": crash_type,
         "step": step,
@@ -368,7 +417,8 @@ def _build_crash_report(
         "memoryAddress": str(raw_crash.get("faultAddress") or "").strip() or None,
         "memoryAccess": str(raw_crash.get("memoryAccess") or "").strip() or None,
         "unicornError": str(raw_crash.get("unicornError") or "").strip(),
-        "reason": str(raw_crash.get("reason") or "").strip() or "Crash runtime Unicorn.",
+        "reason": str(raw_crash.get("reason") or "").strip()
+        or "Crash runtime Unicorn.",
         "suspectOverwrittenSlot": suspect_slot,
         "suspectBytes": suspect_bytes,
         "payloadOffset": payload_offset,
@@ -380,15 +430,15 @@ def _build_crash_report(
 
 def run_pipeline(
     binary_path: str,
-    source_path: Optional[str],
+    source_path: str | None,
     config: TraceConfigLike,
-    output_path: Optional[str],
-    engine: Optional[ExecutionEngine] = None,
+    output_path: str | None,
+    engine: ExecutionEngine | None = None,
 ) -> dict:
     code = _load_binary(binary_path)
     runtime = engine if engine is not None else _default_engine()
     trace = runtime.trace_binary(code, config, binary_path)
-    risks: List[dict] = []
+    risks: list[dict] = []
     disasm = None
     if output_path:
         disasm_path = _derive_disasm_path(output_path)
@@ -515,7 +565,7 @@ def _derive_disasm_path(output_path: str) -> str:
     return output_path + ".disasm.asm"
 
 
-def _main(argv: Optional[List[str]] = None) -> int:
+def _main(argv: list[str] | None = None) -> int:
     from backends.dynamic.engine.unicorn.config import TraceConfig
 
     parser = argparse.ArgumentParser(description="Generate a trace JSON with Unicorn")
@@ -552,7 +602,9 @@ def _main(argv: Optional[List[str]] = None) -> int:
         "--no-capture-binary", action="store_true", help="Capture outside binary"
     )
     parser.add_argument("--argv1", default=None, help="Set argv[1]")
-    parser.add_argument("--argv1-hex", default=None, help="Set argv[1] from raw bytes (hex, no NUL)")
+    parser.add_argument(
+        "--argv1-hex", default=None, help="Set argv[1] from raw bytes (hex, no NUL)"
+    )
     parser.add_argument(
         "--virtual-file",
         action="append",
@@ -575,8 +627,8 @@ def _main(argv: Optional[List[str]] = None) -> int:
             cleaned = cleaned[2:]
         try:
             stdin_data = bytes.fromhex(cleaned)
-        except ValueError:
-            raise SystemExit("Invalid --stdin-hex")
+        except ValueError as err:
+            raise SystemExit("Invalid --stdin-hex") from err
 
     argv1_data = None
     if args.argv1_hex:
@@ -585,10 +637,12 @@ def _main(argv: Optional[List[str]] = None) -> int:
             cleaned = cleaned[2:]
         try:
             argv1_data = bytes.fromhex(cleaned)
-        except ValueError:
-            raise SystemExit("Invalid --argv1-hex")
+        except ValueError as err:
+            raise SystemExit("Invalid --argv1-hex") from err
         if b"\x00" in argv1_data:
-            raise SystemExit("Invalid --argv1-hex: NUL bytes cannot be passed through argv")
+            raise SystemExit(
+                "Invalid --argv1-hex: NUL bytes cannot be passed through argv"
+            )
 
     virtual_files = {}
     for spec in args.virtual_file or []:
@@ -648,8 +702,12 @@ def _main(argv: Optional[List[str]] = None) -> int:
         start_symbol=args.start_symbol,
         stop_symbol=args.stop_symbol,
         argv1=(
-            None if argv1_data is not None else (
-                _expand_payload_expression(args.argv1) if args.argv1 is not None else None
+            None
+            if argv1_data is not None
+            else (
+                _expand_payload_expression(args.argv1)
+                if args.argv1 is not None
+                else None
             )
         ),
         argv1_data=argv1_data,

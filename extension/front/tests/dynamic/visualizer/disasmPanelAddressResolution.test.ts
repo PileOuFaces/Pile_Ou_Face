@@ -18,7 +18,7 @@ describe('dynamic/visualizer disasmPanel address resolution', () => {
   };
 
   before(async () => {
-    const modulePath = path.resolve(__dirname, '../../../webview/dynamic/app/disasmPanel.js');
+    const modulePath = path.resolve(__dirname, '../../../dynamic/app/disasmPanel.js');
     let source = fs.readFileSync(modulePath, 'utf8');
     source = source.replace(
       /^import \{ dom \}.*$/m,

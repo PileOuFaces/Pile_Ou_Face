@@ -19,8 +19,8 @@ from unicorn.x86_const import (
     UC_X86_REG_EIP,
     UC_X86_REG_RAX,
     UC_X86_REG_RDI,
-    UC_X86_REG_RSI,
     UC_X86_REG_RDX,
+    UC_X86_REG_RSI,
 )
 
 

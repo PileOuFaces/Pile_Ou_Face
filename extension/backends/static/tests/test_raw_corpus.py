@@ -18,19 +18,19 @@ if str(ROOT) not in sys.path:
 from backends.static.disasm.call_graph import build_call_graph
 from backends.static.disasm.cfg import build_cfg
 from backends.static.disasm.discover_functions import discover_functions
+from backends.static.disasm.xrefs import extract_xrefs
 from backends.static.search.search import search_in_binary
 from backends.static.tests.fixtures.raw_fixture import (
     write_raw_arm32_call_fixture,
     write_raw_arm64_call_fixture,
     write_raw_mips32_be_call_fixture,
     write_raw_mips32_le_call_fixture,
-    write_raw_ppc32_be_partial_call_fixture,
     write_raw_ppc32_be_call_fixture,
+    write_raw_ppc32_be_partial_call_fixture,
     write_raw_thumb_call_fixture,
     write_raw_thumb_partial_call_fixture,
     write_raw_x64_call_fixture,
 )
-from backends.static.disasm.xrefs import extract_xrefs
 
 try:
     import capstone as _capstone
@@ -82,10 +82,12 @@ class TestRawCorpus(unittest.TestCase):
                 call_graph = build_call_graph(cfg, discovered, lines=lines)
                 self.assertEqual(len(call_graph["edges"]), 1)
                 self.assertEqual(
-                    call_graph["edges"][0]["from_name"], f"sub_{sample['entry_addr'][2:]}"
+                    call_graph["edges"][0]["from_name"],
+                    f"sub_{sample['entry_addr'][2:]}",
                 )
                 self.assertEqual(
-                    call_graph["edges"][0]["to_name"], f"sub_{sample['target_addr'][2:]}"
+                    call_graph["edges"][0]["to_name"],
+                    f"sub_{sample['target_addr'][2:]}",
                 )
 
                 refs = extract_xrefs(lines, sample["target_addr"], functions=discovered)
@@ -93,7 +95,9 @@ class TestRawCorpus(unittest.TestCase):
                 self.assertEqual(refs[0]["type"], "call")
                 self.assertEqual(refs[0]["from_addr"], sample["call_site_addr"])
                 self.assertEqual(refs[0]["function_addr"], sample["entry_addr"])
-                self.assertEqual(refs[0]["function_name"], f"sub_{sample['entry_addr'][2:]}")
+                self.assertEqual(
+                    refs[0]["function_name"], f"sub_{sample['entry_addr'][2:]}"
+                )
 
                 call_bytes = next(
                     line["bytes"].replace(" ", "").lower()
@@ -158,10 +162,12 @@ class TestRawCorpus(unittest.TestCase):
                 call_graph = json.loads(call_graph_proc.stdout)
                 self.assertEqual(len(call_graph["edges"]), 1)
                 self.assertEqual(
-                    call_graph["edges"][0]["from_name"], f"sub_{sample['entry_addr'][2:]}"
+                    call_graph["edges"][0]["from_name"],
+                    f"sub_{sample['entry_addr'][2:]}",
                 )
                 self.assertEqual(
-                    call_graph["edges"][0]["to_name"], f"sub_{sample['target_addr'][2:]}"
+                    call_graph["edges"][0]["to_name"],
+                    f"sub_{sample['target_addr'][2:]}",
                 )
 
                 xrefs_proc = subprocess.run(
@@ -185,7 +191,9 @@ class TestRawCorpus(unittest.TestCase):
                 self.assertEqual(xrefs_proc.returncode, 0, xrefs_proc.stderr)
                 xrefs = json.loads(xrefs_proc.stdout)
                 self.assertEqual(len(xrefs["refs"]), 1)
-                self.assertEqual(xrefs["refs"][0]["from_addr"], sample["call_site_addr"])
+                self.assertEqual(
+                    xrefs["refs"][0]["from_addr"], sample["call_site_addr"]
+                )
                 self.assertEqual(
                     xrefs["refs"][0]["function_name"], f"sub_{sample['entry_addr'][2:]}"
                 )

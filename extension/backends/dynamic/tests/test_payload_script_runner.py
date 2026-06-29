@@ -25,12 +25,14 @@ class TestPayloadScriptRunner(unittest.TestCase):
         self.assertEqual(result["globals"]["payload"]["hex"], "4141414141414141")
 
     def test_sendline_capture_is_recorded(self):
-        script = "\n".join([
-            "from pwn import *",
-            'payload = b"A" * 4',
-            'io = process("./chall")',
-            "io.sendline(payload)",
-        ])
+        script = "\n".join(
+            [
+                "from pwn import *",
+                'payload = b"A" * 4',
+                'io = process("./chall")',
+                "io.sendline(payload)",
+            ]
+        )
 
         result = analyze_script_text(script, source_file_name="solve.py")
 
@@ -44,10 +46,12 @@ class TestPayloadScriptRunner(unittest.TestCase):
         self.assertEqual(result["processes"][0]["argv"], ["./chall"])
 
     def test_p32_and_p64_are_supported(self):
-        script = "\n".join([
-            "from pwn import *",
-            "payload = p32(0xdeadbeef) + p64(0x1122334455667788)",
-        ])
+        script = "\n".join(
+            [
+                "from pwn import *",
+                "payload = p32(0xdeadbeef) + p64(0x1122334455667788)",
+            ]
+        )
 
         result = analyze_script_text(script, source_file_name="solve.py")
 
@@ -58,10 +62,12 @@ class TestPayloadScriptRunner(unittest.TestCase):
         )
 
     def test_flat_is_supported(self):
-        script = "\n".join([
-            "from pwn import *",
-            'payload = flat(b"AA", 0x42424242, word_size=4)',
-        ])
+        script = "\n".join(
+            [
+                "from pwn import *",
+                'payload = flat(b"AA", 0x42424242, word_size=4)',
+            ]
+        )
 
         result = analyze_script_text(script, source_file_name="solve.py")
 
@@ -69,10 +75,12 @@ class TestPayloadScriptRunner(unittest.TestCase):
         self.assertEqual(result["globals"]["payload"]["hex"], "414142424242")
 
     def test_flat_word_size_64_is_treated_as_64_bits(self):
-        script = "\n".join([
-            "from pwn import *",
-            "payload = flat(-1, word_size=64)",
-        ])
+        script = "\n".join(
+            [
+                "from pwn import *",
+                "payload = flat(-1, word_size=64)",
+            ]
+        )
 
         result = analyze_script_text(script, source_file_name="solve.py")
 
@@ -88,11 +96,13 @@ class TestPayloadScriptRunner(unittest.TestCase):
         self.assertIn("Aucun payload capture", " ".join(result["warnings"]))
 
     def test_remote_is_blocked_but_sends_are_captured(self):
-        script = "\n".join([
-            "from pwn import *",
-            "io = remote('example.com', 31337)",
-            'io.send(b"PING")',
-        ])
+        script = "\n".join(
+            [
+                "from pwn import *",
+                "io = remote('example.com', 31337)",
+                'io.send(b"PING")',
+            ]
+        )
 
         result = analyze_script_text(script, source_file_name="solve.py")
 
@@ -105,15 +115,17 @@ class TestPayloadScriptRunner(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             binary_path = Path(tmpdir) / "chall"
             binary_path.write_bytes(b"\x7fELF\x00main\x00func_stub\x00")
-            script = "\n".join([
-                "from pwn import *",
-                "import sys",
-                "exe = sys.argv[1]",
-                "elf = ELF(exe)",
-                "io = process(exe)",
-                "payload = flat(b'AAAA', p32(elf.symbols['main']))",
-                "io.sendlineafter(b'> ', payload)",
-            ])
+            script = "\n".join(
+                [
+                    "from pwn import *",
+                    "import sys",
+                    "exe = sys.argv[1]",
+                    "elf = ELF(exe)",
+                    "io = process(exe)",
+                    "payload = flat(b'AAAA', p32(elf.symbols['main']))",
+                    "io.sendlineafter(b'> ', payload)",
+                ]
+            )
 
             result = analyze_script_text(
                 script,

@@ -15,8 +15,8 @@ Output JSON:
 
 from __future__ import annotations
 
-from pathlib import Path
 import re
+from pathlib import Path
 from typing import Any
 
 # Patterns de fonctions suspectes classées par catégorie
@@ -150,7 +150,7 @@ def analyze_imports(binary_path: str) -> dict[str, Any]:
 
     try:
         binary = lief.parse(str(path))
-    except Exception as e:
+    except Exception:
         return _fallback_scan_import_strings(path)
 
     if binary is None:
@@ -318,7 +318,9 @@ def main() -> int:
     import argparse
     import json
 
-    parser = argparse.ArgumentParser(description="Analyze imports for suspicious patterns")
+    parser = argparse.ArgumentParser(
+        description="Analyze imports for suspicious patterns"
+    )
     parser.add_argument("--binary", required=True, help="Binary path")
     parser.add_argument(
         "--threshold",

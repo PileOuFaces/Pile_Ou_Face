@@ -38,7 +38,6 @@ def _write_u32(uc: _FakeUc, addr: int, value: int) -> None:
 
 @unittest.skipIf(_simulate_symbol_with_args is None, UNICORN_SKIP_REASON)
 class TestTracerScanf(unittest.TestCase):
-
     def test_scanf_reads_string_from_stdin_into_destination(self):
         uc = _FakeUc()
         fmt_addr = 0x100

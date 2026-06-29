@@ -2,6 +2,7 @@
 import os
 from types import SimpleNamespace
 from unittest.mock import patch
+
 from backends.plugins.license import evaluate_plugin_license
 
 

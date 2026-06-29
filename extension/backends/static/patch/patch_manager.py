@@ -18,7 +18,7 @@ import hashlib
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -69,7 +69,7 @@ def _load(binary_path: str) -> dict:
             "patches": [],
             "redo_patches": [],
         }
-    with open(patch_file, "r", encoding="utf-8") as f:
+    with open(patch_file, encoding="utf-8") as f:
         data = json.load(f)
     if not isinstance(data, dict):
         data = {}
@@ -97,7 +97,9 @@ def list_patches(binary_path: str) -> dict:
     return _load(binary_path)
 
 
-def apply_patch(binary_path: str, offset: int, bytes_hex: str, comment: str = "") -> dict:
+def apply_patch(
+    binary_path: str, offset: int, bytes_hex: str, comment: str = ""
+) -> dict:
     """Apply bytes at offset, recording original bytes for undo.
 
     Returns {'ok': True, 'patch': entry} or {'ok': False, 'error': '...'}.
@@ -133,7 +135,7 @@ def apply_patch(binary_path: str, offset: int, bytes_hex: str, comment: str = ""
         "offset": offset,
         "original_bytes": original_hex,
         "patched_bytes": bytes_hex.strip(),
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "comment": comment,
     }
 

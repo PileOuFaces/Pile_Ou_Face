@@ -6,10 +6,10 @@ from __future__ import annotations
 import unittest
 
 from backends.dynamic.engine.unicorn.argv_stdin import (
-    _consume_stream_literal,
-    _consume_stream_token,
     _consume_stdin_bytes,
     _consume_stdin_line,
+    _consume_stream_literal,
+    _consume_stream_token,
     _iterate_scanf_tokens,
 )
 
@@ -42,7 +42,13 @@ class TestArgvStdinHelpers(unittest.TestCase):
             [
                 {"kind": "conversion", "value": "s", "width": 4, "assign": True},
                 {"kind": "whitespace"},
-                {"kind": "conversion", "value": "[", "width": 2, "assign": True, "scanset": "0-9"},
+                {
+                    "kind": "conversion",
+                    "value": "[",
+                    "width": 2,
+                    "assign": True,
+                    "scanset": "0-9",
+                },
                 {"kind": "whitespace"},
                 {"kind": "literal", "value": "%"},
             ],

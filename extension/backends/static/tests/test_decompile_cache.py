@@ -1,6 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # backends/static/tests/test_decompile_cache.py
-import sys, os, tempfile, unittest, json, time
+import json
+import sys
+import tempfile
+import time
+import unittest
 from pathlib import Path
 from unittest import mock
 
@@ -12,8 +16,8 @@ from backends.static.decompile.decompile import (
     _build_cache_meta,
     _cache_key,
     _read_cache,
-    _write_cache,
     _stack_signature,
+    _write_cache,
     decompile_function,
 )
 
@@ -126,10 +130,17 @@ class TestCacheHelpers(unittest.TestCase):
             binary = Path(d) / "demo.bin"
             binary.write_bytes(b"demo")
             subdir = Path(d) / "cache"
-            _write_cache("deadbeefcafe1234", subdir, {"x": 1}, meta=_build_cache_meta(str(binary)))
+            _write_cache(
+                "deadbeefcafe1234",
+                subdir,
+                {"x": 1},
+                meta=_build_cache_meta(str(binary)),
+            )
             result = _read_cache("deadbeefcafe1234", subdir)
             self.assertEqual(result["x"], 1)
-            self.assertEqual(result["_cache_meta"]["binary_path"], str(binary.resolve()))
+            self.assertEqual(
+                result["_cache_meta"]["binary_path"], str(binary.resolve())
+            )
             self.assertEqual(result["_cache_meta"]["binary_size"], 4)
 
 
@@ -139,7 +150,13 @@ class TestCacheHelpers(unittest.TestCase):
 
 
 class TestDecompileFunctionCache(unittest.TestCase):
-    _empty_stack = {"arch": "unknown", "abi": "unknown", "frame_size": 0, "vars": [], "args": []}
+    _empty_stack = {
+        "arch": "unknown",
+        "abi": "unknown",
+        "frame_size": 0,
+        "vars": [],
+        "args": [],
+    }
 
     def _base_patches(self, decompiler="tool_a", fake_code="/* live */"):
         return [
@@ -158,7 +175,8 @@ class TestDecompileFunctionCache(unittest.TestCase):
                 ),
             ),
             mock.patch(
-                "backends.static.decompile.decompile.typed_struct_signature", return_value=""
+                "backends.static.decompile.decompile.typed_struct_signature",
+                return_value="",
             ),
             mock.patch(
                 "backends.static.disasm.stack_frame.analyse_stack_frame",
@@ -199,10 +217,12 @@ class TestDecompileFunctionCache(unittest.TestCase):
                     _available_only("tool_a"),
                 ),
                 mock.patch(
-                    "backends.static.decompile.decompile._run_custom_decompiler", counting_run
+                    "backends.static.decompile.decompile._run_custom_decompiler",
+                    counting_run,
                 ),
                 mock.patch(
-                    "backends.static.decompile.decompile.typed_struct_signature", return_value=""
+                    "backends.static.decompile.decompile.typed_struct_signature",
+                    return_value="",
                 ),
                 mock.patch(
                     "backends.static.disasm.stack_frame.analyse_stack_frame",
@@ -229,11 +249,18 @@ class TestDecompileFunctionCache(unittest.TestCase):
                 mock.patch(
                     "backends.static.decompile.decompile._run_custom_decompiler",
                     _make_run_custom(
-                        {"tool_a": {"addr": "0x401000", "code": "int f(){}", "error": None}}
+                        {
+                            "tool_a": {
+                                "addr": "0x401000",
+                                "code": "int f(){}",
+                                "error": None,
+                            }
+                        }
                     ),
                 ),
                 mock.patch(
-                    "backends.static.decompile.decompile.typed_struct_signature", return_value=""
+                    "backends.static.decompile.decompile.typed_struct_signature",
+                    return_value="",
                 ),
                 mock.patch(
                     "backends.static.disasm.stack_frame.analyse_stack_frame",
@@ -265,7 +292,8 @@ class TestDecompileFunctionCache(unittest.TestCase):
                     lambda d, p="auto": False,
                 ),
                 mock.patch(
-                    "backends.static.decompile.decompile.typed_struct_signature", return_value=""
+                    "backends.static.decompile.decompile.typed_struct_signature",
+                    return_value="",
                 ),
                 mock.patch(
                     "backends.static.disasm.stack_frame.analyse_stack_frame",
@@ -287,7 +315,9 @@ class TestDecompileFunctionCache(unittest.TestCase):
             cache_dir = Path(d)
             calls = []
 
-            def run_custom(decompiler, binary_path, addr="", func_name="", full=False, **kw):
+            def run_custom(
+                decompiler, binary_path, addr="", func_name="", full=False, **kw
+            ):
                 calls.append(decompiler)
                 codes = {
                     "tool_a": "int tool_a_f() { return 0; }",
@@ -313,7 +343,8 @@ class TestDecompileFunctionCache(unittest.TestCase):
                     _available_only("retdec", "ghidra", "tool_a"),
                 ),
                 mock.patch(
-                    "backends.static.decompile.decompile._run_custom_decompiler", run_custom
+                    "backends.static.decompile.decompile._run_custom_decompiler",
+                    run_custom,
                 ),
                 mock.patch(
                     "backends.static.disasm.stack_frame.analyse_stack_frame",
@@ -360,7 +391,8 @@ class TestDecompileFunctionCache(unittest.TestCase):
                     _available_only("tool_a"),
                 ),
                 mock.patch(
-                    "backends.static.decompile.decompile._run_custom_decompiler", run_custom
+                    "backends.static.decompile.decompile._run_custom_decompiler",
+                    run_custom,
                 ),
                 mock.patch(
                     "backends.static.disasm.stack_frame.analyse_stack_frame",
@@ -381,10 +413,18 @@ class TestDecompileFunctionCache(unittest.TestCase):
             time.sleep(delays.get(decompiler, 0))
             function_map = {
                 "tool_a": [
-                    {"addr": "0x401000", "code": "int f_tool_a() { return 0; }", "error": None}
+                    {
+                        "addr": "0x401000",
+                        "code": "int f_tool_a() { return 0; }",
+                        "error": None,
+                    }
                 ],
                 "ghidra": [
-                    {"addr": "0x401000", "code": "int f_ghidra() { return 0; }", "error": None}
+                    {
+                        "addr": "0x401000",
+                        "code": "int f_ghidra() { return 0; }",
+                        "error": None,
+                    }
                 ],
                 "retdec": [
                     {
@@ -392,7 +432,11 @@ class TestDecompileFunctionCache(unittest.TestCase):
                         "code": "int f_retdec() { helper(); return 0; }",
                         "error": None,
                     },
-                    {"addr": "0x401040", "code": "int helper() { return 1; }", "error": None},
+                    {
+                        "addr": "0x401040",
+                        "code": "int helper() { return 1; }",
+                        "error": None,
+                    },
                 ],
             }
             funcs = function_map[decompiler]
@@ -409,7 +453,9 @@ class TestDecompileFunctionCache(unittest.TestCase):
                 "backends.static.decompile.decompile._is_decompiler_available",
                 _available_only("retdec", "ghidra", "tool_a"),
             ),
-            mock.patch("backends.static.decompile.decompile._run_custom_decompiler", run_custom),
+            mock.patch(
+                "backends.static.decompile.decompile._run_custom_decompiler", run_custom
+            ),
         ):
             result = decompile_binary("/bin/ls")
 
@@ -423,7 +469,8 @@ class TestDecompileFunctionCache(unittest.TestCase):
 class TestCLICacheDir(unittest.TestCase):
     def test_cache_dir_arg_accepted(self):
         """--cache-dir est reconnu sans lever d'erreur argparse."""
-        import subprocess, sys
+        import subprocess
+        import sys
 
         with tempfile.TemporaryDirectory() as d:
             result = subprocess.run(

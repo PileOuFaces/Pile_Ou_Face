@@ -1,8 +1,13 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # backends/static/tests/test_decompile.py
 import io
+import json
+import os
 import runpy
-import sys, os, tempfile, unittest, json, subprocess
+import subprocess
+import sys
+import tempfile
+import unittest
 from pathlib import Path
 from unittest import mock
 
@@ -11,19 +16,19 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backends.static.decompile.decompile import (
-    _get_decompiler_docker_image,
-    _docker_missing_image_error,
-    _preferred_docker_platform_for_decompiler,
     _decompiler_target_support,
-    _resolve_function_target,
-    list_available_decompilers,
-    decompile_function,
-    decompile_binary,
+    _docker_missing_image_error,
+    _get_decompiler_docker_image,
     _load_custom_decompilers,
     _parse_c_like_function_blocks,
-    _run_custom_decompiler_in_docker,
+    _preferred_docker_platform_for_decompiler,
+    _resolve_function_target,
     _run_custom_decompiler,
+    _run_custom_decompiler_in_docker,
     _score_decompile_code,
+    decompile_binary,
+    decompile_function,
+    list_available_decompilers,
 )
 
 
@@ -50,7 +55,9 @@ class TestDecompile(unittest.TestCase):
         )
 
     def test_missing_builtin_docker_image_error_suggests_make(self):
-        error = _docker_missing_image_error("retdec", "pile-ou-face/decompiler-retdec:latest")
+        error = _docker_missing_image_error(
+            "retdec", "pile-ou-face/decompiler-retdec:latest"
+        )
         self.assertIn("make decompiler-docker-build DECOMPILER=retdec", error)
         self.assertIn("POF_DECOMPILER_IMAGE_RETDEC", error)
 
@@ -72,14 +79,23 @@ class TestDecompile(unittest.TestCase):
                 return_value=True,
             ),
             mock.patch(
-                "backends.static.decompile.decompile.subprocess.run", return_value=completed
+                "backends.static.decompile.decompile.subprocess.run",
+                return_value=completed,
             ),
         ):
-            result = _run_custom_decompiler_in_docker("retdec", "/bin/ls", addr="0x401000")
-        self.assertIn("make decompiler-docker-build DECOMPILER=retdec", result.get("error", ""))
-        self.assertEqual(result.get("docker_image"), "pile-ou-face/decompiler-retdec:latest")
+            result = _run_custom_decompiler_in_docker(
+                "retdec", "/bin/ls", addr="0x401000"
+            )
+        self.assertIn(
+            "make decompiler-docker-build DECOMPILER=retdec", result.get("error", "")
+        )
+        self.assertEqual(
+            result.get("docker_image"), "pile-ou-face/decompiler-retdec:latest"
+        )
 
-    def test_builtin_docker_run_uses_real_container_result_even_if_probe_is_unreliable(self):
+    def test_builtin_docker_run_uses_real_container_result_even_if_probe_is_unreliable(
+        self,
+    ):
         completed = subprocess.CompletedProcess(
             args=["docker", "run"],
             returncode=0,
@@ -95,16 +111,23 @@ class TestDecompile(unittest.TestCase):
         with (
             mock.patch(
                 "backends.static.decompile.decompile._is_docker_decompiler_image_available",
-                side_effect=AssertionError("preflight inspect should not gate docker run"),
+                side_effect=AssertionError(
+                    "preflight inspect should not gate docker run"
+                ),
             ),
             mock.patch(
-                "backends.static.decompile.decompile.subprocess.run", return_value=completed
+                "backends.static.decompile.decompile.subprocess.run",
+                return_value=completed,
             ),
         ):
-            result = _run_custom_decompiler_in_docker("retdec", "/bin/ls", addr="0x401000")
+            result = _run_custom_decompiler_in_docker(
+                "retdec", "/bin/ls", addr="0x401000"
+            )
         self.assertIsNone(result.get("error"))
         self.assertEqual(result.get("provider"), "docker")
-        self.assertEqual(result.get("docker_image"), "pile-ou-face/decompiler-retdec:latest")
+        self.assertEqual(
+            result.get("docker_image"), "pile-ou-face/decompiler-retdec:latest"
+        )
         self.assertIn("return 5", result.get("code", ""))
 
     def test_target_support_rejects_declared_excluded_combo(self):
@@ -139,10 +162,13 @@ class TestDecompile(unittest.TestCase):
                     return_value="/usr/bin/docker",
                 ),
                 mock.patch(
-                    "backends.static.decompile.decompile.subprocess.run", return_value=completed
+                    "backends.static.decompile.decompile.subprocess.run",
+                    return_value=completed,
                 ) as run_mock,
             ):
-                self.assertTrue(decompile_mod._is_docker_decompiler_image_available(image))
+                self.assertTrue(
+                    decompile_mod._is_docker_decompiler_image_available(image)
+                )
             run_mock.assert_called_once()
             self.assertTrue(decompile_mod._DOCKER_AVAILABLE_CACHE[image])
         finally:
@@ -152,8 +178,12 @@ class TestDecompile(unittest.TestCase):
     def test_preferred_docker_platform_is_only_forced_by_env(self):
         with mock.patch.dict(os.environ, {}, clear=False):
             self.assertEqual(_preferred_docker_platform_for_decompiler("retdec"), "")
-        with mock.patch.dict(os.environ, {"DOCKER_PLATFORM": "linux/amd64"}, clear=False):
-            self.assertEqual(_preferred_docker_platform_for_decompiler("retdec"), "linux/amd64")
+        with mock.patch.dict(
+            os.environ, {"DOCKER_PLATFORM": "linux/amd64"}, clear=False
+        ):
+            self.assertEqual(
+                _preferred_docker_platform_for_decompiler("retdec"), "linux/amd64"
+            )
 
     def test_list_available_decompilers_returns_configured_decompilers(self):
         fake_decompilers = {
@@ -231,7 +261,9 @@ class TestDecompile(unittest.TestCase):
             with self.assertRaises(SystemExit) as exit_ctx:
                 runpy.run_module("backends.static.decompile", run_name="__main__")
         self.assertEqual(exit_ctx.exception.code, 0)
-        list_mock.assert_called_once_with(provider="auto", binary_path="/bin/foo", full=True)
+        list_mock.assert_called_once_with(
+            provider="auto", binary_path="/bin/foo", full=True
+        )
 
     def test_custom_docker_image_is_loaded_from_config(self):
         with tempfile.TemporaryDirectory() as d:
@@ -242,7 +274,13 @@ class TestDecompile(unittest.TestCase):
                         "decompilers": {
                             "my-ghidra": {
                                 "label": "My Ghidra",
-                                "command": ["wrapper", "--binary", "{binary}", "--addr", "{addr}"],
+                                "command": [
+                                    "wrapper",
+                                    "--binary",
+                                    "{binary}",
+                                    "--addr",
+                                    "{addr}",
+                                ],
                                 "docker_image": "registry.example/my-ghidra:latest",
                             }
                         }
@@ -250,16 +288,26 @@ class TestDecompile(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            with mock.patch.dict(os.environ, {"DECOMPILERS_CONFIG": str(config_path)}, clear=False):
+            with mock.patch.dict(
+                os.environ, {"DECOMPILERS_CONFIG": str(config_path)}, clear=False
+            ):
                 self.assertEqual(
                     _get_decompiler_docker_image("my-ghidra"),
                     "registry.example/my-ghidra:latest",
                 )
 
     def test_decompile_function_rewrites_typed_struct_addresses(self):
-        empty_stack = {"arch": "unknown", "abi": "unknown", "frame_size": 0, "vars": [], "args": []}
+        empty_stack = {
+            "arch": "unknown",
+            "abi": "unknown",
+            "frame_size": 0,
+            "vars": [],
+            "args": [],
+        }
 
-        def fake_run_custom(decompiler, _binary, addr="", func_name="", full=False, **kw):
+        def fake_run_custom(
+            decompiler, _binary, addr="", func_name="", full=False, **kw
+        ):
             return {
                 "addr": "0x401000",
                 "code": "int f() { return *(int *)0x402000; }",
@@ -270,10 +318,12 @@ class TestDecompile(unittest.TestCase):
         with (
             tempfile.TemporaryDirectory() as d,
             mock.patch(
-                "backends.static.decompile.decompile._run_custom_decompiler", fake_run_custom
+                "backends.static.decompile.decompile._run_custom_decompiler",
+                fake_run_custom,
             ),
             mock.patch(
-                "backends.static.disasm.stack_frame.analyse_stack_frame", return_value=empty_stack
+                "backends.static.disasm.stack_frame.analyse_stack_frame",
+                return_value=empty_stack,
             ),
             mock.patch(
                 "backends.static.decompile.decompile.build_typed_struct_index",
@@ -420,7 +470,9 @@ class TestDecompile(unittest.TestCase):
         with mock.patch(
             "backends.static.binary.symbols.extract_symbols", return_value=fake_symbols
         ):
-            addr, func_name = _resolve_function_target("/tmp/demo.bin", "0x4011a6", "_main")
+            addr, func_name = _resolve_function_target(
+                "/tmp/demo.bin", "0x4011a6", "_main"
+            )
         self.assertEqual(addr, "0x100000490")
 
     def test_decompile_function_auto_skips_backend_excluded_for_target(self):
@@ -430,7 +482,9 @@ class TestDecompile(unittest.TestCase):
                 "id": "retdec",
                 "label": "RetDec",
                 "command": ["retdec"],
-                "exclude_targets": [{"format": "macho", "arch": "arm64", "reason": "fragile"}],
+                "exclude_targets": [
+                    {"format": "macho", "arch": "arm64", "reason": "fragile"}
+                ],
             },
         }
         called = []
@@ -472,14 +526,17 @@ class TestDecompile(unittest.TestCase):
                     "backends.static.decompile.decompile._run_custom_decompiler",
                     side_effect=fake_run,
                 ),
-                mock.patch("backends.static.decompile.decompile._read_cache", return_value=None),
+                mock.patch(
+                    "backends.static.decompile.decompile._read_cache", return_value=None
+                ),
                 mock.patch("backends.static.decompile.decompile._write_cache"),
                 mock.patch(
                     "backends.static.decompile.decompile._load_typed_struct_annotation_payload",
                     return_value=({}, {}, []),
                 ),
                 mock.patch(
-                    "backends.static.decompile.decompile._build_cache_meta", return_value=None
+                    "backends.static.decompile.decompile._build_cache_meta",
+                    return_value=None,
                 ),
             ):
                 result = decompile_function(binary_path, "0x1000", provider="local")
@@ -490,9 +547,17 @@ class TestDecompile(unittest.TestCase):
         self.assertEqual(called, ["ghidra"])
 
     def test_decompile_function_prefers_resolved_func_name_address(self):
-        empty_stack = {"arch": "unknown", "abi": "unknown", "frame_size": 0, "vars": [], "args": []}
+        empty_stack = {
+            "arch": "unknown",
+            "abi": "unknown",
+            "frame_size": 0,
+            "vars": [],
+            "args": [],
+        }
 
-        def fake_run_custom(decompiler, _binary, addr="", func_name="", full=False, **kw):
+        def fake_run_custom(
+            decompiler, _binary, addr="", func_name="", full=False, **kw
+        ):
             return {
                 "addr": addr,
                 "code": f"int {func_name or 'main'}() {{ return 0; }}",
@@ -504,12 +569,17 @@ class TestDecompile(unittest.TestCase):
         with (
             tempfile.TemporaryDirectory() as d,
             mock.patch(
-                "backends.static.decompile.decompile._run_custom_decompiler", fake_run_custom
+                "backends.static.decompile.decompile._run_custom_decompiler",
+                fake_run_custom,
             ),
             mock.patch(
-                "backends.static.disasm.stack_frame.analyse_stack_frame", return_value=empty_stack
+                "backends.static.disasm.stack_frame.analyse_stack_frame",
+                return_value=empty_stack,
             ),
-            mock.patch("backends.static.binary.symbols.extract_symbols", return_value=fake_symbols),
+            mock.patch(
+                "backends.static.binary.symbols.extract_symbols",
+                return_value=fake_symbols,
+            ),
             mock.patch(
                 "backends.static.decompile.decompile.typed_struct_signature",
                 return_value="structsig",
@@ -545,12 +615,15 @@ class TestBuiltinTargetPolicies(unittest.TestCase):
 
     def assertAccepted(self, backend_id, fmt, arch, bitness="64"):
         ok, reason = self._support(backend_id, fmt, arch, bitness)
-        self.assertTrue(ok, f"{backend_id} should accept {fmt}/{arch}/{bitness}bit — got: {reason}")
+        self.assertTrue(
+            ok, f"{backend_id} should accept {fmt}/{arch}/{bitness}bit — got: {reason}"
+        )
 
     def assertRejected(self, backend_id, fmt, arch, bitness="64"):
         ok, reason = self._support(backend_id, fmt, arch, bitness)
         self.assertFalse(
-            ok, f"{backend_id} should reject {fmt}/{arch}/{bitness}bit — reason was empty"
+            ok,
+            f"{backend_id} should reject {fmt}/{arch}/{bitness}bit — reason was empty",
         )
         return reason
 
@@ -718,7 +791,9 @@ class TestBuiltinTargetPolicies(unittest.TestCase):
         self.assertTrue(ok)
 
     def test_exclude_with_bitness_blocks_only_matching_bitness(self):
-        entry = {"exclude_targets": [{"format": "elf", "arch": "arm64", "bitness": "32"}]}
+        entry = {
+            "exclude_targets": [{"format": "elf", "arch": "arm64", "bitness": "32"}]
+        }
         ok64, _ = _decompiler_target_support(
             entry, {"format": "elf", "arch": "arm64", "bitness": "64"}
         )
@@ -765,7 +840,10 @@ class TestBuiltinTargetPolicies(unittest.TestCase):
 
     def test_entry_supports_overrides_builtin(self):
         # Entrée qui ne supporte que elf — doit rejeter macho même si le builtin l'autorise
-        entry = {"id": "ghidra", "supports": {"formats": ["elf"], "architectures": ["x86_64"]}}
+        entry = {
+            "id": "ghidra",
+            "supports": {"formats": ["elf"], "architectures": ["x86_64"]},
+        }
         ok, reason = _decompiler_target_support(
             entry, {"format": "macho", "arch": "x86_64", "bitness": "64"}
         )
@@ -797,14 +875,14 @@ class TestBuiltinTargetPolicies(unittest.TestCase):
             "angr": {"id": "angr", "label": "Angr"},
             "retdec": {"id": "retdec", "label": "RetDec"},
         }
-        candidates = []
         with (
             mock.patch(
                 "backends.static.decompile.decompile._load_decompilers",
                 return_value=fake_decompilers,
             ),
             mock.patch(
-                "backends.static.decompile.decompile._is_decompiler_available", return_value=True
+                "backends.static.decompile.decompile._is_decompiler_available",
+                return_value=True,
             ),
             mock.patch(
                 "backends.static.decompile.decompile._binary_info",
@@ -827,13 +905,18 @@ class TestBuiltinTargetPolicies(unittest.TestCase):
                     "decompiler": c,
                 },
             ),
-            mock.patch("backends.static.decompile.decompile._read_cache", return_value=None),
+            mock.patch(
+                "backends.static.decompile.decompile._read_cache", return_value=None
+            ),
             mock.patch("backends.static.decompile.decompile._write_cache"),
             mock.patch(
                 "backends.static.decompile.decompile._load_typed_struct_annotation_payload",
                 return_value=({}, {}, []),
             ),
-            mock.patch("backends.static.decompile.decompile._build_cache_meta", return_value=None),
+            mock.patch(
+                "backends.static.decompile.decompile._build_cache_meta",
+                return_value=None,
+            ),
         ):
             import tempfile
 
@@ -849,7 +932,9 @@ class TestBuiltinTargetPolicies(unittest.TestCase):
             ok, reason = _decompiler_target_support(
                 entry, {"format": "macho", "arch": "arm64", "bitness": "64"}
             )
-            self.assertTrue(ok, f"{backend} should be a candidate for macho/arm64 — got: {reason}")
+            self.assertTrue(
+                ok, f"{backend} should be a candidate for macho/arm64 — got: {reason}"
+            )
 
 
 class TestErrorType(unittest.TestCase):
@@ -869,10 +954,12 @@ class TestErrorType(unittest.TestCase):
         self.assertEqual(result["error_type"], "tool_error")
 
     def test_timeout_sets_error_type(self):
-        with mock.patch(
-            "subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="x", timeout=1)
-        ):
-            with mock.patch(
+        with (
+            mock.patch(
+                "subprocess.run",
+                side_effect=subprocess.TimeoutExpired(cmd="x", timeout=1),
+            ),
+            mock.patch(
                 "backends.static.decompile.decompile._load_custom_decompilers",
                 return_value={
                     "tool_a": {
@@ -881,8 +968,9 @@ class TestErrorType(unittest.TestCase):
                         "timeout": 1,
                     }
                 },
-            ):
-                result = _run_custom_decompiler("tool_a", "/bin/ls", addr="0x0")
+            ),
+        ):
+            result = _run_custom_decompiler("tool_a", "/bin/ls", addr="0x0")
         self.assertEqual(result.get("error_type"), "timeout")
 
 

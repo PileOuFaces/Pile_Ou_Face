@@ -2,11 +2,18 @@
 """Utilitaires pour les tests static (compilation d'un binaire minimal)."""
 
 import subprocess
+import sys
 from pathlib import Path
 
 
 def compile_minimal_elf(tmpdir: Path) -> Path | None:
-    """Compile un C minimal en ELF. Retourne le chemin du binaire ou None si gcc absent."""
+    """Compile un C minimal en ELF. Retourne le chemin du binaire ou None si indisponible.
+
+    Sur macOS/Windows, gcc natif produit du Mach-O ou PE — pas de l'ELF.
+    On retourne None pour que les tests appelants fassent skipTest.
+    """
+    if sys.platform != "linux":
+        return None
     src = tmpdir / "minimal.c"
     src.write_text("int main(void) { return 0; }\n", encoding="utf-8")
     out = tmpdir / "minimal.elf"

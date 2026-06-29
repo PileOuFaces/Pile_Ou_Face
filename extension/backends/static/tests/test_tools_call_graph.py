@@ -151,7 +151,9 @@ class TestCallGraphCli(unittest.TestCase):
                     str(binary),
                     {
                         "blocks": [],
-                        "edges": [{"from": "0x401000", "to": "0x401020", "type": "call"}],
+                        "edges": [
+                            {"from": "0x401000", "to": "0x401020", "type": "call"}
+                        ],
                     },
                 )
                 cache.save_symbols(

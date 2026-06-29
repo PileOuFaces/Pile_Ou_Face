@@ -6,12 +6,12 @@ Parse les lignes objdump pour construire des blocs de base et les arcs.
 
 from __future__ import annotations
 
+import contextlib
 import re
 from dataclasses import dataclass, field
-from typing import Optional
 
-from backends.shared.utils import normalize_addr as _normalize_addr
 from backends.shared.log import configure_logging, get_logger
+from backends.shared.utils import normalize_addr as _normalize_addr
 from backends.static.binary.arch import (
     ArchAdapter,
     detect_binary_arch_from_path,
@@ -47,7 +47,7 @@ class BasicBlock:
 
 RET_MNEMONICS = {"ret", "retn", "retq", "retf"}
 PUSH_MNEMONIC = "push"
-ARM64_RET_MNEMONICS = {"ret", "retab", "retaa", "retaa"}
+ARM64_RET_MNEMONICS = {"ret", "retab", "retaa"}
 
 
 def _candidate_adapters(
@@ -65,19 +65,23 @@ def _candidate_adapters(
     return tuple(iter_supported_adapters())
 
 
-def _extract_symbol_from_operand(text: str) -> Optional[str]:
+def _extract_symbol_from_operand(text: str) -> str | None:
     """Extrait le symbole des opérandes objdump : <puts@plt>, <_main+0x2e>, etc."""
     match = re.search(r"<\s*([^>]+)\s*>", text)
     return match.group(1).strip() if match else None
 
 
-def _extract_jump_target(text: str) -> Optional[str]:
+def _extract_jump_target(text: str) -> str | None:
     """Extrait l'adresse cible d'une instruction jmp/call/jcc.
     Supporte: 0x1000004be, 401240, 0x1000004be <_main+0x2e>
     """
     search_area = str(text or "")
     mnem = _get_mnemonic(search_area)
-    if mnem and not mnem.startswith("0x") and not re.fullmatch(r"[0-9a-fA-F]{4,}", mnem):
+    if (
+        mnem
+        and not mnem.startswith("0x")
+        and not re.fullmatch(r"[0-9a-fA-F]{4,}", mnem)
+    ):
         match = re.search(rf"\b{re.escape(mnem)}\b(.*)$", search_area, re.IGNORECASE)
         if match:
             search_area = match.group(1)
@@ -114,12 +118,14 @@ def _get_mnemonic(text: str) -> str:
 def _is_branch(
     text: str,
     adapters: tuple[ArchAdapter, ...] | None = None,
-) -> tuple[bool, bool, Optional[str]]:
+) -> tuple[bool, bool, str | None]:
     """(is_branch, is_call, target_addr).
     Supporte x86/x64 (call, jmp, ret) et ARM64 (bl, blr, b, br, ret).
     """
     mnem = _get_mnemonic(text)
-    operands = re.split(rf"\b{re.escape(mnem)}\b", str(text or ""), maxsplit=1, flags=re.IGNORECASE)
+    operands = re.split(
+        rf"\b{re.escape(mnem)}\b", str(text or ""), maxsplit=1, flags=re.IGNORECASE
+    )
     op_str = operands[1] if len(operands) == 2 else ""
     for adapter in adapters or tuple(iter_supported_adapters()):
         if adapter.is_return_instruction(mnem, op_str):
@@ -176,7 +182,7 @@ def _is_jump_table(text: str) -> bool:
     return False
 
 
-def _detect_switch_max_case(block_lines: list[dict]) -> Optional[int]:
+def _detect_switch_max_case(block_lines: list[dict]) -> int | None:
     """Cherche en arrière dans le bloc pour un 'cmp reg, N' avant le saut indirect.
 
     Retourne le nombre de cas (N+1) si trouvé, sinon None.
@@ -210,7 +216,7 @@ def _append_incoming_switch_case(
         block.incoming_switch_cases.append(entry)
 
 
-def _extract_jump_table_base(text: str) -> Optional[str]:
+def _extract_jump_table_base(text: str) -> str | None:
     """Tente d'extraire l'adresse de base d'une jump table depuis l'instruction.
 
     Exemples:
@@ -226,7 +232,7 @@ def _extract_jump_table_base(text: str) -> Optional[str]:
     return None
 
 
-def _parse_int_literal(text: str | None) -> Optional[int]:
+def _parse_int_literal(text: str | None) -> int | None:
     if text is None:
         return None
     raw = str(text).strip().lower().replace(" ", "")
@@ -260,7 +266,7 @@ def _binary_is_64bit(binary) -> bool:
     return str(machine).upper() in {"AMD64", "AARCH64", "ARM64"}
 
 
-def _extract_register_jump_target(text: str) -> Optional[str]:
+def _extract_register_jump_target(text: str) -> str | None:
     mnem = _get_mnemonic(text)
     if mnem not in {"jmp", "br", "jr", "jalr", "bctr", "bcctr"}:
         return None
@@ -269,7 +275,9 @@ def _extract_register_jump_target(text: str) -> Optional[str]:
     if mnem in {"bctr", "bcctr"}:
         return "ctr"
     if mnem == "jalr":
-        operands_match = re.search(rf"\b{re.escape(mnem)}\b\s+(.+)$", text, re.IGNORECASE)
+        operands_match = re.search(
+            rf"\b{re.escape(mnem)}\b\s+(.+)$", text, re.IGNORECASE
+        )
         if not operands_match:
             return None
         operands = [
@@ -297,7 +305,7 @@ def _resolve_table_addr_from_lea(
     register: str,
     parsed_binary,
     detected_arch_info,
-) -> Optional[int]:
+) -> int | None:
     text = str(line.get("text", "") or "")
     if _get_mnemonic(text) != "lea":
         return None
@@ -311,7 +319,9 @@ def _resolve_table_addr_from_lea(
         if offset is None:
             return None
         curr_addr = int(_normalize_addr(line["addr"]), 16)
-        arch_family = detected_arch_info.family if detected_arch_info is not None else "x86"
+        arch_family = (
+            detected_arch_info.family if detected_arch_info is not None else "x86"
+        )
         return _resolve_rip_relative_table(
             curr_addr,
             offset,
@@ -325,13 +335,13 @@ def _resolve_table_addr_from_lea(
     return None
 
 
-def _extract_memory_base_register(expr: str) -> Optional[str]:
+def _extract_memory_base_register(expr: str) -> str | None:
     cleaned = str(expr or "").replace(" ", "").lower()
     match = re.match(r"[$%]?([a-z][a-z0-9]+)", cleaned)
     return _normalize_register_name(match.group(1)) if match else None
 
 
-def _extract_operand_register(expr: str) -> Optional[str]:
+def _extract_operand_register(expr: str) -> str | None:
     cleaned = str(expr or "").strip().lower()
     match = re.search(r"[$%]?([a-z][a-z0-9]+)\b", cleaned)
     return _normalize_register_name(match.group(1)) if match else None
@@ -340,14 +350,14 @@ def _extract_operand_register(expr: str) -> Optional[str]:
 def _resolve_table_addr_from_arm_setup(
     block_lines: list[dict],
     register: str,
-) -> Optional[int]:
+) -> int | None:
     """Résout une base de jump table ARM64 depuis adr/adrp + add."""
     reg = str(register or "").strip().lower()
     if not reg:
         return None
 
-    page_addr: Optional[int] = None
-    direct_addr: Optional[int] = None
+    page_addr: int | None = None
+    direct_addr: int | None = None
     add_offset = 0
 
     for line in reversed(block_lines):
@@ -369,7 +379,11 @@ def _resolve_table_addr_from_arm_setup(
                 text,
                 re.IGNORECASE,
             )
-            if match and match.group(1).lower() == reg and match.group(2).lower() == reg:
+            if (
+                match
+                and match.group(1).lower() == reg
+                and match.group(2).lower() == reg
+            ):
                 parsed = _parse_int_literal(match.group(3))
                 if parsed is not None:
                     add_offset = parsed
@@ -393,13 +407,13 @@ def _resolve_table_addr_from_arch_setup(
     block_lines: list[dict],
     register: str,
     detected_arch_info,
-) -> Optional[int]:
+) -> int | None:
     reg = _normalize_register_name(register)
     family = (getattr(detected_arch_info, "family", None) or "").lower()
     if not reg or family not in {"mips", "riscv", "ppc"}:
         return None
 
-    upper_base: Optional[int] = None
+    upper_base: int | None = None
     add_offset = 0
 
     for line in reversed(block_lines):
@@ -544,7 +558,7 @@ def _resolve_register_jump_table(
     binary_path: str | None,
     parsed_binary,
     detected_arch_info,
-) -> tuple[list[str], Optional[str]]:
+) -> tuple[list[str], str | None]:
     """Tente de résoudre un switch de type lea+load+add+jmp reg.
 
     Retourne (entries, table_kind) où table_kind vaut "absolute" ou "relative".
@@ -578,7 +592,9 @@ def _resolve_register_jump_table(
             )
             if len(ops_text) == 2:
                 operands = [
-                    operand.strip() for operand in ops_text[1].split(",") if operand.strip()
+                    operand.strip()
+                    for operand in ops_text[1].split(",")
+                    if operand.strip()
                 ]
                 if operands:
                     dest_reg = _extract_operand_register(operands[0])
@@ -586,7 +602,8 @@ def _resolve_register_jump_table(
                         source_regs = [
                             reg
                             for reg in (
-                                _extract_operand_register(operand) for operand in operands[1:]
+                                _extract_operand_register(operand)
+                                for operand in operands[1:]
                             )
                             if reg is not None
                         ]
@@ -629,7 +646,10 @@ def _resolve_register_jump_table(
             text,
             re.IGNORECASE,
         )
-        if arm_match and _normalize_register_name(arm_match.group(2)) == effective_jump_reg:
+        if (
+            arm_match
+            and _normalize_register_name(arm_match.group(2)) == effective_jump_reg
+        ):
             expr = arm_match.group(3).replace(" ", "").lower()
             if relative_base_reg and relative_base_reg not in expr:
                 continue
@@ -654,7 +674,8 @@ def _resolve_register_jump_table(
         )
         if (
             mips_riscv_match
-            and _normalize_register_name(mips_riscv_match.group(2)) == effective_jump_reg
+            and _normalize_register_name(mips_riscv_match.group(2))
+            == effective_jump_reg
         ):
             base_candidate = _normalize_register_name(mips_riscv_match.group(4))
             if relative_base_reg and base_candidate != relative_base_reg:
@@ -670,7 +691,10 @@ def _resolve_register_jump_table(
             text,
             re.IGNORECASE,
         )
-        if ppc_match and _normalize_register_name(ppc_match.group(2)) == effective_jump_reg:
+        if (
+            ppc_match
+            and _normalize_register_name(ppc_match.group(2)) == effective_jump_reg
+        ):
             base_candidate = _normalize_register_name(ppc_match.group(3))
             if relative_base_reg and base_candidate != relative_base_reg:
                 continue
@@ -929,7 +953,9 @@ def _read_jump_table_entries(
     else:
         fmt = "<Q" if detected_entry_size == 8 else "<I"
 
-    for i in range(0, min(len(data), max_entries * detected_entry_size), detected_entry_size):
+    for i in range(
+        0, min(len(data), max_entries * detected_entry_size), detected_entry_size
+    ):
         if i + detected_entry_size > len(data):
             break
 
@@ -939,7 +965,11 @@ def _read_jump_table_entries(
 
         try:
             raw_value = struct.unpack(fmt, chunk)[0]
-            addr = raw_value if entry_mode == "absolute" else (base_addr or table_addr) + raw_value
+            addr = (
+                raw_value
+                if entry_mode == "absolute"
+                else (base_addr or table_addr) + raw_value
+            )
             # Filtrer les entrées invalides (0, ou hors de l'espace d'adressage raisonnable)
             if addr == 0:
                 break
@@ -980,8 +1010,12 @@ def build_cfg(
 
         detected_arch_info = get_raw_arch_info(arch_hint)
     else:
-        detected_arch_info = detect_binary_arch_from_path(binary_path) if binary_path else None
-    support_adapter = detected_arch_info.adapter if detected_arch_info is not None else adapters[0]
+        detected_arch_info = (
+            detect_binary_arch_from_path(binary_path) if binary_path else None
+        )
+    support_adapter = (
+        detected_arch_info.adapter if detected_arch_info is not None else adapters[0]
+    )
     support = get_feature_support(support_adapter, "cfg")
     branch_targets = set()
     # Pour chaque instruction de branchement, enregistrer la cible
@@ -993,7 +1027,7 @@ def build_cfg(
 
     # push+ret = jmp : séquence push addr; [nop]*; ret saute vers addr
     pending_push_target = None
-    for i, line in enumerate(lines):
+    for _i, line in enumerate(lines):
         text = line.get("text", "")
         mnem = _get_mnemonic(text)
         if mnem == PUSH_MNEMONIC:
@@ -1019,10 +1053,8 @@ def build_cfg(
     # Parser le binaire une seule fois pour les jump tables
     _parsed_binary = None
     if lief and binary_path:
-        try:
+        with contextlib.suppress(Exception):
             _parsed_binary = lief.parse(binary_path)
-        except Exception:
-            pass
 
     # Construire les blocs
     blocks = []
@@ -1070,7 +1102,9 @@ def build_cfg(
                                 hdr = getattr(_resolved_bin, "header", None)
                                 if hdr:
                                     if hasattr(hdr, "identity_class"):
-                                        _is_64 = str(hdr.identity_class) == "CLASS.ELF64"
+                                        _is_64 = (
+                                            str(hdr.identity_class) == "CLASS.ELF64"
+                                        )
                                     elif hasattr(hdr, "is_64bit"):
                                         _is_64 = bool(hdr.is_64bit)
                                 arch_family = (
@@ -1079,7 +1113,11 @@ def build_cfg(
                                     else "x86"
                                 )
                                 table_addr = _resolve_rip_relative_table(
-                                    curr_addr, base_int, _resolved_bin, _is_64, arch=arch_family
+                                    curr_addr,
+                                    base_int,
+                                    _resolved_bin,
+                                    _is_64,
+                                    arch=arch_family,
                                 )
                             else:
                                 table_addr = curr_addr + 6 + base_int
@@ -1152,7 +1190,10 @@ def build_cfg(
                 _block_switch_entries = _switch_entries if _switch_entries else []
                 branch_kind = None
                 operands = re.split(
-                    rf"\b{re.escape(mnem)}\b", str(text or ""), maxsplit=1, flags=re.IGNORECASE
+                    rf"\b{re.escape(mnem)}\b",
+                    str(text or ""),
+                    maxsplit=1,
+                    flags=re.IGNORECASE,
                 )
                 op_str = operands[1] if len(operands) == 2 else ""
                 for adapter in adapters:
@@ -1216,7 +1257,9 @@ def build_cfg(
             edge: dict = {"from": blk.addr, "to": succ, "type": edge_type}
             if edge_type == "jumptable":
                 matching_cases = [
-                    sc.get("case") for sc in blk.switch_cases if sc.get("target") == succ
+                    sc.get("case")
+                    for sc in blk.switch_cases
+                    if sc.get("target") == succ
                 ]
                 if matching_cases:
                     edge["case_label"] = matching_cases[0]
@@ -1248,7 +1291,8 @@ def build_cfg(
     for b in blocks:
         incoming_case_labels = [entry.get("case") for entry in b.incoming_switch_cases]
         unresolved_default = b.is_switch and any(
-            sc.get("case") == "default" and sc.get("target") is None for sc in b.switch_cases
+            sc.get("case") == "default" and sc.get("target") is None
+            for sc in b.switch_cases
         )
         bd: dict = {
             "addr": b.addr,
@@ -1323,7 +1367,9 @@ def build_cfg_for_function(
                 queue.append(succ)
 
     func_blocks = [b for b in full_cfg["blocks"] if b["addr"] in visited]
-    func_edges = [e for e in full_cfg["edges"] if e["from"] in visited and e["to"] in visited]
+    func_edges = [
+        e for e in full_cfg["edges"] if e["from"] in visited and e["to"] in visited
+    ]
 
     return {
         "func_addr": func_addr_norm,
@@ -1352,7 +1398,7 @@ def main() -> int:
         logger.error("Mapping file not found: %s", args.mapping)
         return 1
 
-    with open(args.mapping, "r", encoding="utf-8") as f:
+    with open(args.mapping, encoding="utf-8") as f:
         data = json.load(f)
     lines = data.get("lines", [])
     binary_path = data.get("binary")  # Chemin vers le binaire pour jump tables

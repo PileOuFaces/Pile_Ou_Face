@@ -2,7 +2,7 @@
 // @ts-nocheck
 /**
  * @file fileManager.js
- * @brief Gestion centralisée des fichiers générés (.pile-ou-face/).
+ * @brief Gestion centralisée des fichiers générés (storageDir/).
  * Artifacts (disasm, traces), cache statique, purge automatique.
  */
 
@@ -16,7 +16,6 @@ const {
   pruneIndexedCacheEntries,
 } = require('./staticCache');
 
-const ARTIFACTS_DIR = '.pile-ou-face';
 const CACHE_DIR_NAME = 'static_cache';
 const DECOMPILE_CACHE_DIR_NAME = 'decompile_cache';
 const ANNOTATIONS_DIR_NAME = 'annotations';
@@ -25,7 +24,7 @@ const PFDB_DIR_NAME = 'pfdb';
 const MANIFEST_FILE = 'manifest.json';
 const META_FILE = 'meta.json';
 
-// Fichiers/dossiers dans .pile-ou-face/ qui ne doivent JAMAIS être supprimés
+// Fichiers/dossiers dans storageDir/ qui ne doivent JAMAIS être supprimés
 // par le clean — configuration utilisateur persistante.
 const PROTECTED_NAMES = new Set([
   'decompilers.json',
@@ -38,10 +37,10 @@ const PROTECTED_NAMES = new Set([
 ]);
 
 /**
- * Retourne le chemin du dossier pile-ou-face.
+ * Retourne le chemin du dossier de stockage.
  */
-function getBaseDir(root) {
-  return path.resolve(root, ARTIFACTS_DIR);
+function getBaseDir(storageDir) {
+  return path.resolve(storageDir);
 }
 
 /**
@@ -146,8 +145,8 @@ function readJsonFile(filePath) {
   }
 }
 
-function purgeStaleAnnotations(root, fingerprints) {
-  const dir = path.join(getBaseDir(root), ANNOTATIONS_DIR_NAME);
+function purgeStaleAnnotations(storageDir, fingerprints) {
+  const dir = path.join(getBaseDir(storageDir), ANNOTATIONS_DIR_NAME);
   if (!fs.existsSync(dir)) return 0;
   let removed = 0;
   for (const name of fs.readdirSync(dir)) {
@@ -161,8 +160,8 @@ function purgeStaleAnnotations(root, fingerprints) {
   return removed;
 }
 
-function purgeStalePatches(root, fingerprints) {
-  const dir = path.join(getBaseDir(root), PATCHES_DIR_NAME);
+function purgeStalePatches(storageDir, fingerprints) {
+  const dir = path.join(getBaseDir(storageDir), PATCHES_DIR_NAME);
   if (!fs.existsSync(dir)) return 0;
   let removed = 0;
   for (const name of fs.readdirSync(dir)) {
@@ -181,8 +180,8 @@ function purgeStalePatches(root, fingerprints) {
   return removed;
 }
 
-function purgeStaleDecompileCache(root) {
-  const dir = path.join(getBaseDir(root), DECOMPILE_CACHE_DIR_NAME);
+function purgeStaleDecompileCache(storageDir) {
+  const dir = path.join(getBaseDir(storageDir), DECOMPILE_CACHE_DIR_NAME);
   if (!fs.existsSync(dir)) return 0;
   let removed = 0;
   for (const name of fs.readdirSync(dir)) {
@@ -217,8 +216,8 @@ function purgeStaleDecompileCache(root) {
   return removed;
 }
 
-function purgeStalePfdb(root, fingerprints) {
-  const dir = path.join(getBaseDir(root), PFDB_DIR_NAME);
+function purgeStalePfdb(storageDir, fingerprints) {
+  const dir = path.join(getBaseDir(storageDir), PFDB_DIR_NAME);
   if (!fs.existsSync(dir)) return 0;
   let removed = 0;
   for (const name of fs.readdirSync(dir)) {
@@ -242,8 +241,8 @@ function purgeStalePfdb(root, fingerprints) {
   return removed;
 }
 
-function cleanupArtifactsForBinary(root, binaryPath) {
-  const baseDir = getBaseDir(root);
+function cleanupArtifactsForBinary(storageDir, binaryPath) {
+  const baseDir = getBaseDir(storageDir);
   if (!fs.existsSync(baseDir)) return 0;
   const baseName = path.basename(String(binaryPath || '').trim());
   if (!baseName) return 0;
@@ -259,12 +258,12 @@ function cleanupArtifactsForBinary(root, binaryPath) {
   return removed;
 }
 
-function cleanupCacheEntriesForBinary(root, binaryPath) {
+function cleanupCacheEntriesForBinary(storageDir, binaryPath) {
   const target = path.resolve(String(binaryPath || '').trim());
   if (!target) return 0;
   let removed = 0;
   const seenPaths = new Set();
-  for (const entry of listCacheEntries(root)) {
+  for (const entry of listCacheEntries(storageDir)) {
     const entryBinaryPath = String(entry?.binaryPath || '').trim();
     const entryPath = String(entry?.path || '').trim();
     if (!entryBinaryPath || !entryPath) continue;
@@ -274,14 +273,14 @@ function cleanupCacheEntriesForBinary(root, binaryPath) {
     removeRecursive(entryPath);
     removed++;
   }
-  if (removed > 0) pruneIndexedCacheEntries(root);
+  if (removed > 0) pruneIndexedCacheEntries(storageDir);
   return removed;
 }
 
-function cleanupSupportFilesForBinary(root, binaryPath) {
+function cleanupSupportFilesForBinary(storageDir, binaryPath) {
   const target = path.resolve(String(binaryPath || '').trim());
   if (!target) return 0;
-  const baseDir = getBaseDir(root);
+  const baseDir = getBaseDir(storageDir);
   let removed = 0;
 
   const decompileDir = path.join(baseDir, DECOMPILE_CACHE_DIR_NAME);
@@ -331,10 +330,10 @@ function cleanupSupportFilesForBinary(root, binaryPath) {
 }
 
 /**
- * Liste les artifacts (disasm, symbols, etc.) à la racine de .pile-ou-face/.
+ * Liste les artifacts (disasm, symbols, etc.) à la racine de storageDir/.
  */
-function listArtifacts(root) {
-  const baseDir = getBaseDir(root);
+function listArtifacts(storageDir) {
+  const baseDir = getBaseDir(storageDir);
   const items = [];
   if (!fs.existsSync(baseDir)) return items;
   for (const name of fs.readdirSync(baseDir)) {
@@ -365,12 +364,12 @@ function listArtifacts(root) {
 /**
  * Liste les entrées du cache statique (static_cache/).
  */
-function listCacheEntries(root) {
-  const indexedEntries = listIndexedCacheEntries(root);
+function listCacheEntries(storageDir) {
+  const indexedEntries = listIndexedCacheEntries(storageDir);
   if (Array.isArray(indexedEntries)) {
     return indexedEntries.sort((a, b) => Number(b.mtime || 0) - Number(a.mtime || 0));
   }
-  const cacheDir = getCacheDir(root);
+  const cacheDir = getCacheDir(storageDir);
   const items = [];
   if (!fs.existsSync(cacheDir)) return items;
   for (const key of fs.readdirSync(cacheDir)) {
@@ -415,10 +414,10 @@ function listCacheEntries(root) {
 /**
  * Récupère le résumé complet des fichiers générés.
  */
-function listAll(root) {
-  const baseDir = getBaseDir(root);
-  const artifacts = listArtifacts(root);
-  const cacheEntries = listCacheEntries(root);
+function listAll(storageDir) {
+  const baseDir = getBaseDir(storageDir);
+  const artifacts = listArtifacts(storageDir);
+  const cacheEntries = listCacheEntries(storageDir);
   const totalSize = getSize(baseDir);
   const staleCache = cacheEntries.filter((e) => String(e.status || '') !== 'ok');
   return {
@@ -432,11 +431,11 @@ function listAll(root) {
 }
 
 /**
- * Nettoie les artifacts (fichiers à la racine de .pile-ou-face/).
+ * Nettoie les artifacts (fichiers à la racine de storageDir/).
  * Ne touche pas au cache.
  */
-function cleanupArtifacts(root) {
-  const baseDir = getBaseDir(root);
+function cleanupArtifacts(storageDir) {
+  const baseDir = getBaseDir(storageDir);
   if (!fs.existsSync(baseDir)) return { removed: 0 };
   let removed = 0;
   for (const name of fs.readdirSync(baseDir)) {
@@ -452,10 +451,12 @@ function cleanupArtifacts(root) {
 
 /**
  * Purge le cache obsolète (binaires qui n'existent plus).
+ * storageDir: répertoire de stockage des artifacts.
+ * root: racine du workspace (pour calculer les fingerprints des fichiers workspace).
  */
-function purgeStaleCache(root) {
+function purgeStaleCache(storageDir, root) {
   const fingerprints = buildWorkspaceStateFingerprints(root);
-  const entries = listCacheEntries(root);
+  const entries = listCacheEntries(storageDir);
   let removed = 0;
   const seenPaths = new Set();
   for (const entry of entries) {
@@ -468,24 +469,24 @@ function purgeStaleCache(root) {
       removed++;
     }
   }
-  pruneIndexedCacheEntries(root);
-  removed += purgeStaleAnnotations(root, fingerprints);
-  removed += purgeStalePatches(root, fingerprints);
-  removed += purgeStaleDecompileCache(root);
-  removed += purgeStalePfdb(root, fingerprints);
+  pruneIndexedCacheEntries(storageDir);
+  removed += purgeStaleAnnotations(storageDir, fingerprints);
+  removed += purgeStalePatches(storageDir, fingerprints);
+  removed += purgeStaleDecompileCache(storageDir);
+  removed += purgeStalePfdb(storageDir, fingerprints);
   return { removed };
 }
 
 /**
  * Nettoie tout : artifacts + cache.
  */
-function cleanupAll(root, options = {}) {
+function cleanupAll(storageDir, options = {}) {
   const { artifactsOnly = false, cacheOnly = false, purgeStale = false } = options;
   let removedArtifacts = 0;
   let removedCache = 0;
   let purgedStale = 0;
-  const baseDir = getBaseDir(root);
-  const cacheDir = getCacheDir(root);
+  const baseDir = getBaseDir(storageDir);
+  const cacheDir = getCacheDir(storageDir);
   if (!cacheOnly && fs.existsSync(baseDir)) {
     for (const name of fs.readdirSync(baseDir)) {
       if (name === CACHE_DIR_NAME) continue;
@@ -497,14 +498,14 @@ function cleanupAll(root, options = {}) {
   }
   if (!artifactsOnly && fs.existsSync(cacheDir)) {
     if (purgeStale) {
-      for (const entry of listCacheEntries(root)) {
+      for (const entry of listCacheEntries(storageDir)) {
         if (String(entry.status || '') !== 'ok' && fs.existsSync(entry.path)) {
           const keyDir = entry.path;
           removeRecursive(keyDir);
           purgedStale++;
         }
       }
-      pruneIndexedCacheEntries(root);
+      pruneIndexedCacheEntries(storageDir);
     } else {
       for (const name of fs.readdirSync(cacheDir)) {
         removeRecursive(path.join(cacheDir, name));
@@ -515,12 +516,12 @@ function cleanupAll(root, options = {}) {
   return { removedArtifacts, removedCache, purgedStale };
 }
 
-function cleanupForBinary(root, binaryPath, options = {}) {
-  const { purgeStale = true } = options;
-  const removedArtifacts = cleanupArtifactsForBinary(root, binaryPath);
-  const removedCache = cleanupCacheEntriesForBinary(root, binaryPath);
-  const removedSupport = cleanupSupportFilesForBinary(root, binaryPath);
-  const purgedStale = purgeStale ? Number(purgeStaleCache(root).removed || 0) : 0;
+function cleanupForBinary(storageDir, binaryPath, options = {}) {
+  const { purgeStale = true, root } = options;
+  const removedArtifacts = cleanupArtifactsForBinary(storageDir, binaryPath);
+  const removedCache = cleanupCacheEntriesForBinary(storageDir, binaryPath);
+  const removedSupport = cleanupSupportFilesForBinary(storageDir, binaryPath);
+  const purgedStale = purgeStale ? Number(purgeStaleCache(storageDir, root || storageDir).removed || 0) : 0;
   return {
     removedArtifacts,
     removedCache,

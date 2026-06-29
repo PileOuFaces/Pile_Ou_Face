@@ -8,7 +8,6 @@ Transport: stdio (JSON-RPC 2.0 with Content-Length framing).
 from __future__ import annotations
 
 import argparse
-import base64
 import difflib
 import fnmatch
 import importlib.util
@@ -25,14 +24,14 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from backends.static.binary.symbols import extract_symbols as _extract_symbols
-from backends.mcp.env_loader import load_pof_env
-from backends.mcp.tool_scanner import scan_backend_tools
 from backends.mcp.ai_provider import (
     call_provider,
     list_providers,
     set_provider_configuration,
 )
+from backends.mcp.env_loader import load_pof_env
+from backends.mcp.tool_scanner import scan_backend_tools
+from backends.static.binary.symbols import extract_symbols as _extract_symbols
 
 LOGGER = logging.getLogger("pile_ou_face.mcp")
 SERVER_NAME = "pile-ou-face-mcp"
@@ -66,7 +65,10 @@ TOOLS: list[dict[str, Any]] = [
         "description": "List annotations.",
         "inputSchema": {
             "type": "object",
-            "properties": {"binary_path": {"type": "string"}, "addr": {"type": "string"}},
+            "properties": {
+                "binary_path": {"type": "string"},
+                "addr": {"type": "string"},
+            },
             "required": ["binary_path"],
             "additionalProperties": False,
         },
@@ -125,7 +127,10 @@ TOOLS: list[dict[str, Any]] = [
         "description": "Invalidate cache entry.",
         "inputSchema": {
             "type": "object",
-            "properties": {"binary_path": {"type": "string"}, "cache_db": {"type": "string"}},
+            "properties": {
+                "binary_path": {"type": "string"},
+                "cache_db": {"type": "string"},
+            },
             "required": ["binary_path"],
             "additionalProperties": False,
         },
@@ -135,7 +140,10 @@ TOOLS: list[dict[str, Any]] = [
         "description": "Get cache stats.",
         "inputSchema": {
             "type": "object",
-            "properties": {"binary_path": {"type": "string"}, "cache_db": {"type": "string"}},
+            "properties": {
+                "binary_path": {"type": "string"},
+                "cache_db": {"type": "string"},
+            },
             "additionalProperties": False,
         },
     },
@@ -144,7 +152,10 @@ TOOLS: list[dict[str, Any]] = [
         "description": "List cache entries.",
         "inputSchema": {
             "type": "object",
-            "properties": {"binary_path": {"type": "string"}, "cache_db": {"type": "string"}},
+            "properties": {
+                "binary_path": {"type": "string"},
+                "cache_db": {"type": "string"},
+            },
             "additionalProperties": False,
         },
     },
@@ -166,7 +177,10 @@ TOOLS: list[dict[str, Any]] = [
         "description": "Build call graph.",
         "inputSchema": {
             "type": "object",
-            "properties": {"binary_path": {"type": "string"}, "mapping_path": {"type": "string"}},
+            "properties": {
+                "binary_path": {"type": "string"},
+                "mapping_path": {"type": "string"},
+            },
             "additionalProperties": False,
         },
     },
@@ -175,7 +189,10 @@ TOOLS: list[dict[str, Any]] = [
         "description": "Build full CFG.",
         "inputSchema": {
             "type": "object",
-            "properties": {"binary_path": {"type": "string"}, "mapping_path": {"type": "string"}},
+            "properties": {
+                "binary_path": {"type": "string"},
+                "mapping_path": {"type": "string"},
+            },
             "additionalProperties": False,
         },
     },
@@ -248,7 +265,10 @@ TOOLS: list[dict[str, Any]] = [
         "description": "Discover functions.",
         "inputSchema": {
             "type": "object",
-            "properties": {"binary_path": {"type": "string"}, "mapping_path": {"type": "string"}},
+            "properties": {
+                "binary_path": {"type": "string"},
+                "mapping_path": {"type": "string"},
+            },
             "additionalProperties": False,
         },
     },
@@ -322,7 +342,10 @@ TOOLS: list[dict[str, Any]] = [
         "description": "Find import callsites.",
         "inputSchema": {
             "type": "object",
-            "properties": {"binary_path": {"type": "string"}, "function": {"type": "string"}},
+            "properties": {
+                "binary_path": {"type": "string"},
+                "function": {"type": "string"},
+            },
             "required": ["binary_path", "function"],
             "additionalProperties": False,
         },
@@ -342,7 +365,10 @@ TOOLS: list[dict[str, Any]] = [
         "description": "Offset to virtual address.",
         "inputSchema": {
             "type": "object",
-            "properties": {"binary_path": {"type": "string"}, "offset": {"type": "string"}},
+            "properties": {
+                "binary_path": {"type": "string"},
+                "offset": {"type": "string"},
+            },
             "required": ["binary_path", "offset"],
             "additionalProperties": False,
         },
@@ -364,14 +390,21 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "rules_list",
         "description": "List rules.",
-        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
     },
     {
         "name": "rules_toggle",
         "description": "Toggle rule.",
         "inputSchema": {
             "type": "object",
-            "properties": {"rule_id": {"type": "string"}, "enabled": {"type": "boolean"}},
+            "properties": {
+                "rule_id": {"type": "string"},
+                "enabled": {"type": "boolean"},
+            },
             "required": ["rule_id", "enabled"],
             "additionalProperties": False,
         },
@@ -430,7 +463,10 @@ TOOLS: list[dict[str, Any]] = [
         "description": "Analyze stack frame.",
         "inputSchema": {
             "type": "object",
-            "properties": {"binary_path": {"type": "string"}, "addr": {"type": "string"}},
+            "properties": {
+                "binary_path": {"type": "string"},
+                "addr": {"type": "string"},
+            },
             "required": ["binary_path", "addr"],
             "additionalProperties": False,
         },
@@ -484,7 +520,10 @@ TOOLS: list[dict[str, Any]] = [
         "description": "Invoke a command exposed by an active plugin.",
         "inputSchema": {
             "type": "object",
-            "properties": {"command_id": {"type": "string"}, "payload": {"type": "object"}},
+            "properties": {
+                "command_id": {"type": "string"},
+                "payload": {"type": "object"},
+            },
             "required": ["command_id"],
             "additionalProperties": False,
         },
@@ -517,7 +556,9 @@ load_pof_env()
 
 _STATIC_TOOL_NAMES: set[str] = {t["name"] for t in TOOLS}
 _STATIC_ROOT = Path(__file__).resolve().parents[2] / "backends" / "static"
-DYNAMIC_TOOLS: list[dict] = scan_backend_tools(_STATIC_ROOT, exclude_names=_STATIC_TOOL_NAMES)
+DYNAMIC_TOOLS: list[dict] = scan_backend_tools(
+    _STATIC_ROOT, exclude_names=_STATIC_TOOL_NAMES
+)
 
 AI_TOOLS: list[dict] = [
     {
@@ -609,11 +650,15 @@ def _tool_result(payload: Any, is_error: bool = False) -> dict[str, Any]:
 
 
 def _load_mcp_memory_context(max_chars: int = 6000) -> str:
-    for path in (MCP_MEMORY_PATH, MCP_MEMORY_LEGACY_DOCS_PATH, MCP_MEMORY_LEGACY_ROOT_PATH):
+    for path in (
+        MCP_MEMORY_PATH,
+        MCP_MEMORY_LEGACY_DOCS_PATH,
+        MCP_MEMORY_LEGACY_ROOT_PATH,
+    ):
         if not os.path.isfile(path):
             continue
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 content = f.read().strip()
         except OSError:
             continue
@@ -673,6 +718,8 @@ def _python_exe() -> str:
 def _plugin_runtime_records() -> list[Any]:
     from backends.plugins.runtime import (
         HOST_API_VERSION as plugin_api_version,
+    )
+    from backends.plugins.runtime import (
         collect_runtime_state,
         default_plugin_search_paths,
     )
@@ -713,7 +760,10 @@ def _dynamic_plugin_tools() -> list[dict[str, Any]]:
                             "type": "string",
                             "description": "Absolute path to the binary",
                         },
-                        "payload": {"type": "object", "description": "Additional parameters"},
+                        "payload": {
+                            "type": "object",
+                            "description": "Additional parameters",
+                        },
                     },
                     "required": ["binary_path"],
                     "additionalProperties": False,
@@ -826,7 +876,8 @@ def _find_files(query: str, limit: int = 20) -> dict[str, Any]:
         "truncated": total > len(limited),
         "root": ROOT,
         "results": [
-            {"path": abs_path, "relative_path": rel_path} for abs_path, rel_path, _ in limited
+            {"path": abs_path, "relative_path": rel_path}
+            for abs_path, rel_path, _ in limited
         ],
     }
 
@@ -840,8 +891,12 @@ def _disassemble_for_mcp(
     os.makedirs(os.path.join(ROOT, ".pile-ou-face", "mcp"), exist_ok=True)
     stamp = int(time.time() * 1000)
     safe_name = os.path.basename(binary_path).replace(" ", "_")
-    out_asm = os.path.join(ROOT, ".pile-ou-face", "mcp", f"{safe_name}.{stamp}.disasm.asm")
-    out_map = os.path.join(ROOT, ".pile-ou-face", "mcp", f"{safe_name}.{stamp}.mapping.json")
+    out_asm = os.path.join(
+        ROOT, ".pile-ou-face", "mcp", f"{safe_name}.{stamp}.disasm.asm"
+    )
+    out_map = os.path.join(
+        ROOT, ".pile-ou-face", "mcp", f"{safe_name}.{stamp}.mapping.json"
+    )
 
     python_exe = _python_exe()
     disasm_script = os.path.join(ROOT, "backends", "static", "disasm", "disasm.py")
@@ -875,13 +930,19 @@ def _disassemble_for_mcp(
         return {"ok": False, "error": err}
 
     if not os.path.isfile(out_map):
-        return {"ok": False, "error": "Disassembly failed: mapping file was not produced"}
+        return {
+            "ok": False,
+            "error": "Disassembly failed: mapping file was not produced",
+        }
 
     try:
-        with open(out_map, "r", encoding="utf-8") as f:
+        with open(out_map, encoding="utf-8") as f:
             mapping = json.load(f)
     except Exception as exc:
-        return {"ok": False, "error": f"Disassembly failed: cannot read mapping ({exc})"}
+        return {
+            "ok": False,
+            "error": f"Disassembly failed: cannot read mapping ({exc})",
+        }
 
     lines = mapping.get("lines", [])
     if not isinstance(lines, list):
@@ -949,15 +1010,24 @@ def _resolve_binary_path(raw_value: str) -> str:
     if not matches:
         requested_ext = os.path.splitext(basename)[1].lower()
         requested_name = basename.lower()
-        requested_norm = "".join(ch for ch in requested_name if ch.isalnum()) or requested_name
+        requested_norm = (
+            "".join(ch for ch in requested_name if ch.isalnum()) or requested_name
+        )
         scored: list[tuple[float, str]] = []
         for abs_path in workspace_files:
             candidate_name = os.path.basename(abs_path)
-            if requested_ext and os.path.splitext(candidate_name)[1].lower() != requested_ext:
+            if (
+                requested_ext
+                and os.path.splitext(candidate_name)[1].lower() != requested_ext
+            ):
                 continue
             candidate_low = candidate_name.lower()
-            candidate_norm = "".join(ch for ch in candidate_low if ch.isalnum()) or candidate_low
-            score = difflib.SequenceMatcher(None, requested_norm, candidate_norm).ratio()
+            candidate_norm = (
+                "".join(ch for ch in candidate_low if ch.isalnum()) or candidate_low
+            )
+            score = difflib.SequenceMatcher(
+                None, requested_norm, candidate_norm
+            ).ratio()
             if score >= 0.72:
                 scored.append((score, abs_path))
         if scored:
@@ -979,7 +1049,9 @@ def _resolve_binary_path(raw_value: str) -> str:
             return best_path
 
     if not matches:
-        raise ValueError(f"Binary not found: {value}. Use find_files to locate available paths.")
+        raise ValueError(
+            f"Binary not found: {value}. Use find_files to locate available paths."
+        )
 
     matches.sort(
         key=lambda p: (
@@ -1069,7 +1141,7 @@ def _parse_float_arg(
 
 def _load_mapping_lines(mapping_path: str) -> tuple[list[dict[str, Any]], str | None]:
     try:
-        with open(mapping_path, "r", encoding="utf-8") as f:
+        with open(mapping_path, encoding="utf-8") as f:
             payload = json.load(f)
     except Exception as exc:
         raise ValueError(f"Cannot read mapping file: {exc}") from exc
@@ -1115,7 +1187,10 @@ def _call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         "diff_binaries": ("pof.offensive-research-pro", "offensive.bindiff.run"),
         "capa_scan": ("pof.malware-triage-pro", "malware.capa.run"),
         "flirt_scan": ("pof.offensive-research-pro", "offensive.flirt.run"),
-        "compare_functions": ("pof.offensive-research-pro", "offensive.func_similarity.run"),
+        "compare_functions": (
+            "pof.offensive-research-pro",
+            "offensive.func_similarity.run",
+        ),
         "detect_packers": ("pof.malware-triage-pro", "malware.packer_detect.run"),
         "find_rop_gadgets": ("pof.offensive-research-pro", "offensive.rop.run"),
         "deobfuscate_strings": ("pof.malware-triage-pro", "malware.deobfuscate.run"),
@@ -1134,7 +1209,9 @@ def _call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
 
         binary_path = _binary_path_from(args)
         addr = args.get("addr")
-        addr_value = str(addr).strip() if isinstance(addr, str) and addr.strip() else None
+        addr_value = (
+            str(addr).strip() if isinstance(addr, str) and addr.strip() else None
+        )
         with AnnotationStore(binary_path) as store:
             return {"ok": True, "annotations": store.list(addr=addr_value)}
 
@@ -1163,7 +1240,9 @@ def _call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         binary_path = _binary_path_from(args)
         addr = _required_string(args, "addr")
         kind = args.get("kind")
-        kind_value = str(kind).strip() if isinstance(kind, str) and kind.strip() else None
+        kind_value = (
+            str(kind).strip() if isinstance(kind, str) and kind.strip() else None
+        )
         with AnnotationStore(binary_path) as store:
             deleted = store.delete(addr, kind=kind_value)
         return {"ok": True, "deleted": deleted, "addr": addr, "kind": kind_value}
@@ -1198,6 +1277,8 @@ def _call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
     if name == "plugin_invoke":
         from backends.plugins.runtime import (
             HOST_API_VERSION as plugin_api_version,
+        )
+        from backends.plugins.runtime import (
             build_plugin_registry,
             default_plugin_search_paths,
             invoke_plugin_command,
@@ -1264,15 +1345,19 @@ def _call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return {"ok": True, "cache_db": cache_db, "deleted": deleted, "target": target}
 
     if name == "build_call_graph":
+        from backends.static.binary.symbols import extract_symbols
         from backends.static.disasm.call_graph import build_call_graph
         from backends.static.disasm.cfg import build_cfg
-        from backends.static.binary.symbols import extract_symbols
 
         mapping_path = _mapping_path_from(args)
         lines, mapping_binary = _load_mapping_lines(mapping_path)
-        binary_path = _binary_path_from(args) if "binary_path" in args else mapping_binary
+        binary_path = (
+            _binary_path_from(args) if "binary_path" in args else mapping_binary
+        )
         cfg_payload = build_cfg(lines, binary_path=binary_path)
-        symbols_payload = extract_symbols(binary_path, defined_only=False) if binary_path else []
+        symbols_payload = (
+            extract_symbols(binary_path, defined_only=False) if binary_path else []
+        )
         graph = build_call_graph(
             cfg_payload,
             symbols_payload,
@@ -1290,7 +1375,9 @@ def _call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
 
         mapping_path = _mapping_path_from(args)
         lines, mapping_binary = _load_mapping_lines(mapping_path)
-        binary_path = _binary_path_from(args) if "binary_path" in args else mapping_binary
+        binary_path = (
+            _binary_path_from(args) if "binary_path" in args else mapping_binary
+        )
         payload = build_cfg(lines, binary_path=binary_path)
         payload["ok"] = True
         payload["mapping_path"] = mapping_path
@@ -1303,7 +1390,9 @@ def _call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
 
         mapping_path = _mapping_path_from(args)
         lines, mapping_binary = _load_mapping_lines(mapping_path)
-        binary_path = _binary_path_from(args) if "binary_path" in args else mapping_binary
+        binary_path = (
+            _binary_path_from(args) if "binary_path" in args else mapping_binary
+        )
         addr = _required_string(args, "addr")
         payload = build_cfg_for_function(lines, addr, binary_path=binary_path)
         payload["ok"] = True
@@ -1338,17 +1427,21 @@ def _call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
     if name == "disassemble":
         binary_path = _binary_path_from(args)
         addr = args.get("addr")
-        addr_value = str(addr).strip() if isinstance(addr, str) and addr.strip() else None
+        addr_value = (
+            str(addr).strip() if isinstance(addr, str) and addr.strip() else None
+        )
         max_lines = _parse_int_arg(args, "max_lines", 400, minimum=1)
         return _disassemble_for_mcp(binary_path, addr=addr_value, max_lines=max_lines)
 
     if name == "discover_functions":
-        from backends.static.disasm.discover_functions import discover_functions
         from backends.static.binary.symbols import extract_symbols
+        from backends.static.disasm.discover_functions import discover_functions
 
         mapping_path = _mapping_path_from(args)
         lines, mapping_binary = _load_mapping_lines(mapping_path)
-        binary_path = _binary_path_from(args) if "binary_path" in args else mapping_binary
+        binary_path = (
+            _binary_path_from(args) if "binary_path" in args else mapping_binary
+        )
         known_addrs: set[str] = set()
         if binary_path:
             symbols = extract_symbols(binary_path, defined_only=False)
@@ -1390,10 +1483,10 @@ def _call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
 
     if name == "export_results":
         from backends.static import export as export_mod
-        from backends.static.disasm.cfg import build_cfg, build_cfg_for_function
-        from backends.static.search.strings import extract_strings
         from backends.static.binary.symbols import extract_symbols
+        from backends.static.disasm.cfg import build_cfg, build_cfg_for_function
         from backends.static.disasm.xrefs import build_xref_map
+        from backends.static.search.strings import extract_strings
 
         kind = _required_string(args, "kind").lower()
         output_path = _required_string(args, "output_path")
@@ -1433,7 +1526,9 @@ def _call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             if data is None:
                 mapping_path = _mapping_path_from(args)
                 lines, mapping_binary = _load_mapping_lines(mapping_path)
-                binary_path = _binary_path_from(args) if "binary_path" in args else mapping_binary
+                binary_path = (
+                    _binary_path_from(args) if "binary_path" in args else mapping_binary
+                )
                 payload = build_xref_map(lines, binary_path=binary_path)
             else:
                 payload = data
@@ -1449,16 +1544,22 @@ def _call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             if data is None:
                 mapping_path = _mapping_path_from(args)
                 lines, mapping_binary = _load_mapping_lines(mapping_path)
-                binary_path = _binary_path_from(args) if "binary_path" in args else mapping_binary
+                binary_path = (
+                    _binary_path_from(args) if "binary_path" in args else mapping_binary
+                )
                 addr = args.get("addr")
                 if isinstance(addr, str) and addr.strip():
-                    payload = build_cfg_for_function(lines, addr.strip(), binary_path=binary_path)
+                    payload = build_cfg_for_function(
+                        lines, addr.strip(), binary_path=binary_path
+                    )
                 else:
                     payload = build_cfg(lines, binary_path=binary_path)
             else:
                 payload = data
             graph_name = str(args.get("graph_name", "CFG") or "CFG")
-            count = export_mod.export_cfg_dot(payload or {}, output_path, graph_name=graph_name)
+            count = export_mod.export_cfg_dot(
+                payload or {}, output_path, graph_name=graph_name
+            )
             return {
                 "ok": True,
                 "kind": "cfg_dot",
@@ -1617,7 +1718,9 @@ def _call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         addr = _required_string(args, "addr")
         mapping_path = _mapping_path_from(args)
         lines, mapping_binary = _load_mapping_lines(mapping_path)
-        binary_path = _binary_path_from(args) if "binary_path" in args else mapping_binary
+        binary_path = (
+            _binary_path_from(args) if "binary_path" in args else mapping_binary
+        )
         if mode == "map":
             return {
                 "ok": True,
@@ -1650,18 +1753,29 @@ def _call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return set_provider_configuration(provider, api_key, model)
 
     if name == "ai_analyze":
-        provider = args.get("provider") or os.environ.get("POF_DEFAULT_AI_PROVIDER", "ollama")
+        provider = args.get("provider") or os.environ.get(
+            "POF_DEFAULT_AI_PROVIDER", "ollama"
+        )
         model = args.get("model")
         try:
             response = call_provider(
                 provider, args.get("prompt", ""), args.get("context", ""), model
             )
-            return {"ok": True, "provider": provider, "model": model, "response": response}
+            return {
+                "ok": True,
+                "provider": provider,
+                "model": model,
+                "response": response,
+            }
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
     # Dynamic backend tool dispatch
-    if "." in name and name not in _STATIC_TOOL_NAMES and not name.startswith("plugin."):
+    if (
+        "." in name
+        and name not in _STATIC_TOOL_NAMES
+        and not name.startswith("plugin.")
+    ):
         return _dispatch_dynamic_tool(name, args)
 
     raise KeyError(f"Unknown tool: {name}")
@@ -1693,7 +1807,9 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any] | None:
     if method == "initialize":
         protocol = params.get("protocolVersion")
         protocol_version = (
-            protocol if isinstance(protocol, str) and protocol else DEFAULT_PROTOCOL_VERSION
+            protocol
+            if isinstance(protocol, str) and protocol
+            else DEFAULT_PROTOCOL_VERSION
         )
         result = {
             "protocolVersion": protocol_version,
@@ -1791,8 +1907,8 @@ def _read_message(stdin: Any) -> dict[str, Any] | None:
     if header_line.lstrip().startswith(b"{"):
         try:
             return json.loads(header_line.decode("utf-8"))
-        except json.JSONDecodeError:
-            raise ValueError("Invalid JSON payload")
+        except json.JSONDecodeError as err:
+            raise ValueError("Invalid JSON payload") from err
 
     headers: dict[str, str] = {}
     line = header_line

@@ -1,6 +1,6 @@
 const { expect } = require('chai');
 
-const preview = require('../../../webview/shared/payloadPreview');
+const preview = require('../../../shared/payloadPreview');
 const payloadFixture = require('../fixtures/payloads/payload-builder-aa.json');
 const fileFixture = require('../fixtures/payloads/file-mode-argv1.json');
 

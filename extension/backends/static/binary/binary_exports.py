@@ -82,7 +82,9 @@ def extract_exports(binary_path: str) -> dict:
                     {
                         "addr": hex(entry.address + binary.optional_header.imagebase),
                         "name": name or f"ord_{entry.ordinal}",
-                        "demangled": demangled if demangled and demangled != name else None,
+                        "demangled": demangled
+                        if demangled and demangled != name
+                        else None,
                         "type": "function",
                         "ordinal": entry.ordinal,
                     }
@@ -101,7 +103,9 @@ def extract_exports(binary_path: str) -> dict:
             seen_addrs.add(address)
             clean_name = _strip_leading_underscore(raw_name)
             demangled = _demangle(raw_name)
-            demangled = _strip_leading_underscore(demangled) if demangled != raw_name else None
+            demangled = (
+                _strip_leading_underscore(demangled) if demangled != raw_name else None
+            )
             exports.append(
                 {
                     "addr": hex(address),
