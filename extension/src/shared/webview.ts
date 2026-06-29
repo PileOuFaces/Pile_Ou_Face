@@ -140,7 +140,6 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', worksp
     (storageDir || globalDir) ? loadPluginWebviews(workspaceRoot, {
       storageDir,
       globalDir,
-      webviewResourceResolver: (filePath) => webview.asWebviewUri(vscode.Uri.file(filePath)).toString(),
     }) : { styles: '', panels: '', scripts: '' };
 
   const html = read('front', 'hub.html')
