@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # auto-generated — sous-modules par domaine
-from backends.static import (
+from . import (
     analysis,  # noqa: F401
     annotations,  # noqa: F401
     binary,  # noqa: F401
