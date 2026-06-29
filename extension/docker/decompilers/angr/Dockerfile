@@ -42,11 +42,11 @@ COPY docker/decompilers/angr/decompile.py /opt/pof/decompile.py
 COPY docker/decompilers/angr/rop_build.py /opt/pof/rop_build.py
 COPY docker/decompilers/angr/test_rop_build.py /opt/pof/test_rop_build.py
 # Compile the test binary from source (avoids committing pre-built ELFs to git).
-# gcc -m64 is x86-specific — skip on arm64 where the flag is meaningless.
-ARG TARGETARCH=amd64
+# gcc -m64 is x86_64-specific — skip on arm64 via uname -m (reliable under QEMU,
+# unlike TARGETARCH which may resolve to the builder arch in cross-build stages).
 COPY docker/decompilers/angr/testdata/vuln.c /tmp/vuln.c
 RUN mkdir -p /opt/pof/testdata \
-    && if [ "$TARGETARCH" = "amd64" ]; then \
+    && if [ "$(uname -m)" = "x86_64" ]; then \
         gcc -m64 -fno-stack-protector -no-pie -o /opt/pof/testdata/vuln_x64.elf /tmp/vuln.c; \
     fi \
     && rm /tmp/vuln.c
