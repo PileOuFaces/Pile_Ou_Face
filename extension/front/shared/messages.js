@@ -629,6 +629,10 @@ window.addEventListener('message', (event) => {
     }
     return;
   }
+  if (msg.type === 'refreshGeneratedFiles') {
+    vscode.postMessage({ type: 'listGeneratedFiles' });
+    return;
+  }
   // ── Import xrefs panel (inline sous importsContent) ─────────────────────
   function _showImportXrefsPanel(fnName, callsites, error) {
     let panel = document.getElementById('importXrefsPanel');
@@ -1885,6 +1889,32 @@ window.addEventListener('message', (event) => {
     _detectDecompilerStateChanges(newResult);
     populateDecompilerProfiles(newResult);
     _renderDecompilerStatusList(newResult);
+    return;
+  }
+  if (msg.type === 'hubDecompilerPullProgress') {
+    const area = document.getElementById('decompilerPullArea_' + msg.decompiler);
+    if (!area) return;
+    const log = area.querySelector('.decompiler-pull-log');
+    const bar = area.querySelector('.decompiler-pull-progress');
+    if (log && msg.line) {
+      const entry = document.createElement('div');
+      entry.textContent = msg.line;
+      log.appendChild(entry);
+      log.scrollTop = log.scrollHeight;
+    }
+    if (bar && msg.percent != null) bar.value = msg.percent;
+    return;
+  }
+  if (msg.type === 'hubDecompilerPullDone') {
+    const area = document.getElementById('decompilerPullArea_' + msg.decompiler);
+    if (area) {
+      const bar = area.querySelector('.decompiler-pull-progress');
+      if (bar) bar.value = msg.ok ? 100 : 0;
+      const status = document.createElement('div');
+      status.className = msg.ok ? 'decompiler-pull-status--ok' : 'decompiler-pull-status--err';
+      status.textContent = msg.ok ? 'Image t\u00E9l\u00E9charg\u00E9e.' : ('Échec : ' + (msg.error || 'erreur inconnue'));
+      area.appendChild(status);
+    }
     return;
   }
   if (msg.type === 'hubCommandResult') {

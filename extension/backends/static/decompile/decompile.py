@@ -449,11 +449,44 @@ def _get_decompiler_docker_image(decompiler: str) -> str:
         img = str(entry.get("docker_image") or "").strip()
         if img:
             return img
-    # Fallback conventionnel : pile-ou-face/decompiler-{name}:latest
+    # Fallback OCI : ghcr.io/pileoufaces/pile-ou-face/decompiler-{name}:latest
     # Permet d'utiliser un décompilateur builtin même sans entrée dans decompilers.json
     if normalized:
-        return f"pile-ou-face/decompiler-{normalized}:latest"
+        return f"ghcr.io/pileoufaces/pile-ou-face/decompiler-{normalized}:latest"
     return ""
+
+
+def _docker_pull_image(image_name: str) -> bool:
+    """Lance docker pull sur l'image et retourne True si succès.
+
+    Uniquement pour les images avec un registre distant (ghcr.io, etc.).
+    Ne tente pas de puller des images locales de dev.
+    """
+    if _is_local_dev_docker_image(image_name):
+        return False
+    docker_exe = _find_docker_executable() or "docker"
+    _log.info("Pulling Docker image %s …", image_name)
+    try:
+        proc = subprocess.run(
+            [docker_exe, "pull", image_name],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        if proc.returncode == 0:
+            _log.info("Pull réussi : %s", image_name)
+            _DOCKER_AVAILABLE_CACHE[image_name] = True
+            return True
+        _log.warning(
+            "docker pull %s a échoué (code %d): %s",
+            image_name,
+            proc.returncode,
+            proc.stderr.strip()[-400:],
+        )
+        return False
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        _log.warning("docker pull %s exception: %s", image_name, exc)
+        return False
 
 
 def _get_all_docker_images() -> dict[str, str]:
@@ -1196,6 +1229,31 @@ def _run_custom_decompiler_in_docker(
                 stderr_tail = (proc.stderr or "").strip()[-800:]
                 if _docker_run_failed_because_image_missing(stderr_tail):
                     _DOCKER_AVAILABLE_CACHE[image_name] = False
+                    # Tenter un pull automatique puis relancer
+                    if _docker_pull_image(image_name):
+                        proc2 = subprocess.run(
+                            docker_cmd,
+                            capture_output=True,
+                            timeout=timeout,
+                            text=True,
+                        )
+                        parsed = _parse_external_decompiler_output(
+                            proc2.stdout,
+                            decompiler=decompiler,
+                            addr=addr,
+                            out_file=output_mount_dir / f"out{out_ext}",
+                            full=full,
+                            output_format=output_format,
+                        )
+                        parsed["provider"] = "docker"
+                        parsed["docker_image"] = image_name
+                        if proc2.returncode != 0:
+                            parsed["error"] = (
+                                (proc2.stderr or "").strip()[-800:]
+                                or f"{decompiler} Docker exited with code {proc2.returncode}"
+                            )
+                            parsed["error_type"] = "tool_error"
+                        return parsed
                     parsed["error"] = _docker_missing_image_error(
                         decompiler, image_name
                     )
@@ -1394,8 +1452,13 @@ def _is_docker_image_available_for_decompiler(decompiler: str) -> bool:
 
 
 def _is_local_dev_docker_image(image_name: str) -> bool:
-    normalized = str(image_name or "").strip().lower()
-    return normalized.startswith("pile-ou-face/decompiler-")
+    """Retourne True si l'image est une image de dev local (sans registre distant).
+
+    Les images OCI publiées ont un hostname avec un '.' dans le premier segment
+    (ex: ghcr.io/..., docker.io/...). Les images locales n'en ont pas.
+    """
+    first_segment = str(image_name or "").strip().split("/")[0]
+    return "." not in first_segment and ":" not in first_segment
 
 
 def _docker_missing_image_error(decompiler: str, image_name: str) -> str:
@@ -1409,7 +1472,13 @@ def _docker_missing_image_error(decompiler: str, image_name: str) -> str:
             f"Ou surcharge l'image avec {_docker_env_var_name_for_decompiler(normalized)}=registry/image:tag"
         )
     else:
-        lines.append(f"Fais un docker pull {image_name} ou configure une image valide.")
+        lines.append(f"Pull automatique échoué pour {image_name}.")
+        lines.append(
+            f"Vérifie ta connexion ou tente manuellement : docker pull {image_name}"
+        )
+        lines.append(
+            f"Surcharge possible avec {_docker_env_var_name_for_decompiler(normalized)}=registry/image:tag"
+        )
     return "\n".join(lines)
 
 

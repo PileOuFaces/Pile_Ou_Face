@@ -62,7 +62,7 @@ RUN if [ "${TARGETARCH}" = "arm64" ] || { [ -z "${TARGETARCH}" ] && [ "$(uname -
     fi
 
 WORKDIR /app
-COPY backends /app/backends
+COPY extension/backends /app/backends
 # requirements propre au container ghidra (lief + capstone)
 COPY docker/decompilers/ghidra/requirements.txt /app/requirements-container.txt
 # Config de décompilation embarquée dans l'image — pointée par DECOMPILERS_CONFIG

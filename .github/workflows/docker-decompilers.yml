@@ -11,13 +11,13 @@ on:
   push:
     branches: [main, develops]
     paths:
-      - 'extension/docker/decompilers/**'
+      - 'docker/decompilers/**'
       - 'extension/backends/static/decompile/**'
       - '.github/workflows/docker-decompilers.yml'
   pull_request:
     branches: [main, develops]
     paths:
-      - 'extension/docker/decompilers/**'
+      - 'docker/decompilers/**'
       - 'extension/backends/static/decompile/**'
       - '.github/workflows/docker-decompilers.yml'
   workflow_dispatch:
@@ -80,11 +80,11 @@ jobs:
               REBUILD=false
 
               # Dockerfile ou fichier propre à ce décompilateur
-              if echo "$CHANGED" | grep -Eq "^extension/docker/decompilers/${d}/"; then
+              if echo "$CHANGED" | grep -Eq "^docker/decompilers/${d}/"; then
                 REBUILD=true
               fi
 
-              # Backend Python du sous-module decompile (nouveau chemin)
+              # Backend Python du sous-module decompile
               if echo "$CHANGED" | grep -Eq "^extension/backends/static/decompile/"; then
                 REBUILD=true
               fi
@@ -166,11 +166,11 @@ jobs:
 
       - name: Check Dockerfile exists
         run: |
-          if [ ! -f "extension/docker/decompilers/${{ matrix.decompiler }}/Dockerfile" ]; then
+          if [ ! -f "docker/decompilers/${{ matrix.decompiler }}/Dockerfile" ]; then
             echo "❌ Dockerfile manquant pour ${{ matrix.decompiler }}"
             exit 1
           fi
-          echo "✅ Dockerfile : extension/docker/decompilers/${{ matrix.decompiler }}/Dockerfile"
+          echo "✅ Dockerfile : docker/decompilers/${{ matrix.decompiler }}/Dockerfile"
 
       - name: Set build platforms
         id: platforms
@@ -189,8 +189,8 @@ jobs:
         if: ${{ github.event_name == 'pull_request' }}
         uses: docker/build-push-action@v6
         with:
-          context: ./extension
-          file: extension/docker/decompilers/${{ matrix.decompiler }}/Dockerfile
+          context: .
+          file: docker/decompilers/${{ matrix.decompiler }}/Dockerfile
           platforms: linux/amd64
           push: false
           load: true
@@ -221,8 +221,8 @@ jobs:
         if: ${{ github.event_name != 'pull_request' }}
         uses: docker/build-push-action@v6
         with:
-          context: ./extension
-          file: extension/docker/decompilers/${{ matrix.decompiler }}/Dockerfile
+          context: .
+          file: docker/decompilers/${{ matrix.decompiler }}/Dockerfile
           platforms: ${{ steps.platforms.outputs.platforms }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
@@ -247,7 +247,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        decompiler: [ghidra, angr]
+        decompiler: [angr, ghidra]
         # retdec exclus : amd64-only
 
     steps:
