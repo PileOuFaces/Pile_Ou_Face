@@ -1,15 +1,15 @@
 name: Docker — Build Decompilers
 
-# Rebuild uniquement les images dont les fichiers ont changé.
-# Optimisations quota :
-#   - Sur PR : build amd64 uniquement + pas de smoke rebuild (le build valide déjà)
-#   - Sur main/develops : build multiarch complet + push ghcr.io
+# Build once, promote tags :
+#   - PR      : build amd64 uniquement, push (tag pr-N + sha-*)
+#   - develops: build multiarch complet, push (tag develops + sha-*)
+#   - main    : aucun build — les releases sont gérées par docker-release.yml
 #   - Cache GHA scopé par décompilateur (évite les évictions croisées)
 #   - angr : couche pip séparée pour maximiser les hits de cache
 
 on:
   push:
-    branches: [main, develops]
+    branches: [develops]
     paths:
       - 'docker/decompilers/**'
       - 'extension/backends/static/decompile/**'
@@ -120,14 +120,15 @@ jobs:
           fi
 
   # ──────────────────────────────────────────────
-  # Build des images
-  #   - PR      : amd64 uniquement, sans push (validation rapide)
-  #   - push    : amd64 + arm64 (sauf retdec), push ghcr.io
+  # Build des images — PR et develops uniquement
+  #   - PR      : amd64 uniquement (validation rapide)
+  #   - develops: amd64 + arm64 (sauf retdec)
+  #   - main    : skippé → voir promote-latest
   # ──────────────────────────────────────────────
   build:
     name: Build ${{ matrix.decompiler }}
     needs: detect-changes
-    if: ${{ needs.detect-changes.outputs.any_changed == 'true' }}
+    if: ${{ needs.detect-changes.outputs.any_changed == 'true' && github.ref != 'refs/heads/main' }}
     runs-on: ubuntu-latest
 
     strategy:
@@ -145,7 +146,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up QEMU (cross-build arm64 — push seulement)
+      - name: Set up QEMU (cross-build arm64 — develops uniquement)
         if: ${{ github.event_name != 'pull_request' }}
         uses: docker/setup-qemu-action@v3
 
@@ -158,7 +159,6 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/decompiler-${{ matrix.decompiler }}
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=branch
             type=ref,event=pr
             type=sha,prefix=sha-,format=short
@@ -200,13 +200,16 @@ jobs:
         run: echo "✅ ${{ matrix.decompiler }} → ${{ steps.meta.outputs.tags }}"
 
   # ──────────────────────────────────────────────
-  # Smoke tests arm64 — pull depuis ghcr.io après le build
-  # Tourne sur PR et push (l'image est toujours pushée maintenant)
+  # Smoke tests arm64 — après build develops seulement
+  # (PR ne build pas arm64, main ne build pas du tout)
   # ──────────────────────────────────────────────
   smoke-arm64:
     name: Smoke ${{ matrix.decompiler }}/arm64
     needs: [detect-changes, build]
-    if: ${{ needs.detect-changes.outputs.any_changed == 'true' }}
+    if: |
+      ${{ needs.detect-changes.outputs.any_changed == 'true' &&
+          github.event_name != 'pull_request' &&
+          github.ref != 'refs/heads/main' }}
     runs-on: ubuntu-latest
 
     strategy:
