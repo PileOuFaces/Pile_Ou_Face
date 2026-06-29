@@ -55,7 +55,7 @@ RUN apt-get update \
 # TARGETARCH est injecté par docker buildx ; fallback sur uname -m pour builds locaux.
 RUN if [ "${TARGETARCH}" = "arm64" ] || { [ -z "${TARGETARCH}" ] && [ "$(uname -m)" = "aarch64" ]; }; then \
         cd /opt/ghidra/Ghidra/Features/Decompiler/src/decompile/cpp \
-        && make ghidra_opt PLATFORM="" \
+        && make ghidra_opt ARCH_TYPE="" \
         && mkdir -p /opt/ghidra/Ghidra/Features/Decompiler/os/linux_arm_64 \
         && cp ghidra_opt /opt/ghidra/Ghidra/Features/Decompiler/os/linux_arm_64/decompile \
         && make clean; \
