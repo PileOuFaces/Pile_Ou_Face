@@ -2,7 +2,7 @@
   "name": "stack-visualizer",
   "displayName": "Pile ou Face",
   "description": "Binary reverse engineering tool for CTF: disassembly, CFG, call graph, xrefs, decompilation and annotations for ELF/PE/Mach-O binaries.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "PileOuFaces",
   "type": "commonjs",
   "license": "AGPL-3.0-only",
