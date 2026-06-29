@@ -382,7 +382,7 @@ async function cmdDecompilerAdd(root, storageDir, editId = null) {
       // Auto-configuration complète depuis OCI_DECOMPILERS
       id = ociKey;
       label = ociDef.label;
-      const ociConfig = {
+      const ociConfig: Record<string, unknown> = {
         label: ociDef.label,
         docker_image: ociDef.image,
         docker_command: ociDef.docker_command,
@@ -392,6 +392,7 @@ async function cmdDecompilerAdd(root, storageDir, editId = null) {
         timeout: ociDef.timeout,
       };
       if (ociDef.env) ociConfig.env = ociDef.env;
+      if (ociDef.platform) ociConfig.docker_platform = ociDef.platform;
 
       // Proposer de télécharger l'image si absente
       const imageReady = _checkDockerImageSync(ociDef.image);
@@ -1011,4 +1012,15 @@ function registerDecompilerCommands(context, deps, root, storageDir) {
   return subs;
 }
 
-module.exports = { registerDecompilerCommands };
+/** Retourne la platform docker requise pour une image OCI connue (ex: 'linux/amd64'), ou '' si aucune contrainte. */
+function getKnownOciImagePlatform(image: string): string {
+  const img = String(image || '').trim();
+  for (const def of Object.values(OCI_DECOMPILERS)) {
+    if (def.image === img && (def as { platform?: string }).platform) {
+      return (def as { platform?: string }).platform!;
+    }
+  }
+  return '';
+}
+
+module.exports = { registerDecompilerCommands, getKnownOciImagePlatform };

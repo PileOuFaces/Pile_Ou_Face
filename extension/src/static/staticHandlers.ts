@@ -24,6 +24,7 @@ const {
   clearAiProcess,
   registerAiProcess,
 } = require('../shared/aiProcessRegistry');
+const { getKnownOciImagePlatform } = require('./decompilerCommands');
 
 const AUTH_STRICT_LICENSE_ENV = 'BINHOST_DISABLE_LICENSE_FALLBACK';
 
@@ -706,7 +707,7 @@ function staticHandlers(config) {
       let layersTotal = 0;
       let layersDone = 0;
       let lastError = '';
-      const platform = String(message.platform || '').trim();
+      const platform = String(message.platform || '').trim() || getKnownOciImagePlatform(image);
       const pullArgs = platform ? ['pull', '--platform', platform, image] : ['pull', image];
       const proc = cp.spawn('docker', pullArgs, { env: process.env });
       proc.stdout.on('data', (chunk: Buffer) => {
