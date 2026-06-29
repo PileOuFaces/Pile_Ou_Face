@@ -1,0 +1,16 @@
+{
+  "compilers": {
+    "rust": {
+      "label": "Rust (rustc)",
+      "native_cmd": "rustc",
+      "langs": ["rust"],
+      "targets": [
+        "elf-x64", "elf-arm64", "elf-arm",
+        "pe-x64",
+        "macho-arm64", "macho-x64",
+        "elf-ppc", "elf-ppc64", "elf-ppc64le",
+        "elf-sparc64", "elf-riscv64", "elf-s390x"
+      ]
+    }
+  }
+}

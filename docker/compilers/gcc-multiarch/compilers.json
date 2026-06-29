@@ -1,0 +1,17 @@
+{
+  "compilers": {
+    "gcc-multiarch": {
+      "label": "GCC multi-arch (container local)",
+      "native_cmd": "gcc",
+      "langs": ["c", "cpp"],
+      "targets": [
+        "elf-x64", "elf-x86", "elf-arm64", "elf-arm",
+        "pe-x64", "pe-x86",
+        "elf-mips", "elf-mipsel", "elf-mips64el",
+        "elf-ppc", "elf-ppc64", "elf-ppc64le",
+        "elf-sparc64", "elf-riscv64", "elf-s390x",
+        "elf-m68k", "elf-sh4"
+      ]
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "compilers": {
+    "go": {
+      "label": "Go",
+      "native_cmd": "go",
+      "langs": ["go"],
+      "targets": ["elf-x64", "elf-arm64", "pe-x64", "macho-arm64", "macho-x64"]
+    }
+  }
+}
