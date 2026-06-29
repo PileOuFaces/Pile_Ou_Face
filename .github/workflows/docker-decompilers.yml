@@ -139,14 +139,13 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Log in to GitHub Container Registry
-        if: ${{ github.event_name != 'pull_request' }}
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up QEMU (cross-build arm64 — push only)
+      - name: Set up QEMU (cross-build arm64 — push seulement)
         if: ${{ github.event_name != 'pull_request' }}
         uses: docker/setup-qemu-action@v3
 
@@ -185,40 +184,7 @@ jobs:
             echo "platforms=linux/amd64,linux/arm64" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Build ${{ matrix.decompiler }} (PR — amd64, no push)
-        if: ${{ github.event_name == 'pull_request' }}
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/decompilers/${{ matrix.decompiler }}/Dockerfile
-          platforms: linux/amd64
-          push: false
-          load: true
-          tags: pof-smoke-${{ matrix.decompiler }}:amd64
-          cache-from: type=gha,scope=${{ matrix.decompiler }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.decompiler }}
-
-      - name: Smoke test intégré (PR — amd64)
-        if: ${{ github.event_name == 'pull_request' }}
-        run: |
-          docker run --rm --network none \
-            "pof-smoke-${{ matrix.decompiler }}:amd64" \
-            /opt/pof-venv/bin/python -m backends.static.decompile --list --provider local \
-            2>/dev/null | python3 -c "
-          import sys, json
-          raw = sys.stdin.read()
-          try:
-              d = json.loads(raw)
-              keys = [k for k in d if not k.startswith('_')][:6]
-              print('OK ${{ matrix.decompiler }}/amd64 — backends: ' + str(keys))
-              sys.exit(0)
-          except Exception as e:
-              print('FAIL Pas de JSON valide: ' + str(e))
-              sys.exit(1)
-          "
-
-      - name: Build and push ${{ matrix.decompiler }} (push — multiarch)
-        if: ${{ github.event_name != 'pull_request' }}
+      - name: Build and push ${{ matrix.decompiler }}
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -231,17 +197,16 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.decompiler }}
 
       - name: Image digest
-        if: ${{ github.event_name != 'pull_request' }}
         run: echo "✅ ${{ matrix.decompiler }} → ${{ steps.meta.outputs.tags }}"
 
   # ──────────────────────────────────────────────
-  # Smoke tests arm64 — uniquement sur push (main/develops)
-  # Les PR utilisent le smoke intégré dans le job build ci-dessus
+  # Smoke tests arm64 — pull depuis ghcr.io après le build
+  # Tourne sur PR et push (l'image est toujours pushée maintenant)
   # ──────────────────────────────────────────────
   smoke-arm64:
     name: Smoke ${{ matrix.decompiler }}/arm64
     needs: [detect-changes, build]
-    if: ${{ github.event_name != 'pull_request' && needs.detect-changes.outputs.any_changed == 'true' }}
+    if: ${{ needs.detect-changes.outputs.any_changed == 'true' }}
     runs-on: ubuntu-latest
 
     strategy:
