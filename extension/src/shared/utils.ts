@@ -90,7 +90,8 @@ function ensureStorageDir(context) {
   return dir;
 }
 
-async function ensurePythonDependencies(pythonExe, root) {
+async function ensurePythonDependencies(pythonExe, root, options = {}) {
+  const { quiet = false } = options || {};
   const backendBase = _extensionPath || path.resolve(String(root || '').trim());
   const requirementsPath = path.join(backendBase, 'backends', 'requirements.txt');
   if (!fs.existsSync(requirementsPath)) {
@@ -118,12 +119,14 @@ async function ensurePythonDependencies(pythonExe, root) {
             break;
           }
         }
-      } catch (venvErr) {
-        logChannel.appendLine(`[venv] Erreur: ${venvErr.message}`);
+    } catch (venvErr) {
+      logChannel.appendLine(`[venv] Erreur: ${venvErr.message}`);
+      if (!quiet) {
         vscode.window.showWarningMessage(`Impossible de créer backends/.venv: ${venvErr.message}`);
-        return;
       }
+      return;
     }
+  }
   }
   const coreDeps = ['unicorn', 'capstone'];
   let needInstall = false;
@@ -151,9 +154,11 @@ async function ensurePythonDependencies(pythonExe, root) {
   } catch (installErr) {
     const msg = installErr.message || '';
     logChannel.appendLine(`[pip] Erreur: ${msg}`);
-    vscode.window.showWarningMessage(
-      `Dépendances manquantes. Exécutez: ${pythonExe} -m pip install -r requirements.txt`
-    );
+    if (!quiet) {
+      vscode.window.showWarningMessage(
+        `Dépendances manquantes. Exécutez: ${pythonExe} -m pip install -r requirements.txt`
+      );
+    }
   }
 }
 

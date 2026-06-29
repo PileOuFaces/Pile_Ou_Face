@@ -18,11 +18,29 @@ function createGraphRenderers({
   const {
     resolveAnalysisArtifactsContext,
     resolveCachedAnalysisView,
+    readAnalysisCacheEntry,
+    writeAnalysisCacheEntry,
     ensureDiscoveredFunctionsArtifact,
     loadBinarySymbols,
   } = analysisCtx;
 
   const hubPost = (type, data) => panel.webview.postMessage(Object.assign({ type }, data || {}));
+
+  const getFileSignature = (filePath) => {
+    if (!filePath || !fs.existsSync(filePath)) return '';
+    try {
+      const stat = fs.statSync(filePath);
+      return `${stat.mtimeMs}:${stat.size}`;
+    } catch (_) {
+      return '';
+    }
+  };
+
+  const stripCacheMeta = (value) => {
+    if (!value || typeof value !== 'object') return value;
+    const { _cache_meta, ...rest } = value;
+    return rest;
+  };
 
   return {
     hubLoadCfg: async (message) => {
@@ -46,14 +64,19 @@ function createGraphRenderers({
       }
       try {
         if (fs.existsSync(mappingPath)) {
-          const cfg = await resolveCachedAnalysisView({
-            effectiveAbsPath,
-            allowCache,
-            cacheKey: 'cfg',
-            logLabel: 'CFG',
-            compute: () => runPythonJson(getCfgScript(root), ['--mapping', mappingPath]),
+          const mappingSig = getFileSignature(mappingPath);
+          const cachedCfg = readAnalysisCacheEntry(effectiveAbsPath, allowCache, 'cfg');
+          if (cachedCfg && cachedCfg._cache_meta?.mapping_sig === mappingSig) {
+            logChannel.appendLine('[cache] CFG depuis cache');
+            hubPost('hubCfg', { cfg: stripCacheMeta(cachedCfg) });
+            return;
+          }
+          const cfg = await runPythonJson(getCfgScript(root), ['--mapping', mappingPath]);
+          writeAnalysisCacheEntry(effectiveAbsPath, allowCache, 'cfg', {
+            ...cfg,
+            _cache_meta: { mapping_sig: mappingSig },
           });
-          hubPost('hubCfg', { cfg });
+          hubPost('hubCfg', { cfg: stripCacheMeta(cfg) });
         } else {
           logChannel.appendLine(`[CFG] Mapping introuvable: ${mappingPath}`);
           hubPost('hubCfg', { cfg: { blocks: [], edges: [] } });
@@ -110,14 +133,24 @@ function createGraphRenderers({
           fs.writeFileSync(resolvedSymbolsPath, JSON.stringify(symbols, null, 2), 'utf8');
         }
         if (fs.existsSync(mappingPath) && fs.existsSync(resolvedSymbolsPath)) {
-          const callGraph = await resolveCachedAnalysisView({
-            effectiveAbsPath,
-            allowCache,
-            cacheKey: 'callgraph',
-            logLabel: 'Call graph',
-            compute: () => runPythonJson(getCallGraphScript(root), ['--mapping', mappingPath, '--symbols', resolvedSymbolsPath]),
+          const mappingSig = getFileSignature(mappingPath);
+          const symbolsSig = getFileSignature(resolvedSymbolsPath);
+          const cachedCallGraph = readAnalysisCacheEntry(effectiveAbsPath, allowCache, 'callgraph');
+          if (
+            cachedCallGraph
+            && cachedCallGraph._cache_meta?.mapping_sig === mappingSig
+            && cachedCallGraph._cache_meta?.symbols_sig === symbolsSig
+          ) {
+            logChannel.appendLine('[cache] Call graph depuis cache');
+            hubPost('hubCallGraph', { callGraph: stripCacheMeta(cachedCallGraph) });
+            return;
+          }
+          const callGraph = await runPythonJson(getCallGraphScript(root), ['--mapping', mappingPath, '--symbols', resolvedSymbolsPath]);
+          writeAnalysisCacheEntry(effectiveAbsPath, allowCache, 'callgraph', {
+            ...callGraph,
+            _cache_meta: { mapping_sig: mappingSig, symbols_sig: symbolsSig },
           });
-          hubPost('hubCallGraph', { callGraph });
+          hubPost('hubCallGraph', { callGraph: stripCacheMeta(callGraph) });
         } else {
           logChannel.appendLine(`[CallGraph] Fichiers manquants: mapping=${fs.existsSync(mappingPath)}, symbols=${fs.existsSync(resolvedSymbolsPath)}`);
           hubPost('hubCallGraph', { callGraph: { nodes: [], edges: [] } });

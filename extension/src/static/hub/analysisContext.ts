@@ -410,13 +410,13 @@ function createAnalysisContext({
   const readAnalysisCacheEntry = (effectiveAbsPath, allowCache, cacheKey) => {
     const target = getAnalysisCacheTarget(effectiveAbsPath, allowCache);
     if (!target) return null;
-    return readCache(root, target, cacheKey);
+    return readCache(storageDir || root, target, cacheKey);
   };
 
   const writeAnalysisCacheEntry = (effectiveAbsPath, allowCache, cacheKey, value) => {
     const target = getAnalysisCacheTarget(effectiveAbsPath, allowCache);
     if (!target) return false;
-    writeCache(root, target, cacheKey, value);
+    writeCache(storageDir || root, target, cacheKey, value);
     return true;
   };
 

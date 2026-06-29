@@ -103,7 +103,7 @@ function activate(context) {
   if (folders && folders.length > 0) {
     const root = resolveProjectRoot(folders[0].uri.fsPath);
     const pythonExe = detectPythonExecutable(root);
-    ensurePythonDependencies(pythonExe, root).catch((err) => {
+    ensurePythonDependencies(pythonExe, root, { quiet: true }).catch((err) => {
       logChannel.appendLine(`[Python setup] Warning: ${err.message}`);
     });
   }

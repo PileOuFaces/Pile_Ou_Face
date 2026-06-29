@@ -14,6 +14,7 @@ const {
   readMeta,
   listIndexedCacheEntries,
   pruneIndexedCacheEntries,
+  clearIndexedCacheEntries,
 } = require('./staticCache');
 
 const CACHE_DIR_NAME = 'static_cache';
@@ -511,6 +512,7 @@ function cleanupAll(storageDir, options = {}) {
         removeRecursive(path.join(cacheDir, name));
         removedCache++;
       }
+      clearIndexedCacheEntries(storageDir);
     }
   }
   return { removedArtifacts, removedCache, purgedStale };

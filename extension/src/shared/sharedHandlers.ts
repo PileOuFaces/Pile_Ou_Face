@@ -287,11 +287,15 @@ function sharedHandlers(ctx) {
     if (context) await forgetRecentBinaryState(context, target);
     await Promise.resolve(clearRawProfile?.(target));
     if (answer === 'Retirer et nettoyer') {
-      const result = fileManager.cleanupForBinary(root, target, { purgeStale: true });
+      const result = fileManager.cleanupForBinary(storageDir || root, target, {
+        purgeStale: true,
+        root,
+      });
       if (result.total > 0) {
         vscode.window.showInformationMessage(`Reverse Workspace : ${result.total} fichier(s) généré(s) supprimé(s).`);
       }
-      panel.webview.postMessage({ type: 'generatedFiles', files: fileManager.listAll(root) });
+      panel.webview.postMessage({ type: 'refreshGeneratedFiles' });
+      panel.webview.postMessage({ type: 'generatedFiles', files: fileManager.listAll(storageDir || root) });
     }
     return null;
   };
@@ -529,7 +533,7 @@ function sharedHandlers(ctx) {
       }
     },
     listGeneratedFiles: () => {
-      const summary = fileManager.listAll(root);
+      const summary = fileManager.listAll(storageDir || root);
       panel.webview.postMessage({ type: 'generatedFiles', files: summary });
     },
     cleanupGeneratedFiles: async (message) => {
@@ -542,19 +546,23 @@ function sharedHandlers(ctx) {
         );
         if (choice !== 'Supprimer') return;
       }
-      const { removedArtifacts, removedCache } = fileManager.cleanupAll(root);
+      const { removedArtifacts, removedCache } = fileManager.cleanupAll(storageDir || root);
       const total = removedArtifacts + removedCache;
       if (total > 0) {
         vscode.window.showInformationMessage(`Reverse Workspace : ${total} fichier(s) supprimé(s).`);
       }
-      panel.webview.postMessage({ type: 'generatedFiles', files: fileManager.listAll(root) });
+      panel.webview.postMessage({ type: 'refreshGeneratedFiles' });
+      panel.webview.postMessage({ type: 'generatedFiles', files: fileManager.listAll(storageDir || root) });
     },
     purgeStaleCache: () => {
-      const { removed } = fileManager.purgeStaleCache(root);
-      if (removed > 0) {
-        vscode.window.showInformationMessage(`Reverse Workspace : ${removed} entrée(s) de cache obsolète(s) supprimée(s).`);
-      }
-      panel.webview.postMessage({ type: 'generatedFiles', files: fileManager.listAll(root) });
+      const { removed } = fileManager.purgeStaleCache(storageDir || root, root);
+      vscode.window.showInformationMessage(
+        removed > 0
+          ? `Reverse Workspace : ${removed} entrée(s) de cache obsolète(s) supprimée(s).`
+          : 'Reverse Workspace : aucune entrée de cache obsolète trouvée.'
+      );
+      panel.webview.postMessage({ type: 'refreshGeneratedFiles' });
+      panel.webview.postMessage({ type: 'generatedFiles', files: fileManager.listAll(storageDir || root) });
     },
     hubError: (message) => {
       vscode.window.showErrorMessage(message.message || 'Erreur');

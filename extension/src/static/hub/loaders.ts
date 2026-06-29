@@ -5,6 +5,7 @@ function createLoaders({
   panel,
   analysisCtx,
   root,
+  storageDir,
   runPythonJson,
   logChannel,
   fs,
@@ -33,13 +34,14 @@ function createLoaders({
     isCacheUsable = () => true,
     compute,
   }) => {
-    const cached = readCache(root, absPath, cacheKey, cacheOptions);
+    const cacheRoot = storageDir || root;
+    const cached = readCache(cacheRoot, absPath, cacheKey, cacheOptions);
     if (cached && isCacheUsable(cached)) {
       if (logLabel) logChannel.appendLine(`[cache] ${logLabel} depuis cache`);
       return cached;
     }
     const value = await compute();
-    writeCache(root, absPath, cacheKey, value, cacheOptions);
+    writeCache(cacheRoot, absPath, cacheKey, value, cacheOptions);
     return value;
   };
 
