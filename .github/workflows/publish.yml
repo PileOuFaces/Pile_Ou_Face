@@ -1,0 +1,35 @@
+name: Publish
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: extension
+
+      - name: Publish to VS Code Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [[ "$TAG" == *"-pre"* || "$TAG" == *"-beta"* || "$TAG" == *"-rc"* ]]; then
+            npx vsce publish --pre-release --pat "$VSCE_PAT"
+          else
+            npx vsce publish --pat "$VSCE_PAT"
+          fi
+        working-directory: extension
