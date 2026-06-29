@@ -3,15 +3,30 @@
 
 Usage: python decompile.py --binary <path> [--addr 0x1234] [--full]
 Sortie JSON: [{"addr": "0x...", "name": "...", "code": "..."}]
-
-Tout le code Ghidra-spécifique vit ici — jamais dans le moteur générique.
 """
 import argparse
-import contextlib
 import json
 import sys
 import tempfile
 from pathlib import Path
+
+
+def _decompile_fn(decomp_ifc, fn, monitor):
+    addr_str = "0x%x" % fn.getEntryPoint().getOffset()
+    try:
+        res = decomp_ifc.decompileFunction(fn, 60, monitor)
+    except Exception as exc:
+        return {"addr": addr_str, "name": str(fn.getName()), "code": "", "error": str(exc)}
+    if res and res.decompileCompleted():
+        df = res.getDecompiledFunction()
+        code = str(df.getC()) if df else ""
+        return {"addr": addr_str, "name": str(fn.getName()), "code": code}
+    err_msg = ""
+    try:
+        err_msg = str(res.getErrorMessage() or "") if res else ""
+    except Exception:
+        pass
+    return {"addr": addr_str, "name": str(fn.getName()), "code": "", "error": err_msg or "decompilation non completee"}
 
 
 def run(binary: str, addr: str = "", full: bool = False) -> list[dict]:
@@ -20,38 +35,50 @@ def run(binary: str, addr: str = "", full: bool = False) -> list[dict]:
     except ImportError:
         return [{"error": "pyghidra non installé (pip install pyghidra)"}]
 
-    script_path = Path(__file__).parent / "script.py"
-    if not script_path.exists():
-        return [{"error": f"Script introuvable : {script_path}"}]
+    try:
+        with tempfile.TemporaryDirectory(prefix="pof_ghidra_") as proj_dir:
+            with pyghidra.open_program(binary, analyze=True, project_location=proj_dir) as flat_api:
+                from ghidra.app.decompiler import DecompInterface, DecompileOptions
+                from ghidra.util.task import ConsoleTaskMonitor
 
-    mode_arg = "full" if full else (addr or "")
+                program = flat_api.currentProgram
+                monitor = ConsoleTaskMonitor()
+                fm = program.getFunctionManager()
 
-    with tempfile.TemporaryDirectory(prefix="pof_ghidra_") as tmp:
-        result_file = Path(tmp) / "result.json"
+                decomp_ifc = DecompInterface()
+                decomp_ifc.setOptions(DecompileOptions())
+                decomp_ifc.openProgram(program)
 
-        try:
-            # Redirige stdout vers stderr pour ne pas polluer la sortie JSON
-            with contextlib.redirect_stdout(sys.stderr):
-                pyghidra.run_script(
-                    binary,
-                    str(script_path),
-                    project_location=tmp,
-                    project_name="pof_tmp",
-                    script_args=[str(result_file), mode_arg],
-                    analyze=True,
-                )
-        except SystemExit:
-            pass
-        except Exception as exc:
-            return [{"error": str(exc)}]
+                try:
+                    if full:
+                        results = []
+                        for fn in fm.getFunctions(True):
+                            if not fn.isExternal():
+                                results.append(_decompile_fn(decomp_ifc, fn, monitor))
+                        return results
 
-        if result_file.exists():
-            try:
-                return json.loads(result_file.read_text(encoding="utf-8"))
-            except Exception as exc:
-                return [{"error": f"JSON invalide dans result.json: {exc}"}]
+                    target_fn = None
+                    if addr:
+                        try:
+                            addr_obj = program.getAddressFactory().getAddress(addr)
+                            target_fn = fm.getFunctionContaining(addr_obj)
+                            if target_fn is None:
+                                target_fn = fm.getFunctionAt(addr_obj)
+                        except Exception:
+                            pass
+                    if target_fn is None:
+                        for fn in fm.getFunctions(True):
+                            if not fn.isExternal():
+                                target_fn = fn
+                                break
+                    if target_fn:
+                        return [_decompile_fn(decomp_ifc, target_fn, monitor)]
+                    return [{"error": "aucune fonction trouvee dans le binaire"}]
+                finally:
+                    decomp_ifc.dispose()
 
-        return [{"error": "pyghidra.run_script n'a pas produit de résultat"}]
+    except Exception as exc:
+        return [{"error": str(exc)}]
 
 
 if __name__ == "__main__":
