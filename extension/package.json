@@ -29,7 +29,7 @@
     "Programming Languages",
     "Other"
   ],
-  "icon": "media/icon.png",
+  "icon": "media/icon-light.png",
   "galleryBanner": {
     "color": "#0d1117",
     "theme": "dark"
@@ -49,8 +49,8 @@
         "command": "pileOuFace.open",
         "title": "Pile ou Face",
         "icon": {
-          "light": "media/icon-light.svg",
-          "dark": "media/icon-dark.svg"
+          "light": "media/icon-light.png",
+          "dark": "media/icon-dark.png"
         }
       },
       {
