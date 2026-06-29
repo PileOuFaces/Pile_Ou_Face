@@ -456,7 +456,7 @@ def _get_decompiler_docker_image(decompiler: str) -> str:
     return ""
 
 
-def _docker_pull_image(image_name: str) -> bool:
+def _docker_pull_image(image_name: str, platform: str = "") -> bool:
     """Lance docker pull sur l'image et retourne True si succès.
 
     Uniquement pour les images avec un registre distant (ghcr.io, etc.).
@@ -466,9 +466,13 @@ def _docker_pull_image(image_name: str) -> bool:
         return False
     docker_exe = _find_docker_executable() or "docker"
     _log.info("Pulling Docker image %s …", image_name)
+    cmd = [docker_exe, "pull"]
+    if platform:
+        cmd += ["--platform", platform]
+    cmd.append(image_name)
     try:
         proc = subprocess.run(
-            [docker_exe, "pull", image_name],
+            cmd,
             capture_output=True,
             text=True,
             timeout=300,
@@ -1230,7 +1234,7 @@ def _run_custom_decompiler_in_docker(
                 if _docker_run_failed_because_image_missing(stderr_tail):
                     _DOCKER_AVAILABLE_CACHE[image_name] = False
                     # Tenter un pull automatique puis relancer
-                    if _docker_pull_image(image_name):
+                    if _docker_pull_image(image_name, platform=pof_platform):
                         proc2 = subprocess.run(
                             docker_cmd,
                             capture_output=True,
@@ -1510,7 +1514,8 @@ def _preferred_docker_platform_for_decompiler(decompiler: str) -> str:
     forced = os.environ.get("DOCKER_PLATFORM", "").strip()
     if forced:
         return forced
-    return ""
+    entry = _load_decompilers().get(_normalize_decompiler_id(decompiler)) or {}
+    return str(entry.get("docker_platform") or "").strip()
 
 
 def _load_annotations_payload(
@@ -2493,6 +2498,11 @@ def list_available_decompilers(
         "full": bool(full),
         "docker_images": docker_images,
         "docker_images_available": docker_avail,
+        "docker_platform": {
+            did: str(all_decompilers[did].get("docker_platform") or "").strip()
+            for did in all_decompilers
+            if all_decompilers[did].get("docker_platform")
+        },
         "local_available": local_available,
         "labels": _custom_decompiler_labels(),
         "reasons": reasons,

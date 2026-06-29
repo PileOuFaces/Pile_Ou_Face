@@ -54,6 +54,7 @@ const OCI_DECOMPILERS = {
     output_format: 'c',
     timeout: 120,
     env: null,
+    platform: 'linux/amd64', // binaire pré-compilé amd64-only
   },
   angr: {
     label: 'Angr',
@@ -219,14 +220,15 @@ async function _autoCheckDecompiler(root, storageDir, id, label) {
  * Lance `docker pull <image>` avec une barre de progression VS Code.
  * Retourne true si le pull a réussi.
  */
-async function _pullOciImageWithProgress(image, label) {
+async function _pullOciImageWithProgress(image, label, platform = '') {
   let ok = false;
   let lastError = '';
   await vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: `Téléchargement de ${label}…`, cancellable: true },
     async (progress, token) => {
       const dockerExe = resolveDockerExecutable();
-      const proc = cp.spawn(dockerExe, ['pull', image], { env: buildRuntimeEnv('') });
+      const pullArgs = platform ? ['pull', '--platform', platform, image] : ['pull', image];
+      const proc = cp.spawn(dockerExe, pullArgs, { env: buildRuntimeEnv('') });
       let layersTotal = 0;
       let layersDone = 0;
       let killed = false;
@@ -399,7 +401,7 @@ async function cmdDecompilerAdd(root, storageDir, editId = null) {
           'Télécharger maintenant', 'Plus tard'
         );
         if (pullNow === 'Télécharger maintenant') {
-          await _pullOciImageWithProgress(ociDef.image, ociDef.label);
+          await _pullOciImageWithProgress(ociDef.image, ociDef.label, ociDef.platform || '');
         }
       }
 
