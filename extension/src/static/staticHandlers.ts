@@ -798,6 +798,7 @@ function staticHandlers(config) {
       if (!commandId) return;
 
       const _sendResult = (status, detail = '') => {
+        logChannel.appendLine(`[hubExecuteCommand] sending hubCommandResult requestId=${requestId} status=${status}`);
         panel.webview.postMessage({ type: 'hubCommandResult', requestId, command: commandId, status, detail });
       };
 

@@ -709,15 +709,26 @@ function _runDecompilerCommand(command, btnId, loadLabel, args = []) {
   _decompilerCmdPending.set(requestId, { btnId, originalLabel: btn.textContent });
 
   // Désactiver tous les boutons d'action pendant qu'une commande est en vol
-  _setDecompilerButtonsLocked(true, btnId);
+  _setDecompilerButtonsLocked(true, null); // null = verrouille TOUS les boutons (y compris Add)
   btn.textContent = loadLabel;
   btn.classList.add('btn--loading');
 
+  console.debug('[POF] _runDecompilerCommand', command, requestId);
   vscode.postMessage({ type: 'hubExecuteCommand', command, requestId, args });
+
+  // Sécurité : déverrouiller après 60s si hubCommandResult n'arrive jamais
+  setTimeout(() => {
+    if (_decompilerCmdPending.has(requestId)) {
+      console.warn('[POF] hubCommandResult timeout pour', requestId, '— déverrouillage forcé');
+      _decompilerCmdPending.delete(requestId);
+      _onDecompilerCommandResult({ requestId: null, status: 'timeout' });
+    }
+  }, 60000);
 }
 
 /** Callback appelé quand `hubCommandResult` arrive depuis l'extension */
 function _onDecompilerCommandResult(msg) {
+  console.debug('[POF] _onDecompilerCommandResult', msg?.requestId, msg?.status);
   const pending = msg.requestId ? _decompilerCmdPending.get(msg.requestId) : null;
   if (pending) {
     _decompilerCmdPending.delete(msg.requestId);
@@ -727,7 +738,7 @@ function _onDecompilerCommandResult(msg) {
       btn.classList.remove('btn--loading');
     }
   }
-  // Déverrouiller tous les boutons
+  // Déverrouiller tous les boutons (y compris Add)
   _setDecompilerButtonsLocked(false);
 
   // Feedback visuel bref sur le bouton (flash vert/rouge)
@@ -931,8 +942,6 @@ document.getElementById('btnDecompilerOpenConfig')?.addEventListener('click', ()
   const root = document.querySelector('.hub-panels') || document.body;
   observer.observe(root, { attributes: true, subtree: true, attributeFilter: ['class', 'style'] });
 })();
-
-toastController?.init();
 
 // ─── Fin gestionnaire décompilateurs ───────────────────────────────────────
 

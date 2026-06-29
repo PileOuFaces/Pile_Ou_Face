@@ -1918,6 +1918,7 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubCommandResult') {
+    console.debug('[POF] messages.js received hubCommandResult', msg?.requestId, msg?.status);
     _onDecompilerCommandResult(msg);
     return;
   }
