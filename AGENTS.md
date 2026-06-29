@@ -26,7 +26,7 @@ Do not assume every optional capability visible in the UI is implemented in this
 
 Before making non-trivial changes, read:
 
-- [docs/static/ROADMAP.md](docs/static/ROADMAP.md)
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 ## Public Boundary Rule
 

@@ -25,7 +25,22 @@
     "vscode": "^1.120.0"
   },
   "categories": [
+    "Debuggers",
+    "Programming Languages",
     "Other"
+  ],
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#0d1117",
+    "theme": "dark"
+  },
+  "homepage": "https://github.com/PileOuFaces/Pile_Ou_Face",
+  "bugs": {
+    "url": "https://github.com/PileOuFaces/Pile_Ou_Face/issues"
+  },
+  "activationEvents": [
+    "onStartupFinished",
+    "onLanguage:asm"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -254,6 +269,7 @@
     "esm": false
   },
   "devDependencies": {
+    "@vscode/vsce": "^3.3.2",
     "@eslint/js": "^9.0.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "^25.9.1",
