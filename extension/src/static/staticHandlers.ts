@@ -15,7 +15,7 @@ const path = require('path');
 const http = require('http');
 const https = require('https');
 const readline = require('readline');
-const { detectPythonExecutable, buildRuntimeEnv } = require('../shared/utils');
+const { detectPythonExecutable, buildRuntimeEnv, resolveDockerExecutable } = require('../shared/utils');
 const { normalizeRawArchName } = require('../shared/sharedHandlers');
 const { emptyPluginUiState, summarizePluginRuntimeState } = require('./pluginState');
 const { AuthService } = require('../shared/authService');
@@ -27,6 +27,152 @@ const {
 const { getKnownOciImagePlatform } = require('./decompilerCommands');
 
 const AUTH_STRICT_LICENSE_ENV = 'BINHOST_DISABLE_LICENSE_FALLBACK';
+
+function _collectProcessOutput(command, args, options = {}) {
+  return new Promise((resolve) => {
+    if (typeof cp.spawn !== 'function') {
+      resolve({ code: -1, stdout: '', stderr: 'spawn unavailable' });
+      return;
+    }
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const proc = cp.spawn(command, args, {
+      env: options.env || process.env,
+      cwd: options.cwd,
+    });
+    const timeoutMs = options.timeout || 12000;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try { proc.kill('SIGTERM'); } catch (_) {}
+      resolve({ code: -1, stdout, stderr: stderr || 'timeout' });
+    }, timeoutMs);
+    proc.stdout?.on('data', (chunk) => { stdout += chunk.toString(); });
+    proc.stderr?.on('data', (chunk) => { stderr += chunk.toString(); });
+    proc.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ code: -1, stdout, stderr: String(err.message || err) });
+    });
+    proc.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ code, stdout, stderr });
+    });
+  });
+}
+
+function _extractDockerDigests(value, digests = new Set()) {
+  if (value == null) return digests;
+  if (typeof value === 'string') {
+    for (const match of value.matchAll(/sha256:[a-f0-9]{64}/gi)) {
+      digests.add(match[0].toLowerCase());
+    }
+    return digests;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item) => _extractDockerDigests(item, digests));
+    return digests;
+  }
+  if (typeof value === 'object') {
+    Object.values(value).forEach((item) => _extractDockerDigests(item, digests));
+  }
+  return digests;
+}
+
+function _extractLocalRepoDigests(payload) {
+  const digests = new Set();
+  const entries = Array.isArray(payload) ? payload : [];
+  entries.forEach((entry) => {
+    const repoDigests = Array.isArray(entry?.RepoDigests) ? entry.RepoDigests : [];
+    repoDigests.forEach((digestRef) => _extractDockerDigests(digestRef, digests));
+  });
+  return Array.from(digests);
+}
+
+function _extractRemoteManifestDigests(payload) {
+  const digests = new Set();
+  const add = (value) => _extractDockerDigests(value, digests);
+  const entries = Array.isArray(payload) ? payload : [payload];
+  entries.forEach((entry) => {
+    if (!entry || typeof entry !== 'object') return;
+    add(entry.Descriptor?.digest);
+    add(entry.digest);
+    if (Array.isArray(entry.manifests)) {
+      entry.manifests.forEach((manifest) => add(manifest?.digest));
+    }
+  });
+  return Array.from(digests);
+}
+
+async function _checkDockerImageUpdate(image, platform = '') {
+  const dockerExe = resolveDockerExecutable();
+  const local = await _collectProcessOutput(
+    dockerExe,
+    ['image', 'inspect', image],
+    { env: buildRuntimeEnv(''), timeout: 8000 },
+  );
+  if (local.code !== 0) {
+    return { image, platform, status: 'missing', error: local.stderr.trim() };
+  }
+
+  let localPayload = null;
+  try { localPayload = JSON.parse(local.stdout || '[]'); } catch (_) {}
+  const localDigests = _extractLocalRepoDigests(localPayload);
+  if (localDigests.length === 0) {
+    return { image, platform, status: 'unknown', error: 'image locale sans digest registry' };
+  }
+
+  const remoteArgs = ['manifest', 'inspect', '--verbose', image];
+  const remote = await _collectProcessOutput(
+    dockerExe,
+    remoteArgs,
+    { env: buildRuntimeEnv(''), timeout: 15000 },
+  );
+  if (remote.code !== 0) {
+    return { image, platform, status: 'unknown', localDigests, error: remote.stderr.trim() };
+  }
+
+  let remotePayload = null;
+  try { remotePayload = JSON.parse(remote.stdout || '{}'); } catch (_) {}
+  const remoteDigests = _extractRemoteManifestDigests(remotePayload);
+  if (remoteDigests.length === 0) {
+    return { image, platform, status: 'unknown', localDigests, error: 'digest distant introuvable' };
+  }
+
+  const isCurrent = localDigests.some((digest) => remoteDigests.includes(digest));
+  return {
+    image,
+    platform,
+    status: isCurrent ? 'up-to-date' : 'update-available',
+    localDigests,
+    remoteDigests,
+  };
+}
+
+async function _postDecompilerImageUpdateStatus(panel, result) {
+  const meta = result?._meta || {};
+  const dockerImages = meta.docker_images || {};
+  const dockerAvail = meta.docker_images_available || {};
+  const dockerPlatform = meta.docker_platform || {};
+  const ids = Object.keys(dockerImages).filter((id) => dockerImages[id] && dockerAvail[id]);
+  if (!ids.length) return;
+
+  const checking = {};
+  ids.forEach((id) => {
+    checking[id] = { image: dockerImages[id], platform: dockerPlatform[id] || '', status: 'checking' };
+  });
+  panel.webview.postMessage({ type: 'hubDecompilerImageUpdates', updates: checking });
+
+  const entries = await Promise.all(ids.map(async (id) => {
+    const status = await _checkDockerImageUpdate(dockerImages[id], dockerPlatform[id] || '');
+    return [id, status];
+  }));
+  panel.webview.postMessage({ type: 'hubDecompilerImageUpdates', updates: Object.fromEntries(entries) });
+}
 
 function staticHandlers(config) {
   const { root, panel, context, logChannel, storageDir, globalDir } = config;
@@ -688,7 +834,9 @@ function staticHandlers(config) {
       const provider = message.provider || 'auto';
       try {
         const { stdout } = await runPython(['backends/static/decompile/decompile.py', '--list', '--provider', provider]);
-        panel.webview.postMessage({ type: 'hubDecompilerList', result: JSON.parse(stdout) });
+        const result = JSON.parse(stdout);
+        panel.webview.postMessage({ type: 'hubDecompilerList', result });
+        _postDecompilerImageUpdateStatus(panel, result).catch(() => {});
       } catch (e) {
         panel.webview.postMessage({
           type: 'hubDecompilerList',
@@ -725,7 +873,9 @@ function staticHandlers(config) {
         if (ok) {
           try {
             const { stdout } = await runPython(['backends/static/decompile/decompile.py', '--list', '--provider', 'auto']);
-            panel.webview.postMessage({ type: 'hubDecompilerList', result: JSON.parse(stdout) });
+            const result = JSON.parse(stdout);
+            panel.webview.postMessage({ type: 'hubDecompilerList', result });
+            _postDecompilerImageUpdateStatus(panel, result).catch(() => {});
           } catch (_e) { /* refresh best-effort */ }
         }
       });

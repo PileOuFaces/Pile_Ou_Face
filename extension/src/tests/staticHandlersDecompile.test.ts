@@ -1,4 +1,5 @@
 const { expect } = require('chai');
+const { EventEmitter } = require('events');
 const proxyquire = require('proxyquire').noCallThru();
 const sinon = require('sinon');
 
@@ -8,10 +9,11 @@ describe('hubLoadDecompile parallel', () => {
   // Helper to build a stub staticHandlers
   function makeHandlers(execFile, posted = [], overrides = {}) {
     const proxyStubs = {
-      child_process: { execFile },
+      child_process: { execFile, ...(overrides.child_process || {}) },
       '../shared/utils': {
         detectPythonExecutable: () => '/usr/bin/python3',
         buildRuntimeEnv: () => ({}),
+        resolveDockerExecutable: () => '/usr/bin/docker',
       },
       '../shared/sharedHandlers': { normalizeRawArchName: (v) => v },
       './pluginState': {
@@ -173,5 +175,48 @@ describe('hubLoadDecompile parallel', () => {
     expect(listMsg.result).to.have.property('ghidra', true);
     expect(listMsg.result).to.have.property('angr', false);
     expect(listMsg.result).to.have.property('retdec', true);
+  });
+
+  it('posts update availability when a remote Docker digest differs', async () => {
+    const oldDigest = `sha256:${'a'.repeat(64)}`;
+    const newDigest = `sha256:${'b'.repeat(64)}`;
+    const execFile = sinon.stub().callsFake((bin, args, opts, cb) => {
+      expect(args).to.include('--list');
+      cb(null, JSON.stringify({
+        retdec: true,
+        _meta: {
+          labels: { retdec: 'RetDec' },
+          docker_images: { retdec: 'ghcr.io/pileoufaces/pile-ou-face/decompiler-retdec:latest' },
+          docker_images_available: { retdec: true },
+          docker_platform: { retdec: 'linux/amd64' },
+        },
+      }), '');
+    });
+    const spawn = sinon.stub().callsFake((bin, args) => {
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = sinon.stub();
+      process.nextTick(() => {
+        if (args.includes('image')) {
+          child.stdout.emit('data', JSON.stringify([
+            { RepoDigests: [`ghcr.io/pileoufaces/pile-ou-face/decompiler-retdec@${oldDigest}`] },
+          ]));
+        } else {
+          child.stdout.emit('data', JSON.stringify({ Descriptor: { digest: newDigest } }));
+        }
+        child.emit('close', 0);
+      });
+      return child;
+    });
+    const posted = [];
+    const handlers = makeHandlers(execFile, posted, { child_process: { spawn } });
+    await handlers.hubListDecompilers({ provider: 'auto' });
+    await new Promise(resolve => setTimeout(resolve, 10));
+
+    const updateMsgs = posted.filter(m => m.type === 'hubDecompilerImageUpdates');
+    expect(updateMsgs.length).to.equal(2);
+    expect(updateMsgs[0].updates.retdec.status).to.equal('checking');
+    expect(updateMsgs[1].updates.retdec.status).to.equal('update-available');
   });
 });

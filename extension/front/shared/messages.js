@@ -1888,9 +1888,25 @@ window.addEventListener('message', (event) => {
   if (msg.type === 'hubDecompilerList') {
     const newResult = msg.result || {};
     console.log('[POF] messages.js received hubDecompilerList keys:', Object.keys(newResult));
+    if (window._decompilerImageUpdates) {
+      const dockerImages = newResult._meta?.docker_images || {};
+      Object.keys(window._decompilerImageUpdates).forEach((id) => {
+        if (!dockerImages[id] || window._decompilerImageUpdates[id]?.image !== dockerImages[id]) {
+          delete window._decompilerImageUpdates[id];
+        }
+      });
+    }
     _detectDecompilerStateChanges(newResult);
     populateDecompilerProfiles(newResult);
     _renderDecompilerStatusList(newResult);
+    return;
+  }
+  if (msg.type === 'hubDecompilerImageUpdates') {
+    window._decompilerImageUpdates = {
+      ...(window._decompilerImageUpdates || {}),
+      ...(msg.updates || {}),
+    };
+    _renderDecompilerStatusList({ ..._decompilerAvailability, _meta: _decompilerMeta });
     return;
   }
   if (msg.type === 'hubDecompilerPullProgress') {
