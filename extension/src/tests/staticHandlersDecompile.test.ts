@@ -1,4 +1,5 @@
 const { expect } = require('chai');
+const { EventEmitter } = require('events');
 const proxyquire = require('proxyquire').noCallThru();
 const sinon = require('sinon');
 
@@ -8,10 +9,11 @@ describe('hubLoadDecompile parallel', () => {
   // Helper to build a stub staticHandlers
   function makeHandlers(execFile, posted = [], overrides = {}) {
     const proxyStubs = {
-      child_process: { execFile },
+      child_process: { execFile, ...(overrides.child_process || {}) },
       '../shared/utils': {
         detectPythonExecutable: () => '/usr/bin/python3',
         buildRuntimeEnv: () => ({}),
+        resolveDockerExecutable: () => '/usr/bin/docker',
       },
       '../shared/sharedHandlers': { normalizeRawArchName: (v) => v },
       './pluginState': {
@@ -25,6 +27,7 @@ describe('hubLoadDecompile parallel', () => {
       root: '/workspace',
       panel: { webview: { postMessage: (m) => posted.push(m) } },
       context: { globalState: { get: () => ({}), update: async () => {} } },
+      logChannel: overrides.logChannel,
     });
   }
 
@@ -173,5 +176,210 @@ describe('hubLoadDecompile parallel', () => {
     expect(listMsg.result).to.have.property('ghidra', true);
     expect(listMsg.result).to.have.property('angr', false);
     expect(listMsg.result).to.have.property('retdec', true);
+  });
+
+  it('posts update availability when a remote Docker digest differs', async () => {
+    const oldDigest = `sha256:${'a'.repeat(64)}`;
+    const newDigest = `sha256:${'b'.repeat(64)}`;
+    const execFile = sinon.stub().callsFake((bin, args, opts, cb) => {
+      expect(args).to.include('--list');
+      cb(null, JSON.stringify({
+        retdec: true,
+        _meta: {
+          labels: { retdec: 'RetDec' },
+          docker_images: { retdec: 'ghcr.io/pileoufaces/pile-ou-face/decompiler-retdec:latest' },
+          docker_images_available: { retdec: true },
+          docker_platform: { retdec: 'linux/amd64' },
+        },
+      }), '');
+    });
+    const spawn = sinon.stub().callsFake((bin, args) => {
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = sinon.stub();
+      process.nextTick(() => {
+        if (args.includes('image')) {
+          child.stdout.emit('data', JSON.stringify([
+            { RepoDigests: [`ghcr.io/pileoufaces/pile-ou-face/decompiler-retdec@${oldDigest}`] },
+          ]));
+        } else if (args.includes('buildx')) {
+          child.stdout.emit('data', `Name: ghcr.io/pileoufaces/pile-ou-face/decompiler-retdec:latest\nDigest:    ${newDigest}\n`);
+        } else {
+          child.stdout.emit('data', JSON.stringify({ Descriptor: { digest: newDigest } }));
+        }
+        child.emit('close', 0);
+      });
+      return child;
+    });
+    const posted = [];
+    const handlers = makeHandlers(execFile, posted, { child_process: { spawn } });
+    await handlers.hubListDecompilers({ provider: 'auto' });
+    await new Promise(resolve => setTimeout(resolve, 10));
+
+    const updateMsgs = posted.filter(m => m.type === 'hubDecompilerImageUpdates');
+    expect(updateMsgs.length).to.equal(2);
+    expect(updateMsgs[0].updates.retdec.status).to.equal('checking');
+    expect(updateMsgs[1].updates.retdec.status).to.equal('update-available');
+  });
+
+  it('treats a matching remote image index digest as up to date', async () => {
+    const indexDigest = `sha256:${'c'.repeat(64)}`;
+    const platformDigest = `sha256:${'d'.repeat(64)}`;
+    const execFile = sinon.stub().callsFake((bin, args, opts, cb) => {
+      expect(args).to.include('--list');
+      cb(null, JSON.stringify({
+        ghidra: true,
+        _meta: {
+          labels: { ghidra: 'Ghidra' },
+          docker_images: { ghidra: 'ghcr.io/pileoufaces/pile-ou-face/decompiler-ghidra:latest' },
+          docker_images_available: { ghidra: true },
+          docker_platform: {},
+        },
+      }), '');
+    });
+    const spawn = sinon.stub().callsFake((bin, args) => {
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = sinon.stub();
+      process.nextTick(() => {
+        if (args.includes('image')) {
+          child.stdout.emit('data', JSON.stringify([
+            { RepoDigests: [`ghcr.io/pileoufaces/pile-ou-face/decompiler-ghidra@${indexDigest}`] },
+          ]));
+        } else if (args.includes('buildx')) {
+          child.stdout.emit('data', [
+            'Name:      ghcr.io/pileoufaces/pile-ou-face/decompiler-ghidra:latest',
+            'MediaType: application/vnd.oci.image.index.v1+json',
+            `Digest:    ${indexDigest}`,
+            `  Name: ghcr.io/pileoufaces/pile-ou-face/decompiler-ghidra:latest@${platformDigest}`,
+          ].join('\n'));
+        } else {
+          child.stdout.emit('data', JSON.stringify({ Descriptor: { digest: platformDigest } }));
+        }
+        child.emit('close', 0);
+      });
+      return child;
+    });
+    const posted = [];
+    const handlers = makeHandlers(execFile, posted, { child_process: { spawn } });
+    await handlers.hubListDecompilers({ provider: 'auto' });
+    await new Promise(resolve => setTimeout(resolve, 10));
+
+    const updateMsgs = posted.filter(m => m.type === 'hubDecompilerImageUpdates');
+    expect(updateMsgs.length).to.equal(2);
+    expect(updateMsgs[1].updates.ghidra.status).to.equal('up-to-date');
+  });
+
+  it('reuses cached Docker image update status on repeated list refreshes', async () => {
+    const digest = `sha256:${'e'.repeat(64)}`;
+    const image = 'ghcr.io/pileoufaces/pile-ou-face/decompiler-cache-test:latest';
+    const execFile = sinon.stub().callsFake((bin, args, opts, cb) => {
+      expect(args).to.include('--list');
+      cb(null, JSON.stringify({
+        cachetest: true,
+        _meta: {
+          labels: { cachetest: 'Cache Test' },
+          docker_images: { cachetest: image },
+          docker_images_available: { cachetest: true },
+          docker_platform: {},
+        },
+      }), '');
+    });
+    const spawn = sinon.stub().callsFake((bin, args) => {
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = sinon.stub();
+      process.nextTick(() => {
+        if (args.includes('image')) {
+          child.stdout.emit('data', JSON.stringify([
+            { RepoDigests: [`${image.replace(':latest', '')}@${digest}`], Created: '2026-06-30T10:00:00Z', Os: 'linux', Architecture: 'arm64' },
+          ]));
+        } else if (args.includes('buildx')) {
+          child.stdout.emit('data', `Name: ${image}\nDigest:    ${digest}\n`);
+        } else {
+          child.stdout.emit('data', JSON.stringify({ Descriptor: { digest } }));
+        }
+        child.emit('close', 0);
+      });
+      return child;
+    });
+    const posted = [];
+    const handlers = makeHandlers(execFile, posted, { child_process: { spawn } });
+
+    await handlers.hubListDecompilers({ provider: 'auto' });
+    await new Promise(resolve => setTimeout(resolve, 10));
+    await handlers.hubListDecompilers({ provider: 'auto' });
+    await new Promise(resolve => setTimeout(resolve, 10));
+
+    const imageStatusCalls = spawn.getCalls().filter((call) => {
+      const args = call.args[1] || [];
+      return args.includes('image') || args.includes('manifest') || (args.includes('buildx') && args.includes('imagetools'));
+    });
+    expect(imageStatusCalls.length).to.equal(3);
+    const updateMsgs = posted.filter(m => m.type === 'hubDecompilerImageUpdates');
+    expect(updateMsgs.length).to.equal(3);
+    expect(updateMsgs[0].updates.cachetest.status).to.equal('checking');
+    expect(updateMsgs[1].updates.cachetest.status).to.equal('up-to-date');
+    expect(updateMsgs[2].updates.cachetest.status).to.equal('up-to-date');
+    expect(updateMsgs[2].updates.cachetest.cached).to.equal(true);
+    expect(updateMsgs[2].updates.cachetest.localDigestShort).to.equal('eeeeeeeeeeee');
+    expect(updateMsgs[2].updates.cachetest.localPlatform).to.equal('linux/arm64');
+  });
+
+  it('compacts Docker pull progress instead of posting every layer line', async () => {
+    const execFile = sinon.stub().callsFake((bin, args, opts, cb) => {
+      expect(args).to.include('--list');
+      cb(null, JSON.stringify({ _meta: { docker_images: {}, docker_images_available: {} } }), '');
+    });
+    const logLines = [];
+    const spawn = sinon.stub().callsFake((bin, args) => {
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = sinon.stub();
+      process.nextTick(() => {
+        if (args.includes('pull')) {
+          child.stdout.emit('data', [
+            'Pulling from pileoufaces/pile-ou-face/decompiler-logtest',
+            'aaa111: Pulling fs layer',
+            'bbb222: Pulling fs layer',
+            'aaa111: Pull complete',
+            'bbb222: Pull complete',
+            'Digest: sha256:' + 'f'.repeat(64),
+            'Status: Image is up to date',
+          ].join('\n'));
+          child.emit('close', 0);
+          return;
+        }
+        child.stdout.emit('data', 'Docker ok');
+        child.emit('close', 0);
+      });
+      return child;
+    });
+    const posted = [];
+    const handlers = makeHandlers(execFile, posted, {
+      child_process: { spawn },
+      logChannel: { appendLine: (line) => logLines.push(line) },
+    });
+
+    await handlers.hubPullDecompilerImage({
+      decompiler: 'logtest',
+      image: 'ghcr.io/pileoufaces/pile-ou-face/decompiler-logtest:latest',
+      mode: 'force',
+    });
+    await new Promise(resolve => setTimeout(resolve, 20));
+
+    const progressLines = posted
+      .filter(m => m.type === 'hubDecompilerPullProgress')
+      .map(m => m.line);
+    expect(progressLines.some(line => line.includes('aaa111: Pull complete'))).to.equal(false);
+    expect(progressLines.some(line => line.includes('bbb222: Pull complete'))).to.equal(false);
+    expect(progressLines).to.include('Layers 2/2');
+    expect(progressLines.some(line => line.startsWith('Digest:'))).to.equal(true);
+    expect(logLines.some(line => line.includes('[decompiler/docker] pull.start'))).to.equal(true);
+    expect(logLines.some(line => line.includes('[decompiler/docker] pull.done'))).to.equal(true);
   });
 });

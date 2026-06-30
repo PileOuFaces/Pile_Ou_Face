@@ -147,7 +147,7 @@ async function ensurePythonDependencies(pythonExe, root, options = {}) {
   logChannel.appendLine('[pip] Installation des dépendances…');
   try {
     await new Promise((resolve, reject) => {
-      cp.exec(`${pythonExe} -m pip install -r "${requirementsPath}" --quiet`, (error, stdout, stderr) =>
+      cp.execFile(pythonExe, ['-m', 'pip', 'install', '-r', requirementsPath, '--quiet', '--break-system-packages'], (error, stdout, stderr) =>
         error ? reject(new Error(stderr || error.message)) : resolve());
     });
     logChannel.appendLine('[pip] Installation terminée.');

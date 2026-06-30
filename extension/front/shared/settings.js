@@ -471,6 +471,38 @@ document.getElementById('btnOpenLicenseDir')?.addEventListener('click', () => {
 
 // ─── Gestionnaire de décompilateurs (panneau Options) ──────────────────────
 
+window._decompilerImageUpdates = window._decompilerImageUpdates || {};
+window._dockerRuntimeStatus = window._dockerRuntimeStatus || null;
+
+function _formatDockerDigestForUi(digest, fallback = '') {
+  const value = String(digest || fallback || '').trim();
+  const match = value.match(/sha256:([a-f0-9]{12})[a-f0-9]*/i);
+  return match ? match[1].toLowerCase() : '';
+}
+
+function _formatDockerDateForUi(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString('fr-FR', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function _dockerRuntimeSummaryLabel() {
+  const status = window._dockerRuntimeStatus;
+  if (!status) return 'non vérifié';
+  if (!status.dockerFound) return status.errorLabel || 'Docker introuvable';
+  if (!status.daemonOk) return status.errorLabel || 'daemon indisponible';
+  if (!status.buildxOk) return status.errorLabel || 'buildx indisponible';
+  return 'prêt';
+}
+
 /**
  * Construit et affiche la grille de statut des décompilateurs.
  * @param {object} available  — résultat de list_available_decompilers()
@@ -512,6 +544,7 @@ function _renderDecompilerStatusList(available) {
   if (summary) {
     summary.innerHTML = [
       `<div class="decompiler-summary-chip decompiler-summary-chip--accent"><strong>Provider</strong> ${escapeHtml(activeProvider)}</div>`,
+      `<div class="decompiler-summary-chip"><strong>Docker</strong> ${escapeHtml(_dockerRuntimeSummaryLabel())}</div>`,
       `<div class="decompiler-summary-chip"><strong>${availableCount}/${allIds.length}</strong> prêts maintenant</div>`,
       `<div class="decompiler-summary-chip"><strong>${localReadyCount}</strong> prêts en local</div>`,
       `<div class="decompiler-summary-chip"><strong>${dockerConfiguredCount}</strong> avec image Docker</div>`,
@@ -522,6 +555,7 @@ function _renderDecompilerStatusList(available) {
     const avail = !!available[id];
     const label = (meta.labels && meta.labels[id]) || id;
     const image = dockerImages[id] || '';
+    const platform = dockerPlatform[id] || '';
     const dockerOk = image ? !!dockerAvail[id] : null;
     const localOk = !!localAvail[id];
     const localSpec = _getLocalPathSpecForDecompiler(id);
@@ -536,17 +570,54 @@ function _renderDecompilerStatusList(available) {
       ? ''
       : (localPathValue ? 'Chemin configuré' : 'Auto-détection');
     const localDetectionHint = _describeLocalDetectionHint(id, localSpec, localPathValue);
+    const imageUpdateInfo = window._decompilerImageUpdates[id] || {};
+    const imageUpdateStatus = imageUpdateInfo.image === image ? String(imageUpdateInfo.status || '') : '';
     const dockerStatus = !image
       ? 'Non configuré'
-      : (dockerOk ? 'Image prête' : 'Image absente');
+      : (dockerOk
+        ? (imageUpdateStatus === 'update-available'
+          ? 'Update disponible'
+          : imageUpdateStatus === 'checking'
+            ? 'Vérification update…'
+            : imageUpdateStatus === 'up-to-date'
+              ? 'Image à jour'
+              : imageUpdateStatus === 'unknown'
+                ? (imageUpdateInfo.errorLabel || 'Update non vérifiable')
+                : 'Image prête')
+        : 'Image absente');
     const dockerStatusClass = !image
       ? 'decompiler-badge--docker-off'
-      : (dockerOk ? 'decompiler-badge--docker-ok' : 'decompiler-badge--docker-err');
+      : (imageUpdateStatus === 'update-available'
+        ? 'decompiler-badge--docker-update'
+        : (dockerOk ? 'decompiler-badge--docker-ok' : 'decompiler-badge--docker-err'));
+    const dockerUpdateHint = imageUpdateStatus === 'update-available'
+      ? 'Nouvelle image publiée'
+      : imageUpdateStatus === 'up-to-date'
+        ? 'Dernière image installée'
+        : imageUpdateStatus === 'unknown'
+          ? (imageUpdateInfo.errorLabel || 'Update non vérifiable')
+          : '';
+    const dockerDigest = _formatDockerDigestForUi(imageUpdateInfo.localDigest, imageUpdateInfo.localImageId);
+    const dockerCreated = _formatDockerDateForUi(imageUpdateInfo.localCreated);
+    const dockerPlatformLabel = imageUpdateInfo.localPlatform || platform || '';
+    const dockerCacheHint = imageUpdateInfo.cached && imageUpdateInfo.cacheAgeMs != null
+      ? `Statut en cache (${Math.max(1, Math.round(Number(imageUpdateInfo.cacheAgeMs) / 1000))}s)`
+      : '';
+    const dockerDetailLines = [
+      dockerUpdateHint,
+      dockerDigest ? `Digest ${dockerDigest}` : '',
+      dockerPlatformLabel ? `Plateforme ${dockerPlatformLabel}` : '',
+      dockerCreated ? `Créée ${dockerCreated}` : '',
+      dockerCacheHint,
+      image,
+      image ? 'Container à la demande, supprimé après usage' : '',
+    ].filter(Boolean);
     const availabilityLabel = avail ? 'Prêt' : 'Indisponible';
     const availabilityClass = avail ? 'decompiler-card-state--ready' : 'decompiler-card-state--off';
     const captionBits = [`Provider ${activeProvider}`];
     if (localSpec) captionBits.push(localOk ? 'backend local détecté' : 'backend local indisponible');
     if (image) captionBits.push(dockerOk ? 'image Docker prête' : 'image Docker à préparer');
+    if (dockerUpdateHint) captionBits.push(dockerUpdateHint);
     if (!avail && reasons[id]) {
       captionBits.push(reasons[id]);
     }
@@ -594,9 +665,12 @@ function _renderDecompilerStatusList(available) {
     // Boutons d'actions inline dans la card — tous les décompilateurs sont dans le JSON
     const editBtn = `<button type="button" class="btn btn-secondary btn-xs decompiler-card-btn-edit" data-decompiler-edit="${id}" title="Modifier ${escapeHtml(label)}">✎ Modifier</button>`;
     const hideOrDeleteBtn = `<button type="button" class="btn btn-xs btn-danger-soft decompiler-card-btn-remove" data-decompiler-remove="${id}" title="Supprimer ${escapeHtml(label)}">✕ Supprimer</button>`;
-    const platform = dockerPlatform[id] || '';
-    const pullBtn = image && !dockerOk
-      ? `<button type="button" class="btn btn-primary btn-xs decompiler-card-btn-pull" data-decompiler-pull="${escapeHtml(id)}" data-decompiler-image="${escapeHtml(image)}" data-decompiler-platform="${escapeHtml(platform)}" title="Télécharger ${escapeHtml(image)}">⬇ Télécharger</button>`
+    const pullMode = dockerOk ? 'update' : 'pull';
+    const pullBtn = image && (!dockerOk || imageUpdateStatus === 'update-available')
+      ? `<button type="button" class="btn btn-primary btn-xs decompiler-card-btn-pull" data-decompiler-pull="${escapeHtml(id)}" data-decompiler-image="${escapeHtml(image)}" data-decompiler-platform="${escapeHtml(platform)}" data-decompiler-pull-mode="${pullMode}" title="${dockerOk ? 'Mettre à jour' : 'Télécharger'} ${escapeHtml(image)}">${dockerOk ? '↻ Mettre à jour' : '⬇ Télécharger'}</button>`
+      : '';
+    const forcePullBtn = image && dockerOk && imageUpdateStatus && imageUpdateStatus !== 'checking' && imageUpdateStatus !== 'update-available'
+      ? `<button type="button" class="btn btn-secondary btn-xs decompiler-card-btn-pull" data-decompiler-pull="${escapeHtml(id)}" data-decompiler-image="${escapeHtml(image)}" data-decompiler-platform="${escapeHtml(platform)}" data-decompiler-pull-mode="force" title="Repull ${escapeHtml(image)}">↻ Repull</button>`
       : '';
 
     return `<article class="decompiler-card${isSelected ? ' decompiler-card--selected' : ''}${isActiveSource ? ' decompiler-card--active' : ''}${avail ? '' : ' decompiler-card--disabled'}" data-select-decompiler="${id}" role="button" tabindex="0" title="Sélectionner ${escapeHtml(label)}" aria-pressed="${isActiveSource ? 'true' : 'false'}">
@@ -624,7 +698,7 @@ function _renderDecompilerStatusList(available) {
         </div>
         <div class="decompiler-card-metric">
           <span class="decompiler-card-metric-label">Docker</span>
-          <span class="decompiler-card-metric-value">${escapeHtml(dockerStatus)}${image ? `<br>${escapeHtml(image)}` : ''}${image ? '<br>Container à la demande, supprimé après usage' : ''}</span>
+          <span class="decompiler-card-metric-value">${escapeHtml(dockerStatus)}${dockerDetailLines.length ? `<br>${dockerDetailLines.map(line => escapeHtml(line)).join('<br>')}` : ''}</span>
         </div>
       </div>
 
@@ -633,6 +707,7 @@ function _renderDecompilerStatusList(available) {
       ${pathBlock}
       <div class="decompiler-card-actions decompiler-card-actions--inline">
         ${pullBtn}
+        ${forcePullBtn}
         ${editBtn}
         ${hideOrDeleteBtn}
       </div>
@@ -669,8 +744,13 @@ function _renderDecompilerStatusList(available) {
       const id = btn.dataset.decompilerPull;
       const image = btn.dataset.decompilerImage;
       const platform = btn.dataset.decompilerPlatform || '';
+      const mode = btn.dataset.decompilerPullMode || 'pull';
       btn.disabled = true;
-      btn.textContent = '\u23F3 T\u00E9l\u00E9chargement\u2026';
+      btn.textContent = mode === 'update'
+        ? '⏳ Mise à jour…'
+        : mode === 'force'
+          ? '⏳ Repull…'
+          : '\u23F3 T\u00E9l\u00E9chargement\u2026';
       const area = document.getElementById('decompilerPullArea_' + id);
       if (area) {
         area.removeAttribute('hidden');
@@ -684,7 +764,7 @@ function _renderDecompilerStatusList(available) {
         area.appendChild(log);
         area.appendChild(progress);
       }
-      vscode.postMessage({ type: 'hubPullDecompilerImage', decompiler: id, image, platform });
+      vscode.postMessage({ type: 'hubPullDecompilerImage', decompiler: id, image, platform, mode });
     });
   });
 }
@@ -709,11 +789,19 @@ function _runDecompilerCommand(command, btnId, loadLabel, args = []) {
   _decompilerCmdPending.set(requestId, { btnId, originalLabel: btn.textContent });
 
   // Désactiver tous les boutons d'action pendant qu'une commande est en vol
-  _setDecompilerButtonsLocked(true, btnId);
+  _setDecompilerButtonsLocked(true, null); // null = verrouille TOUS les boutons (y compris Add)
   btn.textContent = loadLabel;
   btn.classList.add('btn--loading');
 
   vscode.postMessage({ type: 'hubExecuteCommand', command, requestId, args });
+
+  // Sécurité : déverrouiller après 60s si hubCommandResult n'arrive jamais
+  setTimeout(() => {
+    if (_decompilerCmdPending.has(requestId)) {
+      _decompilerCmdPending.delete(requestId);
+      _onDecompilerCommandResult({ requestId: null, status: 'timeout' });
+    }
+  }, 60000);
 }
 
 /** Callback appelé quand `hubCommandResult` arrive depuis l'extension */
@@ -727,7 +815,7 @@ function _onDecompilerCommandResult(msg) {
       btn.classList.remove('btn--loading');
     }
   }
-  // Déverrouiller tous les boutons
+  // Déverrouiller tous les boutons (y compris Add)
   _setDecompilerButtonsLocked(false);
 
   // Feedback visuel bref sur le bouton (flash vert/rouge)
@@ -1444,255 +1532,7 @@ document.querySelectorAll('[data-interface-mode]').forEach((btn) => {
   });
 });
 
-document.getElementById('staticFeatureChecklist')?.addEventListener('change', (event) => {
-  if (!event.target?.matches?.('[data-static-feature]')) return;
-  _settingsCache = _collectSettings();
-  refreshStaticNavigationForSettings();
-  _scheduleSave();
-});
 
-document.getElementById('btnStaticFeaturesAll')?.addEventListener('click', () => {
-  document.querySelectorAll('[data-static-feature]').forEach((input) => { input.checked = true; });
-  _settingsCache = _collectSettings();
-  refreshStaticNavigationForSettings();
-  _scheduleSave();
-});
-
-document.getElementById('btnStaticFeaturesEssential')?.addEventListener('click', () => {
-  document.querySelectorAll('[data-static-feature]').forEach((input) => {
-    input.checked = STATIC_SIMPLE_FEATURES.has(input.dataset.staticFeature);
-  });
-  _settingsCache = _collectSettings();
-  refreshStaticNavigationForSettings();
-  _scheduleSave();
-});
-
-document.getElementById('panel-options')?.addEventListener('click', (event) => {
-  const btn = event.target.closest('[data-browse]');
-  if (!btn) return;
-  vscode.postMessage({ type: 'hubPickFile', target: btn.dataset.browse });
-});
-
-document.getElementById('decompilerStatusList')?.addEventListener('click', (event) => {
-  const localToggle = event.target.closest('[data-decompiler-local-toggle]');
-  if (localToggle) {
-    event.preventDefault();
-    event.stopPropagation();
-    const key = String(localToggle.getAttribute('data-decompiler-local-toggle') || '').trim();
-    if (!key) return;
-    const nextVisibility = _getDecompilerLocalPathVisibility(key) === 'visible' ? 'hidden' : 'visible';
-    _applyDecompilerLocalPathVisibility(key, nextVisibility);
-    return;
-  }
-  const interactive = event.target.closest('input, button, select, textarea, option');
-  const target = event.target.closest('[data-select-decompiler]');
-  if (!target || (interactive && !interactive.hasAttribute('data-select-decompiler'))) return;
-  const id = String(target.getAttribute('data-select-decompiler') || '').trim();
-  if (!id) return;
-  _selectedDecompilerCardId = id;
-  if (_decompilerAvailability[id] !== false) {
-    if (typeof decompileUiState !== 'undefined') decompileUiState.forcedDecompiler = id;
-  }
-  _renderDecompilerStatusList({ ..._decompilerAvailability, _meta: _decompilerMeta });
-  populateDecompilerProfiles({ ..._decompilerAvailability, _meta: _decompilerMeta });
-  if (isStaticTabActive('decompile')) requestDecompileForCurrentSelection({ skipHistory: true, preserveStackEntry: true });
-});
-
-document.getElementById('decompilerStatusList')?.addEventListener('keydown', (event) => {
-  if (event.target?.matches?.('input, button, select, textarea, option')) return;
-  const target = event.target.closest('[data-select-decompiler]');
-  if (!target) return;
-  if (event.key !== 'Enter' && event.key !== ' ') return;
-  event.preventDefault();
-  const id = String(target.getAttribute('data-select-decompiler') || '').trim();
-  if (!id) return;
-  _selectedDecompilerCardId = id;
-  if (_decompilerAvailability[id] !== false) {
-    if (typeof decompileUiState !== 'undefined') decompileUiState.forcedDecompiler = id;
-  }
-  _renderDecompilerStatusList({ ..._decompilerAvailability, _meta: _decompilerMeta });
-  populateDecompilerProfiles({ ..._decompilerAvailability, _meta: _decompilerMeta });
-  if (isStaticTabActive('decompile')) requestDecompileForCurrentSelection({ skipHistory: true, preserveStackEntry: true });
-});
-
-document.getElementById('panel-options')?.addEventListener('input', (event) => {
-  if (event.target?.matches?.('[data-decompiler-local-path]')) {
-    const key = event.target.dataset.decompilerLocalPath;
-    const value = event.target.value;
-    document.querySelectorAll(`#panel-options [data-decompiler-local-path="${key}"]`).forEach((input) => {
-      if (input !== event.target) input.value = value;
-    });
-    _scheduleSave();
-  }
-});
-
-document.getElementById('panel-options')?.addEventListener('change', (event) => {
-  if (event.target?.matches?.('[data-decompiler-local-path]')) {
-    const key = event.target.dataset.decompilerLocalPath;
-    const value = event.target.value;
-    document.querySelectorAll(`#panel-options [data-decompiler-local-path="${key}"]`).forEach((input) => {
-      if (input !== event.target) input.value = value;
-    });
-    _scheduleSave();
-  }
-});
-
-document.getElementById('btnResetSettings')?.addEventListener('click', () => {
-  vscode.postMessage({ type: 'hubResetSettings' });
-});
-document.getElementById('btnPluginRefresh')?.addEventListener('click', () => {
-  vscode.postMessage({ type: 'hubLoadPluginState' });
-});
-document.getElementById('btnPluginAdd')?.addEventListener('click', () => {
-  vscode.postMessage({ type: 'hubInstallPlugin' });
-});
-document.getElementById('btnPluginAddLicense')?.addEventListener('click', () => {
-  vscode.postMessage({ type: 'hubInstallPluginLicense' });
-});
-document.getElementById('btnOpenUserPluginDir')?.addEventListener('click', () => {
-  vscode.postMessage({ type: 'hubOpenPluginDirectory', scope: 'user' });
-});
-document.getElementById('btnOpenLicenseDir')?.addEventListener('click', () => {
-  vscode.postMessage({ type: 'hubOpenLicenseDirectory' });
-});
-
-// ─── Gestionnaire de décompilateurs (panneau Options) ──────────────────────
-
-/**
- * Construit et affiche la grille de statut des décompilateurs.
- * @param {object} available  — résultat de list_available_decompilers()
- */
-
-// ─── Gestionnaire boutons décompilateurs ──────────────────────────────────────
-
-/** Compteur de requêtes en vol pour gérer les états loading */
-let _decompilerCmdPending = new Map(); // requestId → { btnId, label }
-let _decompilerCmdSeq = 0;
-
-/**
- * Lance une commande décompilateur depuis le webview avec feedback visuel.
- * @param {string} command   — ID de la commande VS Code à exécuter
- * @param {string} btnId     — ID du bouton HTML à mettre en loading
- * @param {string} loadLabel — Texte affiché pendant le chargement
- */
-
-/** Callback appelé quand `hubCommandResult` arrive depuis l'extension */
-
-/** Verrouille/déverrouille les boutons d'action (sauf le bouton actif lui-même) */
-
-// Toast system — moved to toastController.js
-toastController?.init();
-
-// ── Détection changements d'état décompilateurs ───────────────────────────────
-// null = pas encore initialisé (premier chargement = silencieux)
-let _prevDecompilerAvailability = null;
-
-// ── Bouton Actualiser ──────────────────────────────────────────────────────────
-document.getElementById('btnDecompilerRefresh')?.addEventListener('click', () => {
-  const btn = document.getElementById('btnDecompilerRefresh');
-  if (btn) { btn.disabled = true; btn.classList.add('btn--loading'); }
-  const list = document.getElementById('decompilerStatusList');
-  if (list) list.innerHTML = '<div class="decompiler-status-loading"><span class="decompiler-status-dot decompiler-status-dot--pending"></span> Interrogation…</div>';
-  vscode.postMessage({ type: 'hubListDecompilers', provider: _getConfiguredDecompilerProvider() });
-  // Réactiver après réception de hubDecompilerList (géré plus haut)
-  // Sécurité : timeout si pas de réponse
-  setTimeout(() => {
-    if (btn) { btn.disabled = false; btn.classList.remove('btn--loading'); }
-  }, 8000);
-});
-
-// Réactiver le bouton refresh dès réception de la liste
-const _origHandleDecompilerList = window._hubDecompilerListHook;
-(function _patchDecompilerListForRefreshBtn() {
-  const origHandler = window.addEventListener;
-  // On intercepte via l'event hubDecompilerList déjà traité plus haut dans hub.js
-  // Le plus simple : on observe quand _renderDecompilerStatusList est appelé
-  const _origRender = _renderDecompilerStatusList;
-  // Re-définir n'est pas possible (déclaré function), donc on patch via MutationObserver sur le container
-  const list = document.getElementById('decompilerStatusList');
-  if (list) {
-    new MutationObserver(() => {
-      const btn = document.getElementById('btnDecompilerRefresh');
-      if (btn && !list.querySelector('.decompiler-status-loading')) {
-        btn.disabled = false;
-        btn.classList.remove('btn--loading');
-      }
-    }).observe(list, { childList: true });
-  }
-})();
-
-// ── Bouton Ajouter ─────────────────────────────────────────────────────────────
-document.getElementById('btnDecompilerAdd')?.addEventListener('click', () => {
-  _runDecompilerCommand('pileOuFace.decompilerAdd', 'btnDecompilerAdd', '…');
-});
-
-// ── Bouton Modifier ────────────────────────────────────────────────────────────
-document.getElementById('btnDecompilerEdit')?.addEventListener('click', () => {
-  const selectedId = _selectedDecompilerCardId || _getActiveDecompilerSource();
-  if (selectedId && selectedId !== 'auto') {
-    _runDecompilerCommand('pileOuFace.decompilerEdit', 'btnDecompilerEdit', '…', [selectedId]);
-  } else {
-    _runDecompilerCommand('pileOuFace.decompilerEdit', 'btnDecompilerEdit', '…');
-  }
-});
-
-// ── Bouton Supprimer ───────────────────────────────────────────────────────────
-document.getElementById('btnDecompilerRemove')?.addEventListener('click', () => {
-  const selectedId = _selectedDecompilerCardId || _getActiveDecompilerSource();
-  if (selectedId && selectedId !== 'auto') {
-    _runDecompilerCommand('pileOuFace.decompilerRemove', 'btnDecompilerRemove', '…', [selectedId]);
-  } else {
-    _runDecompilerCommand('pileOuFace.decompilerRemove', 'btnDecompilerRemove', '…');
-  }
-});
-
-// ── Bouton Tester ──────────────────────────────────────────────────────────────
-document.getElementById('btnDecompilerTest')?.addEventListener('click', () => {
-  const btn = document.getElementById('btnDecompilerTest');
-  if (!btn || btn.disabled) return;
-  const selectedId = _selectedDecompilerCardId || _getActiveDecompilerSource();
-
-  const requestId = `dcmd_${++_decompilerCmdSeq}`;
-  _decompilerCmdPending.set(requestId, { btnId: 'btnDecompilerTest', originalLabel: btn.textContent });
-  _setDecompilerButtonsLocked(true, 'btnDecompilerTest');
-  btn.textContent = '…';
-  btn.classList.add('btn--loading');
-
-  vscode.postMessage({
-    type: 'hubExecuteCommand',
-    command: 'pileOuFace.decompilerTest',
-    requestId,
-    args: selectedId && selectedId !== 'auto' ? [selectedId] : [],
-  });
-});
-
-// ── Bouton Config JSON ─────────────────────────────────────────────────────────
-document.getElementById('btnDecompilerOpenConfig')?.addEventListener('click', () => {
-  vscode.postMessage({ type: 'hubExecuteCommand', command: 'pileOuFace.decompilerOpenConfig', requestId: null });
-});
-
-// ── Actualisation automatique quand on ouvre le panneau Options ───────────────
-(function _hookOptionsPanel() {
-  let _lastOptionsVisible = false;
-  const observer = new MutationObserver(() => {
-    const panel = document.getElementById('panel-options');
-    const isVisible = panel && !panel.classList.contains('hidden') && panel.style.display !== 'none';
-    if (isVisible && !_lastOptionsVisible) {
-      // Vient d'être ouvert
-      const list = document.getElementById('decompilerStatusList');
-      if (list && (list.querySelector('.decompiler-status-loading') || list.children.length === 0)) {
-        vscode.postMessage({ type: 'hubListDecompilers', provider: _getConfiguredDecompilerProvider() });
-      }
-      vscode.postMessage({ type: 'hubLoadPluginState' });
-    }
-    _lastOptionsVisible = !!isVisible;
-  });
-  // Observer le conteneur principal pour détecter les changements de visibilité
-  const root = document.querySelector('.hub-panels') || document.body;
-  observer.observe(root, { attributes: true, subtree: true, attributeFilter: ['class', 'style'] });
-})();
-
-// ─── Fin gestionnaire décompilateurs ───────────────────────────────────────
 }
 
 // ── AI Providers panel ──────────────────────────────────────────────────────

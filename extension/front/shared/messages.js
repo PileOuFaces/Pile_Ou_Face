@@ -1886,9 +1886,30 @@ window.addEventListener('message', (event) => {
   }
   if (msg.type === 'hubDecompilerList') {
     const newResult = msg.result || {};
+    if (window._decompilerImageUpdates) {
+      const dockerImages = newResult._meta?.docker_images || {};
+      Object.keys(window._decompilerImageUpdates).forEach((id) => {
+        if (!dockerImages[id] || window._decompilerImageUpdates[id]?.image !== dockerImages[id]) {
+          delete window._decompilerImageUpdates[id];
+        }
+      });
+    }
     _detectDecompilerStateChanges(newResult);
     populateDecompilerProfiles(newResult);
     _renderDecompilerStatusList(newResult);
+    return;
+  }
+  if (msg.type === 'hubDecompilerImageUpdates') {
+    window._decompilerImageUpdates = {
+      ...(window._decompilerImageUpdates || {}),
+      ...(msg.updates || {}),
+    };
+    _renderDecompilerStatusList({ ..._decompilerAvailability, _meta: _decompilerMeta });
+    return;
+  }
+  if (msg.type === 'hubDockerRuntimeStatus') {
+    window._dockerRuntimeStatus = msg.status || null;
+    _renderDecompilerStatusList({ ..._decompilerAvailability, _meta: _decompilerMeta });
     return;
   }
   if (msg.type === 'hubDecompilerPullProgress') {
@@ -1912,7 +1933,12 @@ window.addEventListener('message', (event) => {
       if (bar) bar.value = msg.ok ? 100 : 0;
       const status = document.createElement('div');
       status.className = msg.ok ? 'decompiler-pull-status--ok' : 'decompiler-pull-status--err';
-      status.textContent = msg.ok ? 'Image t\u00E9l\u00E9charg\u00E9e.' : ('Échec : ' + (msg.error || 'erreur inconnue'));
+      const doneLabel = msg.mode === 'update'
+        ? 'Image mise à jour.'
+        : msg.mode === 'force'
+          ? 'Repull terminé.'
+          : 'Image t\u00E9l\u00E9charg\u00E9e.';
+      status.textContent = msg.ok ? doneLabel : ('Échec : ' + (msg.error || 'erreur inconnue'));
       area.appendChild(status);
     }
     return;

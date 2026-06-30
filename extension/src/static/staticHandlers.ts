@@ -15,7 +15,7 @@ const path = require('path');
 const http = require('http');
 const https = require('https');
 const readline = require('readline');
-const { detectPythonExecutable, buildRuntimeEnv } = require('../shared/utils');
+const { detectPythonExecutable, buildRuntimeEnv, resolveDockerExecutable } = require('../shared/utils');
 const { normalizeRawArchName } = require('../shared/sharedHandlers');
 const { emptyPluginUiState, summarizePluginRuntimeState } = require('./pluginState');
 const { AuthService } = require('../shared/authService');
@@ -24,8 +24,373 @@ const {
   clearAiProcess,
   registerAiProcess,
 } = require('../shared/aiProcessRegistry');
+const { getKnownOciImagePlatform } = require('./decompilerCommands');
 
 const AUTH_STRICT_LICENSE_ENV = 'BINHOST_DISABLE_LICENSE_FALLBACK';
+const DOCKER_IMAGE_UPDATE_CACHE_TTL_MS = 10 * 60 * 1000;
+const _dockerImageUpdateCache = new Map();
+let _dockerRuntimeStatusCache = null;
+
+function _collectProcessOutput(command, args, options = {}) {
+  return new Promise((resolve) => {
+    if (typeof cp.spawn !== 'function') {
+      resolve({ code: -1, stdout: '', stderr: 'spawn unavailable' });
+      return;
+    }
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const proc = cp.spawn(command, args, {
+      env: options.env || process.env,
+      cwd: options.cwd,
+    });
+    const timeoutMs = options.timeout || 12000;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try { proc.kill('SIGTERM'); } catch (_) {}
+      resolve({ code: -1, stdout, stderr: stderr || 'timeout' });
+    }, timeoutMs);
+    proc.stdout?.on('data', (chunk) => { stdout += chunk.toString(); });
+    proc.stderr?.on('data', (chunk) => { stderr += chunk.toString(); });
+    proc.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ code: -1, stdout, stderr: String(err.message || err) });
+    });
+    proc.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ code, stdout, stderr });
+    });
+  });
+}
+
+function _extractDockerDigests(value, digests = new Set()) {
+  if (value == null) return digests;
+  if (typeof value === 'string') {
+    for (const match of value.matchAll(/sha256:[a-f0-9]{64}/gi)) {
+      digests.add(match[0].toLowerCase());
+    }
+    return digests;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item) => _extractDockerDigests(item, digests));
+    return digests;
+  }
+  if (typeof value === 'object') {
+    Object.values(value).forEach((item) => _extractDockerDigests(item, digests));
+  }
+  return digests;
+}
+
+function _extractLocalRepoDigests(payload) {
+  const digests = new Set();
+  const entries = Array.isArray(payload) ? payload : [];
+  entries.forEach((entry) => {
+    const repoDigests = Array.isArray(entry?.RepoDigests) ? entry.RepoDigests : [];
+    repoDigests.forEach((digestRef) => _extractDockerDigests(digestRef, digests));
+  });
+  return Array.from(digests);
+}
+
+function _extractRemoteManifestDigests(payload) {
+  const digests = new Set();
+  const add = (value) => _extractDockerDigests(value, digests);
+  const entries = Array.isArray(payload) ? payload : [payload];
+  entries.forEach((entry) => {
+    if (!entry || typeof entry !== 'object') return;
+    add(entry.Descriptor?.digest);
+    add(entry.digest);
+    if (Array.isArray(entry.manifests)) {
+      entry.manifests.forEach((manifest) => add(manifest?.digest));
+    }
+  });
+  return Array.from(digests);
+}
+
+function _extractImagetoolsDigests(stdout) {
+  const digests = new Set();
+  const text = String(stdout || '');
+  for (const match of text.matchAll(/(?:^|\s)Digest:\s*(sha256:[a-f0-9]{64})/gim)) {
+    digests.add(match[1].toLowerCase());
+  }
+  for (const match of text.matchAll(/@((?:sha256:)[a-f0-9]{64})/gim)) {
+    digests.add(match[1].toLowerCase());
+  }
+  return Array.from(digests);
+}
+
+function _shortDockerDigest(digest) {
+  const value = String(digest || '').trim();
+  const match = value.match(/sha256:([a-f0-9]{12})[a-f0-9]*/i);
+  return match ? match[1].toLowerCase() : '';
+}
+
+function _dockerImageUpdateCacheKey(image, platform = '') {
+  return `${String(image || '').trim()}|${String(platform || '').trim()}`;
+}
+
+function _getCachedDockerImageUpdate(image, platform = '') {
+  const cached = _dockerImageUpdateCache.get(_dockerImageUpdateCacheKey(image, platform));
+  if (!cached || Date.now() - cached.cachedAt > DOCKER_IMAGE_UPDATE_CACHE_TTL_MS) return null;
+  return { ...cached.value, cached: true, cacheAgeMs: Date.now() - cached.cachedAt };
+}
+
+function _setCachedDockerImageUpdate(image, platform, value) {
+  _dockerImageUpdateCache.set(_dockerImageUpdateCacheKey(image, platform), {
+    cachedAt: Date.now(),
+    value,
+  });
+}
+
+function _getCachedDockerRuntimeStatus() {
+  if (!_dockerRuntimeStatusCache || Date.now() - _dockerRuntimeStatusCache.cachedAt > DOCKER_IMAGE_UPDATE_CACHE_TTL_MS) return null;
+  return { ..._dockerRuntimeStatusCache.value, cached: true, cacheAgeMs: Date.now() - _dockerRuntimeStatusCache.cachedAt };
+}
+
+function _setCachedDockerRuntimeStatus(value) {
+  _dockerRuntimeStatusCache = { cachedAt: Date.now(), value };
+}
+
+function _formatLogDetails(details = {}) {
+  return Object.entries(details)
+    .filter(([, value]) => value !== undefined && value !== null && value !== '')
+    .map(([key, value]) => `${key}=${JSON.stringify(value)}`)
+    .join(' ');
+}
+
+function _logDecompilerDocker(logChannel, event, details = {}) {
+  if (!logChannel?.appendLine) return;
+  const suffix = _formatLogDetails(details);
+  logChannel.appendLine(`[decompiler/docker] ${event}${suffix ? ` ${suffix}` : ''}`);
+}
+
+function _pullProgressSummary(layersDone, layersTotal) {
+  if (!layersTotal) return '';
+  return `Layers ${layersDone}/${layersTotal}`;
+}
+
+function _classifyDockerStatusError(stderr) {
+  const text = String(stderr || '').trim();
+  if (/docker.*buildx.*not.*command|unknown command.*buildx|is not a docker command/i.test(text)) {
+    return { errorKind: 'buildx-missing', errorLabel: 'Docker buildx indisponible' };
+  }
+  if (/ENOENT|not found|no such file or directory|executable file not found/i.test(text)) {
+    return { errorKind: 'docker-missing', errorLabel: 'Docker introuvable' };
+  }
+  if (/cannot connect to the docker daemon|is the docker daemon running|docker daemon/i.test(text)) {
+    return { errorKind: 'daemon-unavailable', errorLabel: 'Daemon Docker indisponible' };
+  }
+  if (/unauthorized|authentication required|denied|forbidden/i.test(text)) {
+    return { errorKind: 'auth-required', errorLabel: 'Authentification registry requise' };
+  }
+  if (/manifest unknown|name unknown|not found|does not exist/i.test(text)) {
+    return { errorKind: 'manifest-missing', errorLabel: 'Manifest distant introuvable' };
+  }
+  if (/lookup|no such host|connection refused|i\/o timeout|timed out|tls handshake|network is unreachable|timeout/i.test(text)) {
+    return { errorKind: 'registry-unreachable', errorLabel: 'Registry inaccessible' };
+  }
+  return { errorKind: text ? 'unknown' : '', errorLabel: text ? 'Update non vérifiable' : '' };
+}
+
+function _readLocalDockerImageMetadata(payload) {
+  const entries = Array.isArray(payload) ? payload : [];
+  const first = entries[0] || {};
+  const localDigests = _extractLocalRepoDigests(entries);
+  const imageId = String(first.Id || '').trim();
+  const osName = String(first.Os || '').trim();
+  const architecture = String(first.Architecture || '').trim();
+  return {
+    localDigests,
+    localDigest: localDigests[0] || '',
+    localDigestShort: _shortDockerDigest(localDigests[0] || ''),
+    localImageId: imageId,
+    localImageIdShort: _shortDockerDigest(imageId),
+    localCreated: String(first.Created || '').trim(),
+    localOs: osName,
+    localArchitecture: architecture,
+    localPlatform: osName && architecture ? `${osName}/${architecture}` : '',
+  };
+}
+
+async function _checkDockerRuntimeStatus(options = {}) {
+  if (!options.force) {
+    const cached = _getCachedDockerRuntimeStatus();
+    if (cached) return cached;
+  }
+  const dockerExe = resolveDockerExecutable();
+  const version = await _collectProcessOutput(dockerExe, ['--version'], { env: buildRuntimeEnv(''), timeout: 5000 });
+  const info = version.code === 0
+    ? await _collectProcessOutput(dockerExe, ['info'], { env: buildRuntimeEnv(''), timeout: 8000 })
+    : { code: -1, stdout: '', stderr: version.stderr };
+  const buildx = version.code === 0
+    ? await _collectProcessOutput(dockerExe, ['buildx', 'version'], { env: buildRuntimeEnv(''), timeout: 8000 })
+    : { code: -1, stdout: '', stderr: version.stderr };
+  const runtimeError = version.code !== 0
+    ? _classifyDockerStatusError(version.stderr)
+    : info.code !== 0
+      ? _classifyDockerStatusError(info.stderr)
+      : buildx.code !== 0
+        ? _classifyDockerStatusError(buildx.stderr)
+        : { errorKind: '', errorLabel: '' };
+  const value = {
+    dockerFound: version.code === 0,
+    daemonOk: info.code === 0,
+    buildxOk: buildx.code === 0,
+    dockerVersion: String(version.stdout || '').trim(),
+    buildxVersion: String(buildx.stdout || '').trim(),
+    checkedAt: new Date().toISOString(),
+    ...runtimeError,
+  };
+  _setCachedDockerRuntimeStatus(value);
+  return value;
+}
+
+async function _postDockerRuntimeStatus(panel, options = {}) {
+  const status = await _checkDockerRuntimeStatus(options);
+  _logDecompilerDocker(options.logChannel, 'runtime.status', {
+    dockerFound: status.dockerFound,
+    daemonOk: status.daemonOk,
+    buildxOk: status.buildxOk,
+    cached: status.cached === true,
+    errorKind: status.errorKind,
+  });
+  panel.webview.postMessage({ type: 'hubDockerRuntimeStatus', status });
+}
+
+async function _checkDockerImageUpdate(image, platform = '', options = {}) {
+  if (!options.force) {
+    const cached = _getCachedDockerImageUpdate(image, platform);
+    if (cached) return cached;
+  }
+  const dockerExe = resolveDockerExecutable();
+  const local = await _collectProcessOutput(
+    dockerExe,
+    ['image', 'inspect', image],
+    { env: buildRuntimeEnv(''), timeout: 8000 },
+  );
+  if (local.code !== 0) {
+    const classified = _classifyDockerStatusError(local.stderr);
+    const value = { image, platform, status: 'missing', error: local.stderr.trim(), ...classified };
+    _setCachedDockerImageUpdate(image, platform, value);
+    return value;
+  }
+
+  let localPayload = null;
+  try { localPayload = JSON.parse(local.stdout || '[]'); } catch (_) {}
+  const localMeta = _readLocalDockerImageMetadata(localPayload);
+  const localDigests = localMeta.localDigests;
+  if (localDigests.length === 0) {
+    const value = { image, platform, status: 'unknown', ...localMeta, error: 'image locale sans digest registry', errorKind: 'local-digest-missing', errorLabel: 'Digest local absent' };
+    _setCachedDockerImageUpdate(image, platform, value);
+    return value;
+  }
+
+  const imagetools = await _collectProcessOutput(
+    dockerExe,
+    ['buildx', 'imagetools', 'inspect', image],
+    { env: buildRuntimeEnv(''), timeout: 15000 },
+  );
+  let remoteDigests = [];
+  if (imagetools.code === 0) {
+    remoteDigests = _extractImagetoolsDigests(imagetools.stdout);
+  }
+
+  const remoteArgs = ['manifest', 'inspect', '--verbose', image];
+  const remote = await _collectProcessOutput(
+    dockerExe,
+    remoteArgs,
+    { env: buildRuntimeEnv(''), timeout: 15000 },
+  );
+  if (remote.code === 0) {
+    let remotePayload = null;
+    try { remotePayload = JSON.parse(remote.stdout || '{}'); } catch (_) {}
+    remoteDigests = Array.from(new Set([
+      ...remoteDigests,
+      ..._extractRemoteManifestDigests(remotePayload),
+    ]));
+  }
+  if (remoteDigests.length === 0) {
+    const classified = _classifyDockerStatusError(imagetools.stderr || remote.stderr);
+    const value = {
+      image,
+      platform,
+      status: 'unknown',
+      ...localMeta,
+      error: imagetools.stderr.trim() || remote.stderr.trim() || 'digest distant introuvable',
+      ...classified,
+    };
+    _setCachedDockerImageUpdate(image, platform, value);
+    return value;
+  }
+
+  const isCurrent = localDigests.some((digest) => remoteDigests.includes(digest));
+  const value = {
+    image,
+    platform,
+    status: isCurrent ? 'up-to-date' : 'update-available',
+    ...localMeta,
+    remoteDigests,
+    remoteDigest: remoteDigests[0] || '',
+    remoteDigestShort: _shortDockerDigest(remoteDigests[0] || ''),
+    checkedAt: new Date().toISOString(),
+  };
+  _setCachedDockerImageUpdate(image, platform, value);
+  return value;
+}
+
+async function _postDecompilerImageUpdateStatus(panel, result, options = {}) {
+  const meta = result?._meta || {};
+  const dockerImages = meta.docker_images || {};
+  const dockerAvail = meta.docker_images_available || {};
+  const dockerPlatform = meta.docker_platform || {};
+  const ids = Object.keys(dockerImages).filter((id) => dockerImages[id] && dockerAvail[id]);
+  if (!ids.length) return;
+
+  const pendingIds = [];
+  const cached = {};
+  ids.forEach((id) => {
+    const image = dockerImages[id];
+    const platform = dockerPlatform[id] || '';
+    const cachedStatus = options.force ? null : _getCachedDockerImageUpdate(image, platform);
+    if (cachedStatus) cached[id] = cachedStatus;
+    else pendingIds.push(id);
+  });
+  if (Object.keys(cached).length) {
+    Object.entries(cached).forEach(([id, status]) => {
+      _logDecompilerDocker(options.logChannel, 'image.status.cached', {
+        id,
+        status: status.status,
+        image: status.image,
+      });
+    });
+    panel.webview.postMessage({ type: 'hubDecompilerImageUpdates', updates: cached });
+  }
+  if (!pendingIds.length) return;
+
+  const checking = {};
+  pendingIds.forEach((id) => {
+    checking[id] = { image: dockerImages[id], platform: dockerPlatform[id] || '', status: 'checking' };
+  });
+  panel.webview.postMessage({ type: 'hubDecompilerImageUpdates', updates: checking });
+
+  const entries = await Promise.all(pendingIds.map(async (id) => {
+    const status = await _checkDockerImageUpdate(dockerImages[id], dockerPlatform[id] || '', options);
+    _logDecompilerDocker(options.logChannel, 'image.status', {
+      id,
+      status: status.status,
+      image: dockerImages[id],
+      localDigest: status.localDigestShort,
+      remoteDigest: status.remoteDigestShort,
+      errorKind: status.errorKind,
+    });
+    return [id, status];
+  }));
+  panel.webview.postMessage({ type: 'hubDecompilerImageUpdates', updates: Object.fromEntries(entries) });
+}
 
 function staticHandlers(config) {
   const { root, panel, context, logChannel, storageDir, globalDir } = config;
@@ -685,10 +1050,17 @@ function staticHandlers(config) {
     },
     hubListDecompilers: async (message = {}) => {
       const provider = message.provider || 'auto';
+      _logDecompilerDocker(logChannel, 'list.start', { provider });
       try {
         const { stdout } = await runPython(['backends/static/decompile/decompile.py', '--list', '--provider', provider]);
-        panel.webview.postMessage({ type: 'hubDecompilerList', result: JSON.parse(stdout) });
+        const result = JSON.parse(stdout);
+        const count = Object.keys(result || {}).filter((key) => !key.startsWith('_')).length;
+        _logDecompilerDocker(logChannel, 'list.done', { provider, count });
+        panel.webview.postMessage({ type: 'hubDecompilerList', result });
+        _postDockerRuntimeStatus(panel, { logChannel }).catch(() => {});
+        _postDecompilerImageUpdateStatus(panel, result, { logChannel }).catch(() => {});
       } catch (e) {
+        _logDecompilerDocker(logChannel, 'list.error', { provider, error: e?.message || String(e) });
         panel.webview.postMessage({
           type: 'hubDecompilerList',
           result: { _meta: { provider, docker_images: {}, local_available: {}, labels: {} } },
@@ -698,34 +1070,72 @@ function staticHandlers(config) {
     hubPullDecompilerImage: async (message = {}) => {
       const decompiler = String(message.decompiler || '').trim();
       const image = String(message.image || '').trim();
+      const mode = String(message.mode || 'pull').trim();
       if (!decompiler || !image) {
         panel.webview.postMessage({ type: 'hubDecompilerPullDone', decompiler, ok: false, error: 'Nom de décompilateur ou image manquant' });
         return;
       }
-      panel.webview.postMessage({ type: 'hubDecompilerPullProgress', decompiler, line: `Pulling ${image}…`, percent: 0 });
+      const actionLabel = mode === 'update' ? 'Updating' : mode === 'force' ? 'Repulling' : 'Pulling';
+      panel.webview.postMessage({ type: 'hubDecompilerPullProgress', decompiler, line: `${actionLabel} ${image}…`, percent: 0 });
       let layersTotal = 0;
       let layersDone = 0;
       let lastError = '';
-      const platform = String(message.platform || '').trim();
+      const platform = String(message.platform || '').trim() || getKnownOciImagePlatform(image);
       const pullArgs = platform ? ['pull', '--platform', platform, image] : ['pull', image];
+      _logDecompilerDocker(logChannel, 'pull.start', { decompiler, mode, image, platform });
       const proc = cp.spawn('docker', pullArgs, { env: process.env });
-      proc.stdout.on('data', (chunk: Buffer) => {
+      let lastUiSummary = '';
+      let lastUiSummaryAt = 0;
+      const postPullSummary = (force = false) => {
+        const summary = _pullProgressSummary(layersDone, layersTotal);
+        if (!summary || summary === lastUiSummary) return;
+        const now = Date.now();
+        if (!force && now - lastUiSummaryAt < 500) return;
+        lastUiSummary = summary;
+        lastUiSummaryAt = now;
+        const percent = layersTotal > 0 ? Math.min(100, Math.round((layersDone / layersTotal) * 100)) : null;
+        panel.webview.postMessage({ type: 'hubDecompilerPullProgress', decompiler, line: summary, percent });
+      };
+      const handlePullChunk = (chunk: Buffer, isError = false) => {
         for (const line of chunk.toString().split('\n').filter(Boolean)) {
           if (/Pulling fs layer/i.test(line)) layersTotal++;
-          if (/Pull complete/i.test(line)) layersDone++;
-          const percent = layersTotal > 0 ? Math.round((layersDone / layersTotal) * 100) : null;
-          panel.webview.postMessage({ type: 'hubDecompilerPullProgress', decompiler, line: line.trim(), percent });
+          if (/Pull complete|Already exists|Download complete/i.test(line)) layersDone++;
+          const percent = layersTotal > 0 ? Math.min(100, Math.round((layersDone / layersTotal) * 100)) : null;
+          const trimmed = line.trim();
+          if (/Pulling from|Digest:|Status:|Downloaded newer image|Image is up to date/i.test(trimmed)) {
+            panel.webview.postMessage({ type: 'hubDecompilerPullProgress', decompiler, line: trimmed, percent });
+          } else {
+            postPullSummary(false);
+          }
+          if (isError) lastError = line.trim();
         }
-      });
-      proc.stderr.on('data', (chunk: Buffer) => { lastError = chunk.toString().trim(); });
+      };
+      proc.stdout.on('data', (chunk: Buffer) => handlePullChunk(chunk, false));
+      proc.stderr.on('data', (chunk: Buffer) => handlePullChunk(chunk, true));
       proc.on('close', async (code: number | null) => {
         const ok = code === 0;
-        panel.webview.postMessage({ type: 'hubDecompilerPullDone', decompiler, ok, error: ok ? null : lastError });
+        postPullSummary(true);
+        _logDecompilerDocker(logChannel, ok ? 'pull.done' : 'pull.error', {
+          decompiler,
+          mode,
+          image,
+          platform,
+          code,
+          layersDone,
+          layersTotal,
+          error: ok ? '' : lastError,
+        });
+        panel.webview.postMessage({ type: 'hubDecompilerPullDone', decompiler, ok, error: ok ? null : lastError, mode });
         if (ok) {
           try {
             const { stdout } = await runPython(['backends/static/decompile/decompile.py', '--list', '--provider', 'auto']);
-            panel.webview.postMessage({ type: 'hubDecompilerList', result: JSON.parse(stdout) });
-          } catch (_e) { /* refresh best-effort */ }
+            const result = JSON.parse(stdout);
+            panel.webview.postMessage({ type: 'hubDecompilerList', result });
+            _postDockerRuntimeStatus(panel, { force: true, logChannel }).catch(() => {});
+            _postDecompilerImageUpdateStatus(panel, result, { force: true, logChannel }).catch(() => {});
+          } catch (_e) {
+            _logDecompilerDocker(logChannel, 'pull.refresh.error', { decompiler, error: _e?.message || String(_e) });
+          }
         }
       });
     },
@@ -795,8 +1205,10 @@ function staticHandlers(config) {
       const commandId = String(message?.command || '').trim();
       const requestId = message?.requestId || null;
       if (!commandId) return;
+      logChannel?.appendLine(`[hub] hubExecuteCommand START: ${commandId}`);
 
       const _sendResult = (status, detail = '') => {
+        logChannel?.appendLine(`[hub] hubCommandResult: ${commandId} → ${status}${detail ? ' | ' + detail : ''}`);
         panel.webview.postMessage({ type: 'hubCommandResult', requestId, command: commandId, status, detail });
       };
 
