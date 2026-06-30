@@ -1592,9 +1592,11 @@ window.addEventListener('message', (event) => {
       btnCfgFit.addEventListener('click', () => zs.fitToView());
     }
     if (zs?.requestFit) zs.requestFit();
-    if (container._cfgState?.activeAddr) {
+    const _pendingHighlight = window._pendingCfgHighlightAddr || container._cfgState?.activeAddr || '';
+    if (_pendingHighlight) {
+      window._pendingCfgHighlightAddr = null;
       requestAnimationFrame(() => {
-        requestAnimationFrame(() => setCfgActiveAddr(container._cfgState.activeAddr, { reveal: isStaticTabActive('cfg'), instant: true }));
+        requestAnimationFrame(() => setCfgActiveAddr(_pendingHighlight, { reveal: true, revealTable: true, instant: true }));
       });
     }
     return;
@@ -2415,6 +2417,7 @@ window.addEventListener('message', (event) => {
           if (funcSel2) funcSel2.value = best.addr;
           cfgUiState.funcAddr = best.addr;
           cfgUiState.activeAddr = msg.addr;
+          window._pendingCfgHighlightAddr = msg.addr;
           tabDataCache.cfg = null;
           // Reload if CFG tab content is rendered (active or already loaded in DOM)
           const cfgPane = document.getElementById('cfgContent');
