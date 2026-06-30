@@ -612,10 +612,7 @@ def _build_cfg_attribution(
         pos = bisect.bisect_right(addr_sorted, a)
         next_a = addr_sorted[pos] if pos < len(addr_sorted) else None
         succs: list[int] = []
-        if not is_br:
-            if next_a is not None:
-                succs.append(next_a)
-        elif is_call:
+        if not is_br or is_call:
             if next_a is not None:
                 succs.append(next_a)
         else:
