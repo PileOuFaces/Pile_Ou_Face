@@ -961,7 +961,10 @@ function _autoLoadTab(t) {
     postBinaryAwareMessage('hubLoadStrings', { binaryPath: bp, minLen, encoding: enc, section: sec || undefined });
   } else if (t === 'cfg') {
     setStaticLoading('cfgContent', 'Chargement CFG…');
-    postBinaryAwareMessage('hubLoadCfg', { binaryPath: bp });
+    const cfgFuncAddr = (typeof cfgUiState !== 'undefined' ? cfgUiState.funcAddr : '')
+      || (typeof decompileUiState !== 'undefined' ? decompileUiState.selectedAddr : '')
+      || '';
+    postBinaryAwareMessage('hubLoadCfg', { binaryPath: bp, funcAddr: cfgFuncAddr || undefined });
   } else if (t === 'callgraph') {
     setStaticLoading('callgraphContent', 'Chargement call graph…');
     postBinaryAwareMessage('hubLoadCallGraph', { binaryPath: bp });
@@ -1041,3 +1044,10 @@ function _autoLoadTab(t) {
     vscode.postMessage(buildTypedDataRequest(bp));
   }
 }
+
+document.getElementById('cfgFuncSelect')?.addEventListener('change', function () {
+  if (typeof cfgUiState !== 'undefined') cfgUiState.funcAddr = this.value;
+  tabDataCache.cfg = null;
+  const bp = getStaticBinaryPath();
+  if (bp) postBinaryAwareMessage('hubLoadCfg', { binaryPath: bp, funcAddr: this.value || undefined });
+});

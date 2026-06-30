@@ -54,6 +54,7 @@ let cfgUiState = {
   binaryPath: '',
   viewMode: _loadStorage().cfgViewMode || 'graph',
   search: _loadStorage().cfgSearch || '',
+  funcAddr: '',
   expandedAddrs: [],
   graphView: null,
   activeAddr: '',
