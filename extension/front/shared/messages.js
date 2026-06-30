@@ -1909,6 +1909,11 @@ window.addEventListener('message', (event) => {
     _renderDecompilerStatusList({ ..._decompilerAvailability, _meta: _decompilerMeta });
     return;
   }
+  if (msg.type === 'hubDockerRuntimeStatus') {
+    window._dockerRuntimeStatus = msg.status || null;
+    _renderDecompilerStatusList({ ..._decompilerAvailability, _meta: _decompilerMeta });
+    return;
+  }
   if (msg.type === 'hubDecompilerPullProgress') {
     const area = document.getElementById('decompilerPullArea_' + msg.decompiler);
     if (!area) return;
@@ -1930,7 +1935,12 @@ window.addEventListener('message', (event) => {
       if (bar) bar.value = msg.ok ? 100 : 0;
       const status = document.createElement('div');
       status.className = msg.ok ? 'decompiler-pull-status--ok' : 'decompiler-pull-status--err';
-      status.textContent = msg.ok ? 'Image t\u00E9l\u00E9charg\u00E9e.' : ('Échec : ' + (msg.error || 'erreur inconnue'));
+      const doneLabel = msg.mode === 'update'
+        ? 'Image mise à jour.'
+        : msg.mode === 'force'
+          ? 'Repull terminé.'
+          : 'Image t\u00E9l\u00E9charg\u00E9e.';
+      status.textContent = msg.ok ? doneLabel : ('Échec : ' + (msg.error || 'erreur inconnue'));
       area.appendChild(status);
     }
     return;

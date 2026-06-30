@@ -270,4 +270,61 @@ describe('hubLoadDecompile parallel', () => {
     expect(updateMsgs.length).to.equal(2);
     expect(updateMsgs[1].updates.ghidra.status).to.equal('up-to-date');
   });
+
+  it('reuses cached Docker image update status on repeated list refreshes', async () => {
+    const digest = `sha256:${'e'.repeat(64)}`;
+    const image = 'ghcr.io/pileoufaces/pile-ou-face/decompiler-cache-test:latest';
+    const execFile = sinon.stub().callsFake((bin, args, opts, cb) => {
+      expect(args).to.include('--list');
+      cb(null, JSON.stringify({
+        cachetest: true,
+        _meta: {
+          labels: { cachetest: 'Cache Test' },
+          docker_images: { cachetest: image },
+          docker_images_available: { cachetest: true },
+          docker_platform: {},
+        },
+      }), '');
+    });
+    const spawn = sinon.stub().callsFake((bin, args) => {
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = sinon.stub();
+      process.nextTick(() => {
+        if (args.includes('image')) {
+          child.stdout.emit('data', JSON.stringify([
+            { RepoDigests: [`${image.replace(':latest', '')}@${digest}`], Created: '2026-06-30T10:00:00Z', Os: 'linux', Architecture: 'arm64' },
+          ]));
+        } else if (args.includes('buildx')) {
+          child.stdout.emit('data', `Name: ${image}\nDigest:    ${digest}\n`);
+        } else {
+          child.stdout.emit('data', JSON.stringify({ Descriptor: { digest } }));
+        }
+        child.emit('close', 0);
+      });
+      return child;
+    });
+    const posted = [];
+    const handlers = makeHandlers(execFile, posted, { child_process: { spawn } });
+
+    await handlers.hubListDecompilers({ provider: 'auto' });
+    await new Promise(resolve => setTimeout(resolve, 10));
+    await handlers.hubListDecompilers({ provider: 'auto' });
+    await new Promise(resolve => setTimeout(resolve, 10));
+
+    const imageStatusCalls = spawn.getCalls().filter((call) => {
+      const args = call.args[1] || [];
+      return args.includes('image') || args.includes('manifest') || (args.includes('buildx') && args.includes('imagetools'));
+    });
+    expect(imageStatusCalls.length).to.equal(3);
+    const updateMsgs = posted.filter(m => m.type === 'hubDecompilerImageUpdates');
+    expect(updateMsgs.length).to.equal(3);
+    expect(updateMsgs[0].updates.cachetest.status).to.equal('checking');
+    expect(updateMsgs[1].updates.cachetest.status).to.equal('up-to-date');
+    expect(updateMsgs[2].updates.cachetest.status).to.equal('up-to-date');
+    expect(updateMsgs[2].updates.cachetest.cached).to.equal(true);
+    expect(updateMsgs[2].updates.cachetest.localDigestShort).to.equal('eeeeeeeeeeee');
+    expect(updateMsgs[2].updates.cachetest.localPlatform).to.equal('linux/arm64');
+  });
 });

@@ -472,6 +472,36 @@ document.getElementById('btnOpenLicenseDir')?.addEventListener('click', () => {
 // ─── Gestionnaire de décompilateurs (panneau Options) ──────────────────────
 
 window._decompilerImageUpdates = window._decompilerImageUpdates || {};
+window._dockerRuntimeStatus = window._dockerRuntimeStatus || null;
+
+function _formatDockerDigestForUi(digest, fallback = '') {
+  const value = String(digest || fallback || '').trim();
+  const match = value.match(/sha256:([a-f0-9]{12})[a-f0-9]*/i);
+  return match ? match[1].toLowerCase() : '';
+}
+
+function _formatDockerDateForUi(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString('fr-FR', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function _dockerRuntimeSummaryLabel() {
+  const status = window._dockerRuntimeStatus;
+  if (!status) return 'non vérifié';
+  if (!status.dockerFound) return status.errorLabel || 'Docker introuvable';
+  if (!status.daemonOk) return status.errorLabel || 'daemon indisponible';
+  if (!status.buildxOk) return status.errorLabel || 'buildx indisponible';
+  return 'prêt';
+}
 
 /**
  * Construit et affiche la grille de statut des décompilateurs.
@@ -514,6 +544,7 @@ function _renderDecompilerStatusList(available) {
   if (summary) {
     summary.innerHTML = [
       `<div class="decompiler-summary-chip decompiler-summary-chip--accent"><strong>Provider</strong> ${escapeHtml(activeProvider)}</div>`,
+      `<div class="decompiler-summary-chip"><strong>Docker</strong> ${escapeHtml(_dockerRuntimeSummaryLabel())}</div>`,
       `<div class="decompiler-summary-chip"><strong>${availableCount}/${allIds.length}</strong> prêts maintenant</div>`,
       `<div class="decompiler-summary-chip"><strong>${localReadyCount}</strong> prêts en local</div>`,
       `<div class="decompiler-summary-chip"><strong>${dockerConfiguredCount}</strong> avec image Docker</div>`,
@@ -524,6 +555,7 @@ function _renderDecompilerStatusList(available) {
     const avail = !!available[id];
     const label = (meta.labels && meta.labels[id]) || id;
     const image = dockerImages[id] || '';
+    const platform = dockerPlatform[id] || '';
     const dockerOk = image ? !!dockerAvail[id] : null;
     const localOk = !!localAvail[id];
     const localSpec = _getLocalPathSpecForDecompiler(id);
@@ -549,7 +581,9 @@ function _renderDecompilerStatusList(available) {
             ? 'Vérification update…'
             : imageUpdateStatus === 'up-to-date'
               ? 'Image à jour'
-              : 'Image prête')
+              : imageUpdateStatus === 'unknown'
+                ? (imageUpdateInfo.errorLabel || 'Update non vérifiable')
+                : 'Image prête')
         : 'Image absente');
     const dockerStatusClass = !image
       ? 'decompiler-badge--docker-off'
@@ -561,8 +595,23 @@ function _renderDecompilerStatusList(available) {
       : imageUpdateStatus === 'up-to-date'
         ? 'Dernière image installée'
         : imageUpdateStatus === 'unknown'
-          ? 'Update non vérifiable'
+          ? (imageUpdateInfo.errorLabel || 'Update non vérifiable')
           : '';
+    const dockerDigest = _formatDockerDigestForUi(imageUpdateInfo.localDigest, imageUpdateInfo.localImageId);
+    const dockerCreated = _formatDockerDateForUi(imageUpdateInfo.localCreated);
+    const dockerPlatformLabel = imageUpdateInfo.localPlatform || platform || '';
+    const dockerCacheHint = imageUpdateInfo.cached && imageUpdateInfo.cacheAgeMs != null
+      ? `Statut en cache (${Math.max(1, Math.round(Number(imageUpdateInfo.cacheAgeMs) / 1000))}s)`
+      : '';
+    const dockerDetailLines = [
+      dockerUpdateHint,
+      dockerDigest ? `Digest ${dockerDigest}` : '',
+      dockerPlatformLabel ? `Plateforme ${dockerPlatformLabel}` : '',
+      dockerCreated ? `Créée ${dockerCreated}` : '',
+      dockerCacheHint,
+      image,
+      image ? 'Container à la demande, supprimé après usage' : '',
+    ].filter(Boolean);
     const availabilityLabel = avail ? 'Prêt' : 'Indisponible';
     const availabilityClass = avail ? 'decompiler-card-state--ready' : 'decompiler-card-state--off';
     const captionBits = [`Provider ${activeProvider}`];
@@ -616,10 +665,12 @@ function _renderDecompilerStatusList(available) {
     // Boutons d'actions inline dans la card — tous les décompilateurs sont dans le JSON
     const editBtn = `<button type="button" class="btn btn-secondary btn-xs decompiler-card-btn-edit" data-decompiler-edit="${id}" title="Modifier ${escapeHtml(label)}">✎ Modifier</button>`;
     const hideOrDeleteBtn = `<button type="button" class="btn btn-xs btn-danger-soft decompiler-card-btn-remove" data-decompiler-remove="${id}" title="Supprimer ${escapeHtml(label)}">✕ Supprimer</button>`;
-    const platform = dockerPlatform[id] || '';
     const pullMode = dockerOk ? 'update' : 'pull';
     const pullBtn = image && (!dockerOk || imageUpdateStatus === 'update-available')
       ? `<button type="button" class="btn btn-primary btn-xs decompiler-card-btn-pull" data-decompiler-pull="${escapeHtml(id)}" data-decompiler-image="${escapeHtml(image)}" data-decompiler-platform="${escapeHtml(platform)}" data-decompiler-pull-mode="${pullMode}" title="${dockerOk ? 'Mettre à jour' : 'Télécharger'} ${escapeHtml(image)}">${dockerOk ? '↻ Mettre à jour' : '⬇ Télécharger'}</button>`
+      : '';
+    const forcePullBtn = image && dockerOk && imageUpdateStatus && imageUpdateStatus !== 'checking' && imageUpdateStatus !== 'update-available'
+      ? `<button type="button" class="btn btn-secondary btn-xs decompiler-card-btn-pull" data-decompiler-pull="${escapeHtml(id)}" data-decompiler-image="${escapeHtml(image)}" data-decompiler-platform="${escapeHtml(platform)}" data-decompiler-pull-mode="force" title="Repull ${escapeHtml(image)}">↻ Repull</button>`
       : '';
 
     return `<article class="decompiler-card${isSelected ? ' decompiler-card--selected' : ''}${isActiveSource ? ' decompiler-card--active' : ''}${avail ? '' : ' decompiler-card--disabled'}" data-select-decompiler="${id}" role="button" tabindex="0" title="Sélectionner ${escapeHtml(label)}" aria-pressed="${isActiveSource ? 'true' : 'false'}">
@@ -647,7 +698,7 @@ function _renderDecompilerStatusList(available) {
         </div>
         <div class="decompiler-card-metric">
           <span class="decompiler-card-metric-label">Docker</span>
-          <span class="decompiler-card-metric-value">${escapeHtml(dockerStatus)}${dockerUpdateHint ? `<br>${escapeHtml(dockerUpdateHint)}` : ''}${image ? `<br>${escapeHtml(image)}` : ''}${image ? '<br>Container à la demande, supprimé après usage' : ''}</span>
+          <span class="decompiler-card-metric-value">${escapeHtml(dockerStatus)}${dockerDetailLines.length ? `<br>${dockerDetailLines.map(line => escapeHtml(line)).join('<br>')}` : ''}</span>
         </div>
       </div>
 
@@ -656,6 +707,7 @@ function _renderDecompilerStatusList(available) {
       ${pathBlock}
       <div class="decompiler-card-actions decompiler-card-actions--inline">
         ${pullBtn}
+        ${forcePullBtn}
         ${editBtn}
         ${hideOrDeleteBtn}
       </div>
@@ -694,7 +746,11 @@ function _renderDecompilerStatusList(available) {
       const platform = btn.dataset.decompilerPlatform || '';
       const mode = btn.dataset.decompilerPullMode || 'pull';
       btn.disabled = true;
-      btn.textContent = mode === 'update' ? '⏳ Mise à jour…' : '\u23F3 T\u00E9l\u00E9chargement\u2026';
+      btn.textContent = mode === 'update'
+        ? '⏳ Mise à jour…'
+        : mode === 'force'
+          ? '⏳ Repull…'
+          : '\u23F3 T\u00E9l\u00E9chargement\u2026';
       const area = document.getElementById('decompilerPullArea_' + id);
       if (area) {
         area.removeAttribute('hidden');

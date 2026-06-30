@@ -27,6 +27,9 @@ const {
 const { getKnownOciImagePlatform } = require('./decompilerCommands');
 
 const AUTH_STRICT_LICENSE_ENV = 'BINHOST_DISABLE_LICENSE_FALLBACK';
+const DOCKER_IMAGE_UPDATE_CACHE_TTL_MS = 10 * 60 * 1000;
+const _dockerImageUpdateCache = new Map();
+let _dockerRuntimeStatusCache = null;
 
 function _collectProcessOutput(command, args, options = {}) {
   return new Promise((resolve) => {
@@ -120,7 +123,124 @@ function _extractImagetoolsDigests(stdout) {
   return Array.from(digests);
 }
 
-async function _checkDockerImageUpdate(image, platform = '') {
+function _shortDockerDigest(digest) {
+  const value = String(digest || '').trim();
+  const match = value.match(/sha256:([a-f0-9]{12})[a-f0-9]*/i);
+  return match ? match[1].toLowerCase() : '';
+}
+
+function _dockerImageUpdateCacheKey(image, platform = '') {
+  return `${String(image || '').trim()}|${String(platform || '').trim()}`;
+}
+
+function _getCachedDockerImageUpdate(image, platform = '') {
+  const cached = _dockerImageUpdateCache.get(_dockerImageUpdateCacheKey(image, platform));
+  if (!cached || Date.now() - cached.cachedAt > DOCKER_IMAGE_UPDATE_CACHE_TTL_MS) return null;
+  return { ...cached.value, cached: true, cacheAgeMs: Date.now() - cached.cachedAt };
+}
+
+function _setCachedDockerImageUpdate(image, platform, value) {
+  _dockerImageUpdateCache.set(_dockerImageUpdateCacheKey(image, platform), {
+    cachedAt: Date.now(),
+    value,
+  });
+}
+
+function _getCachedDockerRuntimeStatus() {
+  if (!_dockerRuntimeStatusCache || Date.now() - _dockerRuntimeStatusCache.cachedAt > DOCKER_IMAGE_UPDATE_CACHE_TTL_MS) return null;
+  return { ..._dockerRuntimeStatusCache.value, cached: true, cacheAgeMs: Date.now() - _dockerRuntimeStatusCache.cachedAt };
+}
+
+function _setCachedDockerRuntimeStatus(value) {
+  _dockerRuntimeStatusCache = { cachedAt: Date.now(), value };
+}
+
+function _classifyDockerStatusError(stderr) {
+  const text = String(stderr || '').trim();
+  if (/docker.*buildx.*not.*command|unknown command.*buildx|is not a docker command/i.test(text)) {
+    return { errorKind: 'buildx-missing', errorLabel: 'Docker buildx indisponible' };
+  }
+  if (/ENOENT|not found|no such file or directory|executable file not found/i.test(text)) {
+    return { errorKind: 'docker-missing', errorLabel: 'Docker introuvable' };
+  }
+  if (/cannot connect to the docker daemon|is the docker daemon running|docker daemon/i.test(text)) {
+    return { errorKind: 'daemon-unavailable', errorLabel: 'Daemon Docker indisponible' };
+  }
+  if (/unauthorized|authentication required|denied|forbidden/i.test(text)) {
+    return { errorKind: 'auth-required', errorLabel: 'Authentification registry requise' };
+  }
+  if (/manifest unknown|name unknown|not found|does not exist/i.test(text)) {
+    return { errorKind: 'manifest-missing', errorLabel: 'Manifest distant introuvable' };
+  }
+  if (/lookup|no such host|connection refused|i\/o timeout|timed out|tls handshake|network is unreachable|timeout/i.test(text)) {
+    return { errorKind: 'registry-unreachable', errorLabel: 'Registry inaccessible' };
+  }
+  return { errorKind: text ? 'unknown' : '', errorLabel: text ? 'Update non vérifiable' : '' };
+}
+
+function _readLocalDockerImageMetadata(payload) {
+  const entries = Array.isArray(payload) ? payload : [];
+  const first = entries[0] || {};
+  const localDigests = _extractLocalRepoDigests(entries);
+  const imageId = String(first.Id || '').trim();
+  const osName = String(first.Os || '').trim();
+  const architecture = String(first.Architecture || '').trim();
+  return {
+    localDigests,
+    localDigest: localDigests[0] || '',
+    localDigestShort: _shortDockerDigest(localDigests[0] || ''),
+    localImageId: imageId,
+    localImageIdShort: _shortDockerDigest(imageId),
+    localCreated: String(first.Created || '').trim(),
+    localOs: osName,
+    localArchitecture: architecture,
+    localPlatform: osName && architecture ? `${osName}/${architecture}` : '',
+  };
+}
+
+async function _checkDockerRuntimeStatus(options = {}) {
+  if (!options.force) {
+    const cached = _getCachedDockerRuntimeStatus();
+    if (cached) return cached;
+  }
+  const dockerExe = resolveDockerExecutable();
+  const version = await _collectProcessOutput(dockerExe, ['--version'], { env: buildRuntimeEnv(''), timeout: 5000 });
+  const info = version.code === 0
+    ? await _collectProcessOutput(dockerExe, ['info'], { env: buildRuntimeEnv(''), timeout: 8000 })
+    : { code: -1, stdout: '', stderr: version.stderr };
+  const buildx = version.code === 0
+    ? await _collectProcessOutput(dockerExe, ['buildx', 'version'], { env: buildRuntimeEnv(''), timeout: 8000 })
+    : { code: -1, stdout: '', stderr: version.stderr };
+  const runtimeError = version.code !== 0
+    ? _classifyDockerStatusError(version.stderr)
+    : info.code !== 0
+      ? _classifyDockerStatusError(info.stderr)
+      : buildx.code !== 0
+        ? _classifyDockerStatusError(buildx.stderr)
+        : { errorKind: '', errorLabel: '' };
+  const value = {
+    dockerFound: version.code === 0,
+    daemonOk: info.code === 0,
+    buildxOk: buildx.code === 0,
+    dockerVersion: String(version.stdout || '').trim(),
+    buildxVersion: String(buildx.stdout || '').trim(),
+    checkedAt: new Date().toISOString(),
+    ...runtimeError,
+  };
+  _setCachedDockerRuntimeStatus(value);
+  return value;
+}
+
+async function _postDockerRuntimeStatus(panel, options = {}) {
+  const status = await _checkDockerRuntimeStatus(options);
+  panel.webview.postMessage({ type: 'hubDockerRuntimeStatus', status });
+}
+
+async function _checkDockerImageUpdate(image, platform = '', options = {}) {
+  if (!options.force) {
+    const cached = _getCachedDockerImageUpdate(image, platform);
+    if (cached) return cached;
+  }
   const dockerExe = resolveDockerExecutable();
   const local = await _collectProcessOutput(
     dockerExe,
@@ -128,14 +248,20 @@ async function _checkDockerImageUpdate(image, platform = '') {
     { env: buildRuntimeEnv(''), timeout: 8000 },
   );
   if (local.code !== 0) {
-    return { image, platform, status: 'missing', error: local.stderr.trim() };
+    const classified = _classifyDockerStatusError(local.stderr);
+    const value = { image, platform, status: 'missing', error: local.stderr.trim(), ...classified };
+    _setCachedDockerImageUpdate(image, platform, value);
+    return value;
   }
 
   let localPayload = null;
   try { localPayload = JSON.parse(local.stdout || '[]'); } catch (_) {}
-  const localDigests = _extractLocalRepoDigests(localPayload);
+  const localMeta = _readLocalDockerImageMetadata(localPayload);
+  const localDigests = localMeta.localDigests;
   if (localDigests.length === 0) {
-    return { image, platform, status: 'unknown', error: 'image locale sans digest registry' };
+    const value = { image, platform, status: 'unknown', ...localMeta, error: 'image locale sans digest registry', errorKind: 'local-digest-missing', errorLabel: 'Digest local absent' };
+    _setCachedDockerImageUpdate(image, platform, value);
+    return value;
   }
 
   const imagetools = await _collectProcessOutput(
@@ -163,26 +289,35 @@ async function _checkDockerImageUpdate(image, platform = '') {
     ]));
   }
   if (remoteDigests.length === 0) {
-    return {
+    const classified = _classifyDockerStatusError(imagetools.stderr || remote.stderr);
+    const value = {
       image,
       platform,
       status: 'unknown',
-      localDigests,
+      ...localMeta,
       error: imagetools.stderr.trim() || remote.stderr.trim() || 'digest distant introuvable',
+      ...classified,
     };
+    _setCachedDockerImageUpdate(image, platform, value);
+    return value;
   }
 
   const isCurrent = localDigests.some((digest) => remoteDigests.includes(digest));
-  return {
+  const value = {
     image,
     platform,
     status: isCurrent ? 'up-to-date' : 'update-available',
-    localDigests,
+    ...localMeta,
     remoteDigests,
+    remoteDigest: remoteDigests[0] || '',
+    remoteDigestShort: _shortDockerDigest(remoteDigests[0] || ''),
+    checkedAt: new Date().toISOString(),
   };
+  _setCachedDockerImageUpdate(image, platform, value);
+  return value;
 }
 
-async function _postDecompilerImageUpdateStatus(panel, result) {
+async function _postDecompilerImageUpdateStatus(panel, result, options = {}) {
   const meta = result?._meta || {};
   const dockerImages = meta.docker_images || {};
   const dockerAvail = meta.docker_images_available || {};
@@ -190,14 +325,28 @@ async function _postDecompilerImageUpdateStatus(panel, result) {
   const ids = Object.keys(dockerImages).filter((id) => dockerImages[id] && dockerAvail[id]);
   if (!ids.length) return;
 
-  const checking = {};
+  const pendingIds = [];
+  const cached = {};
   ids.forEach((id) => {
+    const image = dockerImages[id];
+    const platform = dockerPlatform[id] || '';
+    const cachedStatus = options.force ? null : _getCachedDockerImageUpdate(image, platform);
+    if (cachedStatus) cached[id] = cachedStatus;
+    else pendingIds.push(id);
+  });
+  if (Object.keys(cached).length) {
+    panel.webview.postMessage({ type: 'hubDecompilerImageUpdates', updates: cached });
+  }
+  if (!pendingIds.length) return;
+
+  const checking = {};
+  pendingIds.forEach((id) => {
     checking[id] = { image: dockerImages[id], platform: dockerPlatform[id] || '', status: 'checking' };
   });
   panel.webview.postMessage({ type: 'hubDecompilerImageUpdates', updates: checking });
 
-  const entries = await Promise.all(ids.map(async (id) => {
-    const status = await _checkDockerImageUpdate(dockerImages[id], dockerPlatform[id] || '');
+  const entries = await Promise.all(pendingIds.map(async (id) => {
+    const status = await _checkDockerImageUpdate(dockerImages[id], dockerPlatform[id] || '', options);
     return [id, status];
   }));
   panel.webview.postMessage({ type: 'hubDecompilerImageUpdates', updates: Object.fromEntries(entries) });
@@ -865,6 +1014,7 @@ function staticHandlers(config) {
         const { stdout } = await runPython(['backends/static/decompile/decompile.py', '--list', '--provider', provider]);
         const result = JSON.parse(stdout);
         panel.webview.postMessage({ type: 'hubDecompilerList', result });
+        _postDockerRuntimeStatus(panel).catch(() => {});
         _postDecompilerImageUpdateStatus(panel, result).catch(() => {});
       } catch (e) {
         panel.webview.postMessage({
@@ -876,35 +1026,40 @@ function staticHandlers(config) {
     hubPullDecompilerImage: async (message = {}) => {
       const decompiler = String(message.decompiler || '').trim();
       const image = String(message.image || '').trim();
+      const mode = String(message.mode || 'pull').trim();
       if (!decompiler || !image) {
         panel.webview.postMessage({ type: 'hubDecompilerPullDone', decompiler, ok: false, error: 'Nom de décompilateur ou image manquant' });
         return;
       }
-      panel.webview.postMessage({ type: 'hubDecompilerPullProgress', decompiler, line: `Pulling ${image}…`, percent: 0 });
+      const actionLabel = mode === 'update' ? 'Updating' : mode === 'force' ? 'Repulling' : 'Pulling';
+      panel.webview.postMessage({ type: 'hubDecompilerPullProgress', decompiler, line: `${actionLabel} ${image}…`, percent: 0 });
       let layersTotal = 0;
       let layersDone = 0;
       let lastError = '';
       const platform = String(message.platform || '').trim() || getKnownOciImagePlatform(image);
       const pullArgs = platform ? ['pull', '--platform', platform, image] : ['pull', image];
       const proc = cp.spawn('docker', pullArgs, { env: process.env });
-      proc.stdout.on('data', (chunk: Buffer) => {
+      const handlePullChunk = (chunk: Buffer, isError = false) => {
         for (const line of chunk.toString().split('\n').filter(Boolean)) {
           if (/Pulling fs layer/i.test(line)) layersTotal++;
-          if (/Pull complete/i.test(line)) layersDone++;
-          const percent = layersTotal > 0 ? Math.round((layersDone / layersTotal) * 100) : null;
+          if (/Pull complete|Already exists|Download complete/i.test(line)) layersDone++;
+          const percent = layersTotal > 0 ? Math.min(100, Math.round((layersDone / layersTotal) * 100)) : null;
           panel.webview.postMessage({ type: 'hubDecompilerPullProgress', decompiler, line: line.trim(), percent });
+          if (isError) lastError = line.trim();
         }
-      });
-      proc.stderr.on('data', (chunk: Buffer) => { lastError = chunk.toString().trim(); });
+      };
+      proc.stdout.on('data', (chunk: Buffer) => handlePullChunk(chunk, false));
+      proc.stderr.on('data', (chunk: Buffer) => handlePullChunk(chunk, true));
       proc.on('close', async (code: number | null) => {
         const ok = code === 0;
-        panel.webview.postMessage({ type: 'hubDecompilerPullDone', decompiler, ok, error: ok ? null : lastError });
+        panel.webview.postMessage({ type: 'hubDecompilerPullDone', decompiler, ok, error: ok ? null : lastError, mode });
         if (ok) {
           try {
             const { stdout } = await runPython(['backends/static/decompile/decompile.py', '--list', '--provider', 'auto']);
             const result = JSON.parse(stdout);
             panel.webview.postMessage({ type: 'hubDecompilerList', result });
-            _postDecompilerImageUpdateStatus(panel, result).catch(() => {});
+            _postDockerRuntimeStatus(panel, { force: true }).catch(() => {});
+            _postDecompilerImageUpdateStatus(panel, result, { force: true }).catch(() => {});
           } catch (_e) { /* refresh best-effort */ }
         }
       });
