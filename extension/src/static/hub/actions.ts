@@ -624,7 +624,8 @@ function createActions({
             dwarfLines: artifacts.binaryMeta.kind !== 'raw',
             emitProgress: true,
             progressTitle: `Désassemblage de ${path.basename(absPath)}`,
-            useCacheDb: cacheEligible,
+            useCacheDb: useCache && cacheEligible,
+            forceRebuild: !useCache,
           });
         } else {
           logChannel.appendLine(`[cache] Réutilisation de ${disasmPath}`);

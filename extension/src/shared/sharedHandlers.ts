@@ -499,6 +499,15 @@ function sharedHandlers(ctx) {
       if (!binaryPath || !context) return;
       const absPath = path.isAbsolute(binaryPath) ? binaryPath : path.join(root, binaryPath);
       await forgetRecentBinaryState(context, absPath);
+      await Promise.resolve(clearRawProfile?.(absPath));
+      const result = fileManager.cleanupForBinary(storageDir || root, absPath, {
+        purgeStale: true,
+        root,
+      });
+      if (result.total > 0) {
+        panel.webview.postMessage({ type: 'refreshGeneratedFiles' });
+        panel.webview.postMessage({ type: 'generatedFiles', files: fileManager.listAll(storageDir || root) });
+      }
     },
     hubClearRecentBinaries: async () => {
       if (!context) return;

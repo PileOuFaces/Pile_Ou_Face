@@ -177,6 +177,7 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', worksp
   // shared controllers
   const sharedHubStateUri              = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'hubState.js'));
   const sharedMessageBusUri            = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'messageBus.js'));
+  const sharedTaskProgressControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'taskProgressController.js'));
   const sharedMessageRouterUri         = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'messageRouter.js'));
   const sharedStatusControllerUri      = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'statusController.js'));
   const sharedToastControllerUri       = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'toastController.js'));
@@ -258,6 +259,7 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', worksp
     // shared controllers
     .replace(/{{sharedHubStateUri}}/g, sharedHubStateUri.toString())
     .replace(/{{sharedMessageBusUri}}/g, sharedMessageBusUri.toString())
+    .replace(/{{sharedTaskProgressControllerUri}}/g, sharedTaskProgressControllerUri.toString())
     .replace(/{{sharedMessageRouterUri}}/g, sharedMessageRouterUri.toString())
     .replace(/{{sharedStatusControllerUri}}/g, sharedStatusControllerUri.toString())
     .replace(/{{sharedToastControllerUri}}/g, sharedToastControllerUri.toString())

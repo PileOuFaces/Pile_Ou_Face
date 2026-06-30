@@ -30,6 +30,7 @@ parser.add_argument("--provider", default="auto", choices=["auto", "local", "doc
 parser.add_argument("--list", action="store_true", dest="list_decompilers")
 parser.add_argument("--annotations-json", default=None)
 parser.add_argument("--cache-dir", default=None)
+parser.add_argument("--no-cache", action="store_true", dest="no_cache")
 
 args = parser.parse_args()
 
@@ -71,6 +72,7 @@ else:
                 annotations_json=args.annotations_json,
                 cache_dir=Path(args.cache_dir) if args.cache_dir else None,
                 provider=args.provider,
+                no_cache=args.no_cache,
             ),
             indent=2,
         )

@@ -2619,6 +2619,7 @@ def decompile_function(
     stack_vars: list[dict] | None = None,
     cache_dir: Path | None = None,
     provider: str = "auto",
+    no_cache: bool = False,
 ) -> dict[str, Any]:
     """Décompile une fonction. decompiler='' → sélection automatique parmi les outils disponibles."""
     provider = _normalize_provider(provider)
@@ -2667,7 +2668,7 @@ def decompile_function(
         stack_signature=_stack_signature(stack_frame_data, stack_vars),
         typed_structs_signature=typed_struct_signature(binary_path),
     )
-    cached = _read_cache(_key, _cdir)
+    cached = None if no_cache else _read_cache(_key, _cdir)
     if cached is not None:
         if not cached.get("error") and not isinstance(
             cached.get("score"), (int, float)

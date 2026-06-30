@@ -80,6 +80,37 @@ describe("sharedHandlers", () => {
     expect(vscodeStub.window.showInformationMessage.calledOnce).to.equal(true);
   });
 
+  it("cleans generated files when a recent binary is removed", async () => {
+    const forgetRecentBinary = sinon.stub().resolves([]);
+    const sharedHandlers = proxyquire("../shared/sharedHandlers", {
+      vscode: vscodeStub,
+      "./fileManager": fileManagerStub,
+      "./recentBinaries": {
+        forgetRecentBinary,
+        getRecentBinaries: () => [],
+        clearRecentBinaries: sinon.stub().resolves([]),
+        rememberRecentBinary: sinon.stub().resolves([]),
+      },
+    });
+    const clearRawProfile = sinon.stub().resolves();
+    const handlers = sharedHandlers({
+      root: tempRoot,
+      storageDir: path.join(tempRoot, "storage"),
+      panel: sink.panel,
+      context: { workspaceState: { get: () => [], update: sinon.stub().resolves() } },
+      clearRawProfile,
+    });
+    const binaryPath = path.join(tempRoot, "sample.exe");
+
+    await handlers.hubForgetRecentBinary({ binaryPath });
+
+    expect(forgetRecentBinary.calledOnce).to.equal(true);
+    expect(clearRawProfile.calledOnceWithExactly(binaryPath)).to.equal(true);
+    expect(fileManagerStub.cleanupForBinary.calledOnce).to.equal(true);
+    expect(fileManagerStub.cleanupForBinary.firstCall.args[1]).to.equal(binaryPath);
+    expect(sink.messages.map((message) => message.type)).to.include("generatedFiles");
+  });
+
   it("allows reconfiguring a stored raw profile when reopening a blob", async () => {
     const sharedHandlers = proxyquire("../shared/sharedHandlers", {
       vscode: vscodeStub,

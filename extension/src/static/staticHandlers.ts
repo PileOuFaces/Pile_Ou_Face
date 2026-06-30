@@ -1239,7 +1239,7 @@ function staticHandlers(config) {
       }
     },
     hubLoadDecompile: async (message) => {
-      const { binaryPath, addr, funcName, full, decompiler, provider } = message;
+      const { binaryPath, addr, funcName, full, decompiler, provider, useCache = true } = message;
       const decompilersJsonPath = storageDir ? path.join(storageDir, 'decompilers.json') : '';
 
       // Build base args (annotation injection preserved)
@@ -1249,6 +1249,7 @@ function staticHandlers(config) {
         else if (addr) { args.push('--addr', addr); if (funcName) args.push('--func-name', funcName); }
         if (targetDecompiler) args.push('--decompiler', targetDecompiler);
         if (provider && provider !== 'auto') args.push('--provider', provider);
+        if (!useCache) args.push('--no-cache');
         // annotation injection (keep existing logic)
         const absPath = path.isAbsolute(binaryPath) ? binaryPath : path.join(root, binaryPath);
         const annHash = crypto.createHash('sha256')
