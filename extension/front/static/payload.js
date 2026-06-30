@@ -563,7 +563,8 @@ function requestDecompileForCurrentSelection(options = {}) {
   decompileUiState.payloads = {};
   if (!decompiler) decompileUiState.forcedDecompiler = '';
   _refreshDecompilePills();
-  if (options.forceRefresh) {
+  const useCacheChecked = document.getElementById('useCache')?.checked !== false;
+  if (options.forceRefresh || !useCacheChecked) {
     decompileResultCache.delete(requestKey);
   }
   const cached = getCachedDecompileResult(requestKey);
@@ -577,9 +578,9 @@ function requestDecompileForCurrentSelection(options = {}) {
   cancelPendingDecompileHighlight();
   setStaticLoading('decompileContent', 'Décompilation en cours…');
   if (addr) {
-    vscode.postMessage({ type: 'hubLoadDecompile', binaryPath: bp, addr, funcName, full: false, decompiler, quality, provider });
+    vscode.postMessage({ type: 'hubLoadDecompile', binaryPath: bp, addr, funcName, full: false, decompiler, quality, provider, useCache: useCacheChecked });
   } else {
-    vscode.postMessage({ type: 'hubLoadDecompile', binaryPath: bp, full: true, decompiler, quality, provider });
+    vscode.postMessage({ type: 'hubLoadDecompile', binaryPath: bp, full: true, decompiler, quality, provider, useCache: useCacheChecked });
   }
 }
 

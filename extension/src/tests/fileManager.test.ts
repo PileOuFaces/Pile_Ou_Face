@@ -235,6 +235,23 @@ describe("fileManager", () => {
       expect(fs.existsSync(path.join(baseDir, "binary.asm"))).to.equal(false);
       expect(fs.existsSync(path.join(baseDir, "binary.symbols.json"))).to.equal(false);
     });
+
+    it("clears pfdb cache files while preserving the protected pfdb directory", () => {
+      const { baseDir, fileManager } = makeCleanupEnv();
+      const pfdbDir = path.join(baseDir, "pfdb");
+      fs.mkdirSync(pfdbDir, { recursive: true });
+      fs.writeFileSync(path.join(pfdbDir, "sample.1234567890abcdef.pfdb"), "sqlite");
+      fs.writeFileSync(path.join(pfdbDir, "sample.1234567890abcdef.pfdb-journal"), "journal");
+      fs.writeFileSync(path.join(pfdbDir, "sentinel.json"), "{}");
+
+      const result = fileManager.cleanupAll(mockStorageDir);
+
+      expect(result.removedCache).to.equal(2);
+      expect(fs.existsSync(pfdbDir)).to.equal(true);
+      expect(fs.existsSync(path.join(pfdbDir, "sample.1234567890abcdef.pfdb"))).to.equal(false);
+      expect(fs.existsSync(path.join(pfdbDir, "sample.1234567890abcdef.pfdb-journal"))).to.equal(false);
+      expect(fs.existsSync(path.join(pfdbDir, "sentinel.json"))).to.equal(true);
+    });
   });
 
   it("cleans targeted artifacts and cache entries for a removed binary", () => {
@@ -254,6 +271,8 @@ describe("fileManager", () => {
 
     fs.writeFileSync(path.join(mockStorageDir, "ghost.bin.disasm.asm"), "nop");
     fs.writeFileSync(path.join(mockStorageDir, "ghost.bin.disasm.mapping.json"), "{}");
+    fs.writeFileSync(path.join(mockStorageDir, "ghost.disasm.asm"), "nop");
+    fs.writeFileSync(path.join(mockStorageDir, "ghost.disasm.mapping.json"), "{}");
     fs.writeFileSync(path.join(mockStorageDir, "other.bin.disasm.asm"), "mov eax, eax");
 
     const staleCacheDir = path.join(cacheDir, "ghost-cache");
@@ -298,6 +317,8 @@ describe("fileManager", () => {
     expect(result.total).to.be.greaterThan(0);
     expect(fs.existsSync(path.join(mockStorageDir, "ghost.bin.disasm.asm"))).to.equal(false);
     expect(fs.existsSync(path.join(mockStorageDir, "ghost.bin.disasm.mapping.json"))).to.equal(false);
+    expect(fs.existsSync(path.join(mockStorageDir, "ghost.disasm.asm"))).to.equal(false);
+    expect(fs.existsSync(path.join(mockStorageDir, "ghost.disasm.mapping.json"))).to.equal(false);
     expect(fs.existsSync(path.join(mockStorageDir, "other.bin.disasm.asm"))).to.equal(true);
     expect(fs.existsSync(staleCacheDir)).to.equal(false);
     expect(fs.existsSync(okCacheDir)).to.equal(true);

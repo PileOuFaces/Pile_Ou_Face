@@ -13,9 +13,19 @@ function requestDisasmOpen({ forceRebuild = false } = {}) {
     currentBinaryMeta = binaryMeta;
     saveBinarySelection(bp, binaryMeta);
   }
-  const useCache = forceRebuild ? false : document.getElementById('useCache')?.checked !== false;
+  const useCache = !forceRebuild;
+  try { window.POFHubTaskProgressController?.startTask({ type: 'hubOpenDisasm', binaryPath: bp }); } catch(e) {}
   vscode.postMessage({ type: 'hubOpenDisasm', binaryPath: bp, binaryMeta, syntax, section, useCache });
 }
+
+// Persist useCache checkbox across sessions
+(function initUseCacheCheckbox() {
+  const el = document.getElementById('useCache');
+  if (!el) return;
+  const stored = _loadStorage();
+  if (typeof stored.useCache === 'boolean') el.checked = stored.useCache;
+  el.addEventListener('change', () => _saveStorage({ useCache: el.checked }));
+})();
 
 document.getElementById('btnOpenDisasm')?.addEventListener('click', () => {
   requestDisasmOpen();

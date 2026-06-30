@@ -41,6 +41,16 @@ function createAnalysisContext({
     return safe || fallback;
   };
 
+  const getDisasmCacheDbPath = (binaryPath) => {
+    if (!storageDir) return 'auto';
+    const absPath = resolvePathFromWorkspace(binaryPath);
+    const cacheDir = path.join(storageDir, 'pfdb');
+    fs.mkdirSync(cacheDir, { recursive: true });
+    const cacheName = sanitizeArtifactToken(path.basename(absPath), 'binary');
+    const cacheKey = crypto.createHash('sha256').update(String(path.resolve(absPath))).digest('hex').slice(0, 16);
+    return path.join(cacheDir, `${cacheName}.${cacheKey}.pfdb`);
+  };
+
   const getBinaryRuntimeProfile = (binaryPath, messageMeta = null) => {
     const absPath = resolvePathFromWorkspace(binaryPath);
     const explicit = normalizeRawProfile(messageMeta?.rawConfig || messageMeta);
@@ -190,7 +200,7 @@ function createAnalysisContext({
     if (rawBaseAddr) args.push('--raw-base-addr', rawBaseAddr);
     if (rawEndian) args.push('--raw-endian', rawEndian);
     if (dwarfLines) args.push('--dwarf-lines');
-    if (useCacheDb) args.push('--cache-db', 'auto');
+    if (useCacheDb) args.push('--cache-db', typeof useCacheDb === 'string' ? useCacheDb : getDisasmCacheDbPath(binaryPath));
     if (emitProgress) args.push('--progress');
     return args;
   };
@@ -273,6 +283,7 @@ function createAnalysisContext({
     emitProgress = false,
     progressTitle = '',
     useCacheDb = null,
+    forceRebuild = false,
   }) => {
     const absPath = resolvePathFromWorkspace(binaryPath);
     if (!fs.existsSync(absPath) || fs.statSync(absPath).isDirectory()) {
@@ -282,7 +293,7 @@ function createAnalysisContext({
     const shouldUseCacheDb = useCacheDb !== null
       ? useCacheDb
       : (artifacts.binaryMeta.kind !== 'raw' && !section && syntax === 'intel');
-    if (!fs.existsSync(artifacts.disasmPath) || !fs.existsSync(artifacts.mappingPath)) {
+    if (forceRebuild || !fs.existsSync(artifacts.disasmPath) || !fs.existsSync(artifacts.mappingPath)) {
       const inflightKey = artifacts.disasmPath;
       if (_disasmInFlight.has(inflightKey)) {
         await _disasmInFlight.get(inflightKey);
