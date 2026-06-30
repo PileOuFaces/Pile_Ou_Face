@@ -396,7 +396,7 @@ function createHub(config) {
     }
 
     const runPythonJson = (scriptPath, args) => new Promise((resolve, reject) => {
-      cp.execFile(pythonExe, [scriptPath, ...args], { encoding: 'utf8', cwd: root, maxBuffer: 4 * 1024 * 1024, timeout: 60000, env: pythonEnv }, (err, stdout) => {
+      cp.execFile(pythonExe, [scriptPath, ...args], { encoding: 'utf8', cwd: root, maxBuffer: 32 * 1024 * 1024, timeout: 60000, env: pythonEnv }, (err, stdout) => {
         if (err) { reject(err.message ? err : new Error(String(err))); return; }
         try { resolve(JSON.parse(stdout)); } catch (e) { reject(e); }
       });

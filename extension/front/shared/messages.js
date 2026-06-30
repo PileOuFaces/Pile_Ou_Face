@@ -374,6 +374,11 @@ window.addEventListener('message', (event) => {
       // rAF : s'assure que showGroup (éventuel) a fini de reconstruire la barre
       requestAnimationFrame(_refreshArchSupportBadges);
     }
+    // Si CFG ou call graph est actif, le recharger maintenant que le désassemblage est prêt
+    const activeTab = typeof getActiveStaticTab === 'function' ? getActiveStaticTab() : '';
+    if ((activeTab === 'cfg' || activeTab === 'callgraph') && typeof _autoLoadTab === 'function') {
+      _autoLoadTab(activeTab);
+    }
     return;
   }
   if (messageRouter?.handleMessage?.(msg)) {
@@ -1266,7 +1271,7 @@ window.addEventListener('message', (event) => {
       container.innerHTML = `<p class="hint">${hint}</p>
         <button type="button" class="btn btn-primary" id="btnCfgOpenDisasm">Ouvrir le désassemblage</button>`;
       document.getElementById('btnCfgOpenDisasm')?.addEventListener('click', () => {
-        if (bp) vscode.postMessage({ type: 'hubOpenDisasm', binaryPath: bp, useCache: false });
+        if (bp) vscode.postMessage({ type: 'hubOpenDisasm', binaryPath: bp, useCache: true });
         else vscode.postMessage({ type: 'requestBinarySelection' });
       });
       return;
@@ -1562,7 +1567,7 @@ window.addEventListener('message', (event) => {
       const btnHtml = bp ? '' : `<button type="button" class="btn btn-primary" id="btnCgOpenDisasm">Ouvrir le désassemblage</button>`;
       container.innerHTML = `<p class="hint">${hint}</p>${btnHtml}`;
       document.getElementById('btnCgOpenDisasm')?.addEventListener('click', () => {
-        if (bp) vscode.postMessage({ type: 'hubOpenDisasm', binaryPath: bp, useCache: false });
+        if (bp) vscode.postMessage({ type: 'hubOpenDisasm', binaryPath: bp, useCache: true });
         else vscode.postMessage({ type: 'requestBinarySelection' });
       });
       return;
