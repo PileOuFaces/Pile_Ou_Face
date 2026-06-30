@@ -27,6 +27,7 @@ describe('hubLoadDecompile parallel', () => {
       root: '/workspace',
       panel: { webview: { postMessage: (m) => posted.push(m) } },
       context: { globalState: { get: () => ({}), update: async () => {} } },
+      logChannel: overrides.logChannel,
     });
   }
 
@@ -326,5 +327,59 @@ describe('hubLoadDecompile parallel', () => {
     expect(updateMsgs[2].updates.cachetest.cached).to.equal(true);
     expect(updateMsgs[2].updates.cachetest.localDigestShort).to.equal('eeeeeeeeeeee');
     expect(updateMsgs[2].updates.cachetest.localPlatform).to.equal('linux/arm64');
+  });
+
+  it('compacts Docker pull progress instead of posting every layer line', async () => {
+    const execFile = sinon.stub().callsFake((bin, args, opts, cb) => {
+      expect(args).to.include('--list');
+      cb(null, JSON.stringify({ _meta: { docker_images: {}, docker_images_available: {} } }), '');
+    });
+    const logLines = [];
+    const spawn = sinon.stub().callsFake((bin, args) => {
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = sinon.stub();
+      process.nextTick(() => {
+        if (args.includes('pull')) {
+          child.stdout.emit('data', [
+            'Pulling from pileoufaces/pile-ou-face/decompiler-logtest',
+            'aaa111: Pulling fs layer',
+            'bbb222: Pulling fs layer',
+            'aaa111: Pull complete',
+            'bbb222: Pull complete',
+            'Digest: sha256:' + 'f'.repeat(64),
+            'Status: Image is up to date',
+          ].join('\n'));
+          child.emit('close', 0);
+          return;
+        }
+        child.stdout.emit('data', 'Docker ok');
+        child.emit('close', 0);
+      });
+      return child;
+    });
+    const posted = [];
+    const handlers = makeHandlers(execFile, posted, {
+      child_process: { spawn },
+      logChannel: { appendLine: (line) => logLines.push(line) },
+    });
+
+    await handlers.hubPullDecompilerImage({
+      decompiler: 'logtest',
+      image: 'ghcr.io/pileoufaces/pile-ou-face/decompiler-logtest:latest',
+      mode: 'force',
+    });
+    await new Promise(resolve => setTimeout(resolve, 20));
+
+    const progressLines = posted
+      .filter(m => m.type === 'hubDecompilerPullProgress')
+      .map(m => m.line);
+    expect(progressLines.some(line => line.includes('aaa111: Pull complete'))).to.equal(false);
+    expect(progressLines.some(line => line.includes('bbb222: Pull complete'))).to.equal(false);
+    expect(progressLines).to.include('Layers 2/2');
+    expect(progressLines.some(line => line.startsWith('Digest:'))).to.equal(true);
+    expect(logLines.some(line => line.includes('[decompiler/docker] pull.start'))).to.equal(true);
+    expect(logLines.some(line => line.includes('[decompiler/docker] pull.done'))).to.equal(true);
   });
 });

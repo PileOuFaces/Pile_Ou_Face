@@ -793,13 +793,11 @@ function _runDecompilerCommand(command, btnId, loadLabel, args = []) {
   btn.textContent = loadLabel;
   btn.classList.add('btn--loading');
 
-  console.log('[POF] _runDecompilerCommand', command, requestId);
   vscode.postMessage({ type: 'hubExecuteCommand', command, requestId, args });
 
   // Sécurité : déverrouiller après 60s si hubCommandResult n'arrive jamais
   setTimeout(() => {
     if (_decompilerCmdPending.has(requestId)) {
-      console.warn('[POF] hubCommandResult timeout pour', requestId, '— déverrouillage forcé');
       _decompilerCmdPending.delete(requestId);
       _onDecompilerCommandResult({ requestId: null, status: 'timeout' });
     }
@@ -808,7 +806,6 @@ function _runDecompilerCommand(command, btnId, loadLabel, args = []) {
 
 /** Callback appelé quand `hubCommandResult` arrive depuis l'extension */
 function _onDecompilerCommandResult(msg) {
-  console.log('[POF] _onDecompilerCommandResult', msg?.requestId, msg?.status);
   const pending = msg.requestId ? _decompilerCmdPending.get(msg.requestId) : null;
   if (pending) {
     _decompilerCmdPending.delete(msg.requestId);

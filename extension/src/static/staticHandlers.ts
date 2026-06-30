@@ -155,6 +155,24 @@ function _setCachedDockerRuntimeStatus(value) {
   _dockerRuntimeStatusCache = { cachedAt: Date.now(), value };
 }
 
+function _formatLogDetails(details = {}) {
+  return Object.entries(details)
+    .filter(([, value]) => value !== undefined && value !== null && value !== '')
+    .map(([key, value]) => `${key}=${JSON.stringify(value)}`)
+    .join(' ');
+}
+
+function _logDecompilerDocker(logChannel, event, details = {}) {
+  if (!logChannel?.appendLine) return;
+  const suffix = _formatLogDetails(details);
+  logChannel.appendLine(`[decompiler/docker] ${event}${suffix ? ` ${suffix}` : ''}`);
+}
+
+function _pullProgressSummary(layersDone, layersTotal) {
+  if (!layersTotal) return '';
+  return `Layers ${layersDone}/${layersTotal}`;
+}
+
 function _classifyDockerStatusError(stderr) {
   const text = String(stderr || '').trim();
   if (/docker.*buildx.*not.*command|unknown command.*buildx|is not a docker command/i.test(text)) {
@@ -233,6 +251,13 @@ async function _checkDockerRuntimeStatus(options = {}) {
 
 async function _postDockerRuntimeStatus(panel, options = {}) {
   const status = await _checkDockerRuntimeStatus(options);
+  _logDecompilerDocker(options.logChannel, 'runtime.status', {
+    dockerFound: status.dockerFound,
+    daemonOk: status.daemonOk,
+    buildxOk: status.buildxOk,
+    cached: status.cached === true,
+    errorKind: status.errorKind,
+  });
   panel.webview.postMessage({ type: 'hubDockerRuntimeStatus', status });
 }
 
@@ -335,6 +360,13 @@ async function _postDecompilerImageUpdateStatus(panel, result, options = {}) {
     else pendingIds.push(id);
   });
   if (Object.keys(cached).length) {
+    Object.entries(cached).forEach(([id, status]) => {
+      _logDecompilerDocker(options.logChannel, 'image.status.cached', {
+        id,
+        status: status.status,
+        image: status.image,
+      });
+    });
     panel.webview.postMessage({ type: 'hubDecompilerImageUpdates', updates: cached });
   }
   if (!pendingIds.length) return;
@@ -347,6 +379,14 @@ async function _postDecompilerImageUpdateStatus(panel, result, options = {}) {
 
   const entries = await Promise.all(pendingIds.map(async (id) => {
     const status = await _checkDockerImageUpdate(dockerImages[id], dockerPlatform[id] || '', options);
+    _logDecompilerDocker(options.logChannel, 'image.status', {
+      id,
+      status: status.status,
+      image: dockerImages[id],
+      localDigest: status.localDigestShort,
+      remoteDigest: status.remoteDigestShort,
+      errorKind: status.errorKind,
+    });
     return [id, status];
   }));
   panel.webview.postMessage({ type: 'hubDecompilerImageUpdates', updates: Object.fromEntries(entries) });
@@ -1010,13 +1050,17 @@ function staticHandlers(config) {
     },
     hubListDecompilers: async (message = {}) => {
       const provider = message.provider || 'auto';
+      _logDecompilerDocker(logChannel, 'list.start', { provider });
       try {
         const { stdout } = await runPython(['backends/static/decompile/decompile.py', '--list', '--provider', provider]);
         const result = JSON.parse(stdout);
+        const count = Object.keys(result || {}).filter((key) => !key.startsWith('_')).length;
+        _logDecompilerDocker(logChannel, 'list.done', { provider, count });
         panel.webview.postMessage({ type: 'hubDecompilerList', result });
-        _postDockerRuntimeStatus(panel).catch(() => {});
-        _postDecompilerImageUpdateStatus(panel, result).catch(() => {});
+        _postDockerRuntimeStatus(panel, { logChannel }).catch(() => {});
+        _postDecompilerImageUpdateStatus(panel, result, { logChannel }).catch(() => {});
       } catch (e) {
+        _logDecompilerDocker(logChannel, 'list.error', { provider, error: e?.message || String(e) });
         panel.webview.postMessage({
           type: 'hubDecompilerList',
           result: { _meta: { provider, docker_images: {}, local_available: {}, labels: {} } },
@@ -1038,13 +1082,31 @@ function staticHandlers(config) {
       let lastError = '';
       const platform = String(message.platform || '').trim() || getKnownOciImagePlatform(image);
       const pullArgs = platform ? ['pull', '--platform', platform, image] : ['pull', image];
+      _logDecompilerDocker(logChannel, 'pull.start', { decompiler, mode, image, platform });
       const proc = cp.spawn('docker', pullArgs, { env: process.env });
+      let lastUiSummary = '';
+      let lastUiSummaryAt = 0;
+      const postPullSummary = (force = false) => {
+        const summary = _pullProgressSummary(layersDone, layersTotal);
+        if (!summary || summary === lastUiSummary) return;
+        const now = Date.now();
+        if (!force && now - lastUiSummaryAt < 500) return;
+        lastUiSummary = summary;
+        lastUiSummaryAt = now;
+        const percent = layersTotal > 0 ? Math.min(100, Math.round((layersDone / layersTotal) * 100)) : null;
+        panel.webview.postMessage({ type: 'hubDecompilerPullProgress', decompiler, line: summary, percent });
+      };
       const handlePullChunk = (chunk: Buffer, isError = false) => {
         for (const line of chunk.toString().split('\n').filter(Boolean)) {
           if (/Pulling fs layer/i.test(line)) layersTotal++;
           if (/Pull complete|Already exists|Download complete/i.test(line)) layersDone++;
           const percent = layersTotal > 0 ? Math.min(100, Math.round((layersDone / layersTotal) * 100)) : null;
-          panel.webview.postMessage({ type: 'hubDecompilerPullProgress', decompiler, line: line.trim(), percent });
+          const trimmed = line.trim();
+          if (/Pulling from|Digest:|Status:|Downloaded newer image|Image is up to date/i.test(trimmed)) {
+            panel.webview.postMessage({ type: 'hubDecompilerPullProgress', decompiler, line: trimmed, percent });
+          } else {
+            postPullSummary(false);
+          }
           if (isError) lastError = line.trim();
         }
       };
@@ -1052,15 +1114,28 @@ function staticHandlers(config) {
       proc.stderr.on('data', (chunk: Buffer) => handlePullChunk(chunk, true));
       proc.on('close', async (code: number | null) => {
         const ok = code === 0;
+        postPullSummary(true);
+        _logDecompilerDocker(logChannel, ok ? 'pull.done' : 'pull.error', {
+          decompiler,
+          mode,
+          image,
+          platform,
+          code,
+          layersDone,
+          layersTotal,
+          error: ok ? '' : lastError,
+        });
         panel.webview.postMessage({ type: 'hubDecompilerPullDone', decompiler, ok, error: ok ? null : lastError, mode });
         if (ok) {
           try {
             const { stdout } = await runPython(['backends/static/decompile/decompile.py', '--list', '--provider', 'auto']);
             const result = JSON.parse(stdout);
             panel.webview.postMessage({ type: 'hubDecompilerList', result });
-            _postDockerRuntimeStatus(panel, { force: true }).catch(() => {});
-            _postDecompilerImageUpdateStatus(panel, result, { force: true }).catch(() => {});
-          } catch (_e) { /* refresh best-effort */ }
+            _postDockerRuntimeStatus(panel, { force: true, logChannel }).catch(() => {});
+            _postDecompilerImageUpdateStatus(panel, result, { force: true, logChannel }).catch(() => {});
+          } catch (_e) {
+            _logDecompilerDocker(logChannel, 'pull.refresh.error', { decompiler, error: _e?.message || String(_e) });
+          }
         }
       });
     },

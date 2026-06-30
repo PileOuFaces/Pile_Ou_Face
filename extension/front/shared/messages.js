@@ -2,7 +2,6 @@
 function initMessageHandler() {
 window.addEventListener('message', (event) => {
   const msg = event.data;
-  if (msg?.type) console.log('[POF] message IN:', msg.type);
   if (!msg?.type) return;
   if (msg.type === 'hubPrefillAiPrompt') {
     prefillOllamaPrompt(String(msg.prompt || ''));
@@ -1887,7 +1886,6 @@ window.addEventListener('message', (event) => {
   }
   if (msg.type === 'hubDecompilerList') {
     const newResult = msg.result || {};
-    console.log('[POF] messages.js received hubDecompilerList keys:', Object.keys(newResult));
     if (window._decompilerImageUpdates) {
       const dockerImages = newResult._meta?.docker_images || {};
       Object.keys(window._decompilerImageUpdates).forEach((id) => {
@@ -1946,7 +1944,6 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubCommandResult') {
-    console.log('[POF] messages.js received hubCommandResult', msg?.requestId, msg?.status);
     _onDecompilerCommandResult(msg);
     return;
   }
