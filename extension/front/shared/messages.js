@@ -1271,7 +1271,8 @@ window.addEventListener('message', (event) => {
       msg.functions.forEach(fn => {
         const opt = document.createElement('option');
         opt.value = String(fn.addr);
-        opt.textContent = `${fn.addr}  ${fn.name}`;
+        const instrInfo = fn.instrCount > 0 ? `  (${fn.instrCount} instr.)` : '';
+        opt.textContent = `${fn.name}${instrInfo}`;
         if (fn.addr === activeFuncAddr) opt.selected = true;
         funcSel.appendChild(opt);
       });
@@ -1286,12 +1287,36 @@ window.addEventListener('message', (event) => {
     if (blocks.length === 0) {
       const bp = getStaticBinaryPath();
       const hint = bp ? 'Aucun bloc détecté. Ouvrez le désassemblage puis rechargez.' : 'Ouvrez d\'abord le désassemblage.';
-      container.innerHTML = `<p class="hint">${hint}</p>
-        <button type="button" class="btn btn-primary" id="btnCfgOpenDisasm">Ouvrir le désassemblage</button>`;
-      document.getElementById('btnCfgOpenDisasm')?.addEventListener('click', () => {
-        if (bp) vscode.postMessage({ type: 'hubOpenDisasm', binaryPath: bp, useCache: true });
-        else vscode.postMessage({ type: 'requestBinarySelection' });
-      });
+      while (container.firstChild) container.removeChild(container.firstChild);
+      const hintEl = document.createElement('p');
+      hintEl.className = 'hint';
+      hintEl.textContent = hint;
+      container.appendChild(hintEl);
+      if (bp) {
+        const btnOpen = document.createElement('button');
+        btnOpen.type = 'button';
+        btnOpen.className = 'btn btn-primary';
+        btnOpen.textContent = 'Ouvrir le désassemblage';
+        btnOpen.addEventListener('click', () => vscode.postMessage({ type: 'hubOpenDisasm', binaryPath: bp, useCache: true }));
+        container.appendChild(btnOpen);
+      } else {
+        const btnSel = document.createElement('button');
+        btnSel.type = 'button';
+        btnSel.className = 'btn btn-primary';
+        btnSel.textContent = 'Sélectionner un binaire';
+        btnSel.addEventListener('click', () => vscode.postMessage({ type: 'requestBinarySelection' }));
+        container.appendChild(btnSel);
+      }
+      return;
+    }
+    const MAX_CFG_BLOCKS = 200;
+    if (blocks.length > MAX_CFG_BLOCKS && !msg.funcAddr) {
+      tabDataCache.cfg = null;
+      while (container.firstChild) container.removeChild(container.firstChild);
+      const warnEl = document.createElement('p');
+      warnEl.className = 'hint';
+      warnEl.textContent = `CFG trop large (${blocks.length} blocs). Sélectionnez une fonction dans le menu ci-dessus.`;
+      container.appendChild(warnEl);
       return;
     }
     // Table view — build with DOM API (no innerHTML with variables)

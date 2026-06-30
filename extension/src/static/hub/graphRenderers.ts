@@ -61,7 +61,14 @@ function createGraphRenderers({
       if (fs.existsSync(mappingPath)) {
         try {
           const mappingData = JSON.parse(fs.readFileSync(mappingPath, 'utf8'));
-          functions = mappingData.functions || [];
+          const rawFunctions = mappingData.functions || [];
+          const instrCount = new Map<string, number>();
+          (mappingData.lines || []).forEach((line: any) => {
+            if (line.function_addr) instrCount.set(line.function_addr, (instrCount.get(line.function_addr) || 0) + 1);
+          });
+          functions = rawFunctions
+            .map((fn: any) => ({ ...fn, instrCount: instrCount.get(fn.addr) || 0 }))
+            .sort((a: any, b: any) => b.instrCount - a.instrCount);
         } catch (_) {}
       }
       if (!fs.existsSync(mappingPath)) {
