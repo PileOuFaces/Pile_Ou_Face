@@ -1258,6 +1258,24 @@ window.addEventListener('message', (event) => {
     if (!container) return;
     const currentBinaryPath = getStaticBinaryPath() || '';
     const cfgState = getGraphUiState('cfg', currentBinaryPath);
+    // Sync funcAddr and populate function selector
+    if (typeof cfgUiState !== 'undefined') cfgUiState.funcAddr = msg.funcAddr || '';
+    const funcSel = document.getElementById('cfgFuncSelect');
+    if (funcSel && Array.isArray(msg.functions) && msg.functions.length > 0) {
+      const activeFuncAddr = msg.funcAddr || '';
+      while (funcSel.firstChild) funcSel.removeChild(funcSel.firstChild);
+      const allOpt = document.createElement('option');
+      allOpt.value = '';
+      allOpt.textContent = '\u2014 D\u00e9sassemblage complet \u2014';
+      funcSel.appendChild(allOpt);
+      msg.functions.forEach(fn => {
+        const opt = document.createElement('option');
+        opt.value = String(fn.addr);
+        opt.textContent = `${fn.addr}  ${fn.name}`;
+        if (fn.addr === activeFuncAddr) opt.selected = true;
+        funcSel.appendChild(opt);
+      });
+    }
     const cfg = msg.cfg || { blocks: [], edges: [] };
     const blocks = cfg.blocks || [];
     const edges = cfg.edges || [];
@@ -1344,7 +1362,10 @@ window.addEventListener('message', (event) => {
       caseLabels: b.incoming_case_labels || [],
     }));
     const rerenderCfgGraph = () => {
-      if (getStaticBinaryPath() === currentBinaryPath) vscode.postMessage({ type: 'hubLoadCfg', binaryPath: currentBinaryPath });
+      if (getStaticBinaryPath() === currentBinaryPath) {
+        const fa = (typeof cfgUiState !== 'undefined' ? cfgUiState.funcAddr : '') || undefined;
+        vscode.postMessage({ type: 'hubLoadCfg', binaryPath: currentBinaryPath, funcAddr: fa });
+      }
     };
     const svgEl = renderGraphSvg(svgNodes, graphEdges, {
       zoomState,

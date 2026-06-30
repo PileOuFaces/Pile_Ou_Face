@@ -45,6 +45,7 @@ function createGraphRenderers({
   return {
     hubLoadCfg: async (message) => {
       const binaryPath = (message.binaryPath || '').trim();
+      const funcAddr = String(message.funcAddr || '').trim();
       const {
         mappingPath,
         effectiveAbsPath,
@@ -56,34 +57,44 @@ function createGraphRenderers({
         logPrefix: 'CFG',
         ensureMapping: true,
       });
+      let functions = [];
+      if (fs.existsSync(mappingPath)) {
+        try {
+          const mappingData = JSON.parse(fs.readFileSync(mappingPath, 'utf8'));
+          functions = mappingData.functions || [];
+        } catch (_) {}
+      }
       if (!fs.existsSync(mappingPath)) {
         if (!hasAnalyzableBinary) {
-          hubPost('hubCfg', { cfg: { blocks: [], edges: [] } });
+          hubPost('hubCfg', { cfg: { blocks: [], edges: [] }, functions, funcAddr });
           return;
         }
       }
       try {
         if (fs.existsSync(mappingPath)) {
           const mappingSig = getFileSignature(mappingPath);
-          const cachedCfg = readAnalysisCacheEntry(effectiveAbsPath, allowCache, 'cfg');
+          const cacheKey = funcAddr ? `cfg_${funcAddr}` : 'cfg';
+          const cachedCfg = readAnalysisCacheEntry(effectiveAbsPath, allowCache, cacheKey);
           if (cachedCfg && cachedCfg._cache_meta?.mapping_sig === mappingSig) {
-            logChannel.appendLine('[cache] CFG depuis cache');
-            hubPost('hubCfg', { cfg: stripCacheMeta(cachedCfg) });
+            logChannel.appendLine(`[cache] CFG depuis cache (${funcAddr || 'full'})`);
+            hubPost('hubCfg', { cfg: stripCacheMeta(cachedCfg), functions, funcAddr });
             return;
           }
-          const cfg = await runPythonJson(getCfgScript(root), ['--mapping', mappingPath]);
-          writeAnalysisCacheEntry(effectiveAbsPath, allowCache, 'cfg', {
+          const scriptArgs = ['--mapping', mappingPath];
+          if (funcAddr) scriptArgs.push('--function', funcAddr);
+          const cfg = await runPythonJson(getCfgScript(root), scriptArgs);
+          writeAnalysisCacheEntry(effectiveAbsPath, allowCache, cacheKey, {
             ...cfg,
             _cache_meta: { mapping_sig: mappingSig },
           });
-          hubPost('hubCfg', { cfg: stripCacheMeta(cfg) });
+          hubPost('hubCfg', { cfg: stripCacheMeta(cfg), functions, funcAddr });
         } else {
           logChannel.appendLine(`[CFG] Mapping introuvable: ${mappingPath}`);
-          hubPost('hubCfg', { cfg: { blocks: [], edges: [] } });
+          hubPost('hubCfg', { cfg: { blocks: [], edges: [] }, functions, funcAddr });
         }
       } catch (err) {
         logChannel.appendLine(`[CFG] Erreur: ${err.message}`);
-        hubPost('hubCfg', { cfg: { blocks: [], edges: [] } });
+        hubPost('hubCfg', { cfg: { blocks: [], edges: [] }, functions, funcAddr });
       }
     },
 
