@@ -202,6 +202,8 @@ describe('hubLoadDecompile parallel', () => {
           child.stdout.emit('data', JSON.stringify([
             { RepoDigests: [`ghcr.io/pileoufaces/pile-ou-face/decompiler-retdec@${oldDigest}`] },
           ]));
+        } else if (args.includes('buildx')) {
+          child.stdout.emit('data', `Name: ghcr.io/pileoufaces/pile-ou-face/decompiler-retdec:latest\nDigest:    ${newDigest}\n`);
         } else {
           child.stdout.emit('data', JSON.stringify({ Descriptor: { digest: newDigest } }));
         }
@@ -218,5 +220,54 @@ describe('hubLoadDecompile parallel', () => {
     expect(updateMsgs.length).to.equal(2);
     expect(updateMsgs[0].updates.retdec.status).to.equal('checking');
     expect(updateMsgs[1].updates.retdec.status).to.equal('update-available');
+  });
+
+  it('treats a matching remote image index digest as up to date', async () => {
+    const indexDigest = `sha256:${'c'.repeat(64)}`;
+    const platformDigest = `sha256:${'d'.repeat(64)}`;
+    const execFile = sinon.stub().callsFake((bin, args, opts, cb) => {
+      expect(args).to.include('--list');
+      cb(null, JSON.stringify({
+        ghidra: true,
+        _meta: {
+          labels: { ghidra: 'Ghidra' },
+          docker_images: { ghidra: 'ghcr.io/pileoufaces/pile-ou-face/decompiler-ghidra:latest' },
+          docker_images_available: { ghidra: true },
+          docker_platform: {},
+        },
+      }), '');
+    });
+    const spawn = sinon.stub().callsFake((bin, args) => {
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = sinon.stub();
+      process.nextTick(() => {
+        if (args.includes('image')) {
+          child.stdout.emit('data', JSON.stringify([
+            { RepoDigests: [`ghcr.io/pileoufaces/pile-ou-face/decompiler-ghidra@${indexDigest}`] },
+          ]));
+        } else if (args.includes('buildx')) {
+          child.stdout.emit('data', [
+            'Name:      ghcr.io/pileoufaces/pile-ou-face/decompiler-ghidra:latest',
+            'MediaType: application/vnd.oci.image.index.v1+json',
+            `Digest:    ${indexDigest}`,
+            `  Name: ghcr.io/pileoufaces/pile-ou-face/decompiler-ghidra:latest@${platformDigest}`,
+          ].join('\n'));
+        } else {
+          child.stdout.emit('data', JSON.stringify({ Descriptor: { digest: platformDigest } }));
+        }
+        child.emit('close', 0);
+      });
+      return child;
+    });
+    const posted = [];
+    const handlers = makeHandlers(execFile, posted, { child_process: { spawn } });
+    await handlers.hubListDecompilers({ provider: 'auto' });
+    await new Promise(resolve => setTimeout(resolve, 10));
+
+    const updateMsgs = posted.filter(m => m.type === 'hubDecompilerImageUpdates');
+    expect(updateMsgs.length).to.equal(2);
+    expect(updateMsgs[1].updates.ghidra.status).to.equal('up-to-date');
   });
 });

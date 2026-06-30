@@ -108,6 +108,18 @@ function _extractRemoteManifestDigests(payload) {
   return Array.from(digests);
 }
 
+function _extractImagetoolsDigests(stdout) {
+  const digests = new Set();
+  const text = String(stdout || '');
+  for (const match of text.matchAll(/(?:^|\s)Digest:\s*(sha256:[a-f0-9]{64})/gim)) {
+    digests.add(match[1].toLowerCase());
+  }
+  for (const match of text.matchAll(/@((?:sha256:)[a-f0-9]{64})/gim)) {
+    digests.add(match[1].toLowerCase());
+  }
+  return Array.from(digests);
+}
+
 async function _checkDockerImageUpdate(image, platform = '') {
   const dockerExe = resolveDockerExecutable();
   const local = await _collectProcessOutput(
@@ -126,21 +138,38 @@ async function _checkDockerImageUpdate(image, platform = '') {
     return { image, platform, status: 'unknown', error: 'image locale sans digest registry' };
   }
 
+  const imagetools = await _collectProcessOutput(
+    dockerExe,
+    ['buildx', 'imagetools', 'inspect', image],
+    { env: buildRuntimeEnv(''), timeout: 15000 },
+  );
+  let remoteDigests = [];
+  if (imagetools.code === 0) {
+    remoteDigests = _extractImagetoolsDigests(imagetools.stdout);
+  }
+
   const remoteArgs = ['manifest', 'inspect', '--verbose', image];
   const remote = await _collectProcessOutput(
     dockerExe,
     remoteArgs,
     { env: buildRuntimeEnv(''), timeout: 15000 },
   );
-  if (remote.code !== 0) {
-    return { image, platform, status: 'unknown', localDigests, error: remote.stderr.trim() };
+  if (remote.code === 0) {
+    let remotePayload = null;
+    try { remotePayload = JSON.parse(remote.stdout || '{}'); } catch (_) {}
+    remoteDigests = Array.from(new Set([
+      ...remoteDigests,
+      ..._extractRemoteManifestDigests(remotePayload),
+    ]));
   }
-
-  let remotePayload = null;
-  try { remotePayload = JSON.parse(remote.stdout || '{}'); } catch (_) {}
-  const remoteDigests = _extractRemoteManifestDigests(remotePayload);
   if (remoteDigests.length === 0) {
-    return { image, platform, status: 'unknown', localDigests, error: 'digest distant introuvable' };
+    return {
+      image,
+      platform,
+      status: 'unknown',
+      localDigests,
+      error: imagetools.stderr.trim() || remote.stderr.trim() || 'digest distant introuvable',
+    };
   }
 
   const isCurrent = localDigests.some((digest) => remoteDigests.includes(digest));
