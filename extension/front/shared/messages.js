@@ -2396,7 +2396,7 @@ window.addEventListener('message', (event) => {
       revealTable: isStaticTabActive('cfg') && document.querySelector('#cfgContent .cfg-table-view')?.style.display !== 'none',
     });
     // Auto-switch CFG function scope when addr falls outside current view
-    if (!cfgBlockFound && isStaticTabActive('cfg')) {
+    if (!cfgBlockFound) {
       const addrInt = parseInt(msg.addr, 16);
       const fns = (typeof cfgUiState !== 'undefined' ? cfgUiState.knownFunctions : null) || [];
       if (!isNaN(addrInt) && fns.length > 0) {
@@ -2416,8 +2416,12 @@ window.addEventListener('message', (event) => {
           cfgUiState.funcAddr = best.addr;
           cfgUiState.activeAddr = msg.addr;
           tabDataCache.cfg = null;
-          const bp = getStaticBinaryPath();
-          if (bp) postBinaryAwareMessage('hubLoadCfg', { binaryPath: bp, funcAddr: best.addr });
+          // Reload if CFG tab content is rendered (active or already loaded in DOM)
+          const cfgPane = document.getElementById('cfgContent');
+          if (cfgPane && cfgPane.style.display !== 'none') {
+            const bp = getStaticBinaryPath();
+            if (bp) postBinaryAwareMessage('hubLoadCfg', { binaryPath: bp, funcAddr: best.addr });
+          }
         }
       }
     }
