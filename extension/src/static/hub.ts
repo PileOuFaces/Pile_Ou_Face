@@ -372,6 +372,7 @@ function createHub(config) {
       globalDir,
       panel,
       context,
+      logChannel,
       getTempDir,
       ensureTempDir,
       refreshSidebar,

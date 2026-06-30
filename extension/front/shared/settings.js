@@ -713,7 +713,7 @@ function _runDecompilerCommand(command, btnId, loadLabel, args = []) {
   btn.textContent = loadLabel;
   btn.classList.add('btn--loading');
 
-  console.debug('[POF] _runDecompilerCommand', command, requestId);
+  console.log('[POF] _runDecompilerCommand', command, requestId);
   vscode.postMessage({ type: 'hubExecuteCommand', command, requestId, args });
 
   // Sécurité : déverrouiller après 60s si hubCommandResult n'arrive jamais
@@ -728,7 +728,7 @@ function _runDecompilerCommand(command, btnId, loadLabel, args = []) {
 
 /** Callback appelé quand `hubCommandResult` arrive depuis l'extension */
 function _onDecompilerCommandResult(msg) {
-  console.debug('[POF] _onDecompilerCommandResult', msg?.requestId, msg?.status);
+  console.log('[POF] _onDecompilerCommandResult', msg?.requestId, msg?.status);
   const pending = msg.requestId ? _decompilerCmdPending.get(msg.requestId) : null;
   if (pending) {
     _decompilerCmdPending.delete(msg.requestId);

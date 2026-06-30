@@ -394,18 +394,6 @@ async function cmdDecompilerAdd(root, storageDir, editId = null) {
       if (ociDef.env) ociConfig.env = ociDef.env;
       if (ociDef.platform) ociConfig.docker_platform = ociDef.platform;
 
-      // Proposer de télécharger l'image si absente
-      const imageReady = _checkDockerImageSync(ociDef.image);
-      if (!imageReady) {
-        const pullNow = await vscode.window.showInformationMessage(
-          `"${ociDef.label}" n'est pas encore téléchargée (${ociDef.image}).`,
-          'Télécharger maintenant', 'Plus tard'
-        );
-        if (pullNow === 'Télécharger maintenant') {
-          await _pullOciImageWithProgress(ociDef.image, ociDef.label, ociDef.platform || '');
-        }
-      }
-
       // Si mode === 'both', on demande quand même la commande locale
       if (mode === 'both') {
         const localCmd = await vscode.window.showInputBox({
@@ -426,10 +414,25 @@ async function cmdDecompilerAdd(root, storageDir, editId = null) {
         if (localFullCmd.trim()) ociConfig.full_command = _splitCommand(localFullCmd.trim());
       }
 
-      // Enregistrement immédiat — pas d'étapes supplémentaires
+      // Enregistrement immédiat — le wizard se termine ici
       cfg.decompilers[id] = ociConfig;
       _writeConfig(storageDir, cfg);
       _autoCheckDecompiler(root, storageDir, id, label);
+
+      // Proposer de télécharger l'image si absente — fire-and-forget (non-bloquant)
+      const imageReady = _checkDockerImageSync(ociDef.image);
+      if (!imageReady) {
+        (async () => {
+          const pullNow = await vscode.window.showInformationMessage(
+            `"${ociDef.label}" n'est pas encore téléchargée (${ociDef.image}).`,
+            'Télécharger maintenant', 'Plus tard'
+          );
+          if (pullNow === 'Télécharger maintenant') {
+            await _pullOciImageWithProgress(ociDef.image, ociDef.label, ociDef.platform || '');
+          }
+        })().catch(() => {});
+      }
+
       return;
     }
 
