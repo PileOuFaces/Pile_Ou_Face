@@ -2927,13 +2927,17 @@ window.addEventListener('message', (event) => {
     });
     updateTypedDataActiveSelection(window._lastDisasmAddr, hexSelectionModel.spanLength, { reveal: false });
     const bp = getStaticBinaryPath();
-    document.getElementById('btnTypedPrev')?.addEventListener('click', () => {
-      if (currentPage > 0)
-        vscode.postMessage(buildTypedDataRequest(bp, { page: currentPage - 1, valueType: type || 'auto' }));
+    container.querySelectorAll('#btnTypedPrev').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (currentPage > 0)
+          vscode.postMessage(buildTypedDataRequest(bp, { page: currentPage - 1, valueType: type || 'auto' }));
+      });
     });
-    document.getElementById('btnTypedNext')?.addEventListener('click', () => {
-      if (currentPage < totalPages - 1)
-        vscode.postMessage(buildTypedDataRequest(bp, { page: currentPage + 1, valueType: type || 'auto' }));
+    container.querySelectorAll('#btnTypedNext').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (currentPage < totalPages - 1)
+          vscode.postMessage(buildTypedDataRequest(bp, { page: currentPage + 1, valueType: type || 'auto' }));
+      });
     });
     return;
   }
