@@ -401,6 +401,16 @@ function createHub(config) {
         try { resolve(JSON.parse(stdout)); } catch (e) { reject(e); }
       });
     });
+    const runPythonJsonViaFile = (scriptPath, args, tmpFile) => new Promise((resolve, reject) => {
+      cp.execFile(pythonExe, [scriptPath, ...args, '--output', tmpFile], { cwd: root, timeout: 120000, env: pythonEnv }, (err) => {
+        if (err) { reject(err.message ? err : new Error(String(err))); return; }
+        try {
+          const data = fs.readFileSync(tmpFile, 'utf8');
+          try { fs.unlinkSync(tmpFile); } catch (_) {}
+          resolve(JSON.parse(data));
+        } catch (e) { reject(e); }
+      });
+    });
     const runPythonJsonFile = (args, {
       timeout = 30000,
       maxBuffer = 4 * 1024 * 1024,
@@ -681,7 +691,7 @@ function createHub(config) {
       getCfgScript, getCallGraphScript, getDiscoverFunctionsScript,
     });
     const loadersHandlers = createLoaders({
-      panel, analysisCtx, root, storageDir, globalDir, runPythonJson, logChannel, fs, path,
+      panel, analysisCtx, root, storageDir, globalDir, runPythonJson, runPythonJsonViaFile, ensureTempDir, logChannel, fs, path,
       readCache, writeCache, getStringsScript, getSectionsScript, getXrefsScript,
     });
     const traceHistoryHandlers = createTraceHistory({

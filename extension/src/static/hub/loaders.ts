@@ -7,6 +7,8 @@ function createLoaders({
   root,
   storageDir,
   runPythonJson,
+  runPythonJsonViaFile,
+  ensureTempDir,
   logChannel,
   fs,
   path,
@@ -86,9 +88,11 @@ function createLoaders({
           logLabel: 'Strings',
           isCacheUsable: (cached) => Array.isArray(cached) && cached.length > 0,
           compute: async () => {
-            const args = [getStringsScript(root), '--binary', absPath, '--min-len', String(minLen), '--encoding', encoding, '--max-results', '5000'];
+            const scriptPath = getStringsScript(root);
+            const args = ['--binary', absPath, '--min-len', String(minLen), '--encoding', encoding];
             if (section) args.push('--section', section);
-            return runPythonJson(args[0], args.slice(1));
+            const tmpFile = path.join(ensureTempDir(root), `strings_${Date.now()}.json`);
+            return runPythonJsonViaFile(scriptPath, args, tmpFile);
           },
         });
         hubPost('hubStrings', { strings });
