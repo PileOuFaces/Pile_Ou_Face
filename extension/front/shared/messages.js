@@ -1211,6 +1211,9 @@ window.addEventListener('message', (event) => {
       ].map(([k, v]) => `<div class="info-row"><span class="info-key">${escapeHtml(k)}</span><span class="info-val">${escapeHtml(String(v))}</span></div>`).join('');
       container.innerHTML = `<div class="info-grid">${rows}</div>${renderPackerAnalysisHtml(info.packer_analysis)}`;
     }
+    if (typeof resetDetectionStateForBinary === 'function') {
+      resetDetectionStateForBinary(getStaticBinaryPath());
+    }
     updateDisasmSessionSummary();
     if (loadAllPending > 0) { loadAllPending--; if (loadAllPending <= 0) { const b = document.getElementById('btnLoadAll'); if (b) { b.disabled = false; b.classList.remove('loading'); } } }
     return;
@@ -1939,6 +1942,31 @@ window.addEventListener('message', (event) => {
   }
   if (msg.type === 'hubRuleToggled' || msg.type === 'hubRuleAdded' || msg.type === 'hubRuleDeleted' || msg.type === 'hubRuleUpdated') {
     vscode.postMessage({ type: 'hubListRules' });
+    return;
+  }
+  if (msg.type === 'hubRuleImported') {
+    if (msg.cancelled) return;
+    if (msg.ok !== false) {
+      const imported = Array.isArray(msg.imported) ? msg.imported : [];
+      _showToast({
+        title: 'Règles importées',
+        sub: imported.length
+          ? `${imported.length} fichier(s) ajouté(s)`
+          : String(msg.source || ''),
+        icon: '📁',
+        variant: 'ready',
+        duration: 3500,
+      });
+      vscode.postMessage({ type: 'hubListRules' });
+    } else {
+      _showToast({
+        title: 'Import de règles impossible',
+        sub: String(msg.error || msg.source || ''),
+        icon: '⚠️',
+        variant: 'error',
+        duration: 5200,
+      });
+    }
     return;
   }
   if (msg.type === 'hubDecompilerList') {
@@ -3026,43 +3054,96 @@ window.addEventListener('message', (event) => {
       if (!byType[r.type]) byType[r.type] = [];
       byType[r.type].push(r);
     }
-    const tree = document.createElement('div');
-    tree.className = 'resource-tree';
-    const detail = document.createElement('div');
-    detail.className = 'resource-detail';
-    detail.style.display = 'none';
 
-    for (const [type, items] of Object.entries(byType)) {
-      const typeRow = document.createElement('div');
-      typeRow.className = 'resource-tree-type';
-      typeRow.textContent = '\u25B8 ' + type + ' (' + items.length + ')';
-      const itemsDiv = document.createElement('div');
-      itemsDiv.className = 'resource-tree-items';
-      itemsDiv.style.display = 'none';
+    // Layout: filtre + arbre gauche / détail droite
+    const layout = document.createElement('div');
+    layout.className = 'resource-layout';
 
-      typeRow.addEventListener('click', () => {
-        const visible = itemsDiv.style.display !== 'none';
-        itemsDiv.style.display = visible ? 'none' : '';
-        typeRow.textContent = (visible ? '\u25B8 ' : '\u25BE ') + type + ' (' + items.length + ')';
-      });
+    const treePaneEl = document.createElement('div');
+    treePaneEl.className = 'resource-tree-pane';
 
-      items.forEach((r) => {
-        const item = document.createElement('div');
-        item.className = 'resource-tree-item';
-        item.textContent = 'ID ' + r.id + ' \u2014 Lang ' + r.lang + ' \u2014 ' + r.size + ' o';
-        item.addEventListener('click', () => {
-          detail.style.display = '';
-          let text = 'Type: ' + r.type + '\nID: ' + r.id + '\nLang: ' + r.lang + '\nSize: ' + r.size + ' octets\n\n';
-          if (r.decoded) text += 'Decoded:\n' + JSON.stringify(r.decoded, null, 2) + '\n\n';
-          text += 'Hex preview:\n' + (r.hex_preview || '\u2014');
-          detail.textContent = text;
+    const filterWrap = document.createElement('div');
+    filterWrap.className = 'resource-filter-wrap';
+    const filterInput = document.createElement('input');
+    filterInput.type = 'text';
+    filterInput.className = 'resource-filter';
+    filterInput.placeholder = 'Filtrer (type, ID\u2026)';
+    filterInput.spellcheck = false;
+    filterWrap.appendChild(filterInput);
+    treePaneEl.appendChild(filterWrap);
+
+    const treeEl = document.createElement('div');
+    treeEl.className = 'resource-tree';
+    treePaneEl.appendChild(treeEl);
+
+    const detailEl = document.createElement('div');
+    detailEl.className = 'resource-detail';
+    const detailPlaceholder = document.createElement('p');
+    detailPlaceholder.className = 'hint';
+    detailPlaceholder.textContent = 'S\u00e9lectionne une ressource pour voir le d\u00e9tail.';
+    detailEl.appendChild(detailPlaceholder);
+
+    layout.appendChild(treePaneEl);
+    layout.appendChild(detailEl);
+
+    let activeItem = null;
+
+    function buildResourceTree(filterStr) {
+      const f = (filterStr || '').toLowerCase().trim();
+      treeEl.textContent = '';
+      for (const [type, items] of Object.entries(byType)) {
+        const filtered = f
+          ? items.filter((r) =>
+              type.toLowerCase().includes(f) ||
+              String(r.id).toLowerCase().includes(f) ||
+              String(r.lang).toLowerCase().includes(f)
+            )
+          : items;
+        if (!filtered.length) continue;
+
+        const typeRow = document.createElement('div');
+        typeRow.className = 'resource-tree-type';
+        const itemsDiv = document.createElement('div');
+        itemsDiv.className = 'resource-tree-items';
+        let open = !!f;
+        const setLabel = (o) => {
+          typeRow.textContent = (o ? '\u25BE ' : '\u25B8 ') + type + ' (' + filtered.length + ')';
+        };
+        setLabel(open);
+        itemsDiv.style.display = open ? '' : 'none';
+        typeRow.addEventListener('click', () => {
+          open = !open;
+          itemsDiv.style.display = open ? '' : 'none';
+          setLabel(open);
         });
-        itemsDiv.appendChild(item);
-      });
-      tree.appendChild(typeRow);
-      tree.appendChild(itemsDiv);
+
+        filtered.forEach((r) => {
+          const item = document.createElement('div');
+          item.className = 'resource-tree-item';
+          item.textContent = 'ID\u00a0' + r.id + '\u00b7 Lang\u00a0' + r.lang + '\u00b7 ' + r.size + '\u00a0o';
+          item.addEventListener('click', () => {
+            if (activeItem) activeItem.classList.remove('is-active');
+            item.classList.add('is-active');
+            activeItem = item;
+            if (typeof renderPeResourceDetail === 'function') {
+              renderPeResourceDetail(r, detailEl);
+            } else {
+              let text = 'Type: ' + r.type + '\nID: ' + r.id + '\nLang: ' + r.lang + '\nSize: ' + r.size + ' octets\n\n';
+              if (r.decoded) text += 'Decoded:\n' + JSON.stringify(r.decoded, null, 2) + '\n\n';
+              text += 'Hex preview:\n' + (r.hex_preview || '\u2014');
+              detailEl.textContent = text;
+            }
+          });
+          itemsDiv.appendChild(item);
+        });
+        treeEl.appendChild(typeRow);
+        treeEl.appendChild(itemsDiv);
+      }
     }
-    container.replaceChildren(tree, detail);
+
+    buildResourceTree('');
+    filterInput.addEventListener('input', () => buildResourceTree(filterInput.value));
+    container.replaceChildren(layout);
     return;
   }
 

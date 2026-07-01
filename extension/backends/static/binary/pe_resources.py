@@ -55,6 +55,74 @@ _RT_NAMES = {
 }
 
 
+def _align4(n: int) -> int:
+    """Arrondit n au multiple de 4 supérieur ou égal."""
+    return (n + 3) & ~3
+
+
+def _read_utf16_key(data: bytes, offset: int, limit: int) -> tuple[str, int]:
+    """Lit une clé UTF-16LE à terminateur nul. Retourne (clé, offset_après_null)."""
+    pos = offset
+    while pos + 1 < limit and not (data[pos] == 0 and data[pos + 1] == 0):
+        pos += 2
+    key = data[offset:pos].decode("utf-16-le", errors="replace")
+    return key, pos + 2
+
+
+def _parse_string_table_entries(data: bytes, start: int, end: int) -> dict:
+    """Parse les blocs String (clé/valeur) à l'intérieur d'un StringTable."""
+    result: dict = {}
+    offset = start
+    while offset + 6 <= end:
+        w_len = int.from_bytes(data[offset : offset + 2], "little")
+        if w_len < 6:
+            break
+        block_end = min(offset + w_len, end)
+        w_val_len = int.from_bytes(data[offset + 2 : offset + 4], "little")
+        key, after_key = _read_utf16_key(data, offset + 6, block_end)
+        val_start = _align4(after_key)
+        if key and w_val_len > 0:
+            val_bytes = w_val_len * 2
+            if val_start + val_bytes <= block_end:
+                val = (
+                    data[val_start : val_start + val_bytes]
+                    .decode("utf-16-le", errors="replace")
+                    .rstrip("\x00")
+                )
+                result[key] = val
+        offset = _align4(offset + w_len)
+    return result
+
+
+def _parse_string_file_info(data: bytes) -> dict:
+    """Extrait les champs StringFileInfo d'un binaire RT_VERSION brut."""
+    needle = "StringFileInfo".encode("utf-16-le")
+    idx = data.find(needle)
+    if idx < 0:
+        return {}
+    sfi_start = idx - 6  # wLength(2) + wValueLength(2) + wType(2)
+    if sfi_start < 0:
+        return {}
+    sfi_len = int.from_bytes(data[sfi_start : sfi_start + 2], "little")
+    sfi_end = min(sfi_start + sfi_len, len(data))
+
+    # Avancer après "StringFileInfo\0" + alignement
+    after_key = idx + len(needle) + 2
+    st_offset = _align4(after_key)
+
+    result: dict = {}
+    while st_offset + 6 <= sfi_end:
+        st_len = int.from_bytes(data[st_offset : st_offset + 2], "little")
+        if st_len < 6:
+            break
+        st_end = min(st_offset + st_len, sfi_end)
+        _, after_st_key = _read_utf16_key(data, st_offset + 6, st_end)
+        entries_start = _align4(after_st_key)
+        result.update(_parse_string_table_entries(data, entries_start, st_end))
+        st_offset = _align4(st_end)
+    return result
+
+
 def _hex_preview(data: bytes, max_bytes: int = 24) -> str:
     return " ".join(f"{b:02x}" for b in data[:max_bytes])
 
@@ -78,34 +146,35 @@ def _decode_rt_manifest(data: bytes) -> dict:
 
 
 def _decode_rt_version(data: bytes) -> dict:
+    result: dict = {}
+
+    # FixedFileInfo — magic 0xFEEF04BD
     magic = b"\xbd\x04\xef\xfe"
     idx = data.find(magic)
-    if idx < 0:
-        return {"raw": True}
-    try:
+    if idx >= 0:
         ms = int.from_bytes(data[idx + 8 : idx + 12], "little")
         ls = int.from_bytes(data[idx + 12 : idx + 16], "little")
         ms2 = int.from_bytes(data[idx + 16 : idx + 20], "little")
         ls2 = int.from_bytes(data[idx + 20 : idx + 24], "little")
-        return {
-            "file_version": f"{ms >> 16}.{ms & 0xFFFF}.{ls >> 16}.{ls & 0xFFFF}",
-            "product_version": f"{ms2 >> 16}.{ms2 & 0xFFFF}.{ls2 >> 16}.{ls2 & 0xFFFF}",
-        }
-    except Exception:
-        return {"raw": True}
+        result["file_version"] = f"{ms >> 16}.{ms & 0xFFFF}.{ls >> 16}.{ls & 0xFFFF}"
+        result["product_version"] = f"{ms2 >> 16}.{ms2 & 0xFFFF}.{ls2 >> 16}.{ls2 & 0xFFFF}"
+
+    # StringFileInfo — ProductName, CompanyName, OriginalFilename, etc.
+    strings = _parse_string_file_info(data)
+    if strings:
+        result.update(strings)
+
+    return result if result else {"raw": True}
 
 
 def _decode_rt_bitmap_icon(data: bytes, rtype: str) -> dict:
     if len(data) < 16:
         return {}
-    try:
-        w = int.from_bytes(data[4:8], "little", signed=True)
-        h = int.from_bytes(data[8:12], "little", signed=True)
-        bpp = int.from_bytes(data[14:16], "little")
-        height = abs(h) // 2 if rtype == "RT_ICON" else abs(h)
-        return {"width": abs(w), "height": height, "bpp": bpp}
-    except Exception:
-        return {}
+    w = int.from_bytes(data[4:8], "little", signed=True)
+    h = int.from_bytes(data[8:12], "little", signed=True)
+    bpp = int.from_bytes(data[14:16], "little")
+    height = abs(h) // 2 if rtype == "RT_ICON" else abs(h)
+    return {"width": abs(w), "height": height, "bpp": bpp}
 
 
 def _decode_resource(rtype_name: str, data: bytes) -> dict | None:
@@ -177,7 +246,7 @@ def get_pe_resources(binary_path: str) -> dict:
             rtype_id = type_node.id
             rtype_name = _RT_NAMES.get(rtype_id, f"RT_{rtype_id}")
             for name_node in type_node.childs:
-                rid = name_node.name if name_node.is_named else name_node.id
+                rid = name_node.name if name_node.has_name else name_node.id
                 for lang_node in name_node.childs:
                     try:
                         data = bytes(lang_node.content)
