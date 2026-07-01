@@ -134,6 +134,82 @@ function createGraphRenderers({
       }
     },
 
+    hubLoadCfgForAddr: async (message) => {
+      const binaryPath = (message.binaryPath || '').trim();
+      const addr = (message.addr || '').trim();
+      if (!addr) return;
+      const {
+        absPath,
+        artifacts,
+        mappingPath,
+        discoveredPath,
+        effectiveAbsPath,
+        allowCache,
+        hasAnalyzableBinary,
+      } = await resolveAnalysisArtifactsContext({
+        binaryPath,
+        binaryMeta: message.binaryMeta || null,
+        logPrefix: 'CFG/addr',
+        ensureMapping: true,
+      });
+      let functions = [];
+      if (fs.existsSync(mappingPath)) {
+        try {
+          const mappingData = JSON.parse(fs.readFileSync(mappingPath, 'utf8'));
+          const rawFunctions = mappingData.functions || [];
+          const instrCount = new Map<string, number>();
+          (mappingData.lines || []).forEach((line: any) => {
+            if (line.function_addr) instrCount.set(line.function_addr, (instrCount.get(line.function_addr) || 0) + 1);
+          });
+          functions = rawFunctions
+            .map((fn: any) => ({ ...fn, instrCount: instrCount.get(fn.addr) || 0 }))
+            .sort((a: any, b: any) => b.instrCount - a.instrCount);
+        } catch (_) {}
+        if (functions.length === 0) {
+          try {
+            let discPath = discoveredPath;
+            if (!discPath || !fs.existsSync(discPath)) {
+              const binForDisc = (effectiveAbsPath && fs.existsSync(effectiveAbsPath) && !fs.statSync(effectiveAbsPath).isDirectory())
+                ? effectiveAbsPath
+                : (absPath && fs.existsSync(absPath) && !fs.statSync(absPath).isDirectory() ? absPath : null);
+              const discScript = getDiscoverFunctionsScript(root);
+              const discArgs = ['--mapping', mappingPath];
+              if (binForDisc) discArgs.push('--binary', binForDisc);
+              const discovered = await runPythonJson(discScript, discArgs);
+              if (discPath) fs.writeFileSync(discPath, JSON.stringify(discovered, null, 2), 'utf8');
+              functions = (Array.isArray(discovered) ? discovered : [])
+                .map((fn: any) => ({ ...fn, instrCount: 0 }))
+                .sort((a: any, b: any) => (b.confidence_score || 0) - (a.confidence_score || 0));
+            } else {
+              const discovered = JSON.parse(fs.readFileSync(discPath, 'utf8'));
+              functions = (Array.isArray(discovered) ? discovered : [])
+                .map((fn: any) => ({ ...fn, instrCount: 0 }))
+                .sort((a: any, b: any) => (b.confidence_score || 0) - (a.confidence_score || 0));
+            }
+          } catch (_) {}
+        }
+      }
+      if (!fs.existsSync(mappingPath)) {
+        if (!hasAnalyzableBinary) {
+          hubPost('hubCfg', { cfg: { blocks: [], edges: [] }, functions, funcAddr: '' });
+          return;
+        }
+      }
+      try {
+        if (fs.existsSync(mappingPath)) {
+          const scriptArgs = ['--mapping', mappingPath, '--addr', addr];
+          const cfg = await runPythonJson(getCfgScript(root), scriptArgs);
+          const funcAddr = (cfg as any).func_addr || '';
+          hubPost('hubCfg', { cfg: stripCacheMeta(cfg), functions, funcAddr });
+        } else {
+          hubPost('hubCfg', { cfg: { blocks: [], edges: [] }, functions, funcAddr: '' });
+        }
+      } catch (err) {
+        logChannel.appendLine(`[CFG/addr] Erreur: ${err.message}`);
+        hubPost('hubCfg', { cfg: { blocks: [], edges: [] }, functions, funcAddr: '' });
+      }
+    },
+
     hubLoadCallGraph: async (message) => {
       const binaryPath = (message.binaryPath || '').trim();
       const {

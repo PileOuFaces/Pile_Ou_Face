@@ -1378,6 +1378,67 @@ def build_cfg_for_function(
     }
 
 
+def find_function_entry_for_addr(
+    lines: list[dict],
+    addr: str,
+    binary_path: str | None = None,
+) -> str | None:
+    """Trouve l'adresse d'entrée de la fonction contenant l'instruction à `addr`.
+
+    Utilise un BFS inverse dans le graphe non-call pour remonter jusqu'au bloc
+    racine (sans prédécesseur non-call) atteignable depuis le bloc contenant `addr`.
+
+    Returns:
+        L'adresse du bloc d'entrée de la fonction, ou None si non trouvé.
+    """
+    from collections import defaultdict, deque
+
+    addr_norm = _normalize_addr(addr)
+    full_cfg = build_cfg(lines, binary_path=binary_path)
+    if not full_cfg["blocks"]:
+        return None
+
+    # Trouver le bloc contenant addr (comme bloc start ou comme ligne)
+    target_block_addr: str | None = None
+    for b in full_cfg["blocks"]:
+        if _normalize_addr(b["addr"]) == addr_norm:
+            target_block_addr = b["addr"]
+            break
+        for ln in b.get("lines") or []:
+            if _normalize_addr(str(ln.get("addr") or "")) == addr_norm:
+                target_block_addr = b["addr"]
+                break
+        if target_block_addr:
+            break
+
+    if target_block_addr is None:
+        return None
+
+    # Construire l'adjacence inverse (non-call uniquement)
+    rev_non_call: dict = defaultdict(set)
+    for edge in full_cfg["edges"]:
+        if edge["type"] != "call":
+            rev_non_call[edge["to"]].add(edge["from"])
+
+    # BFS inverse depuis le bloc cible
+    visited: set = set()
+    queue: deque = deque([target_block_addr])
+    while queue:
+        node = queue.popleft()
+        if node in visited:
+            continue
+        visited.add(node)
+        for pred in rev_non_call.get(node, set()):
+            if pred not in visited:
+                queue.append(pred)
+
+    # Le bloc d'entrée = celui sans prédécesseur non-call dans le sous-graphe visité
+    entries = [n for n in visited if not (rev_non_call.get(n, set()) & visited)]
+    if not entries:
+        return target_block_addr  # fallback
+    return min(entries, key=lambda a: int(_normalize_addr(a), 16))
+
+
 def main() -> int:
     """Point d'entrée CLI : construit le CFG à partir du mapping de désassemblage."""
     import argparse
@@ -1389,6 +1450,9 @@ def main() -> int:
     parser.add_argument("--output", help="Output JSON path (default: stdout)")
     parser.add_argument(
         "--function", help="Export CFG for a single function address (e.g. 0x401000)"
+    )
+    parser.add_argument(
+        "--addr", help="Find the function containing this instruction address and export its CFG"
     )
     args = parser.parse_args()
 
@@ -1403,7 +1467,14 @@ def main() -> int:
     lines = data.get("lines", [])
     binary_path = data.get("binary")  # Chemin vers le binaire pour jump tables
 
-    if args.function:
+    if args.addr:
+        func_addr = find_function_entry_for_addr(lines, args.addr, binary_path=binary_path)
+        if func_addr:
+            cfg = build_cfg_for_function(lines, func_addr, binary_path=binary_path)
+        else:
+            cfg = {"func_addr": None, "blocks": [], "edges": []}
+        label = f"addr {args.addr} → function {func_addr or 'unknown'}"
+    elif args.function:
         cfg = build_cfg_for_function(lines, args.function, binary_path=binary_path)
         label = f"function {args.function}"
     else:

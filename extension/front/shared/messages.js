@@ -2400,34 +2400,16 @@ window.addEventListener('message', (event) => {
       reveal: isStaticTabActive('cfg'),
       revealTable: isStaticTabActive('cfg') && document.querySelector('#cfgContent .cfg-table-view')?.style.display !== 'none',
     });
-    // Auto-switch CFG function scope when addr falls outside current view
+    // Auto-switch CFG function scope: demander au backend de trouver la bonne fonction via BFS inverse
     if (!cfgBlockFound) {
-      const addrInt = parseInt(msg.addr, 16);
-      const fns = (typeof cfgUiState !== 'undefined' ? cfgUiState.knownFunctions : null) || [];
-      if (!isNaN(addrInt) && fns.length > 0) {
-        const sorted = [...fns].sort((a, b) => parseInt(a.addr, 16) - parseInt(b.addr, 16));
-        let best = null;
-        for (let i = 0; i < sorted.length; i++) {
-          const fnStart = parseInt(sorted[i].addr, 16);
-          if (fnStart > addrInt) break;
-          const fnEndExplicit = sorted[i].end_addr ? parseInt(sorted[i].end_addr, 16) : null;
-          const fnEndNext = (i + 1 < sorted.length) ? parseInt(sorted[i + 1].addr, 16) : Infinity;
-          const fnEnd = fnEndExplicit || fnEndNext;
-          if (addrInt < fnEnd) best = sorted[i];
-        }
-        if (best && best.addr !== cfgUiState.funcAddr) {
-          const funcSel2 = document.getElementById('cfgFuncSelect');
-          if (funcSel2) funcSel2.value = best.addr;
-          cfgUiState.funcAddr = best.addr;
+      const cfgPane = document.getElementById('cfgContent');
+      if (cfgPane && cfgPane.style.display !== 'none') {
+        const bp = getStaticBinaryPath();
+        if (bp) {
           cfgUiState.activeAddr = msg.addr;
           window._pendingCfgHighlightAddr = msg.addr;
           tabDataCache.cfg = null;
-          // Reload if CFG tab content is rendered (active or already loaded in DOM)
-          const cfgPane = document.getElementById('cfgContent');
-          if (cfgPane && cfgPane.style.display !== 'none') {
-            const bp = getStaticBinaryPath();
-            if (bp) postBinaryAwareMessage('hubLoadCfg', { binaryPath: bp, funcAddr: best.addr });
-          }
+          postBinaryAwareMessage('hubLoadCfgForAddr', { binaryPath: bp, addr: msg.addr });
         }
       }
     }
