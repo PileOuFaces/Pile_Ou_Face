@@ -780,22 +780,17 @@ class TestFindFunctionEntryForAddr(unittest.TestCase):
             for i, (addr, text) in enumerate(instructions)
         ]
 
-    def setUp(self):
-        from backends.static.disasm.cfg import find_function_entry_for_addr
-
-        self.find_entry = find_function_entry_for_addr
-
     def test_returns_none_for_unknown_addr(self):
         """Adresse absente du CFG → None."""
         lines = self._make_lines([
             ("0x401000", "push rbp"),
             ("0x401001", "ret"),
         ])
-        self.assertIsNone(self.find_entry(lines, "0x999999"))
+        self.assertIsNone(find_function_entry_for_addr(lines, "0x999999"))
 
     def test_returns_none_for_empty_lines(self):
         """Mapping vide → None."""
-        self.assertIsNone(self.find_entry([], "0x401000"))
+        self.assertIsNone(find_function_entry_for_addr([], "0x401000"))
 
     def test_entry_block_addr_returns_itself(self):
         """Addr = début du seul bloc → retourne cette même adresse."""
@@ -804,7 +799,7 @@ class TestFindFunctionEntryForAddr(unittest.TestCase):
             ("0x401001", "mov rbp, rsp"),
             ("0x401003", "ret"),
         ])
-        result = self.find_entry(lines, "0x401000")
+        result = find_function_entry_for_addr(lines, "0x401000")
         self.assertEqual(result, "0x401000")
 
     def test_finds_entry_from_inner_instruction(self):
@@ -814,7 +809,7 @@ class TestFindFunctionEntryForAddr(unittest.TestCase):
             ("0x401001", "mov rbp, rsp"),  # addr inside the entry block
             ("0x401003", "ret"),
         ])
-        result = self.find_entry(lines, "0x401001")
+        result = find_function_entry_for_addr(lines, "0x401001")
         self.assertEqual(result, "0x401000")
 
     def test_finds_entry_from_non_entry_block(self):
@@ -827,7 +822,7 @@ class TestFindFunctionEntryForAddr(unittest.TestCase):
             ("0x401010", "mov rax, 0"),  # non-entry block
             ("0x401013", "ret"),
         ])
-        result = self.find_entry(lines, "0x401010")
+        result = find_function_entry_for_addr(lines, "0x401010")
         self.assertEqual(result, "0x401000")
 
     def test_does_not_cross_call_edges(self):
@@ -841,7 +836,7 @@ class TestFindFunctionEntryForAddr(unittest.TestCase):
             ("0x401023", "ret"),
         ])
         # Addr inside the callee must resolve to callee's entry, not caller's
-        result = self.find_entry(lines, "0x401021")
+        result = find_function_entry_for_addr(lines, "0x401021")
         self.assertEqual(result, "0x401020")
 
     def test_finds_entry_from_branch_target(self):
@@ -854,7 +849,7 @@ class TestFindFunctionEntryForAddr(unittest.TestCase):
             ("0x40100a", "mov eax, 1"),    # branch target block
             ("0x40100f", "ret"),
         ])
-        result = self.find_entry(lines, "0x40100a")
+        result = find_function_entry_for_addr(lines, "0x40100a")
         self.assertEqual(result, "0x401000")
 
 
