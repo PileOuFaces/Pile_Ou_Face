@@ -655,6 +655,7 @@ class TestMain(unittest.TestCase):
         """main() imprime du JSON valide sur stdout et retourne 0."""
         import io
         from contextlib import redirect_stdout
+
         from backends.static.binary.pe_resources import main
 
         buf = io.StringIO()
