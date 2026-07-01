@@ -977,6 +977,7 @@ describe("staticHandlers plugin discovery", () => {
     const postMessage = sinon.spy();
     const handlers = staticHandlers({
       root: "/workspace",
+      storageDir: "/workspace/.pile-ou-face",
       panel: { webview: { postMessage } },
       context: {
         globalState: {
@@ -1052,6 +1053,7 @@ describe("staticHandlers plugin discovery", () => {
     const postMessage = sinon.spy();
     const handlers = staticHandlers({
       root: "/workspace",
+      storageDir: "/workspace/.pile-ou-face",
       panel: { webview: { postMessage } },
       context: {
         globalState: {

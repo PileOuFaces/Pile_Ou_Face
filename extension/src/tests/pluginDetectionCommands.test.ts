@@ -99,6 +99,7 @@ describe('hub detection plugin commands', () => {
         globalState: { get: () => ({}), update: async () => {} },
         globalStorageUri: { fsPath: storageRoot },
       },
+      storageDir: storageRoot,
       logChannel: { appendLine: () => {}, append: () => {} },
       getTempDir: () => '/tmp/pof',
       ensureTempDir: () => '/tmp/pof',
