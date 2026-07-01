@@ -800,7 +800,9 @@ class TestExtractStringsAddrDedup(unittest.TestCase):
 
         occurrences = [e for e in result if e["value"] == "hello"]
         self.assertEqual(
-            len(occurrences), 1, "hello ne doit apparaître qu'une fois malgré la collision VA"
+            len(occurrences),
+            1,
+            "hello ne doit apparaître qu'une fois malgré la collision VA",
         )
 
 
@@ -961,9 +963,7 @@ class TestMain(unittest.TestCase):
         import io
         import runpy
 
-        strings_py = (
-            Path(__file__).resolve().parent.parent / "search" / "strings.py"
-        )
+        strings_py = Path(__file__).resolve().parent.parent / "search" / "strings.py"
         with tempfile.TemporaryDirectory() as tmp:
             f = Path(tmp) / "bin"
             f.write_bytes(b"hello world\x00")
