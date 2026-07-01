@@ -1092,7 +1092,7 @@ class TestExtractStringsSectionFilter(unittest.TestCase):
         binary = pe_header + rdata_content
 
         file_offset = len(pe_header)  # 64 — ce que Python utilise
-        rva = 0x1000  # RVA fictif — bien plus grand que file_offset
+        # RVA fictif = 0x1000 (bien plus grand que file_offset=64) — ne doit PAS être utilisé
 
         # get_section_file_ranges retourne les offsets FICHIER (pas les RVAs)
         with patch(
