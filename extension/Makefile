@@ -284,6 +284,7 @@ decompilers-docker-list-all:
 
 venv:
 	$(PYTHON) -m venv $(VENV)
+	@[ -x $(PIP) ] || $(PY) -m pip install --upgrade pip -q
 
 install: venv
 	@if [ -f backends/requirements.txt ]; then \
