@@ -544,13 +544,14 @@
                 </select>
               </div>
               <div class="form-field">
-                <label title="Limiter à une section ELF">Section</label>
+                <label title="Limiter à une section (PE : .rdata · ELF : .rodata · Mach-O : __cstring)">Section</label>
                 <select id="stringsSection" class="select-modern">
                   <option value="" selected>Toutes</option>
-                  <option value=".rodata">.rodata</option>
+                  <option value=".rdata">.rdata (PE)</option>
+                  <option value=".rodata">.rodata (ELF)</option>
+                  <option value="__cstring">__cstring (Mach-O)</option>
                   <option value=".text">.text</option>
                   <option value=".data">.data</option>
-                  <option value="__cstring">__cstring</option>
                 </select>
               </div>
               <div class="form-field">
