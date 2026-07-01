@@ -3388,6 +3388,22 @@ function renderStringsTable(container, strings, filterText, useRegex) {
     const spanLength = Math.max(1, Number(s.length || val.length || 1));
     return `<tr class="nav-addr-row" data-addr="${addr}" data-addr-match="span" data-span-length="${escapeHtml(String(spanLength))}"><td><code class="addr-link" data-addr="${addr}" data-span="${escapeHtml(String(spanLength))}">${addr}</code></td><td>${escapeHtml(encodingLabel(String(s.encoding || 'utf-8')))}</td><td>${escapeHtml(String(s.length))}</td><td>${escapeHtml(display)}</td></tr>`;
   }).join('');
+  if (!regexError && strings.length === 0) {
+    const activeSection = escapeHtml(document.getElementById('stringsSection')?.value || '');
+    const p = document.createElement('p');
+    p.className = 'hint';
+    if (activeSection) {
+      p.innerHTML = `Aucune chaîne dans la section <code>${activeSection}</code> — elle n'existe pas dans ce binaire ou est vide.`
+        + ' PE → <code>.rdata</code>, ELF → <code>.rodata</code>, Mach-O → <code>__cstring</code>.'
+        + ' Essayez le filtre <strong>Toutes</strong>.';
+    } else {
+      p.innerHTML = 'Aucune chaîne trouvée. Les chaînes sont extraites des octets bruts, indépendamment des symboles'
+        + ' (un binaire strippé les conserve). Si le résultat est vide, le binaire est probablement'
+        + ' <strong>packé ou chiffré</strong> : les chaînes lisibles sont absentes sans déchiffrement préalable.';
+    }
+    container.replaceChildren(p);
+    return;
+  }
   const hintCls = regexError ? 'hint error' : 'hint';
   let hint = regexError ? 'Regex invalide' : (filterText ? `${filtered.length} / ${strings.length} chaîne(s)` : `${strings.length} chaîne(s)`);
   const encodingCounts = filtered.reduce((acc, entry) => {
@@ -3398,9 +3414,9 @@ function renderStringsTable(container, strings, filterText, useRegex) {
   const encodingSummary = Object.entries(encodingCounts)
     .map(([encoding, count]) => `${encodingLabel(encoding)}: ${count}`)
     .join(' · ');
-  hint += ' — Les adresses sont des adresses virtuelles.';
+  hint += ' — Adresses virtuelles (VA).';
   if (encodingSummary) hint += ` — ${encodingSummary}`;
-  container.innerHTML = `<table class="data-table"><thead><tr><th>Adresse</th><th>Encodage</th><th>Long.</th><th>Valeur</th></tr></thead><tbody>${rows}</tbody></table><p class="${hintCls}">${hint}</p>`;
+  container.innerHTML = `<table class="data-table"><thead><tr><th>Adresse</th><th>Encodage</th><th>Long.</th><th>Valeur</th></tr></thead><tbody>${rows}</tbody></table><p class="${hintCls}">${escapeHtml(hint)}</p>`;
   container.querySelectorAll('.addr-link[data-addr]').forEach((link) => {
     link.addEventListener('click', (event) => {
       event.preventDefault();
