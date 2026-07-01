@@ -93,7 +93,9 @@ function reloadStrings() {
 }
 document.getElementById('stringsEncoding')?.addEventListener('change', reloadStrings);
 document.getElementById('stringsSection')?.addEventListener('change', reloadStrings);
-document.getElementById('stringsMinLen')?.addEventListener('change', reloadStrings);
+document.getElementById('stringsMinLen')?.addEventListener('change', () => { stringsPage = 1; applyStringsFilter(); });
+document.getElementById('stringsSource')?.addEventListener('change', () => { stringsPage = 1; applyStringsFilter(); });
+document.getElementById('stringsPageSize')?.addEventListener('change', () => { stringsPage = 1; applyStringsFilter(); });
 // ── Recherche : mode pills (A) ───────────────────────────────────────────────
 let searchMode = 'text';
 const modePills = document.querySelectorAll('.search-mode-pill');
@@ -3359,35 +3361,41 @@ function renderGraphSvg(nodes, edges, opts) {
 }
 
 function renderStringsTable(container, strings, filterText, useRegex) {
-  let filtered = strings;
+  const encodingLabel = (encoding) => {
+    if (encoding === 'utf-16-le') return 'UTF-16 LE';
+    if (encoding === 'utf-16-be') return 'UTF-16 BE';
+    return 'UTF-8 / ASCII';
+  };
+
+  // minLen filter — applied client-side, no extension round-trip on minLen change
+  const minLenFilter = parseInt(document.getElementById('stringsMinLen')?.value || '4', 10);
+  const afterMinLen = strings.filter((s) => Number(s.length || 0) >= minLenFilter);
+
+  // Source filter
+  const sourceFilter = document.getElementById('stringsSource')?.value || 'all';
+  let afterSource = afterMinLen;
+  if (sourceFilter === 'pe_import') afterSource = afterMinLen.filter((s) => s.source === 'pe_import');
+  else if (sourceFilter === 'raw') afterSource = afterMinLen.filter((s) => !s.source);
+
+  // Text filter
+  let filtered = afterSource;
   let regexError = false;
   if (filterText) {
     if (useRegex) {
       try {
         const re = new RegExp(filterText);
-        filtered = strings.filter((s) => re.test(String(s.value)));
+        filtered = afterSource.filter((s) => re.test(String(s.value)));
       } catch {
         filtered = [];
         regexError = true;
       }
     } else {
       const q = filterText.toLowerCase();
-      filtered = strings.filter((s) => String(s.value).toLowerCase().includes(q));
+      filtered = afterSource.filter((s) => String(s.value).toLowerCase().includes(q));
     }
   }
-  const toShow = filtered.slice(0, 500);
-  const encodingLabel = (encoding) => {
-    if (encoding === 'utf-16-le') return 'UTF-16 LE';
-    if (encoding === 'utf-16-be') return 'UTF-16 BE';
-    return 'UTF-8 / ASCII';
-  };
-  const rows = toShow.map((s) => {
-    const val = String(s.value);
-    const display = val.length > 80 ? val.substring(0, 80) + '…' : val;
-    const addr = escapeHtml(String(s.addr || ''));
-    const spanLength = Math.max(1, Number(s.length || val.length || 1));
-    return `<tr class="nav-addr-row" data-addr="${addr}" data-addr-match="span" data-span-length="${escapeHtml(String(spanLength))}"><td><code class="addr-link" data-addr="${addr}" data-span="${escapeHtml(String(spanLength))}">${addr}</code></td><td>${escapeHtml(encodingLabel(String(s.encoding || 'utf-8')))}</td><td>${escapeHtml(String(s.length))}</td><td>${escapeHtml(display)}</td></tr>`;
-  }).join('');
+
+  // Empty state (based on total strings, not filtered)
   if (!regexError && strings.length === 0) {
     const activeSection = escapeHtml(document.getElementById('stringsSection')?.value || '');
     const p = document.createElement('p');
@@ -3404,8 +3412,18 @@ function renderStringsTable(container, strings, filterText, useRegex) {
     container.replaceChildren(p);
     return;
   }
+
+  // Pagination
+  const pageSize = parseInt(document.getElementById('stringsPageSize')?.value || '50', 10);
+  const totalFiltered = filtered.length;
+  const totalPages = Math.max(1, Math.ceil(totalFiltered / pageSize));
+  stringsPage = Math.max(1, Math.min(stringsPage, totalPages));
+  const pageStart = (stringsPage - 1) * pageSize;
+  const toShow = filtered.slice(pageStart, pageStart + pageSize);
+
+  // Hint
   const hintCls = regexError ? 'hint error' : 'hint';
-  let hint = regexError ? 'Regex invalide' : (filterText ? `${filtered.length} / ${strings.length} chaîne(s)` : `${strings.length} chaîne(s)`);
+  let hint = regexError ? 'Regex invalide' : `${filtered.length}${afterMinLen.length !== filtered.length ? ` / ${afterMinLen.length}` : ''} chaîne(s)`;
   const encodingCounts = filtered.reduce((acc, entry) => {
     const key = String(entry.encoding || 'utf-8');
     acc[key] = (acc[key] || 0) + 1;
@@ -3416,7 +3434,30 @@ function renderStringsTable(container, strings, filterText, useRegex) {
     .join(' · ');
   hint += ' — Adresses virtuelles (VA).';
   if (encodingSummary) hint += ` — ${encodingSummary}`;
-  container.innerHTML = `<table class="data-table"><thead><tr><th>Adresse</th><th>Encodage</th><th>Long.</th><th>Valeur</th></tr></thead><tbody>${rows}</tbody></table><p class="${hintCls}">${escapeHtml(hint)}</p>`;
+
+  // Pagination bar
+  const paginationBar = (totalPages > 1)
+    ? `<div class="strings-pagination"><button class="btn btn-sm btn-secondary strings-page-btn" data-dir="-1"${stringsPage <= 1 ? ' disabled' : ''}>◀</button><span>Page ${stringsPage} / ${totalPages}</span><button class="btn btn-sm btn-secondary strings-page-btn" data-dir="1"${stringsPage >= totalPages ? ' disabled' : ''}>▶</button></div>`
+    : '';
+
+  // Rows
+  const rows = toShow.map((s) => {
+    const val = String(s.value);
+    const display = val.length > 80 ? val.substring(0, 80) + '…' : val;
+    const addr = escapeHtml(String(s.addr || ''));
+    const spanLength = Math.max(1, Number(s.length || val.length || 1));
+    const sourceBadge = s.source === 'pe_import' ? ' <span class="badge-source">PE</span>' : '';
+    return `<tr class="nav-addr-row" data-addr="${addr}" data-addr-match="span" data-span-length="${escapeHtml(String(spanLength))}"><td><code class="addr-link" data-addr="${addr}" data-span="${escapeHtml(String(spanLength))}">${addr}</code></td><td>${escapeHtml(encodingLabel(String(s.encoding || 'utf-8')))}${sourceBadge}</td><td>${escapeHtml(String(s.length))}</td><td>${escapeHtml(display)}</td></tr>`;
+  }).join('');
+
+  container.innerHTML = `${paginationBar}<table class="data-table"><thead><tr><th>Adresse</th><th>Encodage</th><th>Long.</th><th>Valeur</th></tr></thead><tbody>${rows}</tbody></table><p class="${hintCls}">${escapeHtml(hint)}</p>${paginationBar}`;
+
+  container.querySelectorAll('.strings-page-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      stringsPage += parseInt(btn.dataset.dir, 10);
+      renderStringsTable(container, strings, filterText, useRegex);
+    });
+  });
   container.querySelectorAll('.addr-link[data-addr]').forEach((link) => {
     link.addEventListener('click', (event) => {
       event.preventDefault();

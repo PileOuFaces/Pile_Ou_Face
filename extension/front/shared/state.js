@@ -7,6 +7,7 @@ const STORAGE_KEY = window.POFHubState?.STORAGE_KEY || 'pile-ou-face-hub';
 // hubPayloadCore is declared in hub.js — payloadCore.js must load first (position 185 in hub.html)
 let loadAllPending = 0;
 let stringsCache = [];
+let stringsPage = 1;
 let pendingStringsFocusAddr = '';
 // Cache des onglets : évite de recharger à chaque clic si les données sont déjà chargées
 let tabDataCache = {};  // tabId -> { binaryPath }

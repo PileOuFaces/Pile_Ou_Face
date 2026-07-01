@@ -126,7 +126,7 @@ function readCache(storageDir, absPath, type, options = {}) {
   if (type === 'strings') {
     const enc = options.encoding || 'utf-8';
     const sec = (options.section || '').replace(/[^a-zA-Z0-9._-]/g, '_') || 'all';
-    file = `strings_${options.minLen || 4}_${enc.replace(/[^a-z0-9-]/g, '_')}_${sec}`;
+    file = `strings_${options.minLen || 4}_${enc.replace(/[^a-z0-9-]/g, '_')}_${sec}_v2`;
   }
   const cachePath = path.join(cacheDir, key, `${file}.json`);
   try {
@@ -159,7 +159,7 @@ function writeCache(storageDir, absPath, type, data, options = {}) {
     if (type === 'strings') {
       const enc = options.encoding || 'utf-8';
       const sec = (options.section || '').replace(/[^a-zA-Z0-9._-]/g, '_') || 'all';
-      file = `strings_${options.minLen || 4}_${enc.replace(/[^a-z0-9-]/g, '_')}_${sec}`;
+      file = `strings_${options.minLen || 4}_${enc.replace(/[^a-z0-9-]/g, '_')}_${sec}_v2`;
     }
     const cachePath = path.join(keyDir, `${file}.json`);
     fs.writeFileSync(cachePath, JSON.stringify(data), 'utf8');

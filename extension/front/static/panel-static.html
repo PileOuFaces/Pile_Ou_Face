@@ -555,6 +555,23 @@
                 </select>
               </div>
               <div class="form-field">
+                <label title="Filtrer par source">Source</label>
+                <select id="stringsSource" class="select-modern">
+                  <option value="all" selected>Toutes</option>
+                  <option value="pe_import">Imports PE</option>
+                  <option value="raw">Raw strings</option>
+                </select>
+              </div>
+              <div class="form-field">
+                <label title="Entrées par page">Par page</label>
+                <select id="stringsPageSize" class="select-modern">
+                  <option value="20">20</option>
+                  <option value="50" selected>50</option>
+                  <option value="100">100</option>
+                  <option value="500">500</option>
+                </select>
+              </div>
+              <div class="form-field">
                 <button id="btnExportStringsJson" type="button" class="btn btn-sm btn-secondary">Export JSON</button>
                 <button id="btnExportStringsCsv" type="button" class="btn btn-sm btn-secondary">Export CSV</button>
                 <button type="button" class="btn btn-sm btn-primary" data-ai-context-view="strings" title="Envoyer les strings affichées dans le composeur IA">✦ Demander à l’IA</button>

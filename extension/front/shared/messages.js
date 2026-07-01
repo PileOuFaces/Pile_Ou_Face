@@ -972,6 +972,7 @@ window.addEventListener('message', (event) => {
     if (!container) return;
     const allStrings = msg.strings || [];
     stringsCache = allStrings;
+    stringsPage = 1;
     renderStringsTable(container, allStrings, '', false);
 
     if (loadAllPending > 0) { loadAllPending--; if (loadAllPending <= 0) { const b = document.getElementById('btnLoadAll'); if (b) { b.disabled = false; b.classList.remove('loading'); } } }

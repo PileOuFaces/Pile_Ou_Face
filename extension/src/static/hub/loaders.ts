@@ -78,9 +78,15 @@ function createLoaders({
         return;
       }
       try {
-        const opts = { minLen, encoding };
+        // Always extract and cache with BASE_MIN_LEN so switching minLen (4→8→4) never
+        // triggers a re-extraction — the full base set is cached once per (encoding, section)
+        // and minLen filtering is delegated to the frontend (renderStringsTable).
+        // Section filtering stays in Python (uses file-offset ranges, not VA — correct for PE RVA).
+        const BASE_MIN_LEN = 4;
+        const extractMinLen = Math.min(minLen, BASE_MIN_LEN);
+        const opts = { minLen: extractMinLen, encoding };
         if (section) opts.section = section;
-        const strings = await resolveCachedBinaryView({
+        const allStrings = await resolveCachedBinaryView({
           absPath,
           cacheKey: 'strings',
           cacheOptions: opts,
@@ -88,13 +94,17 @@ function createLoaders({
           isCacheUsable: (cached) => Array.isArray(cached) && cached.length > 0,
           compute: async () => {
             const scriptPath = getStringsScript(root);
-            const args = ['--binary', absPath, '--min-len', String(minLen), '--encoding', encoding];
+            const args = ['--binary', absPath, '--min-len', String(extractMinLen), '--encoding', encoding];
             if (section) args.push('--section', section);
             const tmpFile = path.join(storageDir, `strings_${Date.now()}.json`);
             return runPythonJsonViaFile(scriptPath, args, tmpFile);
           },
         });
-        hubPost('hubStrings', { strings });
+
+        // minLen filtering is the frontend's responsibility (renderStringsTable).
+        // The extension sends the full set for the requested (encoding, section) so that
+        // switching minLen never requires a round-trip.
+        hubPost('hubStrings', { strings: Array.isArray(allStrings) ? allStrings : [] });
       } catch (_) {
         hubPost('hubStrings', { strings: [] });
       }
