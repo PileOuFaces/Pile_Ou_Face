@@ -248,7 +248,7 @@ describe('loaders — hubLoadStrings', () => {
     expect(posted[0].strings).to.deep.equal(cachedStrings);
   });
 
-  it('passes section arg to runPythonJsonViaFile when section is specified', async () => {
+  it('never passes --section to Python regardless of requested section', async () => {
     const { panel } = makePanel();
     const { logChannel } = makeLogChannel();
     const runPythonJsonViaFile = sinon.stub().resolves([]);
@@ -264,8 +264,110 @@ describe('loaders — hubLoadStrings', () => {
     await loaders.hubLoadStrings({ binaryPath: '/repo/demo.bin', minLen: '4', encoding: 'utf-8', section: '.rodata' });
 
     const args = runPythonJsonViaFile.firstCall.args[1];
-    expect(args).to.include('--section');
-    expect(args).to.include('.rodata');
+    expect(args).to.not.include('--section');
+  });
+
+  it('filters strings by section using sections cache VA ranges', async () => {
+    const { panel, posted } = makePanel();
+    const { logChannel } = makeLogChannel();
+    const allStrings = [
+      { addr: '0x401000', value: 'in-text', length: 7, encoding: 'utf-8' },
+      { addr: '0x402000', value: 'in-data', length: 7, encoding: 'utf-8' },
+      { addr: '0x403000', value: 'in-rodata', length: 9, encoding: 'utf-8' },
+    ];
+    const sections = [
+      { name: '.text', virtual_address: '0x401000', size: 0x1000 },
+      { name: '.data', virtual_address: '0x402000', size: 0x1000 },
+      { name: '.rodata', virtual_address: '0x403000', size: 0x1000 },
+    ];
+    const readCache = sinon.stub();
+    readCache.withArgs('/storage', '/repo/demo.bin', 'strings', sinon.match.any).returns(allStrings);
+    readCache.withArgs('/storage', '/repo/demo.bin', 'sections').returns(sections);
+
+    const loaders = createLoaders({
+      panel, analysisCtx: makeAnalysisCtx(), root: '/root', storageDir: '/storage',
+      runPythonJson: sinon.stub(), runPythonJsonViaFile: sinon.stub(),
+      logChannel, fs: {}, path: require('path'),
+      readCache, writeCache: sinon.stub(),
+      getStringsScript: () => '', getSectionsScript: () => '', getXrefsScript: () => '',
+    });
+
+    await loaders.hubLoadStrings({ binaryPath: '/repo/demo.bin', minLen: '4', encoding: 'utf-8', section: '.text' });
+
+    expect(posted[0].strings).to.deep.equal([
+      { addr: '0x401000', value: 'in-text', length: 7, encoding: 'utf-8' },
+    ]);
+  });
+
+  it('returns empty when requested section is not found in sections cache', async () => {
+    const { panel, posted } = makePanel();
+    const { logChannel } = makeLogChannel();
+    const allStrings = [{ addr: '0x401000', value: 'hello', length: 5, encoding: 'utf-8' }];
+    const sections = [{ name: '.text', virtual_address: '0x401000', size: 0x1000 }];
+    const readCache = sinon.stub();
+    readCache.withArgs('/storage', '/repo/demo.bin', 'strings', sinon.match.any).returns(allStrings);
+    readCache.withArgs('/storage', '/repo/demo.bin', 'sections').returns(sections);
+
+    const loaders = createLoaders({
+      panel, analysisCtx: makeAnalysisCtx(), root: '/root', storageDir: '/storage',
+      runPythonJson: sinon.stub(), runPythonJsonViaFile: sinon.stub(),
+      logChannel, fs: {}, path: require('path'),
+      readCache, writeCache: sinon.stub(),
+      getStringsScript: () => '', getSectionsScript: () => '', getXrefsScript: () => '',
+    });
+
+    await loaders.hubLoadStrings({ binaryPath: '/repo/demo.bin', minLen: '4', encoding: 'utf-8', section: '.nonexistent' });
+
+    expect(posted[0].strings).to.deep.equal([]);
+  });
+
+  it('shows all strings when sections cache is unavailable for section filter', async () => {
+    const { panel, posted } = makePanel();
+    const { logChannel } = makeLogChannel();
+    const allStrings = [{ addr: '0x401000', value: 'hello', length: 5, encoding: 'utf-8' }];
+    const readCache = sinon.stub();
+    readCache.withArgs('/storage', '/repo/demo.bin', 'strings', sinon.match.any).returns(allStrings);
+    readCache.withArgs('/storage', '/repo/demo.bin', 'sections').returns(null); // no sections cache
+
+    const loaders = createLoaders({
+      panel, analysisCtx: makeAnalysisCtx(), root: '/root', storageDir: '/storage',
+      runPythonJson: sinon.stub(), runPythonJsonViaFile: sinon.stub(),
+      logChannel, fs: {}, path: require('path'),
+      readCache, writeCache: sinon.stub(),
+      getStringsScript: () => '', getSectionsScript: () => '', getXrefsScript: () => '',
+    });
+
+    await loaders.hubLoadStrings({ binaryPath: '/repo/demo.bin', minLen: '4', encoding: 'utf-8', section: '.text' });
+
+    // Fallback: show all strings when sections cache is missing
+    expect(posted[0].strings).to.deep.equal(allStrings);
+  });
+
+  it('excludes strings at addr 0x0 (PE import DLL names) when filtering by section', async () => {
+    const { panel, posted } = makePanel();
+    const { logChannel } = makeLogChannel();
+    const allStrings = [
+      { addr: '0x0', value: 'kernel32.dll', length: 12, encoding: 'utf-8', source: 'pe_import' },
+      { addr: '0x401000', value: 'in-text', length: 7, encoding: 'utf-8' },
+    ];
+    const sections = [{ name: '.text', virtual_address: '0x401000', size: 0x1000 }];
+    const readCache = sinon.stub();
+    readCache.withArgs('/storage', '/repo/demo.bin', 'strings', sinon.match.any).returns(allStrings);
+    readCache.withArgs('/storage', '/repo/demo.bin', 'sections').returns(sections);
+
+    const loaders = createLoaders({
+      panel, analysisCtx: makeAnalysisCtx(), root: '/root', storageDir: '/storage',
+      runPythonJson: sinon.stub(), runPythonJsonViaFile: sinon.stub(),
+      logChannel, fs: {}, path: require('path'),
+      readCache, writeCache: sinon.stub(),
+      getStringsScript: () => '', getSectionsScript: () => '', getXrefsScript: () => '',
+    });
+
+    await loaders.hubLoadStrings({ binaryPath: '/repo/demo.bin', minLen: '4', encoding: 'utf-8', section: '.text' });
+
+    expect(posted[0].strings).to.deep.equal([
+      { addr: '0x401000', value: 'in-text', length: 7, encoding: 'utf-8' },
+    ]);
   });
 
   it('always extracts with BASE_MIN_LEN=4 regardless of requested minLen', async () => {

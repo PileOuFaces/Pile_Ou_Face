@@ -78,12 +78,13 @@ function createLoaders({
         return;
       }
       try {
-        // Always extract and cache with BASE_MIN_LEN so that switching minLen (e.g. 4→8→4)
-        // never triggers a re-extraction — the full base set is cached once and filtered in-process.
+        // Always extract and cache all sections with BASE_MIN_LEN.
+        // Switching minLen (4→8→4) or section never triggers a re-extraction:
+        // - minLen filtering is done in-process by length comparison
+        // - section filtering is done in-process using the sections cache VA ranges
         const BASE_MIN_LEN = 4;
         const extractMinLen = Math.min(minLen, BASE_MIN_LEN);
-        const opts = { minLen: extractMinLen, encoding };
-        if (section) opts.section = section;
+        const opts = { minLen: extractMinLen, encoding }; // never include section
         const allStrings = await resolveCachedBinaryView({
           absPath,
           cacheKey: 'strings',
@@ -92,16 +93,44 @@ function createLoaders({
           isCacheUsable: (cached) => Array.isArray(cached) && cached.length > 0,
           compute: async () => {
             const scriptPath = getStringsScript(root);
+            // No --section: always extract all sections, filtered in-process below
             const args = ['--binary', absPath, '--min-len', String(extractMinLen), '--encoding', encoding];
-            if (section) args.push('--section', section);
             const tmpFile = path.join(storageDir, `strings_${Date.now()}.json`);
             return runPythonJsonViaFile(scriptPath, args, tmpFile);
           },
         });
-        // Filter by the user's requested minLen without hitting the disk again
-        const strings = (minLen > extractMinLen && Array.isArray(allStrings))
-          ? allStrings.filter((s) => Number(s.length || 0) >= minLen)
-          : allStrings;
+
+        let strings = Array.isArray(allStrings) ? allStrings : [];
+
+        // Filter by requested minLen
+        if (minLen > extractMinLen) {
+          strings = strings.filter((s) => Number(s.length || 0) >= minLen);
+        }
+
+        // Filter by section using sections cache VA ranges (no re-extraction)
+        if (section) {
+          const parseAddr = (addr) => {
+            if (typeof addr === 'number') return addr;
+            const s = String(addr || '0').trim();
+            return parseInt(s.startsWith('0x') || s.startsWith('0X') ? s.slice(2) : s, 16) || 0;
+          };
+          const sections = readCache(storageDir, absPath, 'sections');
+          if (Array.isArray(sections)) {
+            const sec = sections.find((s) => s.name === section);
+            if (sec) {
+              const secStart = parseAddr(sec.virtual_address);
+              const secEnd = secStart + Number(sec.size || 0);
+              strings = strings.filter((s) => {
+                const va = parseAddr(s.addr);
+                return va > 0 && va >= secStart && va < secEnd;
+              });
+            } else {
+              strings = []; // section not present in this binary
+            }
+          }
+          // No sections cache → show all strings (graceful fallback)
+        }
+
         hubPost('hubStrings', { strings });
       } catch (_) {
         hubPost('hubStrings', { strings: [] });
