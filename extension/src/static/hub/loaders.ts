@@ -8,7 +8,6 @@ function createLoaders({
   storageDir,
   runPythonJson,
   runPythonJsonViaFile,
-  ensureTempDir,
   logChannel,
   fs,
   path,
@@ -36,7 +35,7 @@ function createLoaders({
     isCacheUsable = () => true,
     compute,
   }) => {
-    const cacheRoot = storageDir || root;
+    const cacheRoot = storageDir;
     const cached = readCache(cacheRoot, absPath, cacheKey, cacheOptions);
     if (cached && isCacheUsable(cached)) {
       if (logLabel) logChannel.appendLine(`[cache] ${logLabel} depuis cache`);
@@ -91,7 +90,7 @@ function createLoaders({
             const scriptPath = getStringsScript(root);
             const args = ['--binary', absPath, '--min-len', String(minLen), '--encoding', encoding];
             if (section) args.push('--section', section);
-            const tmpFile = path.join(ensureTempDir(root), `strings_${Date.now()}.json`);
+            const tmpFile = path.join(storageDir, `strings_${Date.now()}.json`);
             return runPythonJsonViaFile(scriptPath, args, tmpFile);
           },
         });

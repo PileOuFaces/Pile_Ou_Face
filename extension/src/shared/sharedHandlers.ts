@@ -211,7 +211,7 @@ function normalizeRawProfile(profile) {
 function getAnnotationsPath(root, binaryPath, storageDir?) {
   const absPath = path.isAbsolute(binaryPath) ? binaryPath : path.join(root, binaryPath);
   const hash = crypto.createHash('sha256').update(absPath).update(fs.existsSync(absPath) ? String(fs.statSync(absPath).mtimeMs) : '').digest('hex').slice(0, 16);
-  const annotationsBase = storageDir || path.join(root, '.pile-ou-face');
+  const annotationsBase = storageDir;
   const dir = path.join(annotationsBase, 'annotations');
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return path.join(dir, `${hash}.json`);

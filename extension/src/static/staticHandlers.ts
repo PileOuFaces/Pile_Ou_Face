@@ -413,7 +413,7 @@ function staticHandlers(config) {
   };
   const getHostArtifactRoot = (kind) => {
     const normalizedKind = String(kind || '').trim();
-    const baseDir = storageDir || path.join(root, '.pile-ou-face');
+    const baseDir = storageDir;
     const base = normalizedKind ? path.join(baseDir, normalizedKind) : baseDir;
     try {
       if (!fs.existsSync(base)) fs.mkdirSync(base, { recursive: true });
