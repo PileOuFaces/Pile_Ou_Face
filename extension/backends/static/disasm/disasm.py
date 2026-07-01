@@ -569,6 +569,98 @@ def _location_matches_text(location: str, text: str) -> bool:
     return bool(pattern.search(text))
 
 
+def _build_cfg_attribution(
+    lines: list[dict],
+    function_ranges: list[tuple[int, int | None, dict]],
+) -> dict[int, str]:
+    """Attribue chaque instruction à une fonction par BFS dans le graphe de flot.
+
+    Contrairement à l'attribution linéaire par plage d'adresses, cette méthode
+    suit le flux de contrôle réel (sauts, branches) depuis chaque point d'entrée.
+    Les instructions non-atteignables tombent en fallback linéaire dans l'appelant.
+
+    Returns: {addr_int -> normalized_func_addr_str}
+    """
+    import bisect
+    from collections import deque
+
+    try:
+        from backends.static.disasm.cfg import _get_mnemonic, _is_branch
+    except ImportError:
+        return {}
+
+    if not function_ranges:
+        return {}
+
+    # Ordered address list for fast "next instruction" lookup
+    addr_sorted: list[int] = []
+    for line in lines:
+        a = _addr_to_int(line.get("addr"))
+        if a is not None:
+            addr_sorted.append(a)
+    addr_sorted.sort()
+    addr_set = set(addr_sorted)
+
+    # Successor map: addr_int -> [next reachable addr_int] (calls not followed)
+    successors: dict[int, list[int]] = {}
+    for line in lines:
+        a = _addr_to_int(line.get("addr"))
+        if a is None:
+            continue
+        text = line.get("text", "")
+        is_br, is_call, target_str = _is_branch(text)
+        pos = bisect.bisect_right(addr_sorted, a)
+        next_a = addr_sorted[pos] if pos < len(addr_sorted) else None
+        succs: list[int] = []
+        if not is_br or is_call:
+            if next_a is not None:
+                succs.append(next_a)
+        else:
+            target_int = _addr_to_int(target_str) if target_str else None
+            is_unconditional = _get_mnemonic(text) in {"jmp", "jmpq", "b", "br"}
+            if target_int is not None and target_int in addr_set:
+                succs.append(target_int)
+            if not is_unconditional and target_int is not None and next_a is not None:
+                succs.append(next_a)
+        successors[a] = succs
+
+    # Entry map: addr_int -> normalized_addr_str
+    entry_map: dict[int, str] = {}
+    for _, _, fn in function_ranges:
+        e = _addr_to_int(fn.get("addr"))
+        if e is not None and e in addr_set:
+            entry_map[e] = _normalize_addr(fn.get("addr", ""))
+
+    if not entry_map:
+        return {}
+
+    # Pre-mark all entry points so cross-function jumps (tail calls) stop BFS
+    attribution: dict[int, str] = {e: s for e, s in entry_map.items()}
+
+    # BFS in ascending address order so earlier functions are claimed first
+    for entry_int, entry_str in sorted(entry_map.items()):
+        queue: deque[int] = deque([entry_int])
+        seen: set[int] = {entry_int}
+        while queue:
+            curr = queue.popleft()
+            owner = attribution.get(curr)
+            if owner is not None and owner != entry_str:
+                continue
+            attribution[curr] = entry_str
+            for succ in successors.get(curr, []):
+                if succ in seen:
+                    continue
+                if succ in entry_map and entry_map[succ] != entry_str:
+                    continue  # tail call → stop
+                succ_owner = attribution.get(succ)
+                if succ_owner is not None and succ_owner != entry_str:
+                    continue  # already claimed by another function
+                seen.add(succ)
+                queue.append(succ)
+
+    return attribution
+
+
 def _build_function_ranges(functions: list[dict]) -> list[tuple[int, int | None, dict]]:
     starts = []
     for fn in functions:
@@ -926,6 +1018,22 @@ def _write_disasm_outputs(
     with open(output_asm, "w", encoding="utf-8") as f:
         f.write("\n".join(asm_output))
 
+    # CFG-based function attribution (more accurate than linear address ranges)
+    cfg_attribution = _build_cfg_attribution(lines, function_ranges)
+    entry_addr_to_fn: dict[str, dict] = {
+        _normalize_addr(fn.get("addr", "")): fn for _, _, fn in function_ranges
+    }
+
+    def _resolve_function(addr_int: int | None) -> dict | None:
+        if addr_int is None:
+            return None
+        cfg_addr = cfg_attribution.get(addr_int)
+        if cfg_addr:
+            fn = entry_addr_to_fn.get(cfg_addr)
+            if fn is not None:
+                return fn
+        return _find_function_context(function_ranges, addr_int)
+
     lines_with_line_num = []
     if label_map:
         addr_to_line: dict[str, int] = {}
@@ -937,7 +1045,7 @@ def _write_disasm_outputs(
                     addr_to_line[addr] = physical_lineno
         for line in lines:
             addr_int = _addr_to_int(line.get("addr"))
-            current_function = _find_function_context(function_ranges, addr_int)
+            current_function = _resolve_function(addr_int)
             function_addr = (
                 _normalize_addr(current_function.get("addr", ""))
                 if current_function
@@ -976,7 +1084,7 @@ def _write_disasm_outputs(
     else:
         for idx, line in enumerate(lines, start=1):
             addr_int = _addr_to_int(line.get("addr"))
-            current_function = _find_function_context(function_ranges, addr_int)
+            current_function = _resolve_function(addr_int)
             function_addr = (
                 _normalize_addr(current_function.get("addr", ""))
                 if current_function

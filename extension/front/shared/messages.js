@@ -1261,6 +1261,7 @@ window.addEventListener('message', (event) => {
     // Sync funcAddr and populate function selector
     if (typeof cfgUiState !== 'undefined') cfgUiState.funcAddr = msg.funcAddr || '';
     const funcSel = document.getElementById('cfgFuncSelect');
+    if (Array.isArray(msg.functions)) cfgUiState.knownFunctions = msg.functions;
     if (funcSel && Array.isArray(msg.functions) && msg.functions.length > 0) {
       const activeFuncAddr = msg.funcAddr || '';
       while (funcSel.firstChild) funcSel.removeChild(funcSel.firstChild);
@@ -1591,9 +1592,14 @@ window.addEventListener('message', (event) => {
       btnCfgFit.addEventListener('click', () => zs.fitToView());
     }
     if (zs?.requestFit) zs.requestFit();
-    if (container._cfgState?.activeAddr) {
+    const _pendingHighlight = window._pendingCfgHighlightAddr || container._cfgState?.activeAddr || '';
+    if (_pendingHighlight) {
+      window._pendingCfgHighlightAddr = null;
+      // Apply class immediately (synchronous) so the border is set on first paint
+      setCfgActiveAddr(_pendingHighlight, { reveal: false, instant: true });
+      // Schedule centering after layout (needs measured coordinates)
       requestAnimationFrame(() => {
-        requestAnimationFrame(() => setCfgActiveAddr(container._cfgState.activeAddr, { reveal: isStaticTabActive('cfg'), instant: true }));
+        requestAnimationFrame(() => setCfgActiveAddr(_pendingHighlight, { reveal: true, revealTable: tableEl.style.display !== 'none', instant: true }));
       });
     }
     return;
@@ -2390,10 +2396,41 @@ window.addEventListener('message', (event) => {
     const cmtEl = document.getElementById('annotationComment');
     if (nameEl) nameEl.value = ann?.name || '';
     if (cmtEl) cmtEl.value = ann?.comment || '';
-    syncCfgActiveAddress(msg.addr, {
+    const cfgBlockFound = syncCfgActiveAddress(msg.addr, {
       reveal: isStaticTabActive('cfg'),
       revealTable: isStaticTabActive('cfg') && document.querySelector('#cfgContent .cfg-table-view')?.style.display !== 'none',
     });
+    // Auto-switch CFG function scope when addr falls outside current view
+    if (!cfgBlockFound) {
+      const addrInt = parseInt(msg.addr, 16);
+      const fns = (typeof cfgUiState !== 'undefined' ? cfgUiState.knownFunctions : null) || [];
+      if (!isNaN(addrInt) && fns.length > 0) {
+        const sorted = [...fns].sort((a, b) => parseInt(a.addr, 16) - parseInt(b.addr, 16));
+        let best = null;
+        for (let i = 0; i < sorted.length; i++) {
+          const fnStart = parseInt(sorted[i].addr, 16);
+          if (fnStart > addrInt) break;
+          const fnEndExplicit = sorted[i].end_addr ? parseInt(sorted[i].end_addr, 16) : null;
+          const fnEndNext = (i + 1 < sorted.length) ? parseInt(sorted[i + 1].addr, 16) : Infinity;
+          const fnEnd = fnEndExplicit || fnEndNext;
+          if (addrInt < fnEnd) best = sorted[i];
+        }
+        if (best && best.addr !== cfgUiState.funcAddr) {
+          const funcSel2 = document.getElementById('cfgFuncSelect');
+          if (funcSel2) funcSel2.value = best.addr;
+          cfgUiState.funcAddr = best.addr;
+          cfgUiState.activeAddr = msg.addr;
+          window._pendingCfgHighlightAddr = msg.addr;
+          tabDataCache.cfg = null;
+          // Reload if CFG tab content is rendered (active or already loaded in DOM)
+          const cfgPane = document.getElementById('cfgContent');
+          if (cfgPane && cfgPane.style.display !== 'none') {
+            const bp = getStaticBinaryPath();
+            if (bp) postBinaryAwareMessage('hubLoadCfg', { binaryPath: bp, funcAddr: best.addr });
+          }
+        }
+      }
+    }
     syncCallGraphActiveAddress(msg.addr, {
       reveal: isStaticTabActive('callgraph'),
       revealTable: isStaticTabActive('callgraph') && document.querySelector('#callgraphContent .cfg-table-view')?.style.display !== 'none',
