@@ -295,6 +295,7 @@ install: venv
 	@$(MAKE) capa-rules 2>/dev/null || true
 
 install-dev: venv
+	@if [ -f backends/requirements.txt ]; then $(PIP) install -r backends/requirements.txt -q; fi
 	$(PIP) install -r backends/requirements-dev.txt
 
 pipeline: venv
