@@ -456,49 +456,8 @@ const ACTIVE_CONTEXT_INJECTED_PANELS = [
   'staticFuncSimilarity',
   'staticDeobfuscate',
 ];
-const RAW_UNSUPPORTED_TABS = {
-  decompile: ['decompileContent'],
-  stack: ['stackContent'],
-  behavior: ['behaviorContent'],
-  taint: ['taintContent'],
-  anti_analysis: ['antiAnalysisContent'],
-  attck: ['attckContent'],
-  vulns: ['vulnsContent'],
-  flirt: ['flirtContent'],
-  func_similarity: ['funcSimilarityContent'],
-  pe_resources: ['peResourcesContent'],
-  exceptions: ['exceptionsContent'],
-  bindiff: ['bindiffStats', 'bindiffResults'],
-};
-const RAW_TAB_CAPABILITIES = {
-  disasm: { level: 'full', note: 'Vue principale pour shellcodes et firmwares bruts.' },
-  discovered: { level: 'full', note: 'Découverte de fonctions sur le blob désassemblé.' },
-  cfg: { level: 'full', note: 'CFG généré à partir du profil d’architecture brut.' },
-  callgraph: { level: 'full', note: 'Call graph basé sur les appels détectés dans le blob.' },
-  hex: { level: 'full', note: 'Hex, base virtuelle, endian et taille de pointeur restent fiables.' },
-  sections: { level: 'full', note: 'Le blob est exposé comme une section brute unique.' },
-  info: { level: 'full', note: 'Résumé pseudo-binaire basé sur le profil brut choisi.' },
-  strings: { level: 'full', note: 'Extraction de chaînes directement depuis le blob.' },
-  recherche: { level: 'full', note: 'Recherche textuelle et offsets disponibles sur le blob.' },
-  typed_data: { level: 'full', note: 'Décodage typé à partir de la base, endian et ptr size du profil brut.' },
-  script: { level: 'full', note: 'Automatisation disponible tant que le script vise le blob courant.' },
-  symbols: { level: 'limited', note: 'Symboles heuristiques ou découverts, sans vraie table native.' },
-  imports: { level: 'limited', note: 'Indices heuristiques uniquement, pas de table d’imports réelle.' },
-  detection: { level: 'limited', note: 'YARA reste utile ; CAPA ne couvre pas les blobs bruts.' },
-  deobfuscate: { level: 'limited', note: 'Résultats utiles sur chaînes et motifs simples, moins fiables qu’un exécutable complet.' },
-  rop: { level: 'limited', note: 'Dépend du profil d’architecture brut et du plugin offensif.' },
-  func_similarity: { level: 'unsupported', note: 'La similarité a besoin d’un binaire structuré et d’une base de références.' },
-  decompile: { level: 'unsupported', note: 'Pas de décompilation fiable sans format exécutable complet.' },
-  stack: { level: 'unsupported', note: 'La reconstruction de stack frame n’est pas encore fiable sur blob brut.' },
-  pe_resources: { level: 'unsupported', note: 'Un blob brut n’expose pas de ressources PE structurées.' },
-  exceptions: { level: 'unsupported', note: 'Pas de tables d’exceptions exploitables sur blob brut.' },
-  taint: { level: 'unsupported', note: 'La taint n’est pas encore câblée pour les blobs bruts.' },
-  behavior: { level: 'unsupported', note: 'Le comportement shellcode/firmware reste à stabiliser côté plugin.' },
-  anti_analysis: { level: 'unsupported', note: 'La vue anti-analyse n’est pas encore exposée proprement pour blob brut.' },
-  vulns: { level: 'unsupported', note: 'L’audit vulnérabilités reste pensé pour des exécutables complets.' },
-  flirt: { level: 'unsupported', note: 'Les signatures FLIRT attendent des structures natives plus riches.' },
-  bindiff: { level: 'unsupported', note: 'Le diff de binaires n’est pas encore prévu pour les blobs bruts.' },
-};
+const RAW_UNSUPPORTED_TABS = window.POFRawTabCapabilities?.RAW_UNSUPPORTED_TABS || {};
+const RAW_TAB_CAPABILITIES = window.POFRawTabCapabilities?.RAW_TAB_CAPABILITIES || {};
 
 // Panels
 const panels = document.querySelectorAll('.panel');
