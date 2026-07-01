@@ -1261,7 +1261,6 @@ window.addEventListener('message', (event) => {
     // Sync funcAddr and populate function selector
     if (typeof cfgUiState !== 'undefined') cfgUiState.funcAddr = msg.funcAddr || '';
     const funcSel = document.getElementById('cfgFuncSelect');
-    if (Array.isArray(msg.functions)) cfgUiState.knownFunctions = msg.functions;
     if (funcSel && Array.isArray(msg.functions) && msg.functions.length > 0) {
       const activeFuncAddr = msg.funcAddr || '';
       while (funcSel.firstChild) funcSel.removeChild(funcSel.firstChild);
