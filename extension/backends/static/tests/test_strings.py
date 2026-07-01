@@ -974,5 +974,202 @@ class TestMain(unittest.TestCase):
         self.assertEqual(ctx.exception.code, 0)
 
 
+class TestLoadDataSliceAdditional(unittest.TestCase):
+    """Tests supplémentaires pour _load_data_slice — section=None, introuvable, OSError."""
+
+    def test_section_none_returns_full_file(self):
+        """section=None → retourne tous les octets avec offset_base=0."""
+        from backends.static.search.strings import _load_data_slice
+
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "bin"
+            f.write_bytes(b"hello world")
+            result = _load_data_slice(str(f), None)
+
+        self.assertEqual(result, (b"hello world", 0))
+
+    def test_section_not_found_returns_none(self):
+        """Section absente des ranges → None (extract_strings retournera [])."""
+        from backends.static.search.strings import _load_data_slice
+
+        with patch(
+            "backends.static.binary.sections.get_section_file_ranges",
+            return_value=[(".text", 0, 50)],
+        ):
+            with tempfile.TemporaryDirectory() as tmp:
+                f = Path(tmp) / "bin"
+                f.write_bytes(b"hello world" * 5)
+                result = _load_data_slice(str(f), ".rodata")
+
+        self.assertIsNone(result)
+
+    def test_oserror_returns_none(self):
+        """Fichier illisible (OSError) → None."""
+        from backends.static.search.strings import _load_data_slice
+
+        result = _load_data_slice("/nonexistent/path/binary.exe", None)
+        self.assertIsNone(result)
+
+    def test_section_found_slice_uses_file_offsets(self):
+        """Le slice retourné correspond exactement aux octets entre start et end (offsets fichier)."""
+        from backends.static.search.strings import _load_data_slice
+
+        # Binary : [PREFIX_16_BYTES][SECTION_DATA][SUFFIX]
+        prefix = b"A" * 16
+        section_data = b"SECTION_CONTENT!"
+        suffix = b"Z" * 32
+        binary = prefix + section_data + suffix
+
+        with patch(
+            "backends.static.binary.sections.get_section_file_ranges",
+            return_value=[(".rodata", 16, 16 + len(section_data))],
+        ):
+            with tempfile.TemporaryDirectory() as tmp:
+                f = Path(tmp) / "bin"
+                f.write_bytes(binary)
+                result = _load_data_slice(str(f), ".rodata")
+
+        self.assertIsNotNone(result)
+        data, offset_base = result
+        self.assertEqual(data, section_data)
+        self.assertEqual(offset_base, 16)
+
+
+class TestExtractStringsSectionFilter(unittest.TestCase):
+    """Vérifie que extract_strings filtre correctement par section via file offsets.
+
+    Critique pour la non-régression ELF .rodata et PE .rdata :
+    - ELF : file_offset != virtual_address → on doit utiliser file_offset
+    - PE  : sec.offset (file offset) != sec.virtual_address (RVA) → on doit utiliser sec.offset
+    """
+
+    def test_elf_rodata_returns_only_section_strings(self):
+        """ELF .rodata : seules les strings dans la section sont retournées."""
+        # Layout : [.text strings][.rodata strings]
+        text_part = b"in_text_section\x00"  # offset 0-16, hors .rodata
+        rodata_part = b"in_rodata_section\x00"  # offset 16-34, dans .rodata
+        binary = text_part + rodata_part
+
+        rodata_start = len(text_part)
+        rodata_end = len(binary)
+
+        with patch(
+            "backends.static.binary.sections.get_section_file_ranges",
+            return_value=[
+                (".text", 0, rodata_start),
+                (".rodata", rodata_start, rodata_end),
+            ],
+        ):
+            with tempfile.TemporaryDirectory() as tmp:
+                f = Path(tmp) / "elf"
+                f.write_bytes(binary)
+
+                all_strings = extract_strings(str(f), section=None)
+                rodata_strings = extract_strings(str(f), section=".rodata")
+                text_strings = extract_strings(str(f), section=".text")
+
+        rodata_values = [s["value"] for s in rodata_strings]
+        text_values = [s["value"] for s in text_strings]
+
+        self.assertIn("in_rodata_section", rodata_values)
+        self.assertNotIn("in_text_section", rodata_values)
+
+        self.assertIn("in_text_section", text_values)
+        self.assertNotIn("in_rodata_section", text_values)
+
+        self.assertGreater(len(all_strings), len(rodata_strings))
+
+    def test_pe_rdata_uses_file_offset_not_rva(self):
+        """PE .rdata : le filtre utilise l'offset fichier, pas le RVA.
+
+        Si le code utilisait virtual_address (RVA=0x1000) au lieu de
+        sec.offset (file_offset=64), il chercherait au mauvais endroit
+        et retournerait [] alors que les strings sont bien présentes.
+        """
+        # Simule un PE : 64 octets de headers puis la section .rdata
+        pe_header = b"\x00" * 64
+        rdata_content = b"pe_rdata_string\x00"
+        binary = pe_header + rdata_content
+
+        file_offset = len(pe_header)  # 64 — ce que Python utilise
+        rva = 0x1000  # RVA fictif — bien plus grand que file_offset
+
+        # get_section_file_ranges retourne les offsets FICHIER (pas les RVAs)
+        with patch(
+            "backends.static.binary.sections.get_section_file_ranges",
+            return_value=[(".rdata", file_offset, file_offset + len(rdata_content))],
+        ):
+            with tempfile.TemporaryDirectory() as tmp:
+                f = Path(tmp) / "pe.exe"
+                f.write_bytes(binary)
+                result = extract_strings(str(f), section=".rdata")
+
+        values = [s["value"] for s in result]
+        self.assertIn(
+            "pe_rdata_string",
+            values,
+            "La string dans .rdata doit être trouvée via l'offset fichier",
+        )
+
+    def test_pe_rdata_rva_would_miss_strings(self):
+        """Preuve que l'approche VA serait incorrecte : si on utilisait le RVA
+        (0x1000 = 4096) au lieu de l'offset fichier (64), le slice serait vide."""
+        pe_header = b"\x00" * 64
+        rdata_content = b"pe_rdata_string\x00"
+        binary = pe_header + rdata_content
+
+        rva = 0x1000  # 4096 — dépasse la taille du fichier (80 octets)
+
+        # Simuler l'approche incorrecte : filtrer avec le RVA
+        data = binary
+        slice_via_rva = data[rva : rva + len(rdata_content)]
+        slice_via_file_offset = data[64 : 64 + len(rdata_content)]
+
+        self.assertEqual(
+            slice_via_rva,
+            b"",
+            "Avec le RVA (0x1000) le slice est vide — approche incorrecte",
+        )
+        self.assertEqual(
+            slice_via_file_offset,
+            rdata_content,
+            "Avec l'offset fichier (64) le slice est correct",
+        )
+
+    def test_nonexistent_section_returns_empty(self):
+        """Section inexistante → [] sans exception."""
+        with patch(
+            "backends.static.binary.sections.get_section_file_ranges",
+            return_value=[(".text", 0, 100)],
+        ):
+            with tempfile.TemporaryDirectory() as tmp:
+                f = Path(tmp) / "bin"
+                f.write_bytes(b"hello world" * 10)
+                result = extract_strings(str(f), section=".rodata")
+
+        self.assertEqual(result, [])
+
+    def test_both_elf_and_pe_section_names_accepted(self):
+        """ELF (.rodata) et PE (.rdata) sont tous les deux des noms de section valides."""
+        data = b"section_string_here\x00"
+
+        for section_name in (".rodata", ".rdata", ".data", ".text", "__cstring"):
+            with patch(
+                "backends.static.binary.sections.get_section_file_ranges",
+                return_value=[(section_name, 0, len(data))],
+            ):
+                with tempfile.TemporaryDirectory() as tmp:
+                    f = Path(tmp) / "bin"
+                    f.write_bytes(data)
+                    result = extract_strings(str(f), section=section_name)
+
+            values = [s["value"] for s in result]
+            self.assertIn(
+                "section_string_here",
+                values,
+                f"Section {section_name!r} doit retourner les strings présentes",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
