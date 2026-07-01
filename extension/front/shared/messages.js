@@ -1595,8 +1595,11 @@ window.addEventListener('message', (event) => {
     const _pendingHighlight = window._pendingCfgHighlightAddr || container._cfgState?.activeAddr || '';
     if (_pendingHighlight) {
       window._pendingCfgHighlightAddr = null;
+      // Apply class immediately (synchronous) so the border is set on first paint
+      setCfgActiveAddr(_pendingHighlight, { reveal: false, instant: true });
+      // Schedule centering after layout (needs measured coordinates)
       requestAnimationFrame(() => {
-        requestAnimationFrame(() => setCfgActiveAddr(_pendingHighlight, { reveal: true, revealTable: true, instant: true }));
+        requestAnimationFrame(() => setCfgActiveAddr(_pendingHighlight, { reveal: true, revealTable: tableEl.style.display !== 'none', instant: true }));
       });
     }
     return;
