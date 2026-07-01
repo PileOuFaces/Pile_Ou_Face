@@ -1510,6 +1510,12 @@ function resetStaticBinaryDerivedState() {
   decompileUiState.renderedAddr = '';
   decompileUiState.renderedBinaryPath = '';
   decompileUiState.renderedQuality = _normalizeDecompileQuality(decompileUiState.quality || 'normal');
+  cfgUiState.funcAddr = '';
+  cfgUiState.activeAddr = '';
+  cfgUiState.knownFunctions = [];
+  cfgUiState.expandedAddrs = [];
+  callGraphUiState.activeAddr = '';
+  window._pendingCfgHighlightAddr = null;
   updateActiveContextBars('');
   renderBookmarks();
   updateDisasmSessionSummary();
