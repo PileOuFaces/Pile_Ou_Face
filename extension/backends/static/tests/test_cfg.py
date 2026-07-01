@@ -782,10 +782,12 @@ class TestFindFunctionEntryForAddr(unittest.TestCase):
 
     def test_returns_none_for_unknown_addr(self):
         """Adresse absente du CFG → None."""
-        lines = self._make_lines([
-            ("0x401000", "push rbp"),
-            ("0x401001", "ret"),
-        ])
+        lines = self._make_lines(
+            [
+                ("0x401000", "push rbp"),
+                ("0x401001", "ret"),
+            ]
+        )
         self.assertIsNone(find_function_entry_for_addr(lines, "0x999999"))
 
     def test_returns_none_for_empty_lines(self):
@@ -794,61 +796,71 @@ class TestFindFunctionEntryForAddr(unittest.TestCase):
 
     def test_entry_block_addr_returns_itself(self):
         """Addr = début du seul bloc → retourne cette même adresse."""
-        lines = self._make_lines([
-            ("0x401000", "push rbp"),
-            ("0x401001", "mov rbp, rsp"),
-            ("0x401003", "ret"),
-        ])
+        lines = self._make_lines(
+            [
+                ("0x401000", "push rbp"),
+                ("0x401001", "mov rbp, rsp"),
+                ("0x401003", "ret"),
+            ]
+        )
         result = find_function_entry_for_addr(lines, "0x401000")
         self.assertEqual(result, "0x401000")
 
     def test_finds_entry_from_inner_instruction(self):
         """Addr = instruction à l'intérieur d'un bloc → retourne l'entrée de la fonction."""
-        lines = self._make_lines([
-            ("0x401000", "push rbp"),
-            ("0x401001", "mov rbp, rsp"),  # addr inside the entry block
-            ("0x401003", "ret"),
-        ])
+        lines = self._make_lines(
+            [
+                ("0x401000", "push rbp"),
+                ("0x401001", "mov rbp, rsp"),  # addr inside the entry block
+                ("0x401003", "ret"),
+            ]
+        )
         result = find_function_entry_for_addr(lines, "0x401001")
         self.assertEqual(result, "0x401000")
 
     def test_finds_entry_from_non_entry_block(self):
         """Addr dans un bloc non-entry → remonte via reverse BFS jusqu'à l'entrée."""
-        lines = self._make_lines([
-            ("0x401000", "push rbp"),
-            ("0x401001", "jne\t0x401010"),
-            ("0x401003", "nop"),
-            ("0x401004", "ret"),
-            ("0x401010", "mov rax, 0"),  # non-entry block
-            ("0x401013", "ret"),
-        ])
+        lines = self._make_lines(
+            [
+                ("0x401000", "push rbp"),
+                ("0x401001", "jne\t0x401010"),
+                ("0x401003", "nop"),
+                ("0x401004", "ret"),
+                ("0x401010", "mov rax, 0"),  # non-entry block
+                ("0x401013", "ret"),
+            ]
+        )
         result = find_function_entry_for_addr(lines, "0x401010")
         self.assertEqual(result, "0x401000")
 
     def test_does_not_cross_call_edges(self):
         """Deux fonctions séparées par un call — reverse BFS ne traverse pas les call edges."""
-        lines = self._make_lines([
-            ("0x401000", "push rbp"),
-            ("0x401001", "call\t0x401020"),
-            ("0x401006", "ret"),
-            ("0x401020", "push rbp"),      # start of second function
-            ("0x401021", "xor eax, eax"),
-            ("0x401023", "ret"),
-        ])
+        lines = self._make_lines(
+            [
+                ("0x401000", "push rbp"),
+                ("0x401001", "call\t0x401020"),
+                ("0x401006", "ret"),
+                ("0x401020", "push rbp"),  # start of second function
+                ("0x401021", "xor eax, eax"),
+                ("0x401023", "ret"),
+            ]
+        )
         # Addr inside the callee must resolve to callee's entry, not caller's
         result = find_function_entry_for_addr(lines, "0x401021")
         self.assertEqual(result, "0x401020")
 
     def test_finds_entry_from_branch_target(self):
         """Addr = bloc cible d'un saut conditionnel → remonte au bloc source."""
-        lines = self._make_lines([
-            ("0x401000", "test eax, eax"),
-            ("0x401002", "jne\t0x40100a"),
-            ("0x401004", "xor eax, eax"),
-            ("0x401006", "ret"),
-            ("0x40100a", "mov eax, 1"),    # branch target block
-            ("0x40100f", "ret"),
-        ])
+        lines = self._make_lines(
+            [
+                ("0x401000", "test eax, eax"),
+                ("0x401002", "jne\t0x40100a"),
+                ("0x401004", "xor eax, eax"),
+                ("0x401006", "ret"),
+                ("0x40100a", "mov eax, 1"),  # branch target block
+                ("0x40100f", "ret"),
+            ]
+        )
         result = find_function_entry_for_addr(lines, "0x40100a")
         self.assertEqual(result, "0x401000")
 

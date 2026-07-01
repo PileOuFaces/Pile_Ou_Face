@@ -1452,7 +1452,8 @@ def main() -> int:
         "--function", help="Export CFG for a single function address (e.g. 0x401000)"
     )
     parser.add_argument(
-        "--addr", help="Find the function containing this instruction address and export its CFG"
+        "--addr",
+        help="Find the function containing this instruction address and export its CFG",
     )
     args = parser.parse_args()
 
@@ -1468,7 +1469,9 @@ def main() -> int:
     binary_path = data.get("binary")  # Chemin vers le binaire pour jump tables
 
     if args.addr:
-        func_addr = find_function_entry_for_addr(lines, args.addr, binary_path=binary_path)
+        func_addr = find_function_entry_for_addr(
+            lines, args.addr, binary_path=binary_path
+        )
         if func_addr:
             cfg = build_cfg_for_function(lines, func_addr, binary_path=binary_path)
         else:
