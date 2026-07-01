@@ -851,6 +851,7 @@ describe('hub runTrace isolation', () => {
         workspaceState: { get: () => ({}), update: async () => {} },
         globalState: { get: () => ({}), update: async () => {} }
       },
+      storageDir: '/tmp/pof',
       logChannel: { appendLine: () => {}, append: () => {} },
       getTempDir: () => '/tmp/pof',
       ensureTempDir: () => '/tmp/pof',
