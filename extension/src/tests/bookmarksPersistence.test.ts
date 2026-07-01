@@ -35,15 +35,16 @@ describe("bookmark persistence", () => {
     fs.writeFileSync(binaryA, "a");
     fs.writeFileSync(binaryB, "b");
 
+    const storageDir = path.join(root, ".pile-ou-face");
     const sinkA = makePanelSink();
-    const handlersA = sharedHandlers({ root, panel: sinkA.panel });
+    const handlersA = sharedHandlers({ root, panel: sinkA.panel, storageDir });
     handlersA.hubSaveBookmark({ binaryPath: binaryA, addr: "0x1000" });
 
     const annA = readOnlyAnnotationFile(root);
     expect(annA["0x1000"]).to.include({ bookmark: true });
 
     const sinkB = makePanelSink();
-    const handlersB = sharedHandlers({ root, panel: sinkB.panel });
+    const handlersB = sharedHandlers({ root, panel: sinkB.panel, storageDir });
     handlersB.hubLoadAnnotations({ binaryPath: binaryB });
     const loadedForB = sinkB.messages.find((message) => message.type === "hubAnnotations");
 
@@ -56,8 +57,9 @@ describe("bookmark persistence", () => {
     fs.mkdirSync(path.dirname(binary), { recursive: true });
     fs.writeFileSync(binary, "review");
 
+    const storageDir = path.join(root, ".pile-ou-face");
     const sink = makePanelSink();
-    const handlers = sharedHandlers({ root, panel: sink.panel });
+    const handlers = sharedHandlers({ root, panel: sink.panel, storageDir });
     handlers.hubSaveFunctionReview({
       binaryPath: binary,
       addr: "0x401000",

@@ -7,6 +7,7 @@ function createLoaders({
   root,
   storageDir,
   runPythonJson,
+  runPythonJsonViaFile,
   logChannel,
   fs,
   path,
@@ -34,7 +35,7 @@ function createLoaders({
     isCacheUsable = () => true,
     compute,
   }) => {
-    const cacheRoot = storageDir || root;
+    const cacheRoot = storageDir;
     const cached = readCache(cacheRoot, absPath, cacheKey, cacheOptions);
     if (cached && isCacheUsable(cached)) {
       if (logLabel) logChannel.appendLine(`[cache] ${logLabel} depuis cache`);
@@ -84,10 +85,13 @@ function createLoaders({
           cacheKey: 'strings',
           cacheOptions: opts,
           logLabel: 'Strings',
+          isCacheUsable: (cached) => Array.isArray(cached) && cached.length > 0,
           compute: async () => {
-            const args = [getStringsScript(root), '--binary', absPath, '--min-len', String(minLen), '--encoding', encoding];
+            const scriptPath = getStringsScript(root);
+            const args = ['--binary', absPath, '--min-len', String(minLen), '--encoding', encoding];
             if (section) args.push('--section', section);
-            return runPythonJson(args[0], args.slice(1));
+            const tmpFile = path.join(storageDir, `strings_${Date.now()}.json`);
+            return runPythonJsonViaFile(scriptPath, args, tmpFile);
           },
         });
         hubPost('hubStrings', { strings });
