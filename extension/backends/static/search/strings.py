@@ -252,6 +252,12 @@ def main() -> int:
         action="store_true",
         help="Use Python impl instead of system strings",
     )
+    parser.add_argument(
+        "--max-results",
+        type=int,
+        default=0,
+        help="Limit raw strings to N entries (0 = unlimited). PE imports are always included.",
+    )
     args = parser.parse_args()
 
     if args.no_system or args.encoding != "utf-8" or args.section:
@@ -267,6 +273,21 @@ def main() -> int:
             strings = extract_strings(
                 args.binary, min_len=args.min_len, encoding=args.encoding
             )
+
+    if args.max_results > 0 and len(strings) > args.max_results:
+        pe_imports = [s for s in strings if s.get("source") == "pe_import"]
+        raw = [s for s in strings if s.get("source") != "pe_import"]
+        limit_raw = max(0, args.max_results - len(pe_imports))
+        strings = raw[:limit_raw] + pe_imports
+        strings.sort(
+            key=lambda entry: (
+                int(str(entry.get("addr", "0")).replace("0x", ""), 16)
+                if str(entry.get("addr", "")).startswith("0x")
+                else 0,
+                str(entry.get("encoding", "")),
+                str(entry.get("value", "")),
+            )
+        )
 
     out = json.dumps(strings, indent=2, ensure_ascii=False)
 
