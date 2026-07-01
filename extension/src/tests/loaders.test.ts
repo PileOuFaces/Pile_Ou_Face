@@ -268,7 +268,57 @@ describe('loaders — hubLoadStrings', () => {
     expect(args).to.include('.rodata');
   });
 
-  it('clamps minLen between 1 and 64', async () => {
+  it('always extracts with BASE_MIN_LEN=4 regardless of requested minLen', async () => {
+    const { panel } = makePanel();
+    const { logChannel } = makeLogChannel();
+    const runPythonJsonViaFile = sinon.stub().resolves([]);
+
+    const loaders = createLoaders({
+      panel, analysisCtx: makeAnalysisCtx(), root: '/root', storageDir: '/storage',
+      runPythonJson: sinon.stub(), runPythonJsonViaFile,
+      logChannel, fs: {}, path: require('path'),
+      readCache: sinon.stub().returns(null), writeCache: sinon.stub(),
+      getStringsScript: () => '/scripts/strings.py', getSectionsScript: () => '', getXrefsScript: () => '',
+    });
+
+    // Request minLen=20 — Python should be called with 4 (BASE_MIN_LEN)
+    await loaders.hubLoadStrings({ binaryPath: '/repo/demo.bin', minLen: '20', encoding: 'utf-8' });
+
+    const args = runPythonJsonViaFile.firstCall.args[1];
+    const minLenIdx = args.indexOf('--min-len');
+    expect(args[minLenIdx + 1]).to.equal('4');
+  });
+
+  it('filters in-process by requested minLen without re-extracting', async () => {
+    const { panel, posted } = makePanel();
+    const { logChannel } = makeLogChannel();
+    const cachedStrings = [
+      { addr: '0x1000', value: 'hi', length: 2, encoding: 'utf-8' },
+      { addr: '0x2000', value: 'hello', length: 5, encoding: 'utf-8' },
+      { addr: '0x3000', value: 'helloworld', length: 10, encoding: 'utf-8' },
+    ];
+    const readCache = sinon.stub().returns(cachedStrings);
+    const runPythonJsonViaFile = sinon.stub();
+
+    const loaders = createLoaders({
+      panel, analysisCtx: makeAnalysisCtx(), root: '/root', storageDir: '/storage',
+      runPythonJson: sinon.stub(), runPythonJsonViaFile,
+      logChannel, fs: {}, path: require('path'),
+      readCache, writeCache: sinon.stub(),
+      getStringsScript: () => '', getSectionsScript: () => '', getXrefsScript: () => '',
+    });
+
+    await loaders.hubLoadStrings({ binaryPath: '/repo/demo.bin', minLen: '8', encoding: 'utf-8' });
+
+    // Python must NOT be called — served from cache and filtered in-process
+    expect(runPythonJsonViaFile.called).to.equal(false);
+    // Only strings with length >= 8 are posted
+    expect(posted[0].strings).to.deep.equal([
+      { addr: '0x3000', value: 'helloworld', length: 10, encoding: 'utf-8' },
+    ]);
+  });
+
+  it('clamps minLen to 64 max and still uses BASE_MIN_LEN=4 for extraction', async () => {
     const { panel } = makePanel();
     const { logChannel } = makeLogChannel();
     const runPythonJsonViaFile = sinon.stub().resolves([]);
@@ -283,9 +333,10 @@ describe('loaders — hubLoadStrings', () => {
 
     await loaders.hubLoadStrings({ binaryPath: '/repo/demo.bin', minLen: '999', encoding: 'utf-8' });
 
+    // 999 clamped to 64, extractMinLen = min(64, 4) = 4
     const args = runPythonJsonViaFile.firstCall.args[1];
     const minLenIdx = args.indexOf('--min-len');
-    expect(args[minLenIdx + 1]).to.equal('64');
+    expect(args[minLenIdx + 1]).to.equal('4');
   });
 
   it('posts empty strings on compute error', async () => {
