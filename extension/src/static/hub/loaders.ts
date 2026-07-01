@@ -84,6 +84,7 @@ function createLoaders({
           cacheKey: 'strings',
           cacheOptions: opts,
           logLabel: 'Strings',
+          isCacheUsable: (cached) => Array.isArray(cached) && cached.length > 0,
           compute: async () => {
             const args = [getStringsScript(root), '--binary', absPath, '--min-len', String(minLen), '--encoding', encoding];
             if (section) args.push('--section', section);
