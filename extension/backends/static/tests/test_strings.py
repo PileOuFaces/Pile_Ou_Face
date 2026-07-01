@@ -598,5 +598,381 @@ class TestExtractStringsPeImportsMerge(unittest.TestCase):
         self.assertGreater(len(raw_entries), 0)
 
 
+class TestLoadDataSlice(unittest.TestCase):
+    """Tests pour _load_data_slice."""
+
+    def test_section_found_returns_slice(self):
+        """Section existante → retourne le slice et l'offset de base."""
+        from backends.static.search.strings import _load_data_slice
+
+        with patch(
+            "backends.static.binary.sections.get_section_file_ranges",
+            return_value=[(".text", 4, 9)],
+        ):
+            with tempfile.TemporaryDirectory() as tmp:
+                f = Path(tmp) / "bin"
+                f.write_bytes(b"PREFHELLO_SUFFIX")
+                result = _load_data_slice(str(f), ".text")
+
+        self.assertEqual(result, (b"HELLO", 4))
+
+
+class TestExtractStringsSystemEdgeCases(unittest.TestCase):
+    """Edge cases pour extract_strings_system."""
+
+    def test_oserror_returns_empty(self):
+        """OSError (commande non trouvée) → []."""
+        import subprocess
+
+        from backends.static.search.strings import extract_strings_system
+
+        with patch("subprocess.run", side_effect=OSError("not found")):
+            with tempfile.TemporaryDirectory() as tmp:
+                f = Path(tmp) / "bin"
+                f.write_bytes(b"hello world\x00")
+                result = extract_strings_system(str(f))
+        self.assertEqual(result, [])
+
+    def test_timeout_returns_empty(self):
+        """TimeoutExpired → []."""
+        import subprocess
+
+        from backends.static.search.strings import extract_strings_system
+
+        with patch(
+            "subprocess.run",
+            side_effect=subprocess.TimeoutExpired("strings", 30),
+        ):
+            with tempfile.TemporaryDirectory() as tmp:
+                f = Path(tmp) / "bin"
+                f.write_bytes(b"hello world\x00")
+                result = extract_strings_system(str(f))
+        self.assertEqual(result, [])
+
+    def test_nonzero_returncode_returns_empty(self):
+        """Returncode != 0 → []."""
+        from backends.static.search.strings import extract_strings_system
+
+        mock_proc = MagicMock()
+        mock_proc.returncode = 1
+        mock_proc.stdout = ""
+        with patch("subprocess.run", return_value=mock_proc):
+            with tempfile.TemporaryDirectory() as tmp:
+                f = Path(tmp) / "bin"
+                f.write_bytes(b"hello world\x00")
+                result = extract_strings_system(str(f))
+        self.assertEqual(result, [])
+
+    def test_non_matching_line_skipped(self):
+        """Lignes sans format '<hex> <string>' → ignorées silencieusement."""
+        from backends.static.search.strings import extract_strings_system
+
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.stdout = "not a valid line\n   1a hello world\n"
+        with patch("subprocess.run", return_value=mock_proc):
+            with patch(
+                "backends.static.search.strings.build_offset_to_vaddr",
+                return_value={},
+            ):
+                with tempfile.TemporaryDirectory() as tmp:
+                    f = Path(tmp) / "bin"
+                    f.write_bytes(b"\x00" * 32)
+                    result = extract_strings_system(str(f))
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["value"], "hello world")
+
+
+class TestExtractFromPeImportsEdgeCases(unittest.TestCase):
+    """Edge cases supplémentaires pour _extract_from_pe_imports."""
+
+    def _make_mock_lief(self, imports):
+        class _FakePE:
+            pass
+
+        mock_binary = _FakePE()
+        mock_binary.optional_header = MagicMock()
+        mock_binary.optional_header.imagebase = 0x400000
+        mock_binary.imports = imports
+
+        mock_lief = MagicMock()
+        mock_lief.PE.Binary = _FakePE
+        mock_lief.parse.return_value = mock_binary
+        return mock_lief
+
+    def test_dll_name_too_short_filtered(self):
+        """DLL dont le nom < min_len → pas dans les résultats (branche 89→100)."""
+        mock_entry = MagicMock()
+        mock_entry.name = "ValidFunction"
+        mock_entry.iat_address = 0x1000
+
+        mock_imp = MagicMock()
+        mock_imp.name = "AB"  # 2 chars, min_len=4 → filtré
+        mock_imp.entries = [mock_entry]
+
+        with patch.dict(sys.modules, {"lief": self._make_mock_lief([mock_imp])}):
+            with tempfile.TemporaryDirectory() as tmp:
+                f = Path(tmp) / "fake.exe"
+                f.write_bytes(b"MZ" + b"\x00" * 64)
+                result = _extract_from_pe_imports(str(f), min_len=4)
+
+        values = [e["value"] for e in result]
+        self.assertNotIn("AB", values)
+        self.assertIn("ValidFunction", values)
+
+    def test_duplicate_pe_import_key_deduplicated(self):
+        """Deux entries avec même (addr, fn) → une seule dans les résultats (ligne 109)."""
+        mock_entry1 = MagicMock()
+        mock_entry1.name = "GetProcAddress"
+        mock_entry1.iat_address = 0x1000
+
+        mock_entry2 = MagicMock()
+        mock_entry2.name = "GetProcAddress"
+        mock_entry2.iat_address = 0x1000  # même clé → dédupliqué
+
+        mock_imp = MagicMock()
+        mock_imp.name = "KERNEL32.dll"
+        mock_imp.entries = [mock_entry1, mock_entry2]
+
+        with patch.dict(sys.modules, {"lief": self._make_mock_lief([mock_imp])}):
+            with tempfile.TemporaryDirectory() as tmp:
+                f = Path(tmp) / "fake.exe"
+                f.write_bytes(b"MZ" + b"\x00" * 64)
+                result = _extract_from_pe_imports(str(f))
+
+        fn_entries = [e for e in result if e["value"] == "GetProcAddress"]
+        self.assertEqual(len(fn_entries), 1)
+
+    def test_lief_parse_exception_returns_empty(self):
+        """Exception pendant lief.parse → [] sans crash (lignes 121-122)."""
+        mock_lief = MagicMock()
+        mock_lief.parse.side_effect = RuntimeError("lief internal error")
+
+        with patch.dict(sys.modules, {"lief": mock_lief}):
+            with tempfile.TemporaryDirectory() as tmp:
+                f = Path(tmp) / "fake.exe"
+                f.write_bytes(b"MZ" + b"\x00" * 64)
+                result = _extract_from_pe_imports(str(f))
+
+        self.assertEqual(result, [])
+
+    def test_iat_address_zero_uses_0x0(self):
+        """entry.iat_address == 0 → addr '0x0' (branche ligne 105-106)."""
+        mock_entry = MagicMock()
+        mock_entry.name = "SomeFunction"
+        mock_entry.iat_address = 0  # zéro → addr "0x0"
+
+        mock_imp = MagicMock()
+        mock_imp.name = "NTDLL.dll"
+        mock_imp.entries = [mock_entry]
+
+        with patch.dict(sys.modules, {"lief": self._make_mock_lief([mock_imp])}):
+            with tempfile.TemporaryDirectory() as tmp:
+                f = Path(tmp) / "fake.exe"
+                f.write_bytes(b"MZ" + b"\x00" * 64)
+                result = _extract_from_pe_imports(str(f))
+
+        fn_entry = next(e for e in result if e["value"] == "SomeFunction")
+        self.assertEqual(fn_entry["addr"], "0x0")
+
+
+class TestExtractStringsAddrDedup(unittest.TestCase):
+    """Déduplication dans extract_strings quand deux offsets → même VA (ligne 168)."""
+
+    def test_addr_collision_deduplicates_entries(self):
+        """Deux 'hello' à des offsets différents mappés sur la même VA → un seul résultat."""
+        # offsets 0 et 10 → VA 0x1000 → clé (0x1000, 'hello', 'utf-8') dupliquée
+        data = b"hello\x00\x00\x00\x00\x00hello\x00"
+        offset_map = {0: 0x1000, 10: 0x1000}
+
+        with patch(
+            "backends.static.search.strings.build_offset_to_vaddr",
+            return_value=offset_map,
+        ):
+            with patch(
+                "backends.static.search.strings._extract_from_pe_imports",
+                return_value=[],
+            ):
+                with tempfile.TemporaryDirectory() as tmp:
+                    f = Path(tmp) / "bin"
+                    f.write_bytes(data)
+                    result = extract_strings(str(f), encoding="utf-8")
+
+        occurrences = [e for e in result if e["value"] == "hello"]
+        self.assertEqual(
+            len(occurrences), 1, "hello ne doit apparaître qu'une fois malgré la collision VA"
+        )
+
+
+class TestMain(unittest.TestCase):
+    """Tests pour la fonction main() — couverture des lignes 234-306."""
+
+    def _call_main(self, argv):
+        import io
+
+        from backends.static.search.strings import main
+
+        with patch("sys.argv", ["strings.py"] + argv):
+            with patch("sys.stdout", new_callable=io.StringIO) as mock_out:
+                ret = main()
+                return ret, mock_out.getvalue()
+
+    def test_no_system_stdout(self):
+        """--no-system écrit le JSON sur stdout et retourne 0."""
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "test.bin"
+            f.write_bytes(b"hello world\x00")
+            ret, out = self._call_main(["--binary", str(f), "--no-system"])
+        self.assertEqual(ret, 0)
+        import json
+
+        parsed = json.loads(out)
+        self.assertIsInstance(parsed, list)
+        values = [e["value"] for e in parsed]
+        self.assertIn("hello world", values)
+
+    def test_output_to_file(self):
+        """--output écrit dans un fichier et affiche un message de confirmation."""
+        import json
+
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "test.bin"
+            out_path = Path(tmp) / "out.json"
+            f.write_bytes(b"hello world\x00")
+            ret, stdout_msg = self._call_main(
+                ["--binary", str(f), "--no-system", "--output", str(out_path)]
+            )
+            self.assertEqual(ret, 0)
+            self.assertTrue(out_path.exists())
+            parsed = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertIsInstance(parsed, list)
+            self.assertIn(str(out_path), stdout_msg)
+
+    def test_encoding_utf16_uses_python_impl(self):
+        """--encoding utf-16-le force l'impl Python (pas system strings)."""
+        import json
+
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "test.bin"
+            f.write_bytes(b"h\x00e\x00l\x00l\x00o\x00\x00\x00")
+            ret, out = self._call_main(["--binary", str(f), "--encoding", "utf-16-le"])
+        self.assertEqual(ret, 0)
+        values = [e["value"] for e in json.loads(out)]
+        self.assertIn("hello", values)
+
+    def test_section_uses_python_impl(self):
+        """--section force l'impl Python (section inexistante → [])."""
+        import json
+
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "test.bin"
+            f.write_bytes(b"hello world test\x00")
+            ret, out = self._call_main(
+                ["--binary", str(f), "--section", ".nonexistent_xyz"]
+            )
+        self.assertEqual(ret, 0)
+        self.assertEqual(json.loads(out), [])
+
+    def test_max_results_limits_raw_strings(self):
+        """--max-results=1 : au plus 1 raw string dans les résultats."""
+        import json
+
+        with patch(
+            "backends.static.search.strings._extract_from_pe_imports", return_value=[]
+        ):
+            with tempfile.TemporaryDirectory() as tmp:
+                f = Path(tmp) / "test.bin"
+                f.write_bytes(b"aaaa\x00bbbb\x00cccc\x00dddd\x00")
+                ret, out = self._call_main(
+                    ["--binary", str(f), "--no-system", "--max-results", "1"]
+                )
+        self.assertEqual(ret, 0)
+        self.assertLessEqual(len(json.loads(out)), 1)
+
+    def test_max_results_preserves_pe_imports(self):
+        """--max-results : les imports PE sont toujours inclus en dehors de la limite."""
+        import json
+
+        pe_entry = {
+            "addr": "0x401000",
+            "value": "ImportedFunction",
+            "length": 16,
+            "encoding": "utf-8",
+            "source": "pe_import",
+        }
+        with patch(
+            "backends.static.search.strings._extract_from_pe_imports",
+            return_value=[pe_entry],
+        ):
+            with tempfile.TemporaryDirectory() as tmp:
+                f = Path(tmp) / "test.bin"
+                # 4 raw strings + 1 PE import → max_results=1 doit garder PE
+                f.write_bytes(b"aaaa\x00bbbb\x00cccc\x00dddd\x00")
+                ret, out = self._call_main(
+                    ["--binary", str(f), "--no-system", "--max-results", "1"]
+                )
+        self.assertEqual(ret, 0)
+        parsed = json.loads(out)
+        pe_entries = [e for e in parsed if e.get("source") == "pe_import"]
+        self.assertEqual(len(pe_entries), 1)
+
+    def test_system_fallback_to_python(self):
+        """Sans --no-system avec --encoding utf-8 : system strings vide → fallback python."""
+        import json
+
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.stdout = ""  # system strings retourne vide → fallback python
+
+        with patch("subprocess.run", return_value=mock_proc):
+            with tempfile.TemporaryDirectory() as tmp:
+                f = Path(tmp) / "test.bin"
+                f.write_bytes(b"hello world\x00")
+                ret, out = self._call_main(["--binary", str(f), "--encoding", "utf-8"])
+        self.assertEqual(ret, 0)
+        values = [e["value"] for e in json.loads(out)]
+        self.assertIn("hello world", values)
+
+    def test_system_returns_results_no_fallback(self):
+        """Sans --no-system : system strings retourne des résultats → pas de fallback python."""
+        import json
+
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.stdout = "   0 hello world\n"  # system retourne un résultat
+
+        with patch("subprocess.run", return_value=mock_proc):
+            with patch(
+                "backends.static.search.strings.build_offset_to_vaddr",
+                return_value={},
+            ):
+                with tempfile.TemporaryDirectory() as tmp:
+                    f = Path(tmp) / "test.bin"
+                    f.write_bytes(b"hello world\x00")
+                    ret, out = self._call_main(
+                        ["--binary", str(f), "--encoding", "utf-8"]
+                    )
+        self.assertEqual(ret, 0)
+        parsed = json.loads(out)
+        self.assertGreater(len(parsed), 0)
+
+    def test_dunder_main_calls_sys_exit(self):
+        """Le bloc if __name__ == '__main__' appelle sys.exit(main())."""
+        import io
+        import runpy
+
+        strings_py = (
+            Path(__file__).resolve().parent.parent / "search" / "strings.py"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "bin"
+            f.write_bytes(b"hello world\x00")
+            with patch("sys.argv", ["strings.py", "--binary", str(f), "--no-system"]):
+                with patch("sys.stdout", new_callable=io.StringIO):
+                    with self.assertRaises(SystemExit) as ctx:
+                        runpy.run_path(str(strings_py), run_name="__main__")
+        self.assertEqual(ctx.exception.code, 0)
+
+
 if __name__ == "__main__":
     unittest.main()
