@@ -93,7 +93,7 @@ function reloadStrings() {
 }
 document.getElementById('stringsEncoding')?.addEventListener('change', reloadStrings);
 document.getElementById('stringsSection')?.addEventListener('change', reloadStrings);
-document.getElementById('stringsMinLen')?.addEventListener('change', reloadStrings);
+document.getElementById('stringsMinLen')?.addEventListener('change', () => { stringsPage = 1; applyStringsFilter(); });
 document.getElementById('stringsSource')?.addEventListener('change', () => { stringsPage = 1; applyStringsFilter(); });
 document.getElementById('stringsPageSize')?.addEventListener('change', () => { stringsPage = 1; applyStringsFilter(); });
 // ── Recherche : mode pills (A) ───────────────────────────────────────────────
@@ -3367,11 +3367,15 @@ function renderStringsTable(container, strings, filterText, useRegex) {
     return 'UTF-8 / ASCII';
   };
 
+  // minLen filter — applied client-side, no extension round-trip on minLen change
+  const minLenFilter = parseInt(document.getElementById('stringsMinLen')?.value || '4', 10);
+  const afterMinLen = strings.filter((s) => Number(s.length || 0) >= minLenFilter);
+
   // Source filter
   const sourceFilter = document.getElementById('stringsSource')?.value || 'all';
-  let afterSource = strings;
-  if (sourceFilter === 'pe_import') afterSource = strings.filter((s) => s.source === 'pe_import');
-  else if (sourceFilter === 'raw') afterSource = strings.filter((s) => !s.source);
+  let afterSource = afterMinLen;
+  if (sourceFilter === 'pe_import') afterSource = afterMinLen.filter((s) => s.source === 'pe_import');
+  else if (sourceFilter === 'raw') afterSource = afterMinLen.filter((s) => !s.source);
 
   // Text filter
   let filtered = afterSource;
@@ -3419,7 +3423,7 @@ function renderStringsTable(container, strings, filterText, useRegex) {
 
   // Hint
   const hintCls = regexError ? 'hint error' : 'hint';
-  let hint = regexError ? 'Regex invalide' : `${filtered.length}${strings.length !== filtered.length ? ` / ${strings.length}` : ''} chaîne(s)`;
+  let hint = regexError ? 'Regex invalide' : `${filtered.length}${afterMinLen.length !== filtered.length ? ` / ${afterMinLen.length}` : ''} chaîne(s)`;
   const encodingCounts = filtered.reduce((acc, entry) => {
     const key = String(entry.encoding || 'utf-8');
     acc[key] = (acc[key] || 0) + 1;

@@ -391,7 +391,7 @@ describe('loaders — hubLoadStrings', () => {
     expect(args[minLenIdx + 1]).to.equal('4');
   });
 
-  it('filters in-process by requested minLen without re-extracting', async () => {
+  it('serves full cache set without minLen filtering (frontend handles it)', async () => {
     const { panel, posted } = makePanel();
     const { logChannel } = makeLogChannel();
     const cachedStrings = [
@@ -412,12 +412,10 @@ describe('loaders — hubLoadStrings', () => {
 
     await loaders.hubLoadStrings({ binaryPath: '/repo/demo.bin', minLen: '8', encoding: 'utf-8' });
 
-    // Python must NOT be called — served from cache and filtered in-process
+    // Python must NOT be called — served from cache
     expect(runPythonJsonViaFile.called).to.equal(false);
-    // Only strings with length >= 8 are posted
-    expect(posted[0].strings).to.deep.equal([
-      { addr: '0x3000', value: 'helloworld', length: 10, encoding: 'utf-8' },
-    ]);
+    // Extension sends the full base set — minLen filtering is the frontend's responsibility
+    expect(posted[0].strings).to.deep.equal(cachedStrings);
   });
 
   it('clamps minLen to 64 max and still uses BASE_MIN_LEN=4 for extraction', async () => {

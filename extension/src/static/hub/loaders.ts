@@ -100,12 +100,9 @@ function createLoaders({
           },
         });
 
+        // minLen filtering is now the frontend's responsibility (applyStringsFilter / renderStringsTable).
+        // The extension always sends the full base set so switching minLen never triggers a round-trip.
         let strings = Array.isArray(allStrings) ? allStrings : [];
-
-        // Filter by requested minLen
-        if (minLen > extractMinLen) {
-          strings = strings.filter((s) => Number(s.length || 0) >= minLen);
-        }
 
         // Filter by section using sections cache VA ranges (no re-extraction)
         if (section) {
