@@ -90,19 +90,23 @@ def default_plugin_search_paths(
     env: dict[str, str] | None = None,
 ) -> list[Path]:
     env_map = env or os.environ
-    cwd_path = Path(cwd or Path.cwd()).expanduser().resolve()
-    home_path = Path(home or Path.home()).expanduser().resolve()
-    workspace_root = cwd_path / ".pile-ou-face"
-    if workspace_root.is_dir():
-        paths = [workspace_root / "plugins"]
-    else:
-        paths = [home_path / ".pile-ou-face" / "plugins"]
     extra = str(env_map.get(f"{_LICENSE_ENV_PREFIX}_PLUGIN_PATH", "") or "").strip()
     if extra:
-        for raw_item in extra.split(os.pathsep):
-            item = raw_item.strip()
-            if item:
-                paths.append(Path(item).expanduser())
+        paths = [
+            Path(item.strip()).expanduser()
+            for item in extra.split(os.pathsep)
+            if item.strip()
+        ]
+    else:
+        paths = []
+    cwd_path = Path(cwd or Path.cwd()).expanduser().resolve()
+    home_path = Path(home or Path.home()).expanduser().resolve()
+    if not paths:
+        workspace_root = cwd_path / ".pile-ou-face"
+        if workspace_root.is_dir():
+            paths = [workspace_root / "plugins"]
+        else:
+            paths = [home_path / ".pile-ou-face" / "plugins"]
     unique: list[Path] = []
     seen: set[Path] = set()
     for path in paths:

@@ -465,6 +465,14 @@ class TestPluginRuntime(unittest.TestCase):
         )
         self.assertEqual(paths, [Path("/tmp/home/.pile-ou-face/plugins").resolve()])
 
+    def test_default_plugin_search_paths_env_overrides_legacy_fallbacks(self):
+        paths = default_plugin_search_paths(
+            cwd="/tmp/project",
+            home="/tmp/home",
+            env={"BINHOST_PLUGIN_PATH": "/tmp/workspaceStorage/pof/plugins"},
+        )
+        self.assertEqual(paths, [Path("/tmp/workspaceStorage/pof/plugins")])
+
     def test_default_license_search_paths_prefers_workspace_root_when_present(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp) / "project"

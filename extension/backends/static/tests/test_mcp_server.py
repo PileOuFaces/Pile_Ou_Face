@@ -95,7 +95,7 @@ class TestMcpServer(unittest.TestCase):
         mock_plugin_runtime_records.return_value = {
             "host_version": "0.1.0",
             "api_version": 1,
-            "search_paths": ["/repo/.pile-ou-face/plugins"],
+            "search_paths": ["/workspaceStorage/df663d3d38c329fe16f94cf93e5fd4d5/PileOuFaces.stack-visualizer/plugins"],
             "summary": {"active": 1},
             "plugins": [
                 {
@@ -125,7 +125,7 @@ class TestMcpServer(unittest.TestCase):
     def test_tools_call_plugin_invoke(
         self, mock_search_paths, mock_build_registry, mock_invoke
     ):
-        mock_search_paths.return_value = [Path("/repo/.pile-ou-face/plugins")]
+        mock_search_paths.return_value = [Path("/workspaceStorage/df663d3d38c329fe16f94cf93e5fd4d5/PileOuFaces.stack-visualizer/plugins")]
         mock_build_registry.return_value = []
         mock_invoke.return_value = (
             {"ok": True, "command": "demo.scan.run", "result": {"findings": 1}},
@@ -159,7 +159,7 @@ class TestMcpServer(unittest.TestCase):
     def test_tools_call_plugin_invoke_by_feature(
         self, mock_search_paths, mock_build_registry, mock_invoke_feature
     ):
-        mock_search_paths.return_value = [Path("/repo/.pile-ou-face/plugins")]
+        mock_search_paths.return_value = [Path("/workspaceStorage/df663d3d38c329fe16f94cf93e5fd4d5/PileOuFaces.stack-visualizer/plugins")]
         mock_build_registry.return_value = []
         mock_invoke_feature.return_value = (
             {"ok": True, "feature": "demo_feature", "command": "demo.feature.run", "result": {"items": []}},
@@ -201,7 +201,7 @@ class TestMcpServer(unittest.TestCase):
         mock_dynamic_plugin_tool_routes.return_value = {
             "plugin.demo_feature": {"feature_id": "demo_feature", "command_id": "demo.scan.run"}
         }
-        mock_search_paths.return_value = [Path("/repo/.pile-ou-face/plugins")]
+        mock_search_paths.return_value = [Path("/workspaceStorage/df663d3d38c329fe16f94cf93e5fd4d5/PileOuFaces.stack-visualizer/plugins")]
         mock_build_registry.return_value = []
         mock_invoke_feature.return_value = (
             {"ok": True, "feature": "demo_feature", "command": "demo.scan.run", "result": {"findings": 2}},

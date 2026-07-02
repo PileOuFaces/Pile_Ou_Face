@@ -145,7 +145,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--source", required=True, help="Dossier plugin extrait ou bundle .pofplug"
     )
     parser.add_argument(
-        "--target-root", required=True, help="Dossier cible .pile-ou-face/plugins"
+        "--target-root", required=True, help="Dossier cible context.storageUri/plugins"
     )
     parser.add_argument(
         "--workspace",

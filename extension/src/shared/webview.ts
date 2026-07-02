@@ -6,7 +6,6 @@
 
 const vscode = require('vscode');
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 
 function _readJsonIfExists(filePath) {
@@ -38,10 +37,9 @@ function _resolvePluginAssetPath(pluginDir, manifest, relativeAssetPath) {
   return '';
 }
 
-function _getPluginSearchDirs(storageDir, globalDir) {
+function _getPluginSearchDirs(storageDir, _globalDir) {
   const dirs: string[] = [];
   if (storageDir) dirs.push(path.join(storageDir, 'plugins'));
-  if (globalDir) dirs.push(path.join(globalDir, 'plugins'));
   return dirs;
 }
 
@@ -51,10 +49,7 @@ function loadPluginWebviews(root, options: { storageDir?: string; globalDir?: st
   let panels = '';
   let scripts = '';
 
-  const rootPluginsDir = root ? path.join(root, '.pile-ou-face', 'plugins') : '';
-  const searchDirs = rootPluginsDir
-    ? [rootPluginsDir, ..._getPluginSearchDirs(storageDir, globalDir)]
-    : _getPluginSearchDirs(storageDir, globalDir);
+  const searchDirs = _getPluginSearchDirs(storageDir, globalDir);
 
   for (const pluginsDir of searchDirs) {
     if (!fs.existsSync(pluginsDir)) continue;

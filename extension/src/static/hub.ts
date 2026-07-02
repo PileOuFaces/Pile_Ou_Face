@@ -7,7 +7,6 @@
 
 const vscode = require('vscode');
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const cp = require('child_process');
@@ -262,10 +261,10 @@ function createHub(config) {
         localResourceRoots: [
           context.extensionUri,
           vscode.Uri.file(root),
-          vscode.Uri.file(storageDir || path.join(root, '.pile-ou-face')),
-          vscode.Uri.file(path.join(storageDir || path.join(root, '.pile-ou-face'), 'plugins')),
-          vscode.Uri.file(globalDir || path.join(os.homedir(), '.pile-ou-face')),
-          vscode.Uri.file(path.join(globalDir || path.join(os.homedir(), '.pile-ou-face'), 'plugins')),
+          ...(storageDir ? [
+            vscode.Uri.file(storageDir),
+            vscode.Uri.file(path.join(storageDir, 'plugins')),
+          ] : []),
         ],
       }
     );

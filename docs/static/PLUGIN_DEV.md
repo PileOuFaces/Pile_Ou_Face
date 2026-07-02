@@ -369,24 +369,22 @@ context.register_ui_panel(
 
 ## Installation locale pour les tests
 
-### 1. Préparer les répertoires
+### 1. Installer dans le storage VS Code
 
-```bash
-# Dans le projet VS Code ouvert (projet workspace)
-mkdir -p .pile-ou-face/plugins/
+Depuis l'extension, utiliser `Options > Plugins > Installer…`. Le host extrait le
+plugin dans `context.storageUri/plugins/`, par exemple :
 
-# Ou dans le dossier utilisateur global
-mkdir -p ~/.pile-ou-face/plugins/
+```text
+~/Library/Application Support/Code/User/workspaceStorage/<workspace-id>/PileOuFaces.stack-visualizer/plugins/
 ```
 
-### 2. Copier le plugin
+### 2. Copier le plugin pour un test CLI
 
 ```bash
-# Depuis le dossier source
-cp -r mon-plugin/ .pile-ou-face/plugins/acme.mon-plugin/
+export BINHOST_PLUGIN_PATH="$HOME/Library/Application Support/Code/User/workspaceStorage/<workspace-id>/PileOuFaces.stack-visualizer/plugins"
 
 # Vérifier la structure
-ls .pile-ou-face/plugins/acme.mon-plugin/
+ls "$BINHOST_PLUGIN_PATH/acme.mon-plugin/"
 # → manifest.json  python/  README.md
 ```
 
@@ -456,11 +454,14 @@ POF_PLUGIN_PATH=/mes/plugins:/autres/plugins python -m backends.plugins.runtime 
 
 ## Chemins de découverte
 
-Le runtime scanne dans cet ordre :
+Dans l'extension VS Code, le host injecte explicitement :
 
-1. `.pile-ou-face/plugins/` dans le projet courant (si `.pile-ou-face/` existe)
-2. `~/.pile-ou-face/plugins/` (dossier utilisateur global)
-3. Chemins supplémentaires via `$POF_PLUGIN_PATH`
+```text
+BINHOST_PLUGIN_PATH=<context.storageUri>/plugins
+```
+
+Pour les tests CLI hors VS Code, définir `POF_PLUGIN_PATH` ou `BINHOST_PLUGIN_PATH`
+vers le dossier de plugins à tester.
 
 ---
 

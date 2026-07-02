@@ -30,7 +30,7 @@ describe("staticHandlers plugin bridge", () => {
       callback(
         null,
         JSON.stringify({
-          search_paths: ["/workspace/.pile-ou-face/plugins"],
+          search_paths: ["/workspaceStorage/df663d3d38c329fe16f94cf93e5fd4d5/PileOuFaces.stack-visualizer/plugins"],
           summary: { active: 1 },
           attached: {
             commands: ["demo.scan.run"],

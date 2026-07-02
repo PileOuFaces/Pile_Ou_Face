@@ -763,7 +763,7 @@ function staticHandlers(config) {
     },
     hubInstallPlugin: async (message = {}) => {
       const requestedScope = String(message.scope || 'user').trim() === 'workspace' ? 'workspace' : 'user';
-      const selectedScope = (storageDir || fs.existsSync(path.join(root, '.pile-ou-face'))) ? 'workspace' : requestedScope;
+      const selectedScope = storageDir ? 'workspace' : requestedScope;
       try {
         const picked = await vscode.window.showOpenDialog({
           canSelectFiles: true,
