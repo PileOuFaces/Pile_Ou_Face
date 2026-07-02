@@ -750,165 +750,12 @@
             </div>
           </div>
 
-          <!-- MALWARE: Comportement -->
-          <div id="staticBehavior" class="static-panel">
-            <div class="panel-toolbar">
-              <span id="behaviorScore" class="score-badge" style="display:none"></span>
-            </div>
-            <div id="behaviorContent" class="data-container"></div>
-          </div>
-
           <!-- MALWARE: Taint -->
           <div id="staticTaint" class="static-panel">
             <div class="panel-toolbar">
               <span id="taintScore" class="score-badge" style="display:none"></span>
             </div>
             <div id="taintContent" class="data-container"></div>
-          </div>
-
-          <!-- MALWARE: Anti-analyse (nouveau) -->
-          <div id="staticAntiAnalysis" class="static-panel">
-            <div id="antiAnalysisContent" class="data-container"></div>
-          </div>
-
-          <!-- MALWARE: ATT&CK Tagger -->
-          <div id="staticAttck" class="static-panel">
-            <div class="panel-toolbar">
-              <span id="attckCount" class="count-badge" style="display:none"></span>
-            </div>
-            <div id="attckContent" class="data-container"></div>
-          </div>
-
-          <!-- MALWARE: Détection -->
-          <div id="staticDetection" class="static-panel">
-            <div class="detection-hero modern-card">
-              <div>
-                <p class="static-kicker">Détection</p>
-                <h3 class="detection-title">Capacités et signatures</h3>
-                <p class="detection-desc">Lance CAPA pour comprendre les comportements, puis YARA pour valider tes règles personnalisées.</p>
-              </div>
-              <div class="detection-summary-grid" aria-label="Résumé détection">
-                <div class="detection-summary-card">
-                  <span class="detection-summary-label">CAPA</span>
-                  <strong id="capaSummaryCount">—</strong>
-                </div>
-                <div class="detection-summary-card">
-                  <span class="detection-summary-label">YARA</span>
-                  <strong id="yaraSummaryCount">—</strong>
-                </div>
-              </div>
-            </div>
-
-            <div class="detection-run-grid">
-              <div class="detection-section modern-card detection-run-card">
-                <div class="detection-card-head">
-                  <div>
-                    <h4 class="section-label">CAPA</h4>
-                    <p class="hint-sm">Comportements, API et capacités reconnues.</p>
-                  </div>
-                  <button id="btnCapaScan" type="button" class="btn btn-primary">Scanner CAPA</button>
-                </div>
-                <div class="detection-filter-row">
-                  <input id="capaFilterInput" class="input-inner" type="text" placeholder="Filtrer les capacités…" spellcheck="false" />
-                  <select id="capaNamespaceFilter" class="select-modern">
-                    <option value="">Tous les namespaces</option>
-                  </select>
-                  <button id="btnCapaExportJson" type="button" class="btn btn-secondary btn-sm">Export JSON</button>
-                </div>
-                <div id="capaContent" class="data-container detection-results"></div>
-              </div>
-
-              <div class="detection-section modern-card detection-run-card yara-section">
-                <div class="detection-card-head">
-                  <div>
-                    <h4 class="section-label">YARA</h4>
-                    <p class="hint-sm">Choisis une source simple, puis relance tes signatures sans ressaisir les chemins.</p>
-                  </div>
-                  <button id="btnYaraScan" type="button" class="btn btn-primary">Scanner YARA</button>
-                </div>
-                <div class="yara-source-card">
-                  <div class="yara-source-head">
-                    <div>
-                      <span class="detection-summary-label">Source active</span>
-                      <p id="yaraManagedSummary" class="hint-sm">Le mode géré utilise les règles activées dans cette interface.</p>
-                    </div>
-                    <span id="yaraSourceStatus" class="soft-badge">À configurer</span>
-                  </div>
-                  <div class="yara-mode-grid" role="radiogroup" aria-label="Mode de règles YARA">
-                    <label class="yara-mode-option">
-                      <input type="radio" name="yaraRulesMode" value="library" checked />
-                      <span class="yara-mode-title">Bibliothèque active</span>
-                      <span class="yara-mode-desc">Utilise les règles activées dans cette interface, globales et projet.</span>
-                    </label>
-                    <label class="yara-mode-option">
-                      <input type="radio" name="yaraRulesMode" value="manual" />
-                      <span class="yara-mode-title">Chemin ponctuel</span>
-                      <span class="yara-mode-desc">Pour un test rapide sans changer ta config globale.</span>
-                    </label>
-                  </div>
-                </div>
-                <div id="yaraManualPathWrap" class="yara-input-row detection-yara-path">
-                  <div class="yara-input-wrap">
-                    <input type="text" id="yaraRulesPath" placeholder="Sélectionnez un fichier .yar ou un dossier…" class="input-inner" />
-                  </div>
-                  <button id="btnYaraBrowse" type="button" class="btn btn-secondary">Parcourir</button>
-                </div>
-                <div class="detection-filter-row">
-                  <input id="yaraFilterInput" class="input-inner" type="text" placeholder="Filtrer règle, offset ou match…" spellcheck="false" />
-                  <button id="btnYaraExportJson" type="button" class="btn btn-secondary btn-sm">Export JSON</button>
-                </div>
-                <div id="yaraContent" class="yara-results-container detection-results"></div>
-              </div>
-            </div>
-
-            <div id="rulesAddForm" class="detection-section modern-card" style="display:none">
-              <h4 id="rulesAddFormTitle" class="section-label">Ajouter une règle</h4>
-              <input type="hidden" id="rulesAddType" value="yara" />
-              <input type="hidden" id="rulesAddScope" value="project" />
-              <input type="hidden" id="rulesEditId" value="" />
-              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-                <label for="rulesAddName">Nom du fichier</label>
-                <input type="text" id="rulesAddName" placeholder="ma_regle.yar" class="input-inner" style="flex:1" />
-              </div>
-              <textarea id="rulesAddContent" rows="10"
-                placeholder="rule MyRule {&#10;  strings:&#10;    $a = &quot;example&quot;&#10;  condition: $a&#10;}"
-                style="width:100%;box-sizing:border-box;font-family:monospace;font-size:12px;padding:8px;border-radius:4px;resize:vertical"></textarea>
-              <div style="display:flex;gap:8px;margin-top:8px">
-                <button id="btnRulesAddCancel" type="button" class="btn btn-secondary">Annuler</button>
-                <button id="btnRulesAddSave" type="button" class="btn btn-primary">Enregistrer</button>
-              </div>
-            </div>
-
-            <div id="rulesManagerSection" class="detection-section modern-card">
-              <div class="detection-card-head">
-                <div>
-                  <h4 class="section-label">Gestionnaire de règles</h4>
-                  <p class="hint-sm">Active, désactive ou ajoute les règles utilisées par les prochains scans.</p>
-                </div>
-              </div>
-              <div class="rules-layout">
-                <div class="rules-group">
-                  <div class="rules-group-head">
-                    <h5 class="rules-group-title">YARA</h5>
-                    <div class="rules-group-actions">
-                      <button id="btnAddYaraRule" type="button" class="btn btn-sm btn-secondary" data-ruletype="yara" data-rulescope="project">Ajouter projet</button>
-                      <button id="btnAddYaraGlobalRule" type="button" class="btn btn-sm btn-secondary" data-ruletype="yara" data-rulescope="global">Ajouter global</button>
-                    </div>
-                  </div>
-                  <div id="yaraRulesList" class="rules-list"></div>
-                </div>
-                <div class="rules-group">
-                  <div class="rules-group-head">
-                    <h5 class="rules-group-title">CAPA</h5>
-                    <div class="rules-group-actions">
-                      <button id="btnAddCapaRule" type="button" class="btn btn-sm btn-secondary" data-ruletype="capa" data-rulescope="project">Ajouter projet</button>
-                      <button id="btnAddCapaGlobalRule" type="button" class="btn btn-sm btn-secondary" data-ruletype="capa" data-rulescope="global">Ajouter global</button>
-                    </div>
-                  </div>
-                  <div id="capaRulesList" class="rules-list"></div>
-                </div>
-              </div>
-            </div>
           </div>
 
           <!-- OFFENSIF: ROP -->
@@ -969,11 +816,6 @@
               <button id="btnFuncSimilarityAddRef" type="button" class="btn btn-sm btn-primary">Ajouter référence</button>
             </div>
             <div id="funcSimilarityContent" class="data-container"></div>
-          </div>
-
-          <!-- OFFENSIF: Déobfuscation (nouveau) -->
-          <div id="staticDeobfuscate" class="static-panel">
-            <div id="deobfuscateContent" class="data-container"></div>
           </div>
 
           <!-- Script Python -->

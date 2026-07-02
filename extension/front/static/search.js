@@ -3650,7 +3650,4 @@ document.getElementById('btnExportCgSvg')?.addEventListener('click', () => {
   vscode.postMessage({ type: 'hubExportCgSvg', svg });
 });
 
-initDetectionUxState();
-applyYaraModeUi();
-updateDetectionSummaries();
 }
