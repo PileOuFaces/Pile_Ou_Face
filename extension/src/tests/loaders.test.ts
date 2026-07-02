@@ -41,7 +41,7 @@ function makeAnalysisCtx(overrides = {}) {
       binaryMeta: _meta || {},
     }),
     buildPseudoRawInfo: sinon.stub().returns({ format: 'raw' }),
-    loadBinaryHeaders: sinon.stub().resolves({ format: 'ELF', stripped: 'No', endianness: 'LSB', packers: 'none', packer_analysis: {} }),
+    loadBinaryHeaders: sinon.stub().resolves({ format: 'ELF', stripped: 'No', endianness: 'LSB' }),
     loadBinarySymbols: sinon.stub().resolves([{ name: 'main', addr: '0x400000' }]),
     collectSymbolNames: sinon.stub().callsFake((syms) => syms.map((s) => s.name)),
     resolveAnalysisArtifactsContext: sinon.stub().resolves({
@@ -451,7 +451,6 @@ describe('loaders — hubLoadInfo', () => {
     const { logChannel } = makeLogChannel();
     const cachedInfo = {
       format: 'ELF', stripped: 'No', endianness: 'LSB',
-      packers: 'none', packer_analysis: { upx: false },
     };
     const readCache = sinon.stub().returns(cachedInfo);
 
@@ -475,7 +474,6 @@ describe('loaders — hubLoadInfo', () => {
     const incompleteCached = { format: 'ELF', stripped: 'No' };
     const freshInfo = {
       format: 'ELF', stripped: 'No', endianness: 'LSB',
-      packers: 'none', packer_analysis: {},
     };
     const analysisCtx = makeAnalysisCtx({
       loadBinaryHeaders: sinon.stub().resolves(freshInfo),

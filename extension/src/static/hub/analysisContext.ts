@@ -99,19 +99,18 @@ function createAnalysisContext({
     const stats = fs.statSync(binaryPath);
     const arch = rawProfile?.arch || 'unknown';
     const descriptor = getRawArchDescriptor(arch);
-    return {
-      format: 'RAW',
-      machine: descriptor.displayName || 'Raw blob',
-      entry: rawProfile?.baseAddr || '0x0',
-      type: 'blob',
-      bits: descriptor.bits || '',
-      stripped: 'n/a',
-      packers: 'n/a',
-      arch,
-      endianness: rawProfile?.endian || 'little',
-      interp: 'n/a',
-      size: stats.size,
-    };
+      return {
+        format: 'RAW',
+        machine: descriptor.displayName || 'Raw blob',
+        entry: rawProfile?.baseAddr || '0x0',
+        type: 'blob',
+        bits: descriptor.bits || '',
+        stripped: 'n/a',
+        arch,
+        endianness: rawProfile?.endian || 'little',
+        interp: 'n/a',
+        size: stats.size,
+      };
   };
 
   const resolveArtifactBinaryPath = (inputPath) => {

@@ -488,13 +488,6 @@ function _renderRulesList(containerId, rules) {
     typeBadge.textContent = String(rule.type || '').toUpperCase();
     meta.appendChild(typeBadge);
 
-    if (rule.path) {
-      const pathEl = document.createElement('div');
-      pathEl.className = 'rule-item-path';
-      pathEl.textContent = rule.path;
-      copy.appendChild(pathEl);
-    }
-
     copy.insertBefore(nameSpan, copy.firstChild);
     copy.insertBefore(meta, copy.children[1] || null);
 
@@ -564,13 +557,13 @@ function applyYaraModeUi() {
   if (managedSummaryEl) {
     managedSummaryEl.textContent = activeCount
       ? `${activeCount} règle(s) YARA activée(s) seront regroupées automatiquement pour le prochain scan.`
-      : 'La bibliothèque active regroupe les règles projet et globales cochées dans cette interface.';
+      : 'La bibliothèque active regroupe les règles activées dans cette interface.';
   }
   if (manualWrap) {
     manualWrap.style.display = mode === 'manual' ? '' : 'none';
   }
   if (statusEl) {
-    let label = 'À configurer';
+    let label = 'Bibliothèque active';
     let variant = 'warn';
     if (mode === 'library') {
       label = activeCount ? `${activeCount} règle(s) actives` : 'Aucune règle active';
@@ -585,17 +578,80 @@ function applyYaraModeUi() {
   }
 }
 
+function getDetectionPanelState() {
+  const stored = _loadStorage();
+  return {
+    capaCollapsed: stored.detectionCapaCollapsed === true,
+    yaraCollapsed: stored.detectionYaraCollapsed === true,
+    rulesCollapsed: stored.detectionRulesCollapsed === true,
+  };
+}
+
+function setDetectionPanelCollapsed(bodyId, buttonId, collapsed) {
+  const body = document.getElementById(bodyId);
+  const button = document.getElementById(buttonId);
+  const card = body?.parentElement || null;
+  if (card) card.classList.toggle('is-collapsed', collapsed);
+  if (body) body.hidden = collapsed;
+  if (button) {
+    button.textContent = collapsed ? 'Afficher' : 'Masquer';
+    button.setAttribute('aria-expanded', String(!collapsed));
+  }
+}
+
+function bindDetectionPanelToggle({ stateKey, bodyId, buttonId }) {
+  const button = document.getElementById(buttonId);
+  if (!button) return;
+  const state = getDetectionPanelState();
+  setDetectionPanelCollapsed(bodyId, buttonId, state[stateKey] === true);
+  button.addEventListener('click', () => {
+    const current = getDetectionPanelState();
+    const collapsed = !(current[stateKey] === true);
+    _saveStorage({ [stateKey]: collapsed });
+    setDetectionPanelCollapsed(bodyId, buttonId, collapsed);
+  });
+}
+
+function initDetectionUxState() {
+  bindDetectionPanelToggle({
+    stateKey: 'detectionCapaCollapsed',
+    bodyId: 'capaPanelBody',
+    buttonId: 'btnToggleCapaPanel',
+  });
+  bindDetectionPanelToggle({
+    stateKey: 'detectionYaraCollapsed',
+    bodyId: 'yaraPanelBody',
+    buttonId: 'btnToggleYaraPanel',
+  });
+  bindDetectionPanelToggle({
+    stateKey: 'detectionRulesCollapsed',
+    bodyId: 'rulesManagerBody',
+    buttonId: 'btnToggleRulesPanel',
+  });
+}
+
 function updateDetectionSummaries() {
   const capaEl = document.getElementById('capaSummaryCount');
+  const capaNamespaceEl = document.getElementById('capaNamespaceCount');
   const yaraEl = document.getElementById('yaraSummaryCount');
+  const yaraActiveEl = document.getElementById('yaraActiveRuleCount');
+  const namespaceCount = new Set(
+    (detectionUiState.capaCapabilities || [])
+      .map((cap) => String(cap.namespace || '').trim())
+      .filter(Boolean),
+  ).size;
   if (capaEl) {
-    capaEl.textContent = detectionUiState.capaError
-      ? 'Erreur'
-      : String(detectionUiState.capaCapabilities.length || 0);
+    capaEl.textContent = getCapaSummaryValue() || String(detectionUiState.capaCapabilities.length || 0);
+  }
+  if (capaNamespaceEl) {
+    capaNamespaceEl.textContent = getCapaSummaryValue() || String(namespaceCount || 0);
   }
   if (yaraEl) {
     const hitCount = detectionUiState.yaraMatches.reduce((acc, rule) => acc + (rule.matches || []).length, 0);
     yaraEl.textContent = detectionUiState.yaraError ? 'Erreur' : String(hitCount || 0);
+  }
+  if (yaraActiveEl) {
+    yaraActiveEl.textContent = String(detectionUiState.activeYaraCount || 0);
   }
 }
 
@@ -626,12 +682,67 @@ function detectionEmptyHtml(title, desc) {
   return `<div class="detection-empty"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(desc)}</span></div>`;
 }
 
+function isCapaConfigIssue(errorText) {
+  const text = String(errorText || '').toLowerCase();
+  return Boolean(text) && (
+    text.includes('règles introuvables')
+    || text.includes('rules introuvables')
+    || text.includes('bibliothèque de règles introuvable')
+    || text.includes('capa non installé')
+    || text.includes('default embedded rules not found')
+    || text.includes('e_missing_rules')
+    || text.includes('vivisect')
+    || text.includes('module not found')
+    || text.includes('timeout')
+    || text.includes('pas de sortie')
+  );
+}
+
+function getCapaSummaryValue() {
+  const error = String(detectionUiState.capaError || '').trim();
+  if (!error) return null;
+  return isCapaConfigIssue(error) ? null : 'Erreur';
+}
+
+function resetDetectionStateForBinary(binaryPath = '') {
+  tabDataCache.detection = { binaryPath: String(binaryPath || getStaticBinaryPath() || '') };
+  detectionUiState.capaCapabilities = [];
+  detectionUiState.capaError = '';
+  detectionUiState.yaraMatches = [];
+  detectionUiState.yaraError = '';
+  updateDetectionSummaries();
+  const capaContainer = document.getElementById('capaContent');
+  if (capaContainer) {
+    const unsupported = getCapaUnsupportedReason();
+    capaContainer.innerHTML = unsupported
+      ? detectionEmptyHtml('CAPA non disponible pour ce format', unsupported)
+      : detectionEmptyHtml(
+          'CAPA prêt',
+          'Lance CAPA pour comprendre les comportements et filtrer les capacités détectées.',
+        );
+  }
+  const yaraContainer = document.getElementById('yaraContent');
+  if (yaraContainer) {
+    yaraContainer.innerHTML = detectionEmptyHtml(
+      'YARA prêt',
+      'Choisis une source puis lance un scan pour afficher les correspondances.',
+    );
+  }
+}
+
 function renderCapaResults() {
   const container = document.getElementById('capaContent');
   if (!container) return;
   updateDetectionSummaries();
   if (detectionUiState.capaError) {
-    container.innerHTML = detectionEmptyHtml('Erreur CAPA', detectionUiState.capaError);
+    if (isCapaConfigIssue(detectionUiState.capaError)) {
+      container.innerHTML = detectionEmptyHtml(
+        'Aucune bibliothèque CAPA active',
+        'Importe une règle CAPA dans le gestionnaire puis relance le scan.',
+      );
+    } else {
+      container.innerHTML = detectionEmptyHtml('Erreur CAPA', detectionUiState.capaError);
+    }
     return;
   }
   const allCaps = detectionUiState.capaCapabilities || [];
@@ -658,8 +769,28 @@ function renderCapaResults() {
     container.innerHTML = detectionEmptyHtml('Aucun résultat filtré', 'Change le filtre ou le namespace pour revoir les capacités.');
     return;
   }
-  const rows = caps.map(c => `<tr><td><code>${escapeHtml(c.name || '')}</code></td><td>${escapeHtml(c.namespace || '')}</td><td>${escapeHtml((c.matches || '').substring(0, 90))}</td></tr>`).join('');
-  container.innerHTML = `<div class="detection-results-header"><span class="detection-results-count">${caps.length} / ${allCaps.length} capacité(s)</span></div><table class="data-table"><thead><tr><th>Capacité</th><th>Namespace</th><th>Match</th></tr></thead><tbody>${rows}</tbody></table>`;
+  const rows = caps.map((c) => {
+    const name = String(c.name || '');
+    const namespace = String(c.namespace || '');
+    const matches = String(c.matches || '').substring(0, 90);
+    return `<tr>
+      <td><button type="button" class="capa-filter-link capa-name-link" data-capa-filter="${escapeHtml(name)}">${escapeHtml(name || '—')}</button></td>
+      <td>${namespace ? `<button type="button" class="capa-filter-link" data-capa-namespace="${escapeHtml(namespace)}">${escapeHtml(namespace)}</button>` : '—'}</td>
+      <td>${escapeHtml(matches)}</td>
+    </tr>`;
+  }).join('');
+  container.innerHTML = `<div class="detection-results-header"><span class="detection-results-count">${caps.length} / ${allCaps.length} capacité(s)</span><span class="hint">Clique sur une capacité ou un namespace pour filtrer</span></div><table class="data-table"><thead><tr><th>Capacité</th><th>Namespace</th><th>Match</th></tr></thead><tbody>${rows}</tbody></table>`;
+  container.querySelectorAll('.capa-filter-link').forEach((button) => {
+    button.addEventListener('click', () => {
+      const name = String(button.dataset.capaFilter || '').trim();
+      const namespace = String(button.dataset.capaNamespace || '').trim();
+      const filterInput = document.getElementById('capaFilterInput');
+      const namespaceSelectEl = document.getElementById('capaNamespaceFilter');
+      if (name && filterInput) filterInput.value = name;
+      if (namespaceSelectEl && namespace) namespaceSelectEl.value = namespace;
+      renderCapaResults();
+    });
+  });
 }
 
 function renderYaraResults() {
@@ -749,7 +880,7 @@ function renderYaraResults() {
       <section class="yara-rule-card">
         <div class="yara-rule-card-head">
           <div class="yara-rule-card-title-wrap">
-            <span class="yara-rule-badge">${escapeHtml(rule.rule || 'Règle sans nom')}</span>
+            <button type="button" class="yara-rule-filter-link yara-rule-badge" data-yara-rule="${escapeHtml(rule.rule || '')}">${escapeHtml(rule.rule || 'Règle sans nom')}</button>
             <span class="yara-rule-hit-count">${(rule.matches || []).length} correspondance(s)</span>
           </div>
         </div>
@@ -770,6 +901,16 @@ function renderYaraResults() {
       const bp = getStaticBinaryPath();
       const spanLength = normalizeSpanLength(el.dataset.span || 1);
       if (a && bp) vscode.postMessage({ type: 'hubGoToFileOffset', fileOffset: a, binaryPath: bp, spanLength });
+    });
+  });
+  container.querySelectorAll('.yara-rule-filter-link').forEach((button) => {
+    button.addEventListener('click', () => {
+      const ruleName = String(button.dataset.yaraRule || '').trim();
+      const filterInput = document.getElementById('yaraFilterInput');
+      if (filterInput && ruleName) {
+        filterInput.value = ruleName;
+        renderYaraResults();
+      }
     });
   });
 }
@@ -890,67 +1031,6 @@ function buildNavigableAddrNode(addr) {
     vscode.postMessage({ type: 'hubGoToAddress', addr: text, binaryPath });
   });
   return code;
-}
-
-function getPackerScoreBadgeClass(score) {
-  const value = Number(score || 0);
-  if (value >= 55) return 'critical';
-  if (value >= 30) return 'high';
-  return '';
-}
-
-function renderPackerAnalysisHtml(analysis) {
-  if (!analysis || typeof analysis !== 'object') return '';
-  const score = Number(analysis.score || 0);
-  const summary = String(analysis.summary || '').trim();
-  const signals = Array.isArray(analysis.signals) ? analysis.signals : [];
-  const suspiciousSections = Array.isArray(analysis.suspicious_sections) ? analysis.suspicious_sections : [];
-  const regions = Array.isArray(analysis.high_entropy_regions) ? analysis.high_entropy_regions : [];
-  const badgeClass = getPackerScoreBadgeClass(score);
-  const chips = [];
-  chips.push(`<span class="score-badge ${badgeClass}">score ${escapeHtml(String(score))}/100</span>`);
-  if (analysis.global_entropy !== null && analysis.global_entropy !== undefined) {
-    chips.push(`<span class="count-badge">entropie globale ${escapeHtml(Number(analysis.global_entropy).toFixed(2))}</span>`);
-  }
-  if (analysis.import_count !== null && analysis.import_count !== undefined) {
-    chips.push(`<span class="count-badge">${escapeHtml(String(analysis.import_count))} imports</span>`);
-  }
-  if (analysis.resource_count !== null && analysis.resource_count !== undefined) {
-    chips.push(`<span class="count-badge">${escapeHtml(String(analysis.resource_count))} ressource(s)</span>`);
-  }
-  const signalsHtml = signals.length
-    ? `<ul>${signals.map((signal) => `<li><strong>${escapeHtml(signal.label || signal.kind || 'Signal')}</strong> — ${escapeHtml(signal.detail || '—')}</li>`).join('')}</ul>`
-    : '<p class="hint">Aucun signal heuristique fort relevé.</p>';
-  const sectionsHtml = suspiciousSections.length
-    ? `<div class="data-table-wrap"><table class="data-table"><thead><tr><th>Section</th><th>Type</th><th>Offset</th><th>Entropie</th><th>Pourquoi</th></tr></thead><tbody>${suspiciousSections.map((section) => `<tr><td><code>${escapeHtml(section.name || '')}</code></td><td>${escapeHtml(section.type || '—')}</td><td><code>${escapeHtml(section.offset_hex || '—')}</code></td><td>${section.entropy !== null && section.entropy !== undefined ? escapeHtml(Number(section.entropy).toFixed(2)) : '—'}</td><td>${escapeHtml((Array.isArray(section.reasons) ? section.reasons : []).join(' ; ') || '—')}</td></tr>`).join('')}</tbody></table></div>`
-    : '<p class="hint">Aucune section ne ressort comme clairement compressée ou chiffrée.</p>';
-  const yaraMatches = Array.isArray(analysis.yara_matches) ? analysis.yara_matches : [];
-  const regionsHtml = regions.length
-    ? `<p class="hint">Zones locales à revoir : ${regions.map((region) => `${escapeHtml(region.offset_hex || '?')} (${escapeHtml(String(region.entropy || '?'))})`).join(', ')}.</p>`
-    : '';
-  const hintHtml = yaraMatches.length
-    ? `<p class="hint">Signature formelle identifiée (YARA) : ${escapeHtml(yaraMatches.map((m) => m.rule || m.family || '?').join(', '))}. Les patterns byte correspondent à un packer connu.</p>`
-    : '<p class="hint">Lecture rapide : ces indices croisent entropie, noms de sections, imports et ressources PE. Ce n\'est pas une signature packer formelle.</p>';
-  return `
-    <div style="margin-top:12px">
-      <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap">
-        <div>
-          <div class="info-key">Packing / compression</div>
-          <div class="info-val" style="margin:4px 0 0 0">${escapeHtml(summary || '—')}</div>
-        </div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${chips.join('')}</div>
-      </div>
-      ${hintHtml}
-      <div style="margin-top:10px">
-        <div class="info-key">Signaux</div>
-        ${signalsHtml}
-      </div>
-      <div style="margin-top:10px">
-        <div class="info-key">Sections suspectes</div>
-        ${sectionsHtml}
-      </div>
-      ${regionsHtml}
-    </div>`;
 }
 
 // ── Plugin shared helpers (globals consumed by plugin webviews) ───────────────
@@ -3569,4 +3649,8 @@ document.getElementById('btnExportCgSvg')?.addEventListener('click', () => {
   const svg = svgEl.outerHTML;
   vscode.postMessage({ type: 'hubExportCgSvg', svg });
 });
+
+initDetectionUxState();
+applyYaraModeUi();
+updateDetectionSummaries();
 }

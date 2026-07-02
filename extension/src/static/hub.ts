@@ -161,6 +161,7 @@ function createHub(config) {
       vscode.window.showErrorMessage('Aucun workspace ouvert.');
       return null;
     }
+    const workspaceRoot = folders[0].uri.fsPath;
     const root = resolveProjectRoot(folders[0].uri.fsPath);
     const backendRoot = getExtensionPath() || root;
     const pythonExe = detectPythonExecutable(root);
@@ -701,7 +702,7 @@ function createHub(config) {
       vscode, fs, path, crypto,
     });
     const actionsHandlers = createActions({
-      panel, context, vscode, root, storageDir, globalDir, logChannel, fs, path,
+      panel, context, vscode, root, workspaceRoot, storageDir, globalDir, logChannel, fs, path,
       runPythonJson, runPythonJsonFile,
       ensureTempDir, getTempDir,
       resolvePathFromWorkspace, toWebviewPath,
@@ -814,7 +815,6 @@ function createHub(config) {
           type: 'blob',
           bits: descriptor.bits || '',
           stripped: 'n/a',
-          packers: 'n/a',
           arch,
           endianness: rawProfile?.endian || 'little',
           interp: 'n/a',

@@ -1205,11 +1205,10 @@ window.addEventListener('message', (event) => {
         ['Bits', info.bits ? info.bits + '-bit' : '—'],
         ['Endianness', info.endianness || '—'],
         ['Stripped', info.stripped || '—'],
-        ['Packers', info.packers || '—'],
         ['Arch (objdump)', info.arch || '—'],
         ['Interp', info.interp || '—']
       ].map(([k, v]) => `<div class="info-row"><span class="info-key">${escapeHtml(k)}</span><span class="info-val">${escapeHtml(String(v))}</span></div>`).join('');
-      container.innerHTML = `<div class="info-grid">${rows}</div>${renderPackerAnalysisHtml(info.packer_analysis)}`;
+      container.innerHTML = `<div class="info-grid">${rows}</div>`;
     }
     if (typeof resetDetectionStateForBinary === 'function') {
       resetDetectionStateForBinary(getStaticBinaryPath());

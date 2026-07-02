@@ -141,9 +141,6 @@ function createLoaders({
             && cached.stripped !== '—'
             && typeof cached.endianness === 'string'
             && cached.endianness
-            && typeof cached.packers === 'string'
-            && typeof cached.packer_analysis === 'object'
-            && cached.packer_analysis !== null
           ),
           compute: () => loadBinaryHeaders(absPath),
         });
