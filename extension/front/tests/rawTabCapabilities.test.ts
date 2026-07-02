@@ -24,29 +24,20 @@ describe("raw tab capabilities", () => {
     ]);
   });
 
-  it("marks heuristic or plugin-dependent raw views as limited", () => {
+  it("marks heuristic public raw views as limited", () => {
     expect(getRawTabsByLevel("limited")).to.have.members([
       "symbols",
       "imports",
       "detection",
-      "deobfuscate",
-      "rop",
     ]);
   });
 
   it("keeps structured-binary-only views unavailable on raw blobs", () => {
     const unsupported = [
-      "func_similarity",
       "decompile",
       "stack",
       "pe_resources",
       "exceptions",
-      "taint",
-      "behavior",
-      "anti_analysis",
-      "vulns",
-      "flirt",
-      "bindiff",
     ];
 
     expect(getRawTabsByLevel("unsupported")).to.have.members(unsupported);

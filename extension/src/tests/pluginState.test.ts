@@ -10,14 +10,14 @@ describe("plugin state helpers", () => {
   it("flattens plugin capabilities across manifest sections", () => {
     const capabilities = flattenPluginCapabilities({
       capabilities: {
-        analysis: ["behavior.enrich", "anti_analysis.enrich"],
+        analysis: ["demo.b.enrich", "demo.b.extra"],
         export: ["report.markdown"],
       },
     });
 
     expect(capabilities).to.deep.equal([
-      "anti_analysis.enrich",
-      "behavior.enrich",
+      "demo.b.enrich",
+      "demo.b.extra",
       "report.markdown",
     ]);
   });
@@ -25,49 +25,49 @@ describe("plugin state helpers", () => {
   it("summarizes active plugin families for the static hub", () => {
     const state = summarizePluginRuntimeState({
       attached: {
-        commands: ["audit.vulns.run", "malware.behavior.run"],
+        commands: ["demo.a.run", "demo.b.run"],
         command_sources: {
-          "audit.vulns.run": "pof.vulnerability-audit-pro",
-          "malware.behavior.run": "pof.malware-triage-pro",
+          "demo.a.run": "pof.demo-a",
+          "demo.b.run": "pof.demo-b",
         },
       },
       plugins: [
         {
-          id: "pof.vulnerability-audit-pro",
+          id: "pof.demo-a",
           state: "active",
           manifest: {
-            name: "Vulnerability Audit Pro",
+            name: "Demo Plugin A",
             version: "2.0.0",
             kind: "analysis-pack",
-            ui: { family: "audit" },
+            ui: { family: "demo_a" },
             capabilities: {
-              analysis: ["taint.enrich", "vuln_patterns.enrich"],
+              analysis: ["demo.a.extra", "demo.a.enrich"],
             },
           },
         },
         {
-          id: "pof.malware-triage-pro",
+          id: "pof.demo-b",
           state: "active",
           manifest: {
-            name: "Malware Triage Pro",
+            name: "Demo Plugin B",
             version: "1.2.0",
             kind: "analysis-pack",
-            ui: { family: "malware" },
+            ui: { family: "demo_family" },
             capabilities: {
-              analysis: ["behavior.enrich", "anti_analysis.enrich"],
+              analysis: ["demo.b.enrich", "demo.b.extra"],
             },
           },
         },
         {
-          id: "pof.offensive-research-pro",
+          id: "pof.demo-c",
           state: "active",
           manifest: {
-            name: "Offensive Research Pro",
+            name: "Demo Plugin C",
             version: "0.9.0",
             kind: "analysis-pack",
             ui: { family: "offensif" },
             capabilities: {
-              analysis: ["rop_gadgets.run", "bindiff.run"],
+              analysis: ["demo.c.extra", "demo.c.run"],
             },
           },
         },
@@ -79,7 +79,7 @@ describe("plugin state helpers", () => {
             version: "0.1.0",
             kind: "analysis-pack",
             capabilities: {
-              analysis: ["string_deobfuscate.run"],
+              analysis: ["demo.c.text"],
             },
           },
         },
@@ -90,48 +90,48 @@ describe("plugin state helpers", () => {
     expect(state.pluginCount).to.equal(4);
     expect(state.searchPaths).to.deep.equal([]);
     expect(state.stateCounts).to.deep.equal({});
-    expect(state.attachedCommands).to.deep.equal(["audit.vulns.run", "malware.behavior.run"]);
-    expect(state.commandSources["audit.vulns.run"]).to.equal("pof.vulnerability-audit-pro");
+    expect(state.attachedCommands).to.deep.equal(["demo.a.run", "demo.b.run"]);
+    expect(state.commandSources["demo.a.run"]).to.equal("pof.demo-a");
     expect(state.activePluginIds).to.deep.equal([
-      "pof.malware-triage-pro",
-      "pof.offensive-research-pro",
-      "pof.vulnerability-audit-pro",
+      "pof.demo-a",
+      "pof.demo-b",
+      "pof.demo-c",
     ]);
     expect(state.families).to.deep.equal({
-      audit: true,
-      malware: true,
+      demo_a: true,
+      demo_family: true,
       offensif: true,
     });
-    expect(state.capabilityMap["vuln_patterns.enrich"]).to.equal(true);
-    expect(state.capabilityMap["behavior.enrich"]).to.equal(true);
-    expect(state.capabilityMap["rop_gadgets.run"]).to.equal(true);
-    expect(state.capabilityMap["string_deobfuscate.run"]).to.equal(undefined);
+    expect(state.capabilityMap["demo.a.enrich"]).to.equal(true);
+    expect(state.capabilityMap["demo.b.enrich"]).to.equal(true);
+    expect(state.capabilityMap["demo.c.extra"]).to.equal(true);
+    expect(state.capabilityMap["demo.c.text"]).to.equal(undefined);
     expect(state.plugins.find((plugin) => plugin.id === "pof.disabled-demo")?.state).to.equal("disabled");
-    expect(state.plugins.find((plugin) => plugin.id === "pof.vulnerability-audit-pro")?.commands).to.deep.equal(["audit.vulns.run"]);
-    expect(state.plugins.find((p) => p.id === "pof.malware-triage-pro")?.family).to.equal("malware");
-    expect(state.plugins.find((p) => p.id === "pof.vulnerability-audit-pro")?.family).to.equal("audit");
+    expect(state.plugins.find((plugin) => plugin.id === "pof.demo-a")?.commands).to.deep.equal(["demo.a.run"]);
+    expect(state.plugins.find((p) => p.id === "pof.demo-b")?.family).to.equal("demo_family");
+    expect(state.plugins.find((p) => p.id === "pof.demo-a")?.family).to.equal("demo_a");
     expect(state.plugins.find((p) => p.id === "pof.disabled-demo")?.family).to.equal(null);
   });
 
   it("returns null family when manifest omits ui.family", () => {
     const state = summarizePluginRuntimeState({
       attached: {
-        commands: ["malware.behavior.run"],
+        commands: ["demo.b.run"],
         command_sources: {
-          "malware.behavior.run": "pof.malware-triage-pro",
+          "demo.b.run": "pof.demo-b",
         },
       },
       summary: { active: 1 },
       plugins: [
         {
-          id: "pof.malware-triage-pro",
+          id: "pof.demo-b",
           state: "active",
           manifest: {
-            name: "Malware Triage Pro",
+            name: "Demo Plugin B",
             version: "1.2.0",
             kind: "analysis-pack",
             capabilities: {
-              analysis: ["behavior.enrich", "anti_analysis.enrich"],
+              analysis: ["demo.b.enrich", "demo.b.extra"],
             },
           },
         },
@@ -140,39 +140,39 @@ describe("plugin state helpers", () => {
 
     expect(state.families).to.deep.equal({});
     expect(state.plugins[0]?.family).to.equal(null);
-    expect(state.plugins[0]?.commands).to.deep.equal(["malware.behavior.run"]);
+    expect(state.plugins[0]?.commands).to.deep.equal(["demo.b.run"]);
   });
 
-  it("keeps cross-analysis plugins visible through the croisee family", () => {
+  it("keeps manifest-declared families visible", () => {
     const state = summarizePluginRuntimeState({
       attached: {
-        commands: ["croisee.cross_analyze.run"],
+        commands: ["demo.d.run"],
         command_sources: {
-          "croisee.cross_analyze.run": "pof.cross-analysis-pro",
+          "demo.d.run": "pof.demo-d",
         },
       },
       summary: { active: 1 },
       plugins: [
         {
-          id: "pof.cross-analysis-pro",
+          id: "pof.demo-d",
           state: "active",
           manifest: {
-            name: "Cross-Analysis Pro",
+            name: "Demo Plugin D",
             version: "0.1.0",
             kind: "analysis-pack",
-            ui: { family: "croisee" },
+            ui: { family: "demo_d" },
             capabilities: {
-              analysis: ["croisee.cross_analyze.run"],
+              analysis: ["demo.d.run"],
             },
           },
         },
       ],
     });
 
-    expect(state.families).to.deep.equal({ croisee: true });
-    expect(state.activePluginIds).to.deep.equal(["pof.cross-analysis-pro"]);
-    expect(state.plugins[0]?.family).to.equal("croisee");
-    expect(state.plugins[0]?.commands).to.deep.equal(["croisee.cross_analyze.run"]);
+    expect(state.families).to.deep.equal({ demo_d: true });
+    expect(state.activePluginIds).to.deep.equal(["pof.demo-d"]);
+    expect(state.plugins[0]?.family).to.equal("demo_d");
+    expect(state.plugins[0]?.commands).to.deep.equal(["demo.d.run"]);
   });
 
   it("returns a safe empty state when plugin loading fails", () => {

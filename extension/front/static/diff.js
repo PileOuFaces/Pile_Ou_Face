@@ -1,5 +1,3 @@
-// ── Binary Diff / Func Similarity moved to offensive-research-pro plugin ──
-
 // ── Script panel ──────────────────────────────────────────────────
 (function initScriptPanel() {
   const editor = document.getElementById('scriptEditor');
@@ -184,49 +182,6 @@ document.getElementById('btnRevertAll')?.addEventListener('click', function() {
 applyHexLayoutMode();
 updateHexSelectionButtons();
 
-// ── Binary Diff buttons ──────────────────────────────────────────────────────
-document.getElementById('btnBindiffBrowseA')?.addEventListener('click', () => {
-  vscode.postMessage({ type: 'hubPickFile', target: 'bindiffPathA' });
-});
-document.getElementById('btnBindiffBrowseB')?.addEventListener('click', () => {
-  vscode.postMessage({ type: 'hubPickFile', target: 'bindiffPathB' });
-});
-document.getElementById('btnRunBindiff')?.addEventListener('click', () => {
-  const binaryA = document.getElementById('bindiffPathA')?.value?.trim();
-  const binaryB = document.getElementById('bindiffPathB')?.value?.trim();
-  if (!binaryA || !binaryB) {
-    const resultsEl = document.getElementById('bindiffResults');
-    if (resultsEl) {
-      while (resultsEl.firstChild) resultsEl.removeChild(resultsEl.firstChild);
-      const p = document.createElement('p');
-      p.className = 'error-text';
-      p.textContent = 'Renseignez les chemins des deux binaires.';
-      resultsEl.appendChild(p);
-    }
-    return;
-  }
-  const threshold = parseFloat(document.getElementById('bindiffThreshold')?.value || '0.60');
-  document.getElementById('btnRunBindiff')?.setAttribute('disabled', 'true');
-  vscode.postMessage({ type: 'hubLoadBindiff', binaryA, binaryB, threshold });
-});
-
-document.getElementById('btnFuncSimilarityRefresh')?.addEventListener('click', () => {
-  reloadFuncSimilarityPanel();
-});
-document.getElementById('btnFuncSimilarityAddRef')?.addEventListener('click', () => {
-  const binaryPath = getStaticBinaryPath();
-  setStaticLoading('funcSimilarityContent', 'Indexation de la référence…');
-  vscode.postMessage({
-    type: 'hubFuncSimilarityIndexReference',
-    binaryPath,
-    threshold: parseFloat(document.getElementById('funcSimilarityThreshold')?.value || '0.4'),
-    top: parseInt(document.getElementById('funcSimilarityTop')?.value || '3', 10),
-  });
-});
-document.getElementById('funcSimilarityThreshold')?.addEventListener('change', () => {
-  if (getActiveStaticTab() === 'func_similarity') reloadFuncSimilarityPanel();
-});
-
 // ====== Typed Data toolbar ===================================================
 document.getElementById('typedDataSection')?.addEventListener('change', () => {
   const bp = getStaticBinaryPath();
@@ -296,7 +251,4 @@ document.getElementById('btnTypedEditStructs')?.addEventListener('click', () => 
   vscode.postMessage({ type: 'hubLoadStructs' });
 });
 
-document.getElementById('funcSimilarityTop')?.addEventListener('change', () => {
-  if (getActiveStaticTab() === 'func_similarity') reloadFuncSimilarityPanel();
-});
 }

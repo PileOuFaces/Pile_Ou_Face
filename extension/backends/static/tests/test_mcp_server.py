@@ -66,17 +66,16 @@ class TestMcpServer(unittest.TestCase):
         self.assertIn("find_files", names)
         self.assertIn("plugins_list", names)
         self.assertIn("plugin_invoke", names)
-        self.assertNotIn("find_vulnerabilities", names)
-        self.assertNotIn("taint_analysis", names)
+        self.assertNotIn("legacy_private_tool", names)
 
     @patch("backends.mcp.server._dynamic_plugin_tools")
-    def test_tools_list_includes_dynamic_plugin_commands(
+    def test_tools_list_includes_dynamic_plugin_features(
         self, mock_dynamic_plugin_tools
     ):
         mock_dynamic_plugin_tools.return_value = [
             {
-                "name": "plugin.audit.vulns.run",
-                "description": "Plugin command exposed by pof.vulnerability-audit-pro: audit.vulns.run",
+                "name": "plugin.demo_feature",
+                "description": "Plugin feature exposed by pof.demo-plugin: demo_feature",
                 "inputSchema": {
                     "type": "object",
                     "properties": {"payload": {"type": "object"}},
@@ -89,7 +88,7 @@ class TestMcpServer(unittest.TestCase):
         self.assertIsNotNone(response)
         assert response is not None
         names = {tool["name"] for tool in response["result"]["tools"]}
-        self.assertIn("plugin.audit.vulns.run", names)
+        self.assertIn("plugin.demo_feature", names)
 
     @patch("backends.mcp.server._plugin_runtime_records")
     def test_tools_call_plugins_list(self, mock_plugin_runtime_records):
@@ -100,12 +99,12 @@ class TestMcpServer(unittest.TestCase):
             "summary": {"active": 1},
             "plugins": [
                 {
-                    "id": "pof.vulnerability-audit-pro",
+                    "id": "pof.demo-plugin",
                     "state": "active",
-                    "manifest": {"name": "Vulnerability Audit Pro"},
+                    "manifest": {"name": "Demo Plugin"},
                 }
             ],
-            "attached": {"commands": ["audit.vulns.run"]},
+            "attached": {"commands": ["demo.scan.run"]},
         }
         request = {
             "jsonrpc": "2.0",
@@ -129,9 +128,9 @@ class TestMcpServer(unittest.TestCase):
         mock_search_paths.return_value = [Path("/repo/.pile-ou-face/plugins")]
         mock_build_registry.return_value = []
         mock_invoke.return_value = (
-            {"ok": True, "command": "audit.vulns.run", "result": {"findings": 1}},
+            {"ok": True, "command": "demo.scan.run", "result": {"findings": 1}},
             type(
-                "Ctx", (), {"snapshot": lambda self: {"commands": ["audit.vulns.run"]}}
+                "Ctx", (), {"snapshot": lambda self: {"commands": ["demo.scan.run"]}}
             )(),
             [],
         )
@@ -142,7 +141,7 @@ class TestMcpServer(unittest.TestCase):
             "params": {
                 "name": "plugin_invoke",
                 "arguments": {
-                    "command_id": "audit.vulns.run",
+                    "command_id": "demo.scan.run",
                     "payload": {"binaryPath": "/repo/demo.bin"},
                 },
             },
@@ -154,34 +153,60 @@ class TestMcpServer(unittest.TestCase):
         self.assertFalse(result["isError"])
         self.assertEqual(result["structuredContent"]["result"], {"findings": 1})
 
-    @patch("backends.mcp.server._dynamic_plugin_tools")
-    @patch("backends.plugins.runtime.invoke_plugin_command")
+    @patch("backends.plugins.runtime.invoke_plugin_feature")
     @patch("backends.plugins.runtime.build_plugin_registry")
     @patch("backends.plugins.runtime.default_plugin_search_paths")
-    def test_tools_call_dynamic_plugin_tool_name(
+    def test_tools_call_plugin_invoke_by_feature(
+        self, mock_search_paths, mock_build_registry, mock_invoke_feature
+    ):
+        mock_search_paths.return_value = [Path("/repo/.pile-ou-face/plugins")]
+        mock_build_registry.return_value = []
+        mock_invoke_feature.return_value = (
+            {"ok": True, "feature": "demo_feature", "command": "demo.feature.run", "result": {"items": []}},
+            type(
+                "Ctx", (), {"snapshot": lambda self: {"commands": ["demo.feature.run"]}}
+            )(),
+            [],
+        )
+        request = {
+            "jsonrpc": "2.0",
+            "id": 24,
+            "method": "tools/call",
+            "params": {
+                "name": "plugin_invoke",
+                "arguments": {
+                    "feature_id": "demo_feature",
+                    "payload": {"binaryPath": "/repo/demo.bin"},
+                },
+            },
+        }
+        response = mcp_server.handle_request(request)
+        self.assertIsNotNone(response)
+        assert response is not None
+        result = response["result"]
+        self.assertFalse(result["isError"])
+        self.assertEqual(result["structuredContent"]["result"], {"items": []})
+
+    @patch("backends.mcp.server._dynamic_plugin_tool_routes")
+    @patch("backends.plugins.runtime.invoke_plugin_feature")
+    @patch("backends.plugins.runtime.build_plugin_registry")
+    @patch("backends.plugins.runtime.default_plugin_search_paths")
+    def test_tools_call_dynamic_plugin_feature_tool_name(
         self,
         mock_search_paths,
         mock_build_registry,
-        mock_invoke,
-        mock_dynamic_plugin_tools,
+        mock_invoke_feature,
+        mock_dynamic_plugin_tool_routes,
     ):
-        mock_dynamic_plugin_tools.return_value = [
-            {
-                "name": "plugin.audit.vulns.run",
-                "description": "Plugin command",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {"payload": {"type": "object"}},
-                    "additionalProperties": False,
-                },
-            }
-        ]
+        mock_dynamic_plugin_tool_routes.return_value = {
+            "plugin.demo_feature": {"feature_id": "demo_feature", "command_id": "demo.scan.run"}
+        }
         mock_search_paths.return_value = [Path("/repo/.pile-ou-face/plugins")]
         mock_build_registry.return_value = []
-        mock_invoke.return_value = (
-            {"ok": True, "command": "audit.vulns.run", "result": {"findings": 2}},
+        mock_invoke_feature.return_value = (
+            {"ok": True, "feature": "demo_feature", "command": "demo.scan.run", "result": {"findings": 2}},
             type(
-                "Ctx", (), {"snapshot": lambda self: {"commands": ["audit.vulns.run"]}}
+                "Ctx", (), {"snapshot": lambda self: {"commands": ["demo.scan.run"]}}
             )(),
             [],
         )
@@ -190,7 +215,7 @@ class TestMcpServer(unittest.TestCase):
             "id": 23,
             "method": "tools/call",
             "params": {
-                "name": "plugin.audit.vulns.run",
+                "name": "plugin.demo_feature",
                 "arguments": {
                     "payload": {"binaryPath": "/repo/demo.bin"},
                 },
@@ -443,11 +468,11 @@ class TestMcpServer(unittest.TestCase):
     ):
         mock_isfile.return_value = False
         mock_iter_files.return_value = [
-            "/repo/examples/vuln_demo.elf",
+            "/repo/examples/sample_demo.elf",
             "/repo/examples/demo_analysis.elf",
         ]
-        resolved = mcp_impl._resolve_binary_path("vul_demo.elf")
-        self.assertEqual(resolved, "/repo/examples/vuln_demo.elf")
+        resolved = mcp_impl._resolve_binary_path("sample_demo.elf")
+        self.assertEqual(resolved, "/repo/examples/sample_demo.elf")
 
 
 if __name__ == "__main__":

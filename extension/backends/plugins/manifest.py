@@ -101,6 +101,7 @@ class PluginManifest:
                 "ui": self.entrypoints.ui,
             },
             "capabilities": self.capabilities,
+            "commands": self.raw.get("commands") or [],
             "dependencies": self.dependencies,
             "manifest_path": str(self.manifest_path),
             "root_path": str(self.root_path),

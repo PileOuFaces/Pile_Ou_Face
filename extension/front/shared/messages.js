@@ -491,8 +491,6 @@ window.addEventListener('message', (event) => {
       callgraph: 'Call graph',
       discovered: 'Fonctions',
       imports: 'Imports',
-      behavior: 'Behavior',
-      anti_analysis: 'Anti-analysis',
       decompile: 'Décompilation',
     };
     const cacheTypeShortLabels = {
@@ -504,8 +502,6 @@ window.addEventListener('message', (event) => {
       callgraph: 'CG',
       discovered: 'FUNC',
       imports: 'IMP',
-      behavior: 'BEH',
-      anti_analysis: 'ANTI',
       decompile: 'DEC',
     };
     const cacheStatusBadge = (entry) => {

@@ -492,34 +492,6 @@
             </div>
           </div>
 
-          <!-- CODE: Binary Diff -->
-          <div id="staticBindiff" class="static-panel">
-            <div class="bd-toolbar">
-              <div class="bd-file bd-file-a">
-                <span class="bd-file-tag">A</span>
-                <input id="bindiffPathA" class="bd-file-input" type="text" placeholder="binaire original…" spellcheck="false" />
-                <button id="btnBindiffBrowseA" class="bd-file-browse" title="Parcourir">…</button>
-              </div>
-              <div class="bd-vs">⇄</div>
-              <div class="bd-file bd-file-b">
-                <span class="bd-file-tag">B</span>
-                <input id="bindiffPathB" class="bd-file-input" type="text" placeholder="binaire modifié…" spellcheck="false" />
-                <button id="btnBindiffBrowseB" class="bd-file-browse" title="Parcourir">…</button>
-              </div>
-              <select id="bindiffThreshold" class="bd-threshold" title="Seuil de similarité">
-                <option value="0.40">Seuil: 40%</option>
-                <option value="0.60" selected>Seuil: 60%</option>
-                <option value="0.75">Seuil: 75%</option>
-                <option value="0.90">Seuil: 90%</option>
-              </select>
-              <button id="btnRunBindiff" class="bd-run">Comparer</button>
-            </div>
-            <div id="bindiffStats" class="bd-summary" hidden></div>
-            <div id="bindiffResults" class="bd-results">
-              <p class="placeholder-text">Sélectionnez deux binaires à comparer.</p>
-            </div>
-          </div>
-
           <!-- DATA: Strings -->
           <div id="staticStrings" class="static-panel">
             <div class="form-row strings-options">
@@ -748,74 +720,6 @@
             <div id="typedDataContent" class="data-container">
               <p class="hint">Selectionnez une section pour voir les données typées.</p>
             </div>
-          </div>
-
-          <!-- MALWARE: Taint -->
-          <div id="staticTaint" class="static-panel">
-            <div class="panel-toolbar">
-              <span id="taintScore" class="score-badge" style="display:none"></span>
-            </div>
-            <div id="taintContent" class="data-container"></div>
-          </div>
-
-          <!-- OFFENSIF: ROP -->
-          <div id="staticRop" class="static-panel">
-            <div class="panel-toolbar">
-              <span id="ropCount" class="count-badge" style="display:none"></span>
-              <select id="ropBuildGoal" class="select-modern" title="Objectif ROP">
-                <option value="ret2libc_x64">ret2libc x64</option>
-                <option value="ret2syscall_x64">ret2syscall x64</option>
-                <option value="custom_exec">Commande personnalisée</option>
-                <option value="stack_pivot">Stack pivot</option>
-              </select>
-              <input id="ropCustomCmd" class="input-modern" type="text" placeholder="/bin/sh" title="Chemin de la commande à exécuter" style="display:none;width:160px">
-              <button id="btnBuildRopChain" class="btn btn-sm btn-primary" title="Lance angr pour assembler automatiquement une chaîne d'exploitation selon l'objectif sélectionné (nécessite Docker)">&#9881; Construire la chaîne ROP</button>
-            </div>
-            <p id="ropGoalDesc" class="rop-goal-desc"></p>
-            <div id="ropChainResult" class="data-container" style="display:none"></div>
-            <hr id="ropDivider" class="rop-section-divider" style="display:none">
-            <div id="ropContent" class="data-container"></div>
-          </div>
-
-          <!-- OFFENSIF: Vulnérabilités -->
-          <div id="staticVulns" class="static-panel">
-            <div class="panel-toolbar">
-              <span id="vulnsCount" class="count-badge" style="display:none"></span>
-            </div>
-            <div id="vulnsContent" class="data-container"></div>
-          </div>
-
-          <!-- OFFENSIF: FLIRT (nouveau) -->
-          <div id="staticFlirt" class="static-panel">
-            <div id="flirtContent" class="data-container"></div>
-          </div>
-
-          <!-- OFFENSIF: Similarité de fonctions -->
-          <div id="staticFuncSimilarity" class="static-panel">
-            <div class="panel-toolbar func-sim-toolbar">
-              <span id="funcSimilarityCount" class="count-badge" style="display:none"></span>
-              <label class="func-sim-field">
-                <span>Seuil</span>
-                <select id="funcSimilarityThreshold" class="bd-threshold" title="Seuil de similarité">
-                  <option value="0.30">30%</option>
-                  <option value="0.40" selected>40%</option>
-                  <option value="0.50">50%</option>
-                  <option value="0.60">60%</option>
-                  <option value="0.75">75%</option>
-                </select>
-              </label>
-              <label class="func-sim-field">
-                <span>Top</span>
-                <select id="funcSimilarityTop" class="bd-threshold" title="Nombre de matchs par fonction">
-                  <option value="1">1</option>
-                  <option value="3" selected>3</option>
-                  <option value="5">5</option>
-                </select>
-              </label>
-              <button id="btnFuncSimilarityRefresh" type="button" class="btn btn-sm btn-secondary">Actualiser</button>
-              <button id="btnFuncSimilarityAddRef" type="button" class="btn btn-sm btn-primary">Ajouter référence</button>
-            </div>
-            <div id="funcSimilarityContent" class="data-container"></div>
           </div>
 
           <!-- Script Python -->

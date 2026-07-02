@@ -118,7 +118,6 @@ function createHub(config) {
     aiPricingRules: [],
     decompilerProvider: 'docker',
     decompilerLocalPaths: {},
-    bindiffThreshold: 0.60,
     stringsEncoding: 'auto',
     stringsMinLen: 4,
     asmSyntax: 'intel',
@@ -467,10 +466,10 @@ function createHub(config) {
       feature,
       ...extra,
     });
-    const invokePluginRuntimeCommand = async (commandId, payload, {
+    const invokePluginRuntimeCommand = async (featureId, payload, {
       timeout = 120000,
       pluginId = '',
-      feature = commandId,
+      feature = featureId,
     } = {}) => {
       try {
         const pluginEnv = await buildPluginRuntimeEnv();
@@ -481,8 +480,8 @@ function createHub(config) {
               path.join(backendRoot, 'backends/plugins/runtime.py'),
               '--host-version', '0.1.0',
               '--api-version', '1',
-              'invoke',
-              commandId,
+              'invoke-feature',
+              featureId,
               '--payload-json',
               JSON.stringify(payload || {}),
             ],
@@ -500,14 +499,14 @@ function createHub(config) {
         }
         return {
           ok: false,
-          error: String(response?.error || `Échec plugin: ${commandId}`),
+          error: String(response?.error || `Échec plugin: ${featureId}`),
           plugin_required: pluginId || undefined,
           feature,
-          plugin_command: commandId,
+          plugin_command: String(response?.command || ''),
         };
       } catch (error) {
         if (pluginId) return buildPluginRequiredPayload(pluginId, feature);
-        return { ok: false, error: String(error?.message || error || `Échec plugin: ${commandId}`) };
+        return { ok: false, error: String(error?.message || error || `Échec plugin: ${featureId}`) };
       }
     };
     const resolvePathFromWorkspace = (inputPath) => (

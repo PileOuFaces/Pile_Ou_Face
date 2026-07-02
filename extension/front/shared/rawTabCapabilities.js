@@ -12,16 +12,8 @@
   const RAW_UNSUPPORTED_TABS = Object.freeze({
     decompile: Object.freeze(['decompileContent']),
     stack: Object.freeze(['stackContent']),
-    behavior: Object.freeze(['behaviorContent']),
-    taint: Object.freeze(['taintContent']),
-    anti_analysis: Object.freeze(['antiAnalysisContent']),
-    attck: Object.freeze(['attckContent']),
-    vulns: Object.freeze(['vulnsContent']),
-    flirt: Object.freeze(['flirtContent']),
-    func_similarity: Object.freeze(['funcSimilarityContent']),
     pe_resources: Object.freeze(['peResourcesContent']),
     exceptions: Object.freeze(['exceptionsContent']),
-    bindiff: Object.freeze(['bindiffStats', 'bindiffResults']),
   });
 
   const RAW_TAB_CAPABILITIES = Object.freeze({
@@ -39,19 +31,10 @@
     symbols: Object.freeze({ level: 'limited', note: 'Symboles heuristiques ou découverts, sans vraie table native.' }),
     imports: Object.freeze({ level: 'limited', note: 'Indices heuristiques uniquement, pas de table d’imports réelle.' }),
     detection: Object.freeze({ level: 'limited', note: 'YARA reste utile ; CAPA ne couvre pas les blobs bruts.' }),
-    deobfuscate: Object.freeze({ level: 'limited', note: 'Résultats utiles sur chaînes et motifs simples, moins fiables qu’un exécutable complet.' }),
-    rop: Object.freeze({ level: 'limited', note: 'Dépend du profil d’architecture brut et du plugin offensif.' }),
-    func_similarity: Object.freeze({ level: 'unsupported', note: 'La similarité a besoin d’un binaire structuré et d’une base de références.' }),
     decompile: Object.freeze({ level: 'unsupported', note: 'Pas de décompilation fiable sans format exécutable complet.' }),
     stack: Object.freeze({ level: 'unsupported', note: 'La stack frame statique raw attend un backend sans dépendance LIEF.' }),
     pe_resources: Object.freeze({ level: 'unsupported', note: 'Un blob brut n’expose pas de ressources PE structurées.' }),
     exceptions: Object.freeze({ level: 'unsupported', note: 'Pas de tables d’exceptions exploitables sur blob brut.' }),
-    taint: Object.freeze({ level: 'unsupported', note: 'La taint n’est pas encore câblée pour les blobs bruts.' }),
-    behavior: Object.freeze({ level: 'unsupported', note: 'Le comportement shellcode/firmware reste à stabiliser côté plugin.' }),
-    anti_analysis: Object.freeze({ level: 'unsupported', note: 'La vue anti-analyse n’est pas encore exposée proprement pour blob brut.' }),
-    vulns: Object.freeze({ level: 'unsupported', note: 'L’audit vulnérabilités reste pensé pour des exécutables complets.' }),
-    flirt: Object.freeze({ level: 'unsupported', note: 'Les signatures FLIRT attendent des structures natives plus riches.' }),
-    bindiff: Object.freeze({ level: 'unsupported', note: 'Le diff de binaires n’est pas encore prévu pour les blobs bruts.' }),
   });
 
   const DEFAULT_RAW_TAB_CAPABILITY = Object.freeze({

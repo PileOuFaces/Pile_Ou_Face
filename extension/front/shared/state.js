@@ -537,29 +537,10 @@ function _migrateDisabledFamilies() {
     }
     return;
   }
-  // First migration: convert plugin IDs → family names
-  if (Array.isArray(store.disabledPlugins) && store.disabledPlugins.length > 0) {
-    const OLD_PLUGIN_FAMILY = {
-      'pof.vulnerability-audit-pro': 'audit',
-      'pof.vuln-audit-pro': 'audit',
-      'pof.malware-triage-pro': 'malware',
-      'pof.offensive-research-pro': 'offensif',
-      'pof.cross-analysis-pro': 'croisee',
-    };
-    const families = [...new Set(
-      store.disabledPlugins.map((id) => OLD_PLUGIN_FAMILY[id]).filter(Boolean)
-    )];
-    const merged = { ...store, disabledFamilies: families };
-    delete merged.disabledPlugins;
-    delete merged.disabledCrossPlugins;
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(merged)); } catch (_) {}
-  } else {
-    // No plugins were disabled — just initialize disabledFamilies and clean up legacy keys
-    const merged = { ...store, disabledFamilies: [] };
-    delete merged.disabledPlugins;
-    delete merged.disabledCrossPlugins;
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(merged)); } catch (_) {}
-  }
+  const merged = { ...store, disabledFamilies: [] };
+  delete merged.disabledPlugins;
+  delete merged.disabledCrossPlugins;
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(merged)); } catch (_) {}
 }
 function getDisabledFamilies() {
   const raw = _loadStorage().disabledFamilies;
