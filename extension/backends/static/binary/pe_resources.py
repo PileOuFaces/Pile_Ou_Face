@@ -157,7 +157,9 @@ def _decode_rt_version(data: bytes) -> dict:
         ms2 = int.from_bytes(data[idx + 16 : idx + 20], "little")
         ls2 = int.from_bytes(data[idx + 20 : idx + 24], "little")
         result["file_version"] = f"{ms >> 16}.{ms & 0xFFFF}.{ls >> 16}.{ls & 0xFFFF}"
-        result["product_version"] = f"{ms2 >> 16}.{ms2 & 0xFFFF}.{ls2 >> 16}.{ls2 & 0xFFFF}"
+        result["product_version"] = (
+            f"{ms2 >> 16}.{ms2 & 0xFFFF}.{ls2 >> 16}.{ls2 & 0xFFFF}"
+        )
 
     # StringFileInfo — ProductName, CompanyName, OriginalFilename, etc.
     strings = _parse_string_file_info(data)

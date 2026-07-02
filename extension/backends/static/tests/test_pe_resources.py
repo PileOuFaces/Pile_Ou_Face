@@ -7,6 +7,7 @@ Organisation :
   - Tests d'intégration de get_pe_resources (avec mocks LIEF + vraie ELF)
   - Tests CLI (subprocess)
 """
+
 import json
 import os
 import struct
@@ -44,6 +45,7 @@ except ImportError:
 
 
 # ── Helpers de construction de binaires RT_VERSION ──────────────────────────
+
 
 def _utf16le(s: str) -> bytes:
     return s.encode("utf-16-le") + b"\x00\x00"
@@ -119,7 +121,11 @@ def _make_version_binary(
 ) -> bytes:
     """Construit un binaire RT_VERSION complet avec FixedFileInfo + StringFileInfo."""
     ffi = _make_fixed_file_info(file_ver, prod_ver)
-    sfi = _make_string_file_info("040904b0", strings or {}) if strings is not None else b""
+    sfi = (
+        _make_string_file_info("040904b0", strings or {})
+        if strings is not None
+        else b""
+    )
 
     root_key = _utf16le("VS_VERSION_INFO")
     # Header (6) + key
@@ -134,6 +140,7 @@ def _make_version_binary(
 
 
 # ── Helper LIEF mock ─────────────────────────────────────────────────────────
+
 
 def _make_lief_pe_mock(resources_spec=None, resources_obj=None):
     """
@@ -184,7 +191,12 @@ def _make_lief_pe_mock(resources_spec=None, resources_obj=None):
 
 def run_cli(binary_path: str) -> dict:
     r = subprocess.run(
-        [sys.executable, "backends/static/binary/pe_resources.py", "--binary", binary_path],
+        [
+            sys.executable,
+            "backends/static/binary/pe_resources.py",
+            "--binary",
+            binary_path,
+        ],
         capture_output=True,
         text=True,
         cwd=ROOT,
@@ -195,6 +207,7 @@ def run_cli(binary_path: str) -> dict:
 # ────────────────────────────────────────────────────────────────────────────
 # Tests _align4
 # ────────────────────────────────────────────────────────────────────────────
+
 
 class TestAlign4(unittest.TestCase):
     def test_zero(self):
@@ -214,6 +227,7 @@ class TestAlign4(unittest.TestCase):
 # ────────────────────────────────────────────────────────────────────────────
 # Tests _read_utf16_key
 # ────────────────────────────────────────────────────────────────────────────
+
 
 class TestReadUtf16Key(unittest.TestCase):
     def test_normal_key(self):
@@ -240,6 +254,7 @@ class TestReadUtf16Key(unittest.TestCase):
 # Tests _hex_preview
 # ────────────────────────────────────────────────────────────────────────────
 
+
 class TestHexPreview(unittest.TestCase):
     def test_empty(self):
         self.assertEqual(_hex_preview(b""), "")
@@ -256,6 +271,7 @@ class TestHexPreview(unittest.TestCase):
 # ────────────────────────────────────────────────────────────────────────────
 # Tests _decode_rt_string
 # ────────────────────────────────────────────────────────────────────────────
+
 
 class TestDecodeRtString(unittest.TestCase):
     def test_empty(self):
@@ -288,6 +304,7 @@ class TestDecodeRtString(unittest.TestCase):
 # Tests _decode_rt_manifest
 # ────────────────────────────────────────────────────────────────────────────
 
+
 class TestDecodeRtManifest(unittest.TestCase):
     def test_short_xml(self):
         xml = "<manifest/>"
@@ -303,6 +320,7 @@ class TestDecodeRtManifest(unittest.TestCase):
 # ────────────────────────────────────────────────────────────────────────────
 # Tests _parse_string_file_info
 # ────────────────────────────────────────────────────────────────────────────
+
 
 class TestParseStringTableEntries(unittest.TestCase):
     def test_w_len_too_small_breaks(self):
@@ -332,11 +350,14 @@ class TestParseStringFileInfo(unittest.TestCase):
         self.assertEqual(result.get("ProductName"), "Pile ou Face")
 
     def test_multiple_string_entries(self):
-        data = _make_string_file_info("040904b0", {
-            "ProductName": "Pile ou Face",
-            "CompanyName": "PileOuFaces",
-            "OriginalFilename": "test.exe",
-        })
+        data = _make_string_file_info(
+            "040904b0",
+            {
+                "ProductName": "Pile ou Face",
+                "CompanyName": "PileOuFaces",
+                "OriginalFilename": "test.exe",
+            },
+        )
         result = _parse_string_file_info(data)
         self.assertEqual(result["ProductName"], "Pile ou Face")
         self.assertEqual(result["CompanyName"], "PileOuFaces")
@@ -389,6 +410,7 @@ class TestParseStringFileInfo(unittest.TestCase):
 # Tests _decode_rt_version
 # ────────────────────────────────────────────────────────────────────────────
 
+
 class TestDecodeRtVersion(unittest.TestCase):
     def test_no_magic_no_strings_returns_raw(self):
         self.assertEqual(_decode_rt_version(b"no magic here"), {"raw": True})
@@ -433,6 +455,7 @@ class TestDecodeRtVersion(unittest.TestCase):
 # Tests _decode_rt_bitmap_icon
 # ────────────────────────────────────────────────────────────────────────────
 
+
 class TestDecodeRtBitmapIcon(unittest.TestCase):
     def _bmp_header(self, w=32, h=32, bpp=24) -> bytes:
         """BITMAPINFOHEADER minimal (40 bytes)."""
@@ -462,6 +485,7 @@ class TestDecodeRtBitmapIcon(unittest.TestCase):
 # ────────────────────────────────────────────────────────────────────────────
 # Tests _decode_resource
 # ────────────────────────────────────────────────────────────────────────────
+
 
 class TestDecodeResource(unittest.TestCase):
     def test_rt_string(self):
@@ -497,6 +521,7 @@ class TestDecodeResource(unittest.TestCase):
 # ────────────────────────────────────────────────────────────────────────────
 # Tests get_pe_resources
 # ────────────────────────────────────────────────────────────────────────────
+
 
 class TestGetPeResources(unittest.TestCase):
     def test_lief_not_available(self):
@@ -573,7 +598,9 @@ class TestGetPeResources(unittest.TestCase):
     def test_pe_with_named_resource(self):
         """Ressource avec un nom texte (has_name=True)."""
         content = b"\xde\xad\xbe\xef"
-        mock_binary = _make_lief_pe_mock(resources_spec=[(10, "MY_DATA", 1033, content)])
+        mock_binary = _make_lief_pe_mock(
+            resources_spec=[(10, "MY_DATA", 1033, content)]
+        )
         with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as f:
             f.write(b"fake")
             tmp = f.name
@@ -603,6 +630,7 @@ class TestGetPeResources(unittest.TestCase):
     def test_pe_lang_node_exception_skipped(self):
         """Une exception dans la lecture du contenu d'un lang_node est silencieuse."""
         from unittest.mock import PropertyMock
+
         mock_binary = MagicMock(spec=_lief.PE.Binary)
         root = MagicMock()
         type_node = MagicMock()
@@ -631,6 +659,7 @@ class TestGetPeResources(unittest.TestCase):
     def test_pe_root_childs_iteration_raises_outer_except(self):
         """Exception sur root.childs → branche except externe → error dans résultat."""
         from unittest.mock import PropertyMock
+
         mock_binary = MagicMock(spec=_lief.PE.Binary)
         root = MagicMock()
         type(root).childs = PropertyMock(side_effect=RuntimeError("root fail"))
@@ -649,6 +678,7 @@ class TestGetPeResources(unittest.TestCase):
 # ────────────────────────────────────────────────────────────────────────────
 # Test main()
 # ────────────────────────────────────────────────────────────────────────────
+
 
 class TestMain(unittest.TestCase):
     def test_main_returns_zero_and_outputs_json(self):
@@ -684,6 +714,7 @@ class TestMain(unittest.TestCase):
 # ────────────────────────────────────────────────────────────────────────────
 # Test branche ImportError (lief indisponible au chargement du module)
 # ────────────────────────────────────────────────────────────────────────────
+
 
 class TestLiefImportError(unittest.TestCase):
     def test_module_sets_lief_none_when_import_fails(self):
@@ -722,6 +753,7 @@ class TestLiefImportError(unittest.TestCase):
 # ────────────────────────────────────────────────────────────────────────────
 # Tests CLI (subprocess)
 # ────────────────────────────────────────────────────────────────────────────
+
 
 class TestCli(unittest.TestCase):
     def test_missing_binary_via_cli(self):
