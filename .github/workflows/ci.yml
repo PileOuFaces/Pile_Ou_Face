@@ -12,10 +12,6 @@ on:
       - 'extension/**'
       - '.github/workflows/ci.yml'
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: true
-
 permissions:
   contents: read
 
@@ -269,13 +265,8 @@ jobs:
           }
 
           if [[ "${{ github.event_name }}" == "push" ]]; then
-            # cancelled = concurrency group superseded this push run with a PR run — acceptable
-            if [[ "$LINT" == "failure" ]]; then
-              echo "❌ Lint failed" && exit 1
-            fi
-            if [[ "$QUICK" == "failure" ]]; then
-              echo "❌ Quick test failed" && exit 1
-            fi
+            fail_if_bad "$LINT" "Lint"
+            fail_if_bad "$QUICK" "Quick test"
             echo "✅ Push checks passed (lint=$LINT, quick=$QUICK)"
             exit 0
           fi
