@@ -1392,6 +1392,17 @@ function staticHandlers(config) {
       });
       panel.webview.postMessage({ type: 'hubBehavior', result });
     },
+    hubPackerScan: async (message = {}) => {
+      const { binaryPath } = message as { binaryPath?: string };
+      if (!binaryPath) {
+        panel.webview.postMessage({ type: 'hubPacker', result: { error: 'Chemin binaire manquant' } });
+        return;
+      }
+      const result = await invokePluginCommand('malware.packer.run', { binaryPath }, {
+        feature: 'packer_detect',
+      });
+      panel.webview.postMessage({ type: 'hubPacker', result });
+    },
     hubLoadAttck: async (message) => {
       const { binaryPath } = message;
       const result = await invokePluginCommand('malware.attck.tag', { binaryPath }, {
