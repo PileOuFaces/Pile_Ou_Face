@@ -166,6 +166,23 @@ class PluginContext:
         }
 
 
+@contextlib.contextmanager
+def _plugin_python_path(plugin_root: Path):
+    python_root = plugin_root / "python"
+    inserted = False
+    if python_root.is_dir():
+        python_root_text = str(python_root)
+        if python_root_text not in sys.path:
+            sys.path.insert(0, python_root_text)
+            inserted = True
+    try:
+        yield
+    finally:
+        if inserted:
+            with contextlib.suppress(ValueError):
+                sys.path.remove(str(python_root))
+
+
 def _load_plugin_module(
     manifest: PluginManifest, *, license_search_paths: list[Path] | None = None
 ):
@@ -187,7 +204,8 @@ def _load_plugin_module(
                     raise ImportError(f"Spec introuvable pour {module_path}")
                 module = importlib.util.module_from_spec(spec)
                 sys.modules[unique_name] = module
-                spec.loader.exec_module(module)
+                with _plugin_python_path(plugin_root):
+                    spec.loader.exec_module(module)
                 return module
     return importlib.import_module(entrypoint.module)
 
@@ -321,7 +339,11 @@ def attach_plugins(
                 record.manifest, license_search_paths=license_search_paths
             )
             register = getattr(module, entrypoint.register)
-            register(context)
+            plugin_root = _resolve_effective_plugin_root(
+                record.manifest, license_search_paths=license_search_paths
+            )
+            with _plugin_python_path(plugin_root):
+                register(context)
         except Exception as exc:  # pragma: no cover - safety net
             _log.warning("plugin attach failed for %s: %s", record.plugin_id, exc)
             record.state = "failed"
