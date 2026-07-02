@@ -25,6 +25,7 @@ from backends.plugins.runtime import (
     _DECRYPTED_PLUGIN_TEMPS,
     PluginContext,
     _cleanup_decrypted_plugin_cache,
+    _plugin_python_path,
     apply_plugin_licensing,
     attach_plugins,
     collect_runtime_state,
@@ -183,6 +184,70 @@ class TestPluginRuntime(unittest.TestCase):
             states = {record.plugin_id: record.state for record in records}
             self.assertEqual(states["pof.disabled"], "disabled")
             self.assertEqual(states["pof.incompatible"], "incompatible")
+
+    def test_plugin_python_path_adds_and_removes_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            plugin_root = Path(tmp)
+            python_root = plugin_root / "python"
+            python_root.mkdir()
+            python_root_str = str(python_root)
+
+            self.assertNotIn(python_root_str, sys.path)
+            with _plugin_python_path(plugin_root):
+                self.assertIn(python_root_str, sys.path)
+                self.assertEqual(sys.path[0], python_root_str)
+            self.assertNotIn(python_root_str, sys.path)
+
+    def test_attach_plugins_python_path_available_during_register(self):
+        """register_plugin() can import sibling modules from the plugin's python/ dir."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            plugin_dir = base / "pof.demo"
+            python_dir = plugin_dir / "python"
+            python_dir.mkdir(parents=True)
+            (plugin_dir / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "id": "pof.demo",
+                        "name": "Demo",
+                        "version": "0.1.0",
+                        "kind": "analysis-pack",
+                        "host": {
+                            "api_version": 1,
+                            "min_version": "0.1.0",
+                            "max_version": "0.1.x",
+                        },
+                        "entrypoints": {
+                            "python": {
+                                "module": "plugin_main",
+                                "register": "register_plugin",
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            # helpers.py lives alongside plugin_main.py — must be importable during register
+            (python_dir / "helpers.py").write_text(
+                "def make_handler():\n    return lambda payload: {'ok': True}\n",
+                encoding="utf-8",
+            )
+            (python_dir / "plugin_main.py").write_text(
+                "\n".join(
+                    [
+                        "def register_plugin(context):",
+                        "    from helpers import make_handler  # lazy import needs python_root in sys.path",
+                        "    context.register_command('demo.run', make_handler())",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            records = build_plugin_registry([base], host_version="0.1.0")
+            context, attached = attach_plugins(records, host_version="0.1.0")
+            self.assertEqual(attached[0].state, "active")
+            self.assertIn("demo.run", context.commands)
+            # python_root must be removed from sys.path after attach
+            self.assertNotIn(str(python_dir), sys.path)
 
     def test_attach_plugins_registers_analysis_enricher(self):
         with tempfile.TemporaryDirectory() as tmp:

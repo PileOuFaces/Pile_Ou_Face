@@ -594,7 +594,7 @@ function staticHandlers(config) {
       }
       const available = Array.isArray(response?.available_commands) ? response.available_commands : [];
       if (available.length === 0) {
-        return buildPluginRequiredPayload(feature);
+        return buildPluginRequiredPayload(featureId);
       }
       return {
         ok: false,
