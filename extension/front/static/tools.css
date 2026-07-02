@@ -606,16 +606,55 @@
 }
 
 /* == Ressources PE ========================================================= */
-.resource-tree { padding: 8px 14px; }
-.resource-tree-type {
-  font-weight: 600; cursor: pointer; padding: 4px 0;
-  user-select: none; color: var(--text-primary);
+/* == Ressources PE — layout ================================================ */
+.resource-layout {
+  display: flex;
+  min-height: 340px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin: 6px 0;
 }
-.resource-tree-type:hover { color: var(--accent); }
-.resource-tree-items { margin-left: 16px; }
+.resource-tree-pane {
+  display: flex;
+  flex-direction: column;
+  width: 220px;
+  min-width: 140px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+}
+.resource-filter-wrap {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.resource-filter {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(0,0,0,0.2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 11px;
+  padding: 4px 8px;
+  outline: none;
+  font-family: inherit;
+}
+.resource-filter:focus { border-color: var(--accent); }
+.resource-tree { padding: 6px 4px; overflow-y: auto; flex: 1; }
+.resource-tree-type {
+  font-weight: 600; cursor: pointer; padding: 5px 8px;
+  user-select: none; color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  font-size: 11px; letter-spacing: 0.02em;
+}
+.resource-tree-type:hover { color: var(--accent); background: var(--bg-hover); }
+.resource-tree-items { margin-left: 10px; }
 .resource-tree-item {
-  padding: 3px 8px; cursor: pointer; border-radius: 3px;
-  font-size: 12px; color: var(--text-muted);
+  padding: 4px 8px; cursor: pointer; border-radius: 3px;
+  font-size: 11px; color: var(--text-muted);
+  font-family: var(--font-mono);
 }
 .resource-tree-item:hover { background: var(--bg-hover); color: var(--text-primary); }
 .resource-tree-item.is-active {
@@ -623,11 +662,13 @@
   color: var(--text-active);
 }
 .resource-detail {
-  margin: 0 14px; padding: 10px 12px;
-  border-top: 1px solid var(--border); border-radius: var(--radius-sm);
+  flex: 1;
+  min-width: 0;
+  padding: 12px 14px;
   font-size: 12px;
-  white-space: normal; word-break: break-word; color: var(--text-muted);
-  background: var(--bg-surface); max-height: 300px; overflow-y: auto;
+  word-break: break-word; color: var(--text-muted);
+  background: var(--bg-surface);
+  overflow-y: auto;
 }
 .resource-detail-head {
   display: flex;
