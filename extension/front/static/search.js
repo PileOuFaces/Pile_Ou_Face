@@ -14,7 +14,6 @@ function requestDisasmOpen({ forceRebuild = false } = {}) {
     saveBinarySelection(bp, binaryMeta);
   }
   const useCache = !forceRebuild;
-  try { window.POFHubTaskProgressController?.startTask({ type: 'hubOpenDisasm', binaryPath: bp }); } catch(e) {}
   vscode.postMessage({ type: 'hubOpenDisasm', binaryPath: bp, binaryMeta, syntax, section, useCache });
 }
 
