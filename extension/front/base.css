@@ -813,6 +813,7 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
   background: color-mix(in srgb, var(--bg-surface) 92%, #000 8%);
   color: var(--text);
   box-shadow: 0 8px 24px rgba(0,0,0,0.34);
+  pointer-events: auto;
 }
 .task-progress-spinner {
   width: 16px;
@@ -870,6 +871,46 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
   font-size: 10px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+.task-progress-details {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+.task-progress-details[hidden] { display: none; }
+.task-progress-details summary {
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+}
+.task-progress-details summary:hover {
+  color: var(--text-active);
+}
+.task-progress-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 112px;
+  margin-top: 5px;
+  overflow: auto;
+}
+.task-progress-row {
+  display: grid;
+  grid-template-columns: minmax(92px, 0.42fr) minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+  padding: 3px 0;
+  border-top: 1px solid rgba(255,255,255,0.08);
+}
+.task-progress-row-title,
+.task-progress-row-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-progress-row-title {
+  color: var(--text-active);
+  font-weight: 600;
 }
 @keyframes task-progress-spin {
   to { transform: rotate(360deg); }
