@@ -929,8 +929,8 @@ function createHub(config) {
             pie: false,
             symbols: { startDefault: defaultMain, stopDefault: '' },
             mvpProfile: {
-              bufferOffset: -64,
-              bufferSize: 64,
+              bufferOffset: null,
+              bufferSize: null,
               maxSteps: 800,
               startSymbol: defaultMain,
               stopSymbol: ''
@@ -957,16 +957,25 @@ function createHub(config) {
         const startDefault = findSymbolByCandidates(symbols, mainSymbolCandidates(info)) || preferredMainSymbol(info);
         const stopDefault = '';
         const defaultProfile = {
-          bufferOffset: archBits === 32 ? -32 : -64,
-          bufferSize: archBits === 32 ? 32 : 64,
+          bufferOffset: null,
+          bufferSize: null,
           maxSteps: 800,
           startSymbol: startDefault,
           stopSymbol: stopDefault
         };
+        const trustedBufferSource = sameBinaryTrace?.meta?.buffer_source === 'detected'
+          || sameBinaryTrace?.meta?.buffer_source === 'user';
+        const hasSameBinaryBuffer = trustedBufferSource
+          && Number.isFinite(Number(sameBinaryTrace?.meta?.buffer_offset))
+          && Number.isFinite(Number(sameBinaryTrace?.meta?.buffer_size));
         const mergedProfile = {
           ...defaultProfile,
-          ...(Number.isFinite(Number(sameBinaryTrace?.meta?.buffer_offset)) ? { bufferOffset: Number(sameBinaryTrace.meta.buffer_offset) } : {}),
-          ...(Number.isFinite(Number(sameBinaryTrace?.meta?.buffer_size)) ? { bufferSize: Number(sameBinaryTrace.meta.buffer_size) } : {}),
+          ...(hasSameBinaryBuffer
+            ? {
+              bufferOffset: Number(sameBinaryTrace.meta.buffer_offset),
+              bufferSize: Number(sameBinaryTrace.meta.buffer_size)
+            }
+            : {}),
           ...(Number.isFinite(Number(sameBinaryTrace?.meta?.steps)) && Number(sameBinaryTrace.meta.steps) > 0
             ? { maxSteps: Math.max(800, Number(sameBinaryTrace.meta.steps)) }
             : {}),
@@ -1037,8 +1046,10 @@ function createHub(config) {
       const archBits = String(payload.archBits || '64');
       const pieChoice = String(payload.pieChoice || (payload.pie === true ? 'yes' : 'no') || 'no');
       const traceMode = String(payload.traceMode || 'dynamic');
-      const bufferOffset = String(payload.bufferOffset || '-64');
-      const bufferSize = String(payload.bufferSize || '64');
+      const hasBufferOffset = payload.bufferOffset !== null && payload.bufferOffset !== undefined && payload.bufferOffset !== '';
+      const hasBufferSize = payload.bufferSize !== null && payload.bufferSize !== undefined && payload.bufferSize !== '';
+      const bufferOffset = hasBufferOffset ? String(payload.bufferOffset) : null;
+      const bufferSize = hasBufferSize ? String(payload.bufferSize) : null;
       const maxSteps = String(payload.maxSteps || '800');
 
       let startSymbol = String(payload.startSymbol || 'main').trim();
@@ -1169,13 +1180,13 @@ function createHub(config) {
             getRunPipelineScript(root),
             '--binary', binaryOutPath,
             '--stdin', injectStdin && !payloadHex ? payloadString : '',
-            '--buffer-offset', bufferOffset,
-            '--buffer-size', bufferSize,
             '--stack-entries', '40',
             '--output', isolatedJsonPath,
             '--start-symbol', startSymbol,
             '--max-steps', maxSteps
           ];
+          if (bufferOffset !== null) pythonArgs.push('--buffer-offset', bufferOffset);
+          if (bufferSize !== null) pythonArgs.push('--buffer-size', bufferSize);
           if (injectStdin && payloadHex) pythonArgs.push('--stdin-hex', payloadHex);
           if (injectArgv && payloadHex) pythonArgs.push('--argv1-hex', payloadHex);
           else if (injectArgv) pythonArgs.push('--argv1', payloadString);

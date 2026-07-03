@@ -443,13 +443,17 @@ renderOllamaConversationHistory();
 requestOllamaModels();
 vscode.postMessage({ type: 'hubReady' });
 
-// À l'ouverture : si binaire restauré, préparer le mapping sans forcer l'ouverture de boîte de dialogue.
-const initialBp = getStaticBinaryPath();
-const initialPanelId = document.body.dataset.initialPanel || 'dashboard';
-if (initialBp) {
-  requestRunTraceInit(null, initialBp);
-} else if (initialPanelId === 'dynamic') {
-  requestRunTraceInit();
+// À l'ouverture : si le panel dynamic n'était pas déjà affiché (auquel cas showPanel l'a déjà init),
+// pré-charger le profil binaire pour que la tab soit prête quand l'utilisateur la bascule.
+const _dynamicAlreadyInit = document.getElementById('panel-dynamic')?.classList.contains('active') ?? false;
+if (!_dynamicAlreadyInit) {
+  const initialBp = getStaticBinaryPath();
+  const initialPanelId = document.body.dataset.initialPanel || 'dashboard';
+  if (initialBp) {
+    requestRunTraceInit(null, initialBp);
+  } else if (initialPanelId === 'dynamic') {
+    requestRunTraceInit();
+  }
 }
 
 updateTabOverflow();

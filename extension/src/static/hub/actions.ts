@@ -324,8 +324,8 @@ function createActions({
         pie: false,
         symbols: { startDefault: defaultMain, stopDefault: '' },
         mvpProfile: {
-          bufferOffset: -64,
-          bufferSize: 64,
+          bufferOffset: null,
+          bufferSize: null,
           maxSteps: 800,
           startSymbol: defaultMain,
           stopSymbol: '',
@@ -352,16 +352,25 @@ function createActions({
     const startDefault = findSymbolByCandidates(symbols, mainSymbolCandidates(info)) || preferredMainSymbol(info);
     const stopDefault = '';
     const defaultProfile = {
-      bufferOffset: archBits === 32 ? -32 : -64,
-      bufferSize: archBits === 32 ? 32 : 64,
+      bufferOffset: null,
+      bufferSize: null,
       maxSteps: 800,
       startSymbol: startDefault,
       stopSymbol: stopDefault,
     };
+    const trustedBufferSource = sameBinaryTrace?.meta?.buffer_source === 'detected'
+      || sameBinaryTrace?.meta?.buffer_source === 'user';
+    const hasSameBinaryBuffer = trustedBufferSource
+      && Number.isFinite(Number(sameBinaryTrace?.meta?.buffer_offset))
+      && Number.isFinite(Number(sameBinaryTrace?.meta?.buffer_size));
     const mergedProfile = {
       ...defaultProfile,
-      ...(Number.isFinite(Number(sameBinaryTrace?.meta?.buffer_offset)) ? { bufferOffset: Number(sameBinaryTrace.meta.buffer_offset) } : {}),
-      ...(Number.isFinite(Number(sameBinaryTrace?.meta?.buffer_size)) ? { bufferSize: Number(sameBinaryTrace.meta.buffer_size) } : {}),
+      ...(hasSameBinaryBuffer
+        ? {
+          bufferOffset: Number(sameBinaryTrace.meta.buffer_offset),
+          bufferSize: Number(sameBinaryTrace.meta.buffer_size)
+        }
+        : {}),
       ...(Number.isFinite(Number(sameBinaryTrace?.meta?.steps)) && Number(sameBinaryTrace.meta.steps) > 0
         ? { maxSteps: Math.max(800, Number(sameBinaryTrace.meta.steps)) }
         : {}),
