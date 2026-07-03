@@ -535,7 +535,9 @@ def _iter_declared_command_specs(manifest: PluginManifest) -> list[dict[str, Any
         command = str(tab.get("command") or tab.get("command_id") or "").strip()
         if not command:
             continue
-        feature = str(tab.get("feature") or tab.get("feature_id") or tab.get("tabId") or "").strip()
+        feature = str(
+            tab.get("feature") or tab.get("feature_id") or tab.get("tabId") or ""
+        ).strip()
         aliases = _as_list(tab.get("aliases"))
         specs.append(
             {
@@ -604,7 +606,11 @@ def resolve_plugin_command_for_feature(
             command = str(
                 spec.get("id") or spec.get("command") or spec.get("command_id") or ""
             ).strip()
-            if command and command in context.commands and _declared_command_matches_feature(spec, feature_name):
+            if (
+                command
+                and command in context.commands
+                and _declared_command_matches_feature(spec, feature_name)
+            ):
                 return command
 
     for command in sorted(context.commands.keys()):

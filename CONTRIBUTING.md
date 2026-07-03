@@ -23,6 +23,17 @@ make install
 cd extension && npm install
 ```
 
+## Hooks pre-commit
+
+Installez les hooks avant de travailler sur une branche :
+
+```bash
+python3 -m pip install pre-commit
+pre-commit install
+```
+
+Les hooks relancent localement le lint Python de la CI publique (`ruff check` et `ruff format --check` dans `extension/`) pour éviter les PR qui échouent uniquement sur GitHub.
+
 ## Lancer les tests
 
 ```bash

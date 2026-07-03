@@ -799,7 +799,9 @@ def _dynamic_plugin_tool_routes() -> dict[str, dict[str, str]]:
             if not isinstance(item, dict):
                 continue
             command_id = str(item.get("id") or item.get("command") or "").strip()
-            feature_id = str(item.get("feature") or item.get("feature_id") or "").strip()
+            feature_id = str(
+                item.get("feature") or item.get("feature_id") or ""
+            ).strip()
             if not command_id or command_id not in command_sources or not feature_id:
                 continue
             routes[f"{PLUGIN_TOOL_NAME_PREFIX}{feature_id}"] = {
@@ -1294,8 +1296,8 @@ def _call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         from backends.plugins.runtime import (
             build_plugin_registry,
             default_plugin_search_paths,
-            invoke_plugin_feature,
             invoke_plugin_command,
+            invoke_plugin_feature,
         )
 
         command_id = str(args.get("command_id") or "").strip()

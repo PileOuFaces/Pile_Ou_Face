@@ -582,9 +582,7 @@ class TestEvaluatePluginLicenseSecurityPaths(_LicenseEvalBase):
         from backends.plugins.license import evaluate_plugin_license
 
         with tempfile.TemporaryDirectory() as tmp:
-            manifest = self._make_manifest(
-                Path(tmp), plugin_id="pof.demo-plugin"
-            )
+            manifest = self._make_manifest(Path(tmp), plugin_id="pof.demo-plugin")
             result = evaluate_plugin_license(
                 manifest,
                 env={"POF_CONTENT_KEY_POF_DEMO_PLUGIN": "secretkey"},
