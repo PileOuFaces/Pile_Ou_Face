@@ -64,6 +64,12 @@ Dans l'extension VS Code, les plugins sont installes et charges depuis le
 <workspaceStorage>/<workspace-id>/PileOuFaces.stack-visualizer/plugins/
 ```
 
+Le host public ne doit pas lire ni documenter un dossier de plugins sous
+`.pile-ou-face/plugins`. Le dossier `.pile-ou-face/` reste reserve aux artefacts
+du projet et aux caches d'analyse. Les plugins installes par l'extension vivent
+dans le stockage VS Code du workspace pour eviter de polluer le repository et
+pour permettre a deux workspaces differents d'avoir des plugins differents.
+
 Pour les tests CLI hors VS Code, la recherche peut etre forcee explicitement avec
 `$POF_PLUGIN_PATH`.
 
@@ -139,6 +145,46 @@ Limitations actuelles :
 - pas encore de saisie manuelle d'une cle courte ;
 - pas encore de compilation/obfuscation dure cote host ;
 - pas encore de revocation ou activation en ligne.
+
+## Contrat dynamique host ↔ plugin
+
+Le host public ne doit pas contenir de logique metier premium ni appeler une
+feature premium par nom de domaine dans le code public. Le flux attendu est :
+
+1. le plugin declare ses commandes et metadonnees dans son manifest ;
+2. le runtime attache le plugin avec `register_plugin(context)` ;
+3. l'UI ou le MCP decouvre les commandes disponibles ;
+4. l'appel passe par le pont generique du host (`hubPluginInvoke`,
+   `plugin_invoke` ou un outil MCP dynamique `plugin.*`).
+
+Cette regle rend les plugins renommables et remplaçables : si un plugin change
+ses noms internes, le host doit continuer a fonctionner tant que le manifest et
+les commandes declarees restent coherents.
+
+Les noms de familles UI (`audit`, `malware`, `offensif`, ou une famille custom)
+servent uniquement a organiser l'interface. Ils ne doivent pas etre utilises
+comme substitut a une commande runtime.
+
+## Isolation CSS des webviews plugin
+
+Le HTML d'un plugin peut contenir un bloc `<style>`. Lors du chargement, le host :
+
+1. extrait les styles inline du `tab.html` ;
+2. les prefixe avec `data-plugin-scope="<slug>"` ;
+3. marque les panels du plugin avec ce meme scope ;
+4. injecte les styles scopes dans le hub.
+
+Objectif :
+
+- le CSS d'un plugin ne doit pas impacter le host public ;
+- le CSS d'un plugin ne doit pas impacter un autre plugin ;
+- le host garde seulement les variables de theme globales qui pourront etre
+  exposees plus tard.
+
+Un plugin doit donc eviter les selecteurs globaux non necessaires (`body`,
+`.btn`, `.static-panel` sans contexte metier). Si un style doit viser un element
+du plugin, il doit cibler une classe propre au plugin, par exemple
+`.my-plugin-result-card`.
 
 ## Manifest minimal
 

@@ -378,6 +378,11 @@ plugin dans `context.storageUri/plugins/`, par exemple :
 ~/Library/Application Support/Code/User/workspaceStorage/<workspace-id>/PileOuFaces.stack-visualizer/plugins/
 ```
 
+Ne copiez pas de plugin dans `.pile-ou-face/plugins`. Ce chemin n'est pas le
+contrat de chargement de l'extension. `.pile-ou-face/` reste le dossier des
+caches et artefacts du projet ; les plugins installes par VS Code vivent dans
+`context.storageUri/plugins/`.
+
 ### 2. Copier le plugin pour un test CLI
 
 ```bash
@@ -462,6 +467,31 @@ BINHOST_PLUGIN_PATH=<context.storageUri>/plugins
 
 Pour les tests CLI hors VS Code, définir `POF_PLUGIN_PATH` ou `BINHOST_PLUGIN_PATH`
 vers le dossier de plugins à tester.
+
+---
+
+## Webview et CSS
+
+Chaque plugin peut fournir un `webview/tab.html` et un `webview/tab.js`. Le
+`tab.html` peut contenir un bloc `<style>`, mais il est scope par le host au
+panel du plugin avant injection.
+
+Règles pratiques :
+
+- préfixer les classes CSS avec un nom propre au plugin ou a sa vue ;
+- éviter les overrides globaux comme `.btn`, `.static-panel`, `body` ou `table`
+  sauf si le style est volontairement limité par une classe plugin ;
+- ne pas compter sur les styles d'un autre plugin ;
+- ne pas compter sur les détails visuels du host, sauf les variables de thème
+  exposées par le host.
+
+Le host ajoute `data-plugin-scope="<slug>"` sur les panels du plugin et préfixe
+les règles CSS inline avec ce scope. Cela empêche un plugin de casser le host ou
+un autre plugin. Pour une isolation totale contre le CSS du host, il faudra une
+évolution future vers iframe ou Shadow DOM.
+
+La preview locale des plugins applique la même règle de scoping pour éviter les
+différences de rendu les plus dangereuses entre `npm run preview` et l'extension.
 
 ---
 
