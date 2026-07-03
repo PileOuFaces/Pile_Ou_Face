@@ -62,6 +62,36 @@ describe('loadPluginWebviews', () => {
     expect(result.scripts).to.include('var x = 1;');
   });
 
+  it('scopes plugin inline styles to plugin panels', () => {
+    const dir = pluginDir('my-plugin');
+    const webviewDir = path.join(dir, 'webview');
+    fs.mkdirSync(webviewDir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'plugin.json'), JSON.stringify({
+      id: 'pof.my-plugin',
+      ui: { family: 'myfamily' },
+      entrypoints: { webview: { tab_html: 'webview/tab.html', scripts: [] } },
+    }));
+    fs.writeFileSync(path.join(webviewDir, 'tab.html'), `
+      <style>
+        .btn { color: red; }
+        #myPanel .item { color: blue; }
+        @media (max-width: 520px) { .item { display: block; } }
+        @keyframes plugin-spin { to { transform: rotate(360deg); } }
+      </style>
+      <div id="myPanel" class="static-panel"><button class="btn item">Run</button></div>
+    `);
+
+    const result = loadFromStorage();
+    expect(result.panels).to.include('data-plugin-scope="my-plugin"');
+    expect(result.panels).not.to.include('<style>');
+    expect(result.styles).to.include(':where([data-plugin-scope="my-plugin"], [data-plugin-scope="my-plugin"] *).btn');
+    expect(result.styles).to.include(':where([data-plugin-scope="my-plugin"], [data-plugin-scope="my-plugin"] *)#myPanel .item');
+    expect(result.styles).to.include('@media (max-width: 520px)');
+    expect(result.styles).to.include(':where([data-plugin-scope="my-plugin"], [data-plugin-scope="my-plugin"] *).item');
+    expect(result.styles).to.include('@keyframes plugin-spin');
+    expect(result.styles).to.include('to { transform: rotate(360deg); }');
+  });
+
   it('builds external plugin script tags when a webview resolver is provided', () => {
     const dir = pluginDir('my-plugin');
     const webviewDir = path.join(dir, 'webview');

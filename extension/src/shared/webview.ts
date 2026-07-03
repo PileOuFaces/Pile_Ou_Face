@@ -37,6 +37,85 @@ function _resolvePluginAssetPath(pluginDir, manifest, relativeAssetPath) {
   return '';
 }
 
+function _escapeHtmlAttr(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function _extractInlineStyles(html) {
+  let styles = '';
+  const withoutStyles = String(html || '').replace(/<style\b[^>]*>([\s\S]*?)<\/style>/gi, (_match, css) => {
+    styles += `\n${css || ''}`;
+    return '';
+  });
+  return { html: withoutStyles, styles };
+}
+
+function _scopeCssSelector(selector, scope) {
+  const trimmed = String(selector || '').trim();
+  if (!trimmed) return '';
+  if (trimmed.startsWith('@')) return trimmed;
+  if (/^[>+~]/.test(trimmed)) return `${scope} ${trimmed}`;
+  if (/^[.#[:]/.test(trimmed)) return `:where(${scope}, ${scope} *)${trimmed}`;
+  return `${scope} ${trimmed}`;
+}
+
+function _scopePluginCss(css, pluginSlug) {
+  const scope = `[data-plugin-scope="${String(pluginSlug || '').replace(/[^a-zA-Z0-9_-]/g, '')}"]`;
+  const source = String(css || '');
+  let result = '';
+  let index = 0;
+
+  while (index < source.length) {
+    const open = source.indexOf('{', index);
+    if (open === -1) {
+      result += source.slice(index);
+      break;
+    }
+    const selectorText = source.slice(index, open);
+    let depth = 1;
+    let cursor = open + 1;
+    while (cursor < source.length && depth > 0) {
+      const ch = source[cursor];
+      if (ch === '{') depth += 1;
+      else if (ch === '}') depth -= 1;
+      cursor += 1;
+    }
+    const body = source.slice(open + 1, cursor - 1);
+    const selector = selectorText.trim();
+
+    if (!selector) {
+      result += source.slice(index, cursor);
+    } else if (/^@(keyframes|font-face)\b/i.test(selector)) {
+      result += `${selectorText}{${body}}`;
+    } else if (/^@(media|supports|container)\b/i.test(selector)) {
+      result += `${selectorText}{${_scopePluginCss(body, pluginSlug)}}`;
+    } else {
+      const scoped = selector
+        .split(',')
+        .map((item) => _scopeCssSelector(item, scope))
+        .filter(Boolean)
+        .join(', ');
+      result += scoped ? `${scoped} {${body}}` : `${selectorText}{${body}}`;
+    }
+    index = cursor;
+  }
+
+  return result;
+}
+
+function _markPluginPanels(html, pluginSlug, pluginId) {
+  const safeSlug = _escapeHtmlAttr(String(pluginSlug || '').replace(/[^a-zA-Z0-9_-]/g, ''));
+  const safeId = _escapeHtmlAttr(pluginId || '');
+  return String(html || '').replace(/<([a-z][\w:-]*)([^>]*\bclass=(["'])[^"']*\bstatic-panel\b[^"']*\3[^>]*)>/gi, (match, tag, attrs) => {
+    if (/\bdata-plugin-scope=/.test(attrs)) return match;
+    return `<${tag}${attrs} data-plugin-scope="${safeSlug}" data-plugin-id="${safeId}">`;
+  });
+}
+
 function _getPluginSearchDirs(storageDir, _globalDir) {
   const dirs: string[] = [];
   if (storageDir) dirs.push(path.join(storageDir, 'plugins'));
@@ -79,7 +158,13 @@ function loadPluginWebviews(root, options: { storageDir?: string; globalDir?: st
       // Panel HTML
       const tabHtmlPath = webviewEntry.tab_html ? _resolvePluginAssetPath(pluginDir, manifest, webviewEntry.tab_html) : null;
       if (tabHtmlPath && fs.existsSync(tabHtmlPath)) {
-        try { panels += '\n' + fs.readFileSync(tabHtmlPath, 'utf8'); } catch (_) { /* skip */ }
+        try {
+          const pluginSlug = _derivePluginSlug(pluginDir, manifest);
+          const rawHtml = fs.readFileSync(tabHtmlPath, 'utf8');
+          const extracted = _extractInlineStyles(rawHtml);
+          if (extracted.styles.trim()) styles += '\n' + _scopePluginCss(extracted.styles, pluginSlug);
+          panels += '\n' + _markPluginPanels(extracted.html, pluginSlug, manifest.id || entry);
+        } catch (_) { /* skip */ }
       }
 
       // Scripts
