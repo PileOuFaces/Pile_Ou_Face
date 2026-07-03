@@ -80,11 +80,6 @@ function _migrateFromLegacyPofDir(root, storageDir, globalDir) {
   copyDirIfExists(path.join(legacyDir, 'static_cache'),  path.join(storageDir, 'static_cache'));
   copyDirIfExists(path.join(legacyDir, 'licenses'), path.join(storageDir, 'licenses'));
 
-  // Plugins → globalDir
-  if (globalDir) {
-    copyDirIfExists(path.join(legacyDir, 'plugins'), path.join(globalDir, 'plugins'));
-  }
-
   logChannel.appendLine('[storage] Migration terminée. Le dossier .pile-ou-face peut être supprimé manuellement.');
 }
 

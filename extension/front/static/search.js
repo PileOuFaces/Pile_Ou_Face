@@ -14,7 +14,6 @@ function requestDisasmOpen({ forceRebuild = false } = {}) {
     saveBinarySelection(bp, binaryMeta);
   }
   const useCache = !forceRebuild;
-  try { window.POFHubTaskProgressController?.startTask({ type: 'hubOpenDisasm', binaryPath: bp }); } catch(e) {}
   vscode.postMessage({ type: 'hubOpenDisasm', binaryPath: bp, binaryMeta, syntax, section, useCache });
 }
 
@@ -1078,11 +1077,12 @@ function renderVulnProofDossiers(dossiers, {
     const subtitle = document.createElement('p');
     subtitle.className = 'vuln-dossier-subtitle';
     const findingCount = Number(dossier.finding_count || 0);
-    const taintCount = Array.isArray(related.taint_flows) ? related.taint_flows.length : 0;
     const callsiteCount = Array.isArray(related.callsites) ? related.callsites.length : 0;
-    const behaviorCount = Array.isArray(related.behavior) ? related.behavior.length : 0;
-    const antiCount = Array.isArray(related.anti_analysis) ? related.anti_analysis.length : 0;
-    subtitle.textContent = `${findingCount} signal${findingCount > 1 ? 'aux' : ''} \u00b7 ${taintCount} flux taint \u00b7 ${callsiteCount} callsite${callsiteCount > 1 ? 's' : ''} \u00b7 ${behaviorCount} behavior \u00b7 ${antiCount} anti-analysis`;
+    const relatedListCounts = Object.entries(related)
+      .filter(([key, value]) => !['apis', 'families', 'callsites', 'patch_targets'].includes(key) && Array.isArray(value))
+      .map(([key, value]) => [key, value.length]);
+    const relatedTotal = relatedListCounts.reduce((total, [, count]) => total + count, 0);
+    subtitle.textContent = `${findingCount} signal${findingCount > 1 ? 'aux' : ''} \u00b7 ${callsiteCount} callsite${callsiteCount > 1 ? 's' : ''} \u00b7 ${relatedTotal} corr\u00e9lation${relatedTotal > 1 ? 's' : ''}`;
     titleWrap.append(title, subtitle);
     const badges = document.createElement('div');
     badges.className = 'vuln-dossier-badges';
@@ -1098,8 +1098,9 @@ function renderVulnProofDossiers(dossiers, {
       makeBadge('Exploit', exploitScore ? `${exploitLevel} ${exploitScore}` : exploitLevel, exploitClass(exploitLevel)),
       makeBadge('S\u00e9v\u00e9rit\u00e9', dossierSeverity || '?', severityClass(dossierSeverity), severityColor[dossierSeverity] || ''),
     );
-    if (behaviorCount) badges.append(makeBadge('Behavior', String(behaviorCount), 'is-behavior'));
-    if (antiCount) badges.append(makeBadge('Anti-analysis', String(antiCount), 'is-anti'));
+    relatedListCounts.slice(0, 3).forEach(([key, count]) => {
+      if (count) badges.append(makeBadge(String(key), String(count)));
+    });
     head.append(titleWrap, badges);
     card.appendChild(head);
     const relatedApis = Array.isArray(related.apis) ? related.apis.filter(Boolean) : [];
@@ -1190,49 +1191,28 @@ function renderVulnProofDossiers(dossiers, {
       section.append(labelEl, list);
       card.appendChild(section);
     }
-    const behaviorSignals = Array.isArray(related.behavior) ? related.behavior.filter((item) => {
-      const i = asVI(item);
-      return i.category || i.evidence;
-    }) : [];
-    if (behaviorSignals.length) {
+    Object.entries(related).forEach(([key, value]) => {
+      if (['apis', 'families', 'callsites', 'patch_targets'].includes(key) || !Array.isArray(value)) return;
+      const signals = value.filter((item) => item && typeof item === 'object');
+      if (!signals.length) return;
       const section = document.createElement('section');
       section.className = 'vuln-dossier-section';
       const labelEl = document.createElement('div');
       labelEl.className = 'vuln-dossier-label';
-      labelEl.textContent = 'Corr\u00e9lation Behavior';
+      labelEl.textContent = `Corr\u00e9lation ${String(key)}`;
       const list = document.createElement('ul');
       list.className = 'vuln-dossier-list';
-      behaviorSignals.slice(0, 3).forEach((rawSignal) => {
+      signals.slice(0, 3).forEach((rawSignal) => {
         const signal = asVI(rawSignal);
         const item = document.createElement('li');
-        const evidenceText = formatPremiumEvidence(signal.evidence, '');
-        item.textContent = `${signal.category || 'SIGNAL'}${evidenceText ? `: ${evidenceText}` : ''}`;
+        const label = signal.category || signal.technique || signal.kind || signal.name || 'SIGNAL';
+        const detail = signal.description || signal.summary || formatPremiumEvidence(signal.evidence, '');
+        item.textContent = `${label}${detail ? `: ${detail}` : ''}`;
         list.appendChild(item);
       });
       section.append(labelEl, list);
       card.appendChild(section);
-    }
-    const antiSignals = Array.isArray(related.anti_analysis) ? related.anti_analysis.filter((item) => {
-      const i = asVI(item);
-      return i.technique || i.description;
-    }) : [];
-    if (antiSignals.length) {
-      const section = document.createElement('section');
-      section.className = 'vuln-dossier-section';
-      const labelEl = document.createElement('div');
-      labelEl.className = 'vuln-dossier-label';
-      labelEl.textContent = 'Corr\u00e9lation Anti-analysis';
-      const list = document.createElement('ul');
-      list.className = 'vuln-dossier-list';
-      antiSignals.slice(0, 3).forEach((rawSignal) => {
-        const signal = asVI(rawSignal);
-        const item = document.createElement('li');
-        item.textContent = `${signal.technique || 'SIGNAL'}${signal.description ? `: ${signal.description}` : ''}`;
-        list.appendChild(item);
-      });
-      section.append(labelEl, list);
-      card.appendChild(section);
-    }
+    });
     const callsites = Array.isArray(related.callsites) ? related.callsites.filter((item) => {
       const i = asVI(item);
       return i.addr;

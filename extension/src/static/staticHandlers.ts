@@ -16,7 +16,6 @@ const http = require('http');
 const https = require('https');
 const readline = require('readline');
 const { detectPythonExecutable, buildRuntimeEnv, resolveDockerExecutable } = require('../shared/utils');
-const { normalizeRawArchName } = require('../shared/sharedHandlers');
 const { emptyPluginUiState, summarizePluginRuntimeState } = require('./pluginState');
 const { AuthService } = require('../shared/authService');
 const { resolveAuthServerUrl } = require('../shared/authConfig');
@@ -580,14 +579,13 @@ function staticHandlers(config) {
     ...extra,
   });
 
-  const invokePluginCommand = async (commandId, payload, {
+  const invokePluginFeature = async (featureId, payload, {
     timeout = 120000,
-    feature = commandId,
   } = {}) => {
     try {
       const response = await runPluginRuntime([
-        'invoke',
-        commandId,
+        'invoke-feature',
+        featureId,
         '--payload-json',
         JSON.stringify(payload || {}),
       ], { timeout });
@@ -596,31 +594,19 @@ function staticHandlers(config) {
       }
       const available = Array.isArray(response?.available_commands) ? response.available_commands : [];
       if (available.length === 0) {
-        return buildPluginRequiredPayload(feature);
+        return buildPluginRequiredPayload(featureId);
       }
       return {
         ok: false,
-        error: String(response?.error || `Échec plugin: ${commandId}`),
-        plugin_command: commandId,
-        plugin_required: feature,
-        feature,
+        error: String(response?.error || `Échec plugin: ${featureId}`),
+        plugin_command: String(response?.command || ''),
+        plugin_required: featureId,
+        feature: featureId,
       };
     } catch (error) {
-      return buildPluginRequiredPayload(feature);
+      return buildPluginRequiredPayload(featureId);
     }
   };
-
-  const loadFuncSimilarityState = async ({
-    binaryPath,
-    threshold = 0.4,
-    top = 3,
-  } = {}) => invokePluginCommand('offensive.func_similarity.run', {
-    action: 'search_db',
-    binaryPath,
-    threshold,
-    top,
-    workspaceRoot: root,
-  }, { feature: 'func_similarity' });
 
   const buildTypedDataArgs = (message) => {
     const {
@@ -643,15 +629,6 @@ function staticHandlers(config) {
     if (rawArch) args.push('--raw-arch', String(rawArch));
     if (rawEndian) args.push('--raw-endian', String(rawEndian));
     return args;
-  };
-
-  const normalizeRopArch = (message = {}) => {
-    const meta = message.binaryMeta || {};
-    const rawArch = String(meta.rawConfig?.arch || meta.rawArch || message.rawArch || '').trim();
-    if (rawArch) return rawArch;
-    const arch = String(meta.arch || message.arch || '').trim().toLowerCase();
-    const normalized = normalizeRawArchName(arch);
-    return normalized || '';
   };
 
   const listOllamaModels = (baseUrlRaw) => new Promise((resolve, reject) => {
@@ -718,6 +695,30 @@ function staticHandlers(config) {
         });
       }
     },
+    hubPluginInvoke: async (message = {}) => {
+      const feature = String(message.feature || message.featureId || '').trim();
+      const requestId = String(message.requestId || message.id || '');
+      const payload = message.payload && typeof message.payload === 'object'
+        ? { ...message.payload }
+        : {};
+      if (message.binaryPath && payload.binaryPath == null && payload.binary_path == null) {
+        payload.binaryPath = message.binaryPath;
+      }
+      const result = feature
+        ? await invokePluginFeature(feature, payload, { timeout: Number(message.timeout || 120000) })
+        : {
+            ok: false,
+            error: 'feature manquante',
+            plugin_required: '',
+            feature,
+          };
+      panel.webview.postMessage({
+        type: 'hubPluginResult',
+        requestId,
+        feature,
+        result,
+      });
+    },
     hubOpenPluginDirectory: async (message = {}) => {
       const requestedScope = String(message.scope || 'user').trim() === 'workspace' ? 'workspace' : 'user';
       const pluginDir = getHostArtifactRoot('plugins');
@@ -762,7 +763,7 @@ function staticHandlers(config) {
     },
     hubInstallPlugin: async (message = {}) => {
       const requestedScope = String(message.scope || 'user').trim() === 'workspace' ? 'workspace' : 'user';
-      const selectedScope = (storageDir || fs.existsSync(path.join(root, '.pile-ou-face'))) ? 'workspace' : requestedScope;
+      const selectedScope = storageDir ? 'workspace' : requestedScope;
       try {
         const picked = await vscode.window.showOpenDialog({
           canSelectFiles: true,
@@ -1385,167 +1386,6 @@ function staticHandlers(config) {
         await Promise.all(targets.map((t, i) => runOne(t, i)));
       }
     },
-    hubLoadBehavior: async (message) => {
-      const { binaryPath } = message;
-      const result = await invokePluginCommand('malware.behavior.run', { binaryPath }, {
-        feature: 'behavior',
-      });
-      panel.webview.postMessage({ type: 'hubBehavior', result });
-    },
-    hubPackerScan: async (message = {}) => {
-      const { binaryPath } = message as { binaryPath?: string };
-      if (!binaryPath) {
-        panel.webview.postMessage({ type: 'hubPacker', result: { error: 'Chemin binaire manquant' } });
-        return;
-      }
-      const result = await invokePluginCommand('malware.packer.run', { binaryPath }, {
-        feature: 'packer_detect',
-      });
-      panel.webview.postMessage({ type: 'hubPacker', result });
-    },
-    hubLoadAttck: async (message) => {
-      const { binaryPath } = message;
-      const result = await invokePluginCommand('malware.attck.tag', { binaryPath }, {
-        feature: 'behavior',
-      });
-      panel.webview.postMessage({ type: 'hubAttck', result });
-    },
-    hubLoadTaint: async (message) => {
-      const { binaryPath } = message;
-      const result = await invokePluginCommand('audit.taint.run', { binaryPath }, {
-        feature: 'taint',
-      });
-      panel.webview.postMessage({ type: 'hubTaint', result });
-    },
-    hubLoadCrossAnalysis: async (message) => {
-      const { binaryPath, disabledFamilies } = message;
-      const result = await invokePluginCommand(
-        'croisee.cross_analyze.run',
-        { binaryPath, disabled_families: Array.isArray(disabledFamilies) ? disabledFamilies : [] },
-        { feature: 'cross_analyze' }
-      );
-      panel.webview.postMessage({ type: 'hubCrossAnalysis', result });
-    },
-    hubLoadFuncSimilarity: async (message = {}) => {
-      const { binaryPath, threshold = 0.4, top = 3 } = message;
-      const result = await loadFuncSimilarityState({ binaryPath, threshold, top });
-      panel.webview.postMessage({ type: 'hubFuncSimilarity', result });
-    },
-    hubFuncSimilarityIndexReference: async (message = {}) => {
-      const { binaryPath, threshold = 0.4, top = 3 } = message;
-      try {
-        const picked = await vscode.window.showOpenDialog({
-          canSelectFiles: true,
-          canSelectFolders: false,
-          canSelectMany: false,
-          openLabel: 'Indexer comme référence',
-        });
-        if (!picked || picked.length === 0) {
-          panel.webview.postMessage({
-            type: 'hubFuncSimilarity',
-            result: {
-              matches: [],
-              references: [],
-              proof_dossiers: [],
-              stats: {},
-              summary: {},
-              error: 'Indexation de référence annulée.',
-            },
-          });
-          return;
-        }
-        const sourceUri = picked[0];
-        const indexed = await invokePluginCommand('offensive.func_similarity.run', {
-          action: 'index_reference',
-          referencePath: sourceUri.fsPath,
-          label: path.basename(sourceUri.fsPath),
-          workspaceRoot: root,
-        }, {
-          feature: 'func_similarity',
-        });
-        const result = binaryPath
-          ? await loadFuncSimilarityState({ binaryPath, threshold, top })
-          : await invokePluginCommand('offensive.func_similarity.run', {
-            action: 'list_db',
-            workspaceRoot: root,
-          }, {
-            feature: 'func_similarity',
-          });
-        result.operation = {
-          action: 'index_reference',
-          ok: indexed?.ok !== false && !indexed?.error,
-          indexed: indexed?.indexed || null,
-          error: indexed?.error || null,
-        };
-        panel.webview.postMessage({ type: 'hubFuncSimilarity', result });
-      } catch (error) {
-        panel.webview.postMessage({
-          type: 'hubFuncSimilarity',
-          result: {
-            matches: [],
-            references: [],
-            proof_dossiers: [],
-            stats: {},
-            summary: {},
-            error: String(error?.message || error || 'Échec indexation référence'),
-          },
-        });
-      }
-    },
-    hubFuncSimilarityRemoveReference: async (message = {}) => {
-      const { binaryPath, threshold = 0.4, top = 3, referenceId } = message;
-      const removed = await invokePluginCommand('offensive.func_similarity.run', {
-        action: 'remove_reference',
-        referenceId,
-        workspaceRoot: root,
-      }, {
-        feature: 'func_similarity',
-      });
-      const result = binaryPath
-        ? await loadFuncSimilarityState({ binaryPath, threshold, top })
-        : await invokePluginCommand('offensive.func_similarity.run', {
-          action: 'list_db',
-          workspaceRoot: root,
-        }, {
-          feature: 'func_similarity',
-        });
-      result.operation = {
-        action: 'remove_reference',
-        ok: removed?.ok !== false && !removed?.error,
-        removed: removed?.removed || null,
-        error: removed?.error || null,
-      };
-      panel.webview.postMessage({ type: 'hubFuncSimilarity', result });
-    },
-    hubLoadRop: async (message) => {
-      const { binaryPath } = message;
-      const arch = normalizeRopArch(message);
-      const result = await invokePluginCommand('offensive.rop.run', { binaryPath, arch }, {
-        feature: 'rop_gadgets',
-      });
-      panel.webview.postMessage({ type: 'hubRop', result });
-    },
-    hubLoadRopBuild: async (message) => {
-      const { binaryPath, goal, cmd } = message;
-      const result = await invokePluginCommand('offensive.rop.build', { binaryPath, goal, cmd }, {
-        feature: 'rop_gadgets',
-      });
-      panel.webview.postMessage({ type: 'hubRopBuild', result });
-    },
-    hubLoadVulns: async (message) => {
-      const { binaryPath } = message;
-      const result = await invokePluginCommand('audit.vulns.run', { binaryPath }, {
-        feature: 'vuln_patterns',
-      });
-      panel.webview.postMessage({ type: 'hubVulns', result });
-    },
-    hubLoadAntiAnalysis: async (message) => {
-      const { binaryPath } = message;
-      const result = await invokePluginCommand('malware.anti_analysis.run', { binaryPath }, {
-        feature: 'anti_analysis',
-      });
-      panel.webview.postMessage({ type: 'hubAntiAnalysisDone', result });
-    },
     hubLoadImports: async (message) => {
       const { binaryPath } = message;
       try {
@@ -1572,20 +1412,6 @@ function staticHandlers(config) {
       } catch (e) {
         panel.webview.postMessage({ type: 'hubImportXrefsDone', data: { function: fnName, callsites: [], error: String(e) } });
       }
-    },
-    hubLoadFlirt: async (message) => {
-      const { binaryPath } = message;
-      const result = await invokePluginCommand('offensive.flirt.run', { binaryPath }, {
-        feature: 'flirt',
-      });
-      panel.webview.postMessage({ type: 'hubFlirtDone', result });
-    },
-    hubLoadDeobfuscate: async (message) => {
-      const { binaryPath } = message;
-      const data = await invokePluginCommand('malware.deobfuscate.run', { binaryPath }, {
-        feature: 'string_deobfuscate',
-      });
-      panel.webview.postMessage({ type: 'hubDeobfuscateDone', data });
     },
     hubLoadHexView: async (message) => {
       const { binaryPath, offset = 0, length = 512 } = message;
@@ -1706,18 +1532,6 @@ function staticHandlers(config) {
           result: { error: String(e), vars: [], args: [], frame_size: 0 },
         });
       }
-    },
-    hubLoadBindiff: async (message) => {
-      const { binaryA, binaryB, threshold = 0.60 } = message;
-      const result = await invokePluginCommand('offensive.bindiff.run', { binaryA, binaryB, threshold }, {
-        feature: 'bindiff',
-      });
-      panel.webview.postMessage({
-        type: 'hubBindiff',
-        result: result?.ok === false && result?.plugin_required
-          ? { ...result, functions: [], stats: {} }
-          : result,
-      });
     },
     hubRunScript: async (message) => {
       const { code, binaryPath } = message;

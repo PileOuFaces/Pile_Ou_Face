@@ -49,13 +49,6 @@ TOOL_NAME_ALIASES: dict[str, tuple[str, ...]] = {
     "xrefs": ("get_xrefs",),
     "sections": ("get_sections",),
     "imports": ("analyze_imports",),
-    "vulns": ("find_vulnerabilities", "plugin.audit.vulns.run"),
-    "vulns_scan": ("find_vulnerabilities", "plugin.audit.vulns.run"),
-    "rop": ("find_rop_gadgets", "plugin.offensive.rop.run"),
-    "behavior": ("analyze_behavior", "plugin.malware.behavior.run"),
-    "anti_analysis": ("detect_anti_analysis", "plugin.malware.anti_analysis.run"),
-    "capa": ("capa_scan", "plugin.malware.capa.run"),
-    "yara": ("yara_scan", "plugin.malware.yara.run"),
     "callgraph": ("build_call_graph",),
     "call_graph": ("build_call_graph",),
     "cfg_function": ("build_cfg_for_function",),
@@ -257,8 +250,6 @@ def _prompt_likely_needs_tools(prompt: str) -> bool:
             "entropie",
             "entropy",
             "header",
-            "vuln",
-            "packer",
         ]
     )
 
@@ -329,8 +320,6 @@ def _detect_tool_intent(prompt: str) -> str | None:
         "info",
         "rapport",
         "report",
-        "vuln",
-        "packer",
     )
     if any(token in p for token in imports_tokens):
         return "binary_info"
@@ -480,19 +469,9 @@ def _normalize_tool_call_arguments(
         "calling_convention.analyze_calling_conventions",
         "function_radar.build_function_radar",
         "analysis_index.build_analysis_index",
-        "analyze_behavior",
-        "find_vulnerabilities",
-        "find_rop_gadgets",
-        "deobfuscate_strings",
-        "plugin.audit.vulns.run",
-        "plugin.audit.taint.run",
-        "plugin.malware.behavior.run",
-        "plugin.malware.anti_analysis.run",
-        "plugin.malware.capa.run",
-        "plugin.malware.yara.run",
-        "plugin.malware.deobfuscate.run",
-        "plugin.offensive.rop.run",
     }
+    if name.startswith("plugin."):
+        needs_binary = True
     if needs_binary:
         raw_binary = normalized.get("binary_path", normalized.get("binary"))
         if not isinstance(raw_binary, str) or not raw_binary.strip():
@@ -522,6 +501,9 @@ def _resolve_requested_tool_name(name: str, available_tool_names: set[str]) -> s
     candidate = raw.lower().replace("-", "_")
     if candidate in available_tool_names:
         return candidate
+    dynamic_plugin_candidate = f"plugin.{candidate}"
+    if dynamic_plugin_candidate in available_tool_names:
+        return dynamic_plugin_candidate
     aliases = TOOL_NAME_ALIASES.get(candidate, ())
     for alias in aliases:
         if alias in available_tool_names:

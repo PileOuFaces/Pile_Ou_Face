@@ -542,38 +542,10 @@ document.getElementById('yaraRulesPath')?.addEventListener('input', () => {
   applyYaraModeUi();
 });
 document.getElementById('btnYaraScan')?.addEventListener('click', () => {
-  const bp = getStaticBinaryPath();
-  const rulesMode = getSelectedYaraMode();
-  const rules = document.getElementById('yaraRulesPath')?.value?.trim();
-  if (!bp) {
-    vscode.postMessage({ type: 'hubError', message: 'Indiquez un binaire.' });
-    return;
-  }
-  if (rulesMode === 'manual' && !rules) {
-    vscode.postMessage({ type: 'hubError', message: 'Choisissez un fichier .yar ou un dossier de règles.' });
-    return;
-  }
-  setStaticLoading('yaraContent', 'Scan YARA…');
-  detectionUiState.yaraError = '';
-  updateDetectionSummaries();
-  vscode.postMessage({ type: 'hubYaraScan', binaryPath: bp, rulesPath: rules, rulesMode });
+  vscode.postMessage({ type: 'hubError', message: 'Cette action doit être fournie par un plugin.' });
 });
 document.getElementById('btnCapaScan')?.addEventListener('click', () => {
-  const bp = getStaticBinaryPath();
-  if (!bp) {
-    vscode.postMessage({ type: 'hubError', message: 'Indiquez un binaire.' });
-    return;
-  }
-  const unsupportedCapa = getCapaUnsupportedReason();
-  if (unsupportedCapa) {
-    renderCapaUnsupported(unsupportedCapa);
-    tabDataCache.detection = { binaryPath: bp };
-    return;
-  }
-  setStaticLoading('capaContent', 'Analyse Capa…');
-  detectionUiState.capaError = '';
-  updateDetectionSummaries();
-  vscode.postMessage({ type: 'hubCapaScan', binaryPath: bp });
+  vscode.postMessage({ type: 'hubError', message: 'Cette action doit être fournie par un plugin.' });
 });
 
 document.getElementById('capaFilterInput')?.addEventListener('input', renderCapaResults);

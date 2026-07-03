@@ -88,7 +88,7 @@ describe('buildPluginRuntimeEnv — MODE selection', () => {
 
   it('MODE 1 — online keys present: BINHOST flag is set and keys are injected', async () => {
     const { handlers, execFileStub } = makeHandlers({
-      fakeKeys: { 'pof.plugin-x': 'base64key==', 'pof.audit-pro': 'anotherkey==' },
+      fakeKeys: { 'pof.plugin-x': 'base64key==', 'pof.plugin-y': 'anotherkey==' },
     });
 
     await handlers.hubLoadPluginState();
@@ -96,7 +96,7 @@ describe('buildPluginRuntimeEnv — MODE selection', () => {
     const env = execFileStub.getCall(0).args[2].env;
     expect(env).to.have.property('BINHOST_DISABLE_LICENSE_FALLBACK', '1');
     expect(env).to.have.property('POF_CONTENT_KEY_POF_PLUGIN_X', 'base64key==');
-    expect(env).to.have.property('POF_CONTENT_KEY_POF_AUDIT_PRO', 'anotherkey==');
+    expect(env).to.have.property('POF_CONTENT_KEY_POF_PLUGIN_Y', 'anotherkey==');
   });
 
   it('MODE 1 priority — online keys + license files present: online wins, flag is set', async () => {
@@ -130,7 +130,7 @@ describe('buildPluginRuntimeEnv — MODE selection', () => {
   it('MODE 3 — AuthService throws + license files: BINHOST flag is absent', async () => {
     const { handlers, execFileStub } = makeHandlers({
       authThrows: true,
-      licenseFiles: ['pof.audit-pro.license.json', 'pof.cross-analysis.license.json'],
+      licenseFiles: ['pof.plugin-y.license.json', 'pof.plugin-z.license.json'],
     });
 
     await handlers.hubLoadPluginState();
@@ -189,13 +189,13 @@ describe('buildPluginRuntimeEnv — MODE selection', () => {
 
   it('plugin IDs with hyphens and dots are normalised to underscores in env var names', async () => {
     const { handlers, execFileStub } = makeHandlers({
-      fakeKeys: { 'pof.cross-analysis-pro': 'mykey==' },
+      fakeKeys: { 'pof.plugin-z': 'mykey==' },
     });
 
     await handlers.hubLoadPluginState();
 
     const env = execFileStub.getCall(0).args[2].env;
-    expect(env).to.have.property('POF_CONTENT_KEY_POF_CROSS_ANALYSIS_PRO', 'mykey==');
+    expect(env).to.have.property('POF_CONTENT_KEY_POF_PLUGIN_Z', 'mykey==');
   });
 
   // -------------------------------------------------------------------------

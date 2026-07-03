@@ -90,19 +90,23 @@ def default_plugin_search_paths(
     env: dict[str, str] | None = None,
 ) -> list[Path]:
     env_map = env or os.environ
-    cwd_path = Path(cwd or Path.cwd()).expanduser().resolve()
-    home_path = Path(home or Path.home()).expanduser().resolve()
-    workspace_root = cwd_path / ".pile-ou-face"
-    if workspace_root.is_dir():
-        paths = [workspace_root / "plugins"]
-    else:
-        paths = [home_path / ".pile-ou-face" / "plugins"]
     extra = str(env_map.get(f"{_LICENSE_ENV_PREFIX}_PLUGIN_PATH", "") or "").strip()
     if extra:
-        for raw_item in extra.split(os.pathsep):
-            item = raw_item.strip()
-            if item:
-                paths.append(Path(item).expanduser())
+        paths = [
+            Path(item.strip()).expanduser()
+            for item in extra.split(os.pathsep)
+            if item.strip()
+        ]
+    else:
+        paths = []
+    cwd_path = Path(cwd or Path.cwd()).expanduser().resolve()
+    home_path = Path(home or Path.home()).expanduser().resolve()
+    if not paths:
+        workspace_root = cwd_path / ".pile-ou-face"
+        if workspace_root.is_dir():
+            paths = [workspace_root / "plugins"]
+        else:
+            paths = [home_path / ".pile-ou-face" / "plugins"]
     unique: list[Path] = []
     seen: set[Path] = set()
     for path in paths:
@@ -166,6 +170,23 @@ class PluginContext:
         }
 
 
+@contextlib.contextmanager
+def _plugin_python_path(plugin_root: Path):
+    python_root = plugin_root / "python"
+    inserted = False
+    if python_root.is_dir():
+        python_root_text = str(python_root)
+        if python_root_text not in sys.path:
+            sys.path.insert(0, python_root_text)
+            inserted = True
+    try:
+        yield
+    finally:
+        if inserted:
+            with contextlib.suppress(ValueError):
+                sys.path.remove(str(python_root))
+
+
 def _load_plugin_module(
     manifest: PluginManifest, *, license_search_paths: list[Path] | None = None
 ):
@@ -187,7 +208,8 @@ def _load_plugin_module(
                     raise ImportError(f"Spec introuvable pour {module_path}")
                 module = importlib.util.module_from_spec(spec)
                 sys.modules[unique_name] = module
-                spec.loader.exec_module(module)
+                with _plugin_python_path(plugin_root):
+                    spec.loader.exec_module(module)
                 return module
     return importlib.import_module(entrypoint.module)
 
@@ -321,7 +343,11 @@ def attach_plugins(
                 record.manifest, license_search_paths=license_search_paths
             )
             register = getattr(module, entrypoint.register)
-            register(context)
+            plugin_root = _resolve_effective_plugin_root(
+                record.manifest, license_search_paths=license_search_paths
+            )
+            with _plugin_python_path(plugin_root):
+                register(context)
         except Exception as exc:  # pragma: no cover - safety net
             _log.warning("plugin attach failed for %s: %s", record.plugin_id, exc)
             record.state = "failed"
@@ -456,6 +482,183 @@ def invoke_plugin_command(
             context,
             attached_records,
         )
+
+
+def _as_list(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    return [value]
+
+
+def _normalize_feature_name(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    out = []
+    prev_sep = False
+    for char in text:
+        if char.isalnum():
+            out.append(char)
+            prev_sep = False
+        elif not prev_sep:
+            out.append("_")
+            prev_sep = True
+    return "".join(out).strip("_")
+
+
+def _feature_tokens(value: Any) -> set[str]:
+    text = str(value or "").strip()
+    if not text:
+        return set()
+    tokens = {_normalize_feature_name(text)}
+    parts = [part for part in text.replace("-", ".").split(".") if part]
+    if parts:
+        tokens.add(_normalize_feature_name(parts[0]))
+        if len(parts) >= 2 and parts[-1] in {"run", "enrich", "build", "tag"}:
+            tokens.add(_normalize_feature_name(".".join(parts[:-1])))
+            tokens.add(_normalize_feature_name(parts[-2]))
+    return {token for token in tokens if token}
+
+
+def _iter_declared_command_specs(manifest: PluginManifest) -> list[dict[str, Any]]:
+    raw = manifest.raw if isinstance(manifest.raw, dict) else {}
+    specs: list[dict[str, Any]] = []
+
+    for item in _as_list(raw.get("commands")):
+        if isinstance(item, dict):
+            specs.append(item)
+
+    ui = raw.get("ui") if isinstance(raw.get("ui"), dict) else {}
+    for tab in _as_list(ui.get("tabs")):
+        if not isinstance(tab, dict):
+            continue
+        command = str(tab.get("command") or tab.get("command_id") or "").strip()
+        if not command:
+            continue
+        feature = str(
+            tab.get("feature") or tab.get("feature_id") or tab.get("tabId") or ""
+        ).strip()
+        aliases = _as_list(tab.get("aliases"))
+        specs.append(
+            {
+                "id": command,
+                "feature": feature,
+                "aliases": aliases,
+                "tabId": tab.get("tabId"),
+                "label": tab.get("label"),
+            }
+        )
+
+    capabilities = raw.get("capabilities")
+    if isinstance(capabilities, dict):
+        for entries in capabilities.values():
+            for entry in _as_list(entries):
+                if isinstance(entry, dict):
+                    specs.append(entry)
+                    continue
+                command = str(entry or "").strip()
+                if command.count(".") >= 2:
+                    specs.append({"id": command, "feature": command})
+    return specs
+
+
+def _declared_command_matches_feature(spec: dict[str, Any], feature: str) -> bool:
+    wanted = _feature_tokens(feature)
+    if not wanted:
+        return False
+    candidates: set[str] = set()
+    for key in (
+        "feature",
+        "feature_id",
+        "id",
+        "command",
+        "command_id",
+        "tabId",
+        "label",
+    ):
+        candidates.update(_feature_tokens(spec.get(key)))
+    for alias in _as_list(spec.get("aliases")):
+        candidates.update(_feature_tokens(alias))
+    return bool(wanted & candidates)
+
+
+def _fallback_command_matches_feature(command_id: str, feature: str) -> bool:
+    wanted = _feature_tokens(feature)
+    command_tokens = _feature_tokens(command_id)
+    return bool(wanted & command_tokens)
+
+
+def resolve_plugin_command_for_feature(
+    context: PluginContext,
+    records: list[PluginRecord],
+    feature: str,
+) -> str | None:
+    feature_name = str(feature or "").strip()
+    if not feature_name:
+        return None
+    if feature_name in context.commands:
+        return feature_name
+
+    for record in records:
+        if record.state != "active" or record.manifest is None:
+            continue
+        for spec in _iter_declared_command_specs(record.manifest):
+            command = str(
+                spec.get("id") or spec.get("command") or spec.get("command_id") or ""
+            ).strip()
+            if (
+                command
+                and command in context.commands
+                and _declared_command_matches_feature(spec, feature_name)
+            ):
+                return command
+
+    for command in sorted(context.commands.keys()):
+        if _fallback_command_matches_feature(command, feature_name):
+            return command
+    return None
+
+
+def invoke_plugin_feature(
+    records: list[PluginRecord],
+    feature: str,
+    payload: dict[str, Any] | None = None,
+    *,
+    host_version: str = DEFAULT_HOST_VERSION,
+    api_version: int = HOST_API_VERSION,
+    license_search_paths: list[Path] | None = None,
+) -> tuple[dict[str, Any], PluginContext, list[PluginRecord]]:
+    context, attached_records = attach_plugins(
+        records,
+        host_version=host_version,
+        api_version=api_version,
+        license_search_paths=license_search_paths,
+    )
+    feature_name = str(feature or "").strip()
+    command_name = resolve_plugin_command_for_feature(
+        context, attached_records, feature_name
+    )
+    if not command_name:
+        return (
+            {
+                "ok": False,
+                "error": f"Feature plugin introuvable: {feature_name}",
+                "feature": feature_name,
+                "available_commands": sorted(context.commands.keys()),
+            },
+            context,
+            attached_records,
+        )
+    response, _context, _records = invoke_plugin_command(
+        attached_records,
+        command_name,
+        payload,
+        host_version=host_version,
+        api_version=api_version,
+        license_search_paths=license_search_paths,
+    )
+    response["feature"] = feature_name
+    return response, context, attached_records
 
 
 def _build_registry_from_args(args: argparse.Namespace) -> list[PluginRecord]:
@@ -633,6 +836,34 @@ def _cmd_invoke(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_invoke_feature(args: argparse.Namespace) -> int:
+    try:
+        payload = _load_invoke_payload(args)
+    except ValueError as exc:
+        print(
+            json.dumps({"ok": False, "error": str(exc)}, indent=2, ensure_ascii=False)
+        )
+        return 0
+    license_search_paths = default_license_search_paths(cwd=Path.cwd())
+    records = apply_plugin_licensing(
+        _build_registry_from_args(args), search_paths=license_search_paths
+    )
+    response, context, records = invoke_plugin_feature(
+        records,
+        args.feature,
+        payload,
+        host_version=args.host_version,
+        api_version=args.api_version,
+        license_search_paths=license_search_paths,
+    )
+    response["host_version"] = args.host_version
+    response["api_version"] = args.api_version
+    response["plugins"] = [record.to_dict() for record in records]
+    response["attached"] = context.snapshot()
+    print(json.dumps(response, indent=2, ensure_ascii=False))
+    return 0
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Runtime minimal des plugins Pile Ou Face"
@@ -645,6 +876,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     list_parser.add_argument("--paths", nargs="*", default=[])
     list_parser.add_argument("--disable", default="")
     list_parser.add_argument("--attach", action="store_true")
+    list_parser.add_argument("--json", action="store_true")
     list_parser.set_defaults(func=_cmd_list)
 
     inspect_parser = sub.add_parser("inspect", help="Inspecter un plugin par id")
@@ -668,6 +900,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
     invoke_parser.add_argument("--paths", nargs="*", default=[])
     invoke_parser.add_argument("--disable", default="")
     invoke_parser.set_defaults(func=_cmd_invoke)
+
+    invoke_feature_parser = sub.add_parser(
+        "invoke-feature", help="Executer une feature exposee par un plugin actif"
+    )
+    invoke_feature_parser.add_argument("feature")
+    invoke_feature_parser.add_argument("--payload-json", default="")
+    invoke_feature_parser.add_argument("--payload-file", default="")
+    invoke_feature_parser.add_argument("--paths", nargs="*", default=[])
+    invoke_feature_parser.add_argument("--disable", default="")
+    invoke_feature_parser.set_defaults(func=_cmd_invoke_feature)
 
     return parser
 

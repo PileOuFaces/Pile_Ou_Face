@@ -1,4 +1,20 @@
 repos:
+  # ── Miroir local de la CI publique ─────────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: extension-ci-ruff-check
+        name: extension CI ruff check
+        entry: bash -c 'cd extension && python3 -m ruff check .'
+        language: system
+        pass_filenames: false
+        files: ^extension/.*\.py$
+      - id: extension-ci-ruff-format
+        name: extension CI ruff format check
+        entry: bash -c 'cd extension && python3 -m ruff format --check .'
+        language: system
+        pass_filenames: false
+        files: ^extension/.*\.py$
+
   # ── Linting et formatage Python ────────────────────────────────────────────
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.17

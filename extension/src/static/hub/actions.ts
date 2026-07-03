@@ -27,7 +27,6 @@ function createActions({
   analysisCtx,
   handlers,
   compileCSource,
-  invokePluginRuntimeCommand,
   payloadToHex,
   buildCmpPayloadSuggestion,
   isSupportedBinary,
@@ -644,39 +643,6 @@ function createActions({
       }
     },
 
-    hubYaraScan: async (message) => {
-      const {
-        absPath,
-        exists,
-        isDirectory,
-      } = analysisCtx.resolveBinaryInputContext(message.binaryPath, message.binaryMeta || null);
-      if (!exists || isDirectory) {
-        hubPost('hubYara', { matches: [], error: 'Binaire introuvable.' });
-        return;
-      }
-      let resolvedRulesTarget = '';
-      try {
-        const inferredRulesMode = message.rulesMode
-          || ((message.rulesPath || '').trim() ? 'manual' : 'library');
-        resolvedRulesTarget = await resolveYaraRulesTarget({
-          mode: inferredRulesMode,
-          rulesPath: message.rulesPath || '',
-        });
-      } catch (err) {
-        hubPost('hubYara', { matches: [], error: err.message || 'Règles YARA introuvables.' });
-        return;
-      }
-      const data = await invokePluginRuntimeCommand('malware.yara.run', {
-        binaryPath: absPath,
-        rulesPath: resolvedRulesTarget,
-      }, {
-        feature: 'yara_scan',
-        timeout: 60000,
-      });
-      const matches = Array.isArray(data) ? data : (data.matches || []);
-      hubPost('hubYara', { matches, error: data.error || undefined });
-    },
-
     hubSearchBinary: async (message) => {
       const {
         binaryPath,
@@ -711,39 +677,6 @@ function createActions({
         const stderr = String(err.stderr || '').trim();
         hubPost('hubRecherche', { results: [], error: stderr || err.message || 'Recherche échouée.' });
       }
-    },
-
-    hubCapaScan: async (message) => {
-      const {
-        absPath,
-        exists,
-        isDirectory,
-        binaryMeta,
-      } = analysisCtx.resolveBinaryInputContext(message.binaryPath, message.binaryMeta || null);
-      if (!exists || isDirectory) {
-        hubPost('hubCapa', { capabilities: [], error: 'Binaire introuvable.' });
-        return;
-      }
-      const format = String(binaryMeta?.format || message.binaryMeta?.format || '').trim().toUpperCase();
-      if (format.includes('MACH')) {
-        hubPost('hubCapa', {
-          capabilities: [],
-          error: 'CAPA analyse les exécutables PE et ELF. Le binaire actif est un Mach-O macOS: utilise YARA ici ou charge un binaire Linux/Windows pour CAPA.',
-        });
-        return;
-      }
-      if (format === 'RAW') {
-        hubPost('hubCapa', {
-          capabilities: [],
-          error: 'CAPA a besoin d\u2019un exécutable PE ou ELF complet. Les blobs bruts restent analysables avec YARA, Hex, Strings et Désassemblage.',
-        });
-        return;
-      }
-      const result = await invokePluginRuntimeCommand('malware.capa.run', {
-        binaryPath: absPath,
-      }, { feature: 'capa_scan' });
-      const errMsg = result.error || (result.errors && result.errors.length ? result.errors.join('; ') : '');
-      hubPost('hubCapa', { capabilities: result.capabilities || [], error: errMsg || undefined });
     },
 
     hubListRules: async (_message) => {
@@ -986,7 +919,7 @@ function createActions({
     },
 
     hubPickFile: async (message) => {
-      const isBinaryTarget = ['bindiffPathA', 'bindiffPathB'].includes(message.target);
+      const isBinaryTarget = message.fileType === 'binary';
       const isSourceTarget = message.fileType === 'sourceC' || message.target === 'dynamicSourcePath';
       const dialogOpts = {
         canSelectFiles: true, canSelectMany: false,

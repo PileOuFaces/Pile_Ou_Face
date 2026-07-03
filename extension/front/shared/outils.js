@@ -1553,7 +1553,6 @@ function triggerStaticQuickAction(action) {
 }
 
 function postBinaryAwareMessage(type, extra = {}) {
-  try { window.POFHubTaskProgressController?.startTask({ type, ...extra }); } catch(e) {}
   if (binarySourceController) {
     binarySourceController.postBinaryAwareMessage(type, extra);
     return;

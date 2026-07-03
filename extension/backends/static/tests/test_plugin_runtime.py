@@ -25,11 +25,13 @@ from backends.plugins.runtime import (
     _DECRYPTED_PLUGIN_TEMPS,
     PluginContext,
     _cleanup_decrypted_plugin_cache,
+    _plugin_python_path,
     apply_plugin_licensing,
     attach_plugins,
     collect_runtime_state,
     default_plugin_search_paths,
     invoke_plugin_command,
+    invoke_plugin_feature,
 )
 
 
@@ -118,7 +120,7 @@ class TestPluginRuntime(unittest.TestCase):
                                 "register": "register_plugin",
                             }
                         },
-                        "capabilities": {"analysis": ["vuln_patterns.enrich"]},
+                        "capabilities": {"analysis": ["demo_signal.enrich"]},
                     }
                 ),
                 encoding="utf-8",
@@ -183,6 +185,70 @@ class TestPluginRuntime(unittest.TestCase):
             self.assertEqual(states["pof.disabled"], "disabled")
             self.assertEqual(states["pof.incompatible"], "incompatible")
 
+    def test_plugin_python_path_adds_and_removes_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            plugin_root = Path(tmp)
+            python_root = plugin_root / "python"
+            python_root.mkdir()
+            python_root_str = str(python_root)
+
+            self.assertNotIn(python_root_str, sys.path)
+            with _plugin_python_path(plugin_root):
+                self.assertIn(python_root_str, sys.path)
+                self.assertEqual(sys.path[0], python_root_str)
+            self.assertNotIn(python_root_str, sys.path)
+
+    def test_attach_plugins_python_path_available_during_register(self):
+        """register_plugin() can import sibling modules from the plugin's python/ dir."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            plugin_dir = base / "pof.demo"
+            python_dir = plugin_dir / "python"
+            python_dir.mkdir(parents=True)
+            (plugin_dir / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "id": "pof.demo",
+                        "name": "Demo",
+                        "version": "0.1.0",
+                        "kind": "analysis-pack",
+                        "host": {
+                            "api_version": 1,
+                            "min_version": "0.1.0",
+                            "max_version": "0.1.x",
+                        },
+                        "entrypoints": {
+                            "python": {
+                                "module": "plugin_main",
+                                "register": "register_plugin",
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            # helpers.py lives alongside plugin_main.py — must be importable during register
+            (python_dir / "helpers.py").write_text(
+                "def make_handler():\n    return lambda payload: {'ok': True}\n",
+                encoding="utf-8",
+            )
+            (python_dir / "plugin_main.py").write_text(
+                "\n".join(
+                    [
+                        "def register_plugin(context):",
+                        "    from helpers import make_handler  # lazy import needs python_root in sys.path",
+                        "    context.register_command('demo.run', make_handler())",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            records = build_plugin_registry([base], host_version="0.1.0")
+            context, attached = attach_plugins(records, host_version="0.1.0")
+            self.assertEqual(attached[0].state, "active")
+            self.assertIn("demo.run", context.commands)
+            # python_root must be removed from sys.path after attach
+            self.assertNotIn(str(python_dir), sys.path)
+
     def test_attach_plugins_registers_analysis_enricher(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -217,7 +283,7 @@ class TestPluginRuntime(unittest.TestCase):
                         "def register_plugin(context):",
                         "    def enrich(result):",
                         "        return result",
-                        "    context.register_analysis_enricher('vuln_patterns', enrich)",
+                        "    context.register_analysis_enricher('demo_signal', enrich)",
                         "    context.register_exporter('demo', enrich)",
                     ]
                 ),
@@ -226,20 +292,20 @@ class TestPluginRuntime(unittest.TestCase):
             records = build_plugin_registry([base], host_version="0.1.0")
             context, attached = attach_plugins(records, host_version="0.1.0")
             self.assertIsInstance(context, PluginContext)
-            self.assertIn("vuln_patterns", context.analysis_enrichers)
+            self.assertIn("demo_signal", context.analysis_enrichers)
             self.assertEqual(attached[0].state, "active")
 
     def test_invoke_plugin_command_executes_registered_command(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
-            plugin_dir = base / "pof.audit"
+            plugin_dir = base / "pof.demo"
             python_dir = plugin_dir / "python"
             python_dir.mkdir(parents=True)
             (plugin_dir / "manifest.json").write_text(
                 json.dumps(
                     {
-                        "id": "pof.vulnerability-audit-pro",
-                        "name": "Audit",
+                        "id": "pof.demo-plugin",
+                        "name": "Demo",
                         "version": "0.1.0",
                         "kind": "analysis-pack",
                         "host": {
@@ -263,7 +329,7 @@ class TestPluginRuntime(unittest.TestCase):
                         "def register_plugin(context):",
                         "    def run(payload):",
                         "        return {'binaryPath': payload.get('binaryPath', ''), 'ok': True}",
-                        "    context.register_command('audit.taint.run', run)",
+                        "    context.register_command('demo.scan.run', run)",
                     ]
                 ),
                 encoding="utf-8",
@@ -271,17 +337,71 @@ class TestPluginRuntime(unittest.TestCase):
             records = build_plugin_registry([base], host_version="0.1.0")
             response, context, attached = invoke_plugin_command(
                 records,
-                "audit.taint.run",
+                "demo.scan.run",
                 {"binaryPath": "/tmp/demo.bin"},
                 host_version="0.1.0",
             )
             self.assertTrue(response["ok"])
             self.assertEqual(response["result"]["binaryPath"], "/tmp/demo.bin")
-            self.assertIn("audit.taint.run", context.snapshot()["commands"])
+            self.assertIn("demo.scan.run", context.snapshot()["commands"])
             self.assertEqual(
-                context.snapshot()["command_sources"]["audit.taint.run"],
-                "pof.vulnerability-audit-pro",
+                context.snapshot()["command_sources"]["demo.scan.run"],
+                "pof.demo-plugin",
             )
+            self.assertEqual(attached[0].state, "active")
+
+    def test_invoke_plugin_feature_resolves_manifest_command(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            plugin_dir = base / "pof.demo"
+            python_dir = plugin_dir / "python"
+            python_dir.mkdir(parents=True)
+            (plugin_dir / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "id": "pof.demo-plugin",
+                        "name": "Demo",
+                        "version": "0.1.0",
+                        "kind": "analysis-pack",
+                        "host": {
+                            "api_version": 1,
+                            "min_version": "0.1.0",
+                            "max_version": "0.1.x",
+                        },
+                        "entrypoints": {
+                            "python": {
+                                "module": "plugin_main",
+                                "register": "register_plugin",
+                            }
+                        },
+                        "commands": [
+                            {"id": "demo.feature.run", "feature": "demo_feature"}
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (python_dir / "plugin_main.py").write_text(
+                "\n".join(
+                    [
+                        "def register_plugin(context):",
+                        "    context.register_command('demo.feature.run', lambda payload: {'packed': True, 'binaryPath': payload.get('binaryPath')})",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            records = build_plugin_registry([base], host_version="0.1.0")
+            response, context, attached = invoke_plugin_feature(
+                records,
+                "demo_feature",
+                {"binaryPath": "/tmp/demo.bin"},
+                host_version="0.1.0",
+            )
+            self.assertTrue(response["ok"])
+            self.assertEqual(response["command"], "demo.feature.run")
+            self.assertEqual(response["feature"], "demo_feature")
+            self.assertEqual(response["result"]["binaryPath"], "/tmp/demo.bin")
+            self.assertIn("demo.feature.run", context.snapshot()["commands"])
             self.assertEqual(attached[0].state, "active")
 
     def test_invoke_plugin_command_reports_missing_command(self):
@@ -319,7 +439,7 @@ class TestPluginRuntime(unittest.TestCase):
             records = build_plugin_registry([base], host_version="0.1.0")
             response, context, _ = invoke_plugin_command(
                 records,
-                "audit.vulns.run",
+                "demo.scan.run",
                 {"binaryPath": "/tmp/demo.bin"},
                 host_version="0.1.0",
             )
@@ -344,6 +464,14 @@ class TestPluginRuntime(unittest.TestCase):
             cwd="/tmp/project", home="/tmp/home", env={}
         )
         self.assertEqual(paths, [Path("/tmp/home/.pile-ou-face/plugins").resolve()])
+
+    def test_default_plugin_search_paths_env_overrides_legacy_fallbacks(self):
+        paths = default_plugin_search_paths(
+            cwd="/tmp/project",
+            home="/tmp/home",
+            env={"BINHOST_PLUGIN_PATH": "/tmp/workspaceStorage/pof/plugins"},
+        )
+        self.assertEqual(paths, [Path("/tmp/workspaceStorage/pof/plugins")])
 
     def test_default_license_search_paths_prefers_workspace_root_when_present(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -397,7 +525,7 @@ class TestPluginRuntime(unittest.TestCase):
     def test_plugin_requiring_license_stays_locked_without_license_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
-            plugin_dir = base / "pof.audit"
+            plugin_dir = base / "pof.demo"
             python_dir = plugin_dir / "python"
             keys_dir = plugin_dir / "keys"
             python_dir.mkdir(parents=True)
@@ -406,8 +534,8 @@ class TestPluginRuntime(unittest.TestCase):
             (plugin_dir / "manifest.json").write_text(
                 json.dumps(
                     {
-                        "id": "pof.vulnerability-audit-pro",
-                        "name": "Audit",
+                        "id": "pof.demo-plugin",
+                        "name": "Demo",
                         "version": "0.1.0",
                         "kind": "analysis-pack",
                         "host": {
@@ -436,7 +564,7 @@ class TestPluginRuntime(unittest.TestCase):
                 "\n".join(
                     [
                         "def register_plugin(context):",
-                        "    context.register_command('audit.vulns.run', lambda payload: {'ok': True})",
+                        "    context.register_command('demo.scan.run', lambda payload: {'ok': True})",
                     ]
                 ),
                 encoding="utf-8",
@@ -457,7 +585,7 @@ class TestPluginRuntime(unittest.TestCase):
     def test_valid_signed_account_based_license_unlocks_plugin(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
-            plugin_dir = base / "pof.audit"
+            plugin_dir = base / "pof.demo"
             python_dir = plugin_dir / "python"
             keys_dir = plugin_dir / "keys"
             license_dir = base / "licenses"
@@ -465,12 +593,12 @@ class TestPluginRuntime(unittest.TestCase):
             keys_dir.mkdir(parents=True)
             license_dir.mkdir(parents=True)
             private_key, public_key = self._generate_rsa_keypair(keys_dir)
-            plugin_id = "pof.vulnerability-audit-pro"
+            plugin_id = "pof.demo-plugin"
             (plugin_dir / "manifest.json").write_text(
                 json.dumps(
                     {
                         "id": plugin_id,
-                        "name": "Audit",
+                        "name": "Demo",
                         "version": "0.1.0",
                         "kind": "analysis-pack",
                         "host": {
@@ -500,7 +628,7 @@ class TestPluginRuntime(unittest.TestCase):
                 "\n".join(
                     [
                         "def register_plugin(context):",
-                        "    context.register_command('audit.vulns.run', lambda payload: {'binaryPath': payload.get('binaryPath', ''), 'ok': True})",
+                        "    context.register_command('demo.scan.run', lambda payload: {'binaryPath': payload.get('binaryPath', ''), 'ok': True})",
                     ]
                 ),
                 encoding="utf-8",
@@ -513,7 +641,7 @@ class TestPluginRuntime(unittest.TestCase):
                 "issued_at": "2026-05-02T10:00:00Z",
                 "expires_at": "2099-01-01T00:00:00Z",
                 "account_id": "test-account-id",
-                "features": ["audit.vulns.run"],
+                "features": ["demo.scan.run"],
                 "signature_algorithm": "rsa-sha256",
             }
             raw_to_sign = {
@@ -565,7 +693,7 @@ class TestPluginRuntime(unittest.TestCase):
             with self._with_env(BINHOST_LICENSE_PATH=str(license_dir)):
                 response, _, _ = invoke_plugin_command(
                     records,
-                    "audit.vulns.run",
+                    "demo.scan.run",
                     {"binaryPath": "/tmp/demo.bin"},
                     host_version="0.1.0",
                 )
@@ -627,7 +755,7 @@ class TestPluginRuntime(unittest.TestCase):
             source.write_text(
                 json.dumps(
                     {
-                        "plugin_id": "pof.vulnerability-audit-pro",
+                        "plugin_id": "pof.demo-plugin",
                         "license_id": "lic-001",
                         "signature": "ZmFrZQ==",
                     }
@@ -637,7 +765,7 @@ class TestPluginRuntime(unittest.TestCase):
             target_root = base / ".pile-ou-face" / "licenses"
             result = install_license(source, target_root)
             self.assertTrue(result["ok"])
-            destination = target_root / "pof.vulnerability-audit-pro.license.json"
+            destination = target_root / "pof.demo-plugin.license.json"
             self.assertTrue(destination.exists())
             self.assertEqual(
                 json.loads(destination.read_text(encoding="utf-8"))["license_id"],
@@ -650,7 +778,7 @@ class TestPluginRuntime(unittest.TestCase):
             keys_dir = base / "keys"
             keys_dir.mkdir(parents=True)
             private_key, public_key = self._generate_rsa_keypair(keys_dir)
-            plugin_id = "pof.vulnerability-audit-pro"
+            plugin_id = "pof.demo-plugin"
             account_id = "test-account-id"
             content_key = base64.b64encode(b"0123456789abcdef0123456789abcdef").decode(
                 "ascii"
@@ -663,7 +791,7 @@ class TestPluginRuntime(unittest.TestCase):
                 json.dumps(
                     {
                         "id": plugin_id,
-                        "name": "Audit",
+                        "name": "Demo",
                         "version": "0.1.0",
                         "kind": "analysis-pack",
                         "host": {
@@ -694,7 +822,7 @@ class TestPluginRuntime(unittest.TestCase):
                 encoding="utf-8",
             )
             (inner_root / "python" / "plugin_main.py").write_text(
-                "def register_plugin(context):\n    context.register_command('audit.vulns.run', lambda payload: {'ok': True})\n",
+                "def register_plugin(context):\n    context.register_command('demo.scan.run', lambda payload: {'ok': True})\n",
                 encoding="utf-8",
             )
             shutil.copy2(
@@ -719,7 +847,7 @@ class TestPluginRuntime(unittest.TestCase):
 
             outer_manifest = {
                 "id": plugin_id,
-                "name": "Audit",
+                "name": "Demo",
                 "version": "0.1.0",
                 "kind": "analysis-pack",
                 "host": {
@@ -740,7 +868,7 @@ class TestPluginRuntime(unittest.TestCase):
                     "python": {"module": "plugin_main", "register": "register_plugin"}
                 },
             }
-            bundle_path = base / "audit-release.pofplug"
+            bundle_path = base / "demo-release.pofplug"
             with ZipFile(bundle_path, "w") as archive:
                 archive.writestr("manifest.json", json.dumps(outer_manifest, indent=2))
                 archive.writestr(
@@ -771,7 +899,7 @@ class TestPluginRuntime(unittest.TestCase):
                 "issued_at": "2026-05-02T10:00:00Z",
                 "expires_at": "2099-01-01T00:00:00Z",
                 "account_id": account_id,
-                "features": ["audit.vulns.run"],
+                "features": ["demo.scan.run"],
                 "content_key": content_key,
                 "signature_algorithm": "rsa-sha256",
             }
@@ -834,7 +962,7 @@ class TestPluginRuntime(unittest.TestCase):
             )
             self.assertEqual(state["summary"], {"active": 1})
             self.assertEqual(state["plugins"][0]["state"], "active")
-            self.assertIn("audit.vulns.run", state["attached"]["commands"])
+            self.assertIn("demo.scan.run", state["attached"]["commands"])
 
     def test_cleanup_decrypted_plugin_cache_removes_temp_dirs(self):
         temp_dir = tempfile.TemporaryDirectory(prefix="pof-plugin-runtime-test-")

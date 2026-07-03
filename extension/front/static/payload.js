@@ -864,33 +864,6 @@ staticBinaryInput?.addEventListener('change', () => {
   syncStaticWorkspaceSummary();
 });
 
-// ROP chain builder — goal descriptions
-const _ROP_GOAL_DESCS = {
-  ret2libc_x64: 'Appelle system("/bin/sh") via la PLT en contrôlant rdi. Nécessite un gadget pop rdi ; ret dans le binaire et la présence de system() dans la PLT.',
-  ret2syscall_x64: 'Déclenche execve("/bin/sh", 0, 0) via un appel système direct (syscall). Nécessite des gadgets pop rax/rdi/rsi/rdx et un gadget syscall.',
-  custom_exec: 'Déclenche execve(cmd, 0, 0) avec la commande de votre choix (ex: /bin/cat, /usr/bin/id, /bin/bash -p). Utile pour CTF ou lire un fichier spécifique.',
-  stack_pivot: 'Redirige le pointeur de pile (rsp) vers une zone contrôlée. Utile quand le débordement est trop court pour une chaîne complète (nécessite un gadget pop rsp ; ret).',
-};
-const _updateRopGoalDesc = () => {
-  const sel = document.getElementById('ropBuildGoal');
-  const desc = document.getElementById('ropGoalDesc');
-  const cmdInput = document.getElementById('ropCustomCmd');
-  if (sel && desc) desc.textContent = _ROP_GOAL_DESCS[sel.value] || '';
-  if (cmdInput) cmdInput.style.display = sel?.value === 'custom_exec' ? '' : 'none';
-};
-document.getElementById('ropBuildGoal')?.addEventListener('change', _updateRopGoalDesc);
-_updateRopGoalDesc();
-
-document.getElementById('btnBuildRopChain')?.addEventListener('click', () => {
-  const bp = getStaticBinaryPath();
-  if (!bp) return;
-  const goal = document.getElementById('ropBuildGoal')?.value || 'ret2libc_x64';
-  const cmd = document.getElementById('ropCustomCmd')?.value.trim() || '/bin/sh';
-  const chainResult = document.getElementById('ropChainResult');
-  if (chainResult) { chainResult.style.display = ''; chainResult.textContent = 'Construction ROP chain…'; }
-  postBinaryAwareMessage('hubLoadRopBuild', { binaryPath: bp, goal, cmd });
-});
-
 document.getElementById('btnDynamicSelectBinary')?.addEventListener('click', () => {
   setDynamicTraceStatus('Sélection du fichier de travail...');
   vscode.postMessage({ type: 'requestBinarySelection' });
@@ -971,60 +944,19 @@ function _autoLoadTab(t) {
   } else if (t === 'discovered') {
     setStaticLoading('functionsContent', 'Chargement fonctions…');
     postBinaryAwareMessage(isRawBinarySelected() ? 'hubLoadDiscoveredFunctions' : 'hubLoadFunctions', { binaryPath: bp });
-  } else if (t === 'detection') {
-    const unsupportedCapa = getCapaUnsupportedReason();
-    if (unsupportedCapa) {
-      renderCapaUnsupported(unsupportedCapa);
-      tabDataCache.detection = { binaryPath: bp };
-    } else {
-      setStaticLoading('capaContent', 'Analyse Capa…');
-      postBinaryAwareMessage('hubCapaScan', { binaryPath: bp });
-    }
-    vscode.postMessage({ type: 'hubListRules' });
-  } else if (t === 'behavior') {
-    setStaticLoading('behaviorContent', 'Analyse comportementale…');
-    postBinaryAwareMessage('hubLoadBehavior', { binaryPath: bp });
-  } else if (t === 'attck') {
-    setStaticLoading('attckContent', 'Tagging ATT&CK…');
-    postBinaryAwareMessage('hubLoadAttck', { binaryPath: bp });
-  } else if (t === 'taint') {
-    setStaticLoading('taintContent', 'Analyse taint…');
-    postBinaryAwareMessage('hubLoadTaint', { binaryPath: bp });
   } else if (callTabLoader(t, bp)) {
     // Tab loaded by registered plugin handler
-  } else if (t === 'func_similarity') {
-    setStaticLoading('funcSimilarityContent', 'Recherche de similarité…');
-    postBinaryAwareMessage('hubLoadFuncSimilarity', {
-      binaryPath: bp,
-      threshold: parseFloat(document.getElementById('funcSimilarityThreshold')?.value || '0.4'),
-      top: parseInt(document.getElementById('funcSimilarityTop')?.value || '3', 10),
-    });
-  } else if (t === 'rop') {
-    setStaticLoading('ropContent', 'Recherche ROP…');
-    postBinaryAwareMessage('hubLoadRop', { binaryPath: bp });
-  } else if (t === 'vulns') {
-    setStaticLoading('vulnsContent', 'Détection vulnérabilités…');
-    postBinaryAwareMessage('hubLoadVulns', { binaryPath: bp });
   } else if (t === 'decompile') {
     setStaticLoading('decompileContent', 'Décompilation…');
     vscode.postMessage({ type: 'hubListDecompilers', provider: _getConfiguredDecompilerProvider() });
     ensureDecompileSelectionSourcesLoaded(bp);
     syncDecompileSelection(window._lastDisasmAddr || decompileUiState.selectedAddr);
     requestDecompileForCurrentSelection();
-  } else if (t === 'anti_analysis') {
-    setStaticLoading('antiAnalysisContent', 'Analyse anti-analyse…');
-    postBinaryAwareMessage('hubLoadAntiAnalysis', { binaryPath: bp });
   } else if (t === 'imports') {
     setStaticLoading('importsContent', 'Analyse imports…');
     setStaticLoading('exportsContent', 'Chargement exports…');
     postBinaryAwareMessage('hubLoadImports', { binaryPath: bp });
     postBinaryAwareMessage('hubLoadExports', { binaryPath: bp });
-  } else if (t === 'flirt') {
-    setStaticLoading('flirtContent', 'Signatures FLIRT…');
-    postBinaryAwareMessage('hubLoadFlirt', { binaryPath: bp });
-  } else if (t === 'deobfuscate') {
-    setStaticLoading('deobfuscateContent', 'Déobfuscation strings…');
-    postBinaryAwareMessage('hubLoadDeobfuscate', { binaryPath: bp });
   } else if (t === 'hex') {
     if (bp && !tabDataCache.hex) loadHexView(bp, 0, hexCurrentLength);
     if (bp && !(tabDataCache.patchList && tabDataCache.patchList.binaryPath === bp)) {

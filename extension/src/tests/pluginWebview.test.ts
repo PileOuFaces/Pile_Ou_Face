@@ -9,6 +9,10 @@ describe('loadPluginWebviews', () => {
   beforeEach(() => { tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pof-test-')); });
   afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
 
+  const storageDir = () => path.join(tmpDir, 'workspaceStorage', 'PileOuFaces.stack-visualizer');
+  const loadFromStorage = () => loadPluginWebviews(tmpDir, { storageDir: storageDir() });
+  const pluginDir = (name) => path.join(storageDir(), 'plugins', name);
+
   it('returns empty strings when plugins dir is absent', () => {
     const result = loadPluginWebviews(tmpDir);
     expect(result.styles).to.equal('');
@@ -17,9 +21,9 @@ describe('loadPluginWebviews', () => {
   });
 
   it('generates inline CSS from ui.tab_color', () => {
-    const pluginDir = path.join(tmpDir, '.pile-ou-face', 'plugins', 'my-plugin');
-    fs.mkdirSync(pluginDir, { recursive: true });
-    fs.writeFileSync(path.join(pluginDir, 'plugin.json'), JSON.stringify({
+    const dir = pluginDir('my-plugin');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'plugin.json'), JSON.stringify({
       id: 'pof.my-plugin',
       ui: {
         family: 'myfamily',
@@ -28,12 +32,12 @@ describe('loadPluginWebviews', () => {
       },
       entrypoints: { webview: { tab_html: 'webview/tab.html', scripts: ['webview/tab.js'] } },
     }));
-    const webviewDir = path.join(pluginDir, 'webview');
+    const webviewDir = path.join(dir, 'webview');
     fs.mkdirSync(webviewDir);
     fs.writeFileSync(path.join(webviewDir, 'tab.html'), '<div id="myPanel"></div>');
     fs.writeFileSync(path.join(webviewDir, 'tab.js'), 'console.log("loaded");');
 
-    const result = loadPluginWebviews(tmpDir);
+    const result = loadFromStorage();
     expect(result.styles).to.include('.group-tab.active[data-group="myfamily"]');
     expect(result.styles).to.include('#111');
     expect(result.styles).to.include('#eee');
@@ -41,10 +45,10 @@ describe('loadPluginWebviews', () => {
   });
 
   it('inlines tab HTML and JS content', () => {
-    const pluginDir = path.join(tmpDir, '.pile-ou-face', 'plugins', 'my-plugin');
-    const webviewDir = path.join(pluginDir, 'webview');
+    const dir = pluginDir('my-plugin');
+    const webviewDir = path.join(dir, 'webview');
     fs.mkdirSync(webviewDir, { recursive: true });
-    fs.writeFileSync(path.join(pluginDir, 'plugin.json'), JSON.stringify({
+    fs.writeFileSync(path.join(dir, 'plugin.json'), JSON.stringify({
       id: 'pof.my-plugin',
       ui: { family: 'myfamily' },
       entrypoints: { webview: { tab_html: 'webview/tab.html', scripts: ['webview/tab.js'] } },
@@ -52,17 +56,47 @@ describe('loadPluginWebviews', () => {
     fs.writeFileSync(path.join(webviewDir, 'tab.html'), '<div id="myPanel">content</div>');
     fs.writeFileSync(path.join(webviewDir, 'tab.js'), 'var x = 1;');
 
-    const result = loadPluginWebviews(tmpDir);
+    const result = loadFromStorage();
     expect(result.panels).to.include('<div id="myPanel">content</div>');
     expect(result.scripts).to.include('<script>');
     expect(result.scripts).to.include('var x = 1;');
   });
 
-  it('builds external plugin script tags when a webview resolver is provided', () => {
-    const pluginDir = path.join(tmpDir, '.pile-ou-face', 'plugins', 'my-plugin');
-    const webviewDir = path.join(pluginDir, 'webview');
+  it('scopes plugin inline styles to plugin panels', () => {
+    const dir = pluginDir('my-plugin');
+    const webviewDir = path.join(dir, 'webview');
     fs.mkdirSync(webviewDir, { recursive: true });
-    fs.writeFileSync(path.join(pluginDir, 'plugin.json'), JSON.stringify({
+    fs.writeFileSync(path.join(dir, 'plugin.json'), JSON.stringify({
+      id: 'pof.my-plugin',
+      ui: { family: 'myfamily' },
+      entrypoints: { webview: { tab_html: 'webview/tab.html', scripts: [] } },
+    }));
+    fs.writeFileSync(path.join(webviewDir, 'tab.html'), `
+      <style>
+        .btn { color: red; }
+        #myPanel .item { color: blue; }
+        @media (max-width: 520px) { .item { display: block; } }
+        @keyframes plugin-spin { to { transform: rotate(360deg); } }
+      </style>
+      <div id="myPanel" class="static-panel"><button class="btn item">Run</button></div>
+    `);
+
+    const result = loadFromStorage();
+    expect(result.panels).to.include('data-plugin-scope="my-plugin"');
+    expect(result.panels).not.to.include('<style>');
+    expect(result.styles).to.include(':where([data-plugin-scope="my-plugin"], [data-plugin-scope="my-plugin"] *).btn');
+    expect(result.styles).to.include(':where([data-plugin-scope="my-plugin"], [data-plugin-scope="my-plugin"] *)#myPanel .item');
+    expect(result.styles).to.include('@media (max-width: 520px)');
+    expect(result.styles).to.include(':where([data-plugin-scope="my-plugin"], [data-plugin-scope="my-plugin"] *).item');
+    expect(result.styles).to.include('@keyframes plugin-spin');
+    expect(result.styles).to.include('to { transform: rotate(360deg); }');
+  });
+
+  it('builds external plugin script tags when a webview resolver is provided', () => {
+    const dir = pluginDir('my-plugin');
+    const webviewDir = path.join(dir, 'webview');
+    fs.mkdirSync(webviewDir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'plugin.json'), JSON.stringify({
       id: 'pof.my-plugin',
       ui: { family: 'myfamily' },
       entrypoints: { webview: { tab_html: 'webview/tab.html', scripts: ['webview/tab.js'] } },
@@ -71,6 +105,7 @@ describe('loadPluginWebviews', () => {
     fs.writeFileSync(path.join(webviewDir, 'tab.js'), 'window.pluginLoaded = true;');
 
     const result = loadPluginWebviews(tmpDir, {
+      storageDir: storageDir(),
       webviewResourceResolver: (filePath) => `vscode-resource:${path.basename(filePath)}`,
     });
 
@@ -79,24 +114,24 @@ describe('loadPluginWebviews', () => {
   });
 
   it('skips plugins with no entrypoints.webview declared', () => {
-    const pluginDir = path.join(tmpDir, '.pile-ou-face', 'plugins', 'backend-only');
-    fs.mkdirSync(pluginDir, { recursive: true });
-    fs.writeFileSync(path.join(pluginDir, 'plugin.json'), JSON.stringify({
+    const dir = pluginDir('backend-only');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'plugin.json'), JSON.stringify({
       id: 'pof.backend-only',
       entrypoints: { python: { module: 'plugin_main', register: 'register_plugin' } },
     }));
 
-    const result = loadPluginWebviews(tmpDir);
+    const result = loadFromStorage();
     expect(result.panels).to.equal('');
     expect(result.scripts).to.equal('');
     expect(result.styles).to.equal('');
   });
 
   it('loads installed plugin webviews from manifest.json and metadata extras', () => {
-    const pluginDir = path.join(tmpDir, '.pile-ou-face', 'plugins', 'pof.cross-analysis-pro');
-    const extrasDir = path.join(pluginDir, 'metadata', 'extras', 'plugins', 'cross-analysis-pro', 'webview');
+    const dir = pluginDir('pof.cross-analysis-pro');
+    const extrasDir = path.join(dir, 'metadata', 'extras', 'plugins', 'cross-analysis-pro', 'webview');
     fs.mkdirSync(extrasDir, { recursive: true });
-    fs.writeFileSync(path.join(pluginDir, 'manifest.json'), JSON.stringify({
+    fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({
       id: 'pof.cross-analysis-pro',
       ui: {
         family: 'croisee',
@@ -104,22 +139,22 @@ describe('loadPluginWebviews', () => {
       },
       entrypoints: { webview: { tab_html: 'webview/tab.html', scripts: ['webview/tab.js'] } },
     }));
-    fs.writeFileSync(path.join(pluginDir, 'metadata', 'build.json'), JSON.stringify({
+    fs.writeFileSync(path.join(dir, 'metadata', 'build.json'), JSON.stringify({
       slug: 'cross-analysis-pro',
     }));
     fs.writeFileSync(path.join(extrasDir, 'tab.html'), '<section id="panel-cross-analysis"></section>');
     fs.writeFileSync(path.join(extrasDir, 'tab.js'), 'window.crossLoaded = true;');
 
-    const result = loadPluginWebviews(tmpDir);
+    const result = loadFromStorage();
     expect(result.styles).to.include('.group-tab.active[data-group="croisee"]');
     expect(result.panels).to.include('panel-cross-analysis');
     expect(result.scripts).to.include('window.crossLoaded = true;');
   });
 
   it('skips missing webview files gracefully', () => {
-    const pluginDir = path.join(tmpDir, '.pile-ou-face', 'plugins', 'broken-plugin');
-    fs.mkdirSync(pluginDir, { recursive: true });
-    fs.writeFileSync(path.join(pluginDir, 'plugin.json'), JSON.stringify({
+    const dir = pluginDir('broken-plugin');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'plugin.json'), JSON.stringify({
       id: 'pof.broken-plugin',
       ui: { family: 'broken' },
       entrypoints: { webview: { tab_html: 'webview/tab.html', scripts: ['webview/tab.js'] } },
@@ -127,7 +162,7 @@ describe('loadPluginWebviews', () => {
     // webview/ dir intentionally absent
 
     expect(() => loadPluginWebviews(tmpDir)).not.to.throw();
-    const result = loadPluginWebviews(tmpDir);
+    const result = loadFromStorage();
     expect(result.panels).to.equal('');
   });
 });

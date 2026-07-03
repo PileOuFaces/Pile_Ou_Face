@@ -14,6 +14,7 @@ __all__ = [
     "default_plugin_search_paths",
     "discover_plugin_dirs",
     "invoke_plugin_command",
+    "invoke_plugin_feature",
     "load_plugin_manifest",
 ]
 
@@ -24,12 +25,14 @@ def __getattr__(name: str):
         "attach_plugins",
         "default_plugin_search_paths",
         "invoke_plugin_command",
+        "invoke_plugin_feature",
     }:
         from .runtime import (
             PluginContext,
             attach_plugins,
             default_plugin_search_paths,
             invoke_plugin_command,
+            invoke_plugin_feature,
         )
 
         runtime_exports = {
@@ -37,6 +40,7 @@ def __getattr__(name: str):
             "attach_plugins": attach_plugins,
             "default_plugin_search_paths": default_plugin_search_paths,
             "invoke_plugin_command": invoke_plugin_command,
+            "invoke_plugin_feature": invoke_plugin_feature,
         }
         return runtime_exports[name]
     raise AttributeError(name)

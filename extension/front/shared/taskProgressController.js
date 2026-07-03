@@ -11,12 +11,8 @@
     'compileResult',
     'compilerListResult',
     'hubAiProvidersResult',
-    'hubAntiAnalysisDone',
     'hubAttck',
     'hubAutoFromCmpResult',
-    'hubBehavior',
-    'hubBindiff',
-    'hubCapa',
     'hubCallGraph',
     'hubCfg',
     'hubCommandResult',
@@ -24,14 +20,11 @@
     'hubDecompilerList',
     'hubDecompilerPullDone',
     'hubDecompile',
-    'hubDeobfuscateDone',
     'hubDisasmReady',
     'hubDiscoveredFunctions',
     'hubError',
     'hubExceptionHandlersDone',
     'hubExportsDone',
-    'hubFlirtDone',
-    'hubFuncSimilarity',
     'hubFunctionsDone',
     'hubHexView',
     'hubImportXrefsDone',
@@ -42,11 +35,10 @@
     'hubPatchesDone',
     'hubPeResourcesDone',
     'hubPluginState',
+    'hubPluginResult',
     'hubRecherche',
     'hubRedoPatchDone',
     'hubRevertPatchDone',
-    'hubRop',
-    'hubRopBuild',
     'hubRuleContent',
     'hubRulesPath',
     'hubScriptLoaded',
@@ -59,12 +51,9 @@
     'hubStructsDone',
     'hubStructsSaved',
     'hubSymbols',
-    'hubTaint',
     'hubTypedDataDone',
     'hubTypedStructPreviewDone',
-    'hubVulns',
     'hubXrefs',
-    'hubYara',
     'pluginStatusRefresh',
     'runTraceDone',
     'symbols',
@@ -75,25 +64,15 @@
     hubAiProviderSet: task('Configuration IA', ['hubAiProvidersResult', 'hubError']),
     hubAiProvidersGet: task('Chargement fournisseurs IA', ['hubAiProvidersResult']),
     hubAutoFromCmp: task('Recherche payload CMP', ['hubAutoFromCmpResult', 'hubError']),
-    hubCapaScan: task('Analyse Capa', ['hubCapa', 'hubError']),
     hubExecuteCommand: task('Execution commande', ['hubCommandResult', 'hubDecompilerList', 'hubError']),
-    hubFuncSimilarityIndexReference: task('Index similarite', ['hubFuncSimilarity', 'hubError']),
-    hubFuncSimilarityRemoveReference: task('Suppression reference', ['hubFuncSimilarity', 'hubError']),
     hubInstallDecompiler: task('Installation decompilateur', ['hubDecompilerList', 'hubError']),
     hubListDecompilers: task('Etat des decompilateurs', ['hubDecompilerList', 'hubError']),
-    hubLoadAntiAnalysis: task('Analyse anti-analyse', ['hubAntiAnalysisDone', 'hubError']),
-    hubLoadAttck: task('Tagging ATT&CK', ['hubAttck', 'hubError']),
-    hubLoadBehavior: task('Analyse comportementale', ['hubBehavior', 'hubError']),
-    hubLoadBindiff: task('Comparaison BinDiff', ['hubBindiff', 'hubError']),
     hubLoadCallGraph: task('Construction call graph', ['hubCallGraph', 'hubError']),
     hubLoadCfg: task('Construction CFG', ['hubCfg', 'hubError']),
     hubLoadDecompile: task('Decompilation', ['hubDecompile', 'hubError']),
-    hubLoadDeobfuscate: task('Deobfuscation strings', ['hubDeobfuscateDone', 'hubError']),
     hubLoadDiscoveredFunctions: task('Decouverte fonctions', ['hubDiscoveredFunctions', 'hubError']),
     hubLoadExceptionHandlers: task('Chargement exceptions', ['hubExceptionHandlersDone', 'hubError']),
     hubLoadExports: task('Chargement exports', ['hubExportsDone', 'hubError']),
-    hubLoadFlirt: task('Signatures FLIRT', ['hubFlirtDone', 'hubError']),
-    hubLoadFuncSimilarity: task('Similarite fonctions', ['hubFuncSimilarity', 'hubError']),
     hubLoadFunctions: task('Analyse fonctions', ['hubFunctionsDone', 'hubError']),
     hubLoadHexView: task('Chargement hex view', ['hubHexView', 'hubError']),
     hubLoadImportXrefs: task('References imports', ['hubImportXrefsDone', 'hubError']),
@@ -101,23 +80,20 @@
     hubLoadPatches: task('Chargement patches', ['hubPatchesDone', 'hubError']),
     hubLoadPeResources: task('Extraction ressources PE', ['hubPeResourcesDone', 'hubError']),
     hubLoadPluginState: task('Actualisation plugins', ['hubPluginState', 'pluginStatusRefresh', 'hubError']),
-    hubLoadRop: task('Recherche ROP', ['hubRop', 'hubError']),
-    hubLoadRopBuild: task('Construction ROP', ['hubRopBuild', 'hubError']),
     hubLoadScript: task('Chargement script', ['hubScriptLoaded', 'hubError']),
     hubLoadSections: task('Chargement sections', ['hubSections', 'hubError']),
     hubLoadStackFrame: task('Analyse stack frame', ['hubStackFrame', 'hubError']),
     hubLoadStrings: task('Chargement strings', ['hubStrings', 'hubError']),
     hubLoadStructs: task('Chargement structs', ['hubStructsDone', 'hubError']),
     hubLoadSymbols: task('Chargement symboles', ['hubSymbols', 'symbols', 'hubError']),
-    hubLoadTaint: task('Analyse taint', ['hubTaint', 'hubError']),
     hubLoadTypedData: task('Analyse donnees typees', ['hubTypedDataDone', 'hubError']),
-    hubLoadVulns: task('Detection vulnerabilites', ['hubVulns', 'hubError']),
     hubLoadXrefs: task('References croisees', ['hubXrefs', 'hubError']),
     hubOllamaListModels: task('Recherche modeles IA', ['hubOllamaModels', 'hubOllamaResult', 'hubError']),
     hubOllamaPrompt: task('Generation IA', ['hubOllamaResult', 'hubError'], { timeoutMs: 240000 }),
     hubOpenDisasm: task('Desassemblage', ['hubDisasmReady', 'hubError']),
     hubPatchBytes: task('Application patch', ['hubPatchResult', 'hubError']),
     hubPullDecompilerImage: task('Image decompilateur', ['hubDecompilerPullDone', 'hubError'], { timeoutMs: 600000 }),
+    hubPluginInvoke: task('Execution plugin', ['hubPluginResult', 'hubError'], { timeoutMs: 240000 }),
     hubRedoPatch: task('Reapplication patch', ['hubRedoPatchDone', 'hubError']),
     hubRunScript: task('Execution script', ['hubScriptResult', 'hubError']),
     hubSaveScript: task('Sauvegarde script', ['hubScriptSaved', 'hubError']),
@@ -125,7 +101,6 @@
     hubSearchBinary: task('Recherche binaire', ['hubSearchBinaryResult', 'hubRecherche', 'hubError']),
     hubStaticCompile: task('Compilation', ['compileResult', 'hubStaticCompileDone', 'hubError']),
     hubUseBinaryPath: task('Chargement binaire', ['hubSetBinaryPath', 'accountState', 'hubError']),
-    hubYaraScan: task('Scan YARA', ['hubYara', 'hubError']),
     runTrace: task('Trace dynamique', ['runTraceDone', 'hubError'], { timeoutMs: 240000 }),
   };
 
@@ -161,6 +136,10 @@
       '    <div class="task-progress-title">Traitement en cours</div>',
       '    <div class="task-progress-detail">Preparation...</div>',
       '    <div class="task-progress-track" aria-hidden="true"><div class="task-progress-bar"></div></div>',
+      '    <details class="task-progress-details">',
+      '      <summary>Details des taches</summary>',
+      '      <div class="task-progress-list"></div>',
+      '    </details>',
       '  </div>',
       '  <div class="task-progress-count" aria-hidden="true"></div>',
       '</div>',
@@ -172,6 +151,8 @@
       detail: root.querySelector('.task-progress-detail'),
       bar: root.querySelector('.task-progress-bar'),
       count: root.querySelector('.task-progress-count'),
+      details: root.querySelector('.task-progress-details'),
+      list: root.querySelector('.task-progress-list'),
     };
     return state.els;
   }
@@ -184,14 +165,16 @@
     const messageType = normalizeMessageType(message);
     const definition = TASK_DEFINITIONS[messageType];
     if (!definition) return '';
+    ensureRequestId(message, messageType);
     const id = `${messageType}:${message?.requestId || message?.decompiler || message?.addr || ++state.sequence}`;
     const existing = state.tasks.get(id);
     if (existing?.timeoutId) global.clearTimeout(existing.timeoutId);
     const timeoutId = global.setTimeout(() => finishTask(id), definition.timeoutMs);
     state.tasks.set(id, {
       id,
+      requestId: String(message?.requestId || ''),
       messageType,
-      label: definition.label,
+      label: getTaskLabel(message, definition.label),
       detail: getInitialDetail(message, definition.label),
       doneTypes: definition.doneTypes,
       percent: null,
@@ -202,8 +185,52 @@
     return id;
   }
 
+  function ensureRequestId(message, messageType) {
+    if (!message || typeof message !== 'object' || message.requestId) return;
+    if (messageType !== 'hubPluginInvoke') return;
+    message.requestId = `plugin-${Date.now()}-${++state.sequence}`;
+  }
+
+  function humanizeFeature(feature) {
+    const raw = String(feature || '').trim();
+    const labels = {
+      anti_analysis: 'Anti-analyse',
+      attck: 'ATT&CK',
+      behavior: 'Comportement',
+      bindiff: 'BinDiff',
+      capa_scan: 'CAPA',
+      cross_analysis: 'Cross-analysis',
+      deobfuscate: 'Deobfuscation',
+      flirt: 'FLIRT',
+      func_similarity: 'Similarite',
+      packer: 'Packer',
+      rop: 'ROP',
+      rop_build: 'ROP chain',
+      taint: 'Taint',
+      vulns: 'Vulnerabilites',
+      yara_scan: 'YARA',
+    };
+    return labels[raw] || raw.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+
+  function getTaskLabel(message, fallback) {
+    if (normalizeMessageType(message) === 'hubPluginInvoke') {
+      const feature = String(message?.feature || message?.featureId || '').trim();
+      return feature ? `Plugin: ${humanizeFeature(feature)}` : 'Plugin';
+    }
+    return fallback;
+  }
+
   function getInitialDetail(message, fallback) {
     const parts = [];
+    if (normalizeMessageType(message) === 'hubPluginInvoke') {
+      const payload = message?.payload && typeof message.payload === 'object' ? message.payload : {};
+      const binaryPath = String(message?.binaryPath || payload.binaryPath || payload.binary_path || '').trim();
+      const action = String(payload.action || '').trim();
+      if (action) parts.push(action);
+      if (binaryPath) parts.push(binaryPath.split(/[\\/]/).pop());
+      return parts.length ? parts.join(' - ') : 'Execution en arriere-plan';
+    }
     if (message?.decompiler) parts.push(String(message.decompiler));
     if (message?.command) parts.push(String(message.command).replace(/^pileOuFace\./, ''));
     if (message?.symbol) parts.push(String(message.symbol));
@@ -223,7 +250,10 @@
     const messageType = normalizeMessageType(message);
     if (!FINISH_MESSAGES.has(messageType)) return;
     const matching = [];
+    const requestId = String(message?.requestId || '');
     state.tasks.forEach((entry, id) => {
+      if (requestId && entry.requestId && entry.requestId !== requestId) return;
+      if (messageType === 'hubPluginResult' && entry.messageType !== 'hubPluginInvoke') return;
       if (entry.doneTypes.has(messageType) || messageType === 'hubError') matching.push(id);
     });
     matching.forEach(finishTask);
@@ -277,6 +307,7 @@
     els.title.textContent = active.label || 'Traitement en cours';
     els.detail.textContent = active.detail || active.label || '';
     els.count.textContent = count > 1 ? `${count} taches` : '';
+    renderTaskList(els);
     if (Number.isFinite(active.percent)) {
       els.root.classList.add('has-percent');
       els.bar.style.width = `${active.percent}%`;
@@ -284,6 +315,24 @@
       els.root.classList.remove('has-percent');
       els.bar.style.width = '';
     }
+  }
+
+  function renderTaskList(els) {
+    if (!els.list || !els.details) return;
+    const entries = Array.from(state.tasks.values()).sort((a, b) => a.startedAt - b.startedAt);
+    els.details.hidden = entries.length <= 1;
+    els.list.replaceChildren(...entries.map((entry) => {
+      const row = global.document.createElement('div');
+      row.className = 'task-progress-row';
+      const title = global.document.createElement('span');
+      title.className = 'task-progress-row-title';
+      title.textContent = entry.label || 'Tache';
+      const detail = global.document.createElement('span');
+      detail.className = 'task-progress-row-detail';
+      detail.textContent = entry.detail || '';
+      row.append(title, detail);
+      return row;
+    }));
   }
 
   function wrapPostMessage() {
