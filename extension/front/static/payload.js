@@ -740,6 +740,29 @@ function _applyCompilerAvailability(compilers) {
 }
 
 // ── Compilateur GCC ──────────────────────────────────────────
+const COMPILER_OPTIM_HINTS = {
+  '-O0': 'Aucune optimisation: garde un désassemblage proche du source.',
+  '-Og': 'Debug confortable avec optimisations légères et flux plus réaliste.',
+  '-O1': 'Optimisation modérée: premiers inlinings et simplifications.',
+  '-O2': 'Profil équilibré: bon niveau pour observer un binaire de release courant.',
+  '-O3': 'Optimisation agressive: vectorisation/inlining, code moins direct à lire.',
+  '-Os': 'Optimise la taille: utile pour comparer les artefacts compacts.',
+};
+
+function _splitCompilerExtraFlags(value) {
+  return String(value || '')
+    .split(/\s+/)
+    .map((flag) => flag.trim())
+    .filter(Boolean)
+    .filter((flag) => !/[\u0000\r\n]/.test(flag));
+}
+
+function _updateCompilerOptimHint() {
+  const optim = document.getElementById('gccOptim')?.value || '-O0';
+  const hint = document.getElementById('compilerOptimHint');
+  if (hint) hint.textContent = COMPILER_OPTIM_HINTS[optim] || COMPILER_OPTIM_HINTS['-O0'];
+}
+
 function _buildCompilerFlags() {
   const target  = document.getElementById('compilerTarget')?.value || 'elf-x64';
   const isELF   = target.startsWith('elf-');
@@ -770,7 +793,7 @@ function _buildCompilerFlags() {
   }
   if (isStatic) f.push('-static');
   if (strip)    f.push('-s');
-  if (extra)    f.push(...extra.split(/\s+/).filter(Boolean));
+  if (extra)    f.push(..._splitCompilerExtraFlags(extra));
   return f;
 }
 
@@ -791,6 +814,7 @@ function _buildGccCommand() {
   if (!isCLike) {
     const preview = document.getElementById('compilerCmdPreview');
     if (preview) preview.textContent = `${lang} build → ${target}`;
+    _updateCompilerOptimHint();
     return;
   }
 
@@ -801,6 +825,7 @@ function _buildGccCommand() {
 
   const preview = document.getElementById('compilerCmdPreview');
   if (preview) preview.textContent = f.join(' ');
+  _updateCompilerOptimHint();
 }
 
 [

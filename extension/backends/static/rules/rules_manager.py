@@ -71,11 +71,21 @@ class RulesManager:
         return f"user:{rule_type}:{name}"
 
     @staticmethod
+    def _validate_rule_name(name: str) -> str:
+        clean = str(name or "").strip()
+        if not clean:
+            raise ValueError("Nom de règle vide.")
+        if clean != Path(clean).name or clean in {".", ".."}:
+            raise ValueError(f"Nom de règle invalide : {name!r}")
+        return clean
+
+    @staticmethod
     def _parse_rule_id(rule_id: str) -> tuple[str, str, str]:
         parts = rule_id.split(":", 2)
         if len(parts) != 3:
             raise ValueError(f"rule_id invalide : {rule_id!r}")
         prefix, rule_type, name = parts
+        name = RulesManager._validate_rule_name(name)
         if prefix == "global":
             return RulesManager._GLOBAL_SCOPE, rule_type, name
         if prefix == "user":
@@ -160,6 +170,7 @@ class RulesManager:
         )
         if base_dir is None:
             raise ValueError("Le stockage global des règles n'est pas configuré.")
+        name = self._validate_rule_name(name)
         d = base_dir / rule_type
         d.mkdir(parents=True, exist_ok=True)
         (d / name).write_text(content, encoding="utf-8")
@@ -226,7 +237,7 @@ class RulesManager:
         source_path = rule_dir / old_name
         if not source_path.exists():
             raise FileNotFoundError(f"Règle introuvable : {source_path}")
-        target_name = str(name or "").strip() or old_name
+        target_name = self._validate_rule_name(name or old_name)
         target_path = rule_dir / target_name
         if target_path != source_path and target_path.exists():
             raise FileExistsError(f"Une règle existe déjà : {target_path.name}")

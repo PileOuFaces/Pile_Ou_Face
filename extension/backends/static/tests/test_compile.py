@@ -13,6 +13,7 @@ if str(ROOT) not in sys.path:
 from backends.static.compile.compile import (
     _build_target_flags_native,
     _load_compilers,
+    _normalize_flags,
     _select_toolchain,
     compile_source,
     list_available_compilers,
@@ -368,6 +369,10 @@ class TestListAvailableCompilersExtended(unittest.TestCase):
 
 
 class TestCompileSourceFlags(unittest.TestCase):
+    def test_normalize_flags_drops_empty_and_line_separated_values(self):
+        flags = _normalize_flags(["-O2", "", "  -g  ", "-DNAME=ok\n-bad", "\x00bad"])
+        self.assertEqual(flags, ["-O2", "-g"])
+
     def test_custom_flags_passed_to_native_compiler(self):
         with tempfile.NamedTemporaryFile(suffix=".c", delete=False) as f:
             f.write(b"int main(){return 0;}")

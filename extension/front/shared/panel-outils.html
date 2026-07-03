@@ -293,12 +293,14 @@
                 <div class="form-field" id="compiler-optim-field">
                   <label>Optimisation</label>
                   <select id="gccOptim" class="select-modern">
-                    <option value="-O0" selected>-O0 (aucune)</option>
-                    <option value="-O1">-O1</option>
-                    <option value="-O2">-O2</option>
-                    <option value="-O3">-O3 (max)</option>
-                    <option value="-Os">-Os (taille)</option>
+                    <option value="-O0" selected>-O0 · debug exact</option>
+                    <option value="-Og">-Og · debug optimisé</option>
+                    <option value="-O1">-O1 · léger</option>
+                    <option value="-O2">-O2 · équilibré</option>
+                    <option value="-O3">-O3 · agressif</option>
+                    <option value="-Os">-Os · taille</option>
                   </select>
+                  <p id="compilerOptimHint" class="compiler-option-hint">Aucune optimisation: garde un désassemblage proche du source.</p>
                 </div>
                 <div class="form-field" id="compiler-debug-field">
                   <label>Debug</label>
