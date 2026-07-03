@@ -459,6 +459,15 @@ def run_pipeline(
         binary_path,
         disasm_lines=disasm.get("lines") if disasm else None,
     )
+    if config.buffer_offset is not None and config.buffer_size is not None:
+        meta["buffer_source"] = "user"
+    elif any(
+        isinstance(step_analysis, dict) and step_analysis.get("buffer") is not None
+        for step_analysis in analysis_by_step.values()
+    ):
+        meta["buffer_source"] = "detected"
+    else:
+        meta["buffer_source"] = "none"
     crash = _build_crash_report(
         trace.get("crash") if isinstance(trace, dict) else None,
         snapshots,
