@@ -19,6 +19,7 @@ build_offset_to_vaddr(binary_path) -> dict[int, int]
 Architecture detection
 ----------------------
 ArchInfo            — dataclass: arch, bits, endian, ...
+FeatureSupport      — dataclass: level, description
 detect_binary_arch_from_path(binary_path) -> ArchInfo | None
 get_feature_support(arch, feature) -> FeatureSupport
 get_raw_arch_info(raw_arch, endian=None) -> ArchInfo | None
@@ -28,6 +29,7 @@ from backends.shared.log import configure_logging, get_logger
 from backends.shared.utils import build_offset_to_vaddr
 from backends.static.binary.arch import (
     ArchInfo,
+    FeatureSupport,
     detect_binary_arch_from_path,
     get_feature_support,
     get_raw_arch_info,
@@ -41,6 +43,7 @@ __all__ = [
     "build_offset_to_vaddr",
     # Architecture detection
     "ArchInfo",
+    "FeatureSupport",
     "detect_binary_arch_from_path",
     "get_feature_support",
     "get_raw_arch_info",
