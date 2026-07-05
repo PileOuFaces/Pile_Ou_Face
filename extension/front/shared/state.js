@@ -599,4 +599,22 @@ window.PoF = {
     detectionUiState.yaraMatches = [];
     detectionUiState.yaraError = '';
   },
+
+  // UI helpers (defined in search.js, resolved lazily at call-time).
+  setLoading: (containerId, msg) => {
+    if (typeof setStaticLoading === 'function') setStaticLoading(containerId, msg);
+  },
+  renderRulesList: (containerId, rules) => {
+    if (typeof _renderRulesList === 'function') _renderRulesList(containerId, rules);
+  },
+  applyYaraModeUi: () => {
+    if (typeof applyYaraModeUi === 'function') applyYaraModeUi();
+  },
+  getYaraMode: () => (typeof getSelectedYaraMode === 'function' ? getSelectedYaraMode() : 'library'),
+  setYaraMode: (mode, opts) => {
+    if (typeof setSelectedYaraMode === 'function') setSelectedYaraMode(mode, opts);
+  },
+
+  // Persistent storage (defined in state.js, no lazy guard needed).
+  saveStorage: (data) => _saveStorage(data),
 };
