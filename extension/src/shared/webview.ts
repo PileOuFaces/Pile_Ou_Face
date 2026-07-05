@@ -292,12 +292,11 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', worksp
     vscode.Uri.joinPath(extensionUri, ...parts).fsPath, 'utf8'
   );
 
-  const { groupStyles: pluginStyles, framesHtml: pluginPanels } =
+  const { groupStyles: pluginGroupStyles, framesHtml: pluginFrames } =
     (storageDir || globalDir) ? loadPluginWebviews(workspaceRoot, {
       storageDir,
       globalDir,
-    }) : { groupStyles: '', framesHtml: '' };
-  const pluginScripts = '';
+    }) : { groupStyles: '', frames: [], framesHtml: '' };
 
   const html = read('front', 'hub.html')
     .replace('{{panelDashboard}}', read('front', 'shared', 'panel-dashboard.html'))
@@ -386,6 +385,7 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', worksp
   const runtimeModuleUri       = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'dynamic', 'app', 'main.js'));
   const outilsCssUri           = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'panel-outils.css'));
   const optionsCssUri          = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'panel-options.css'));
+  const pluginIframeRouterUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'pluginIframeRouter.js'));
   const csp = webview.cspSource;
 
   return html
@@ -470,9 +470,9 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', worksp
     .replace(/{{outilsCssUri}}/g, outilsCssUri.toString())
     .replace(/{{optionsCssUri}}/g, optionsCssUri.toString())
     .replace(/{{cspSource}}/g, csp)
-    .replace('{{pluginStyles}}', pluginStyles)
-    .replace('{{pluginPanels}}', pluginPanels)
-    .replace('{{pluginScripts}}', pluginScripts)
+    .replace('{{pluginGroupStyles}}', pluginGroupStyles)
+    .replace('{{pluginFrames}}', pluginFrames)
+    .replace(/{{pluginIframeRouterUri}}/g, pluginIframeRouterUri.toString())
     .replace(/<body>/, `<body data-initial-panel="${initialPanel}">`);
 }
 
