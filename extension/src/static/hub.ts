@@ -393,6 +393,15 @@ function createHub(config) {
         });
       }, 80);
     }
+    // Proactively push rules state to webview on hub open so rules
+    // are always visible after reload without relying on DOMContentLoaded.
+    globalThis.setTimeout(() => {
+      if (typeof handlers.hubListRules === 'function') {
+        handlers.hubListRules({}).catch((err) => {
+          logChannel.appendLine(`[hub] Rules init error: ${err?.message || err}`);
+        });
+      }
+    }, 200);
 
     const runPythonJson = (scriptPath, args) => new Promise((resolve, reject) => {
       cp.execFile(pythonExe, [scriptPath, ...args], { encoding: 'utf8', cwd: root, maxBuffer: 32 * 1024 * 1024, timeout: 60000, env: pythonEnv }, (err, stdout) => {

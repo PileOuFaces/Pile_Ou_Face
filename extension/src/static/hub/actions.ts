@@ -229,6 +229,11 @@ function createActions({
       .map((rule) => String(rule.path).trim())
       .filter(Boolean);
     if (!activePaths.length) {
+      // Fallback: dossier rules/yara/ à la racine du workspace s'il existe
+      const defaultDir = path.join(root, 'rules', 'yara');
+      if (fs.existsSync(defaultDir)) {
+        return buildStagedYaraBundle('library-default', [defaultDir]);
+      }
       throw new Error('Aucune règle YARA activée. Activez-en une ou configurez une bibliothèque globale.');
     }
     return buildStagedYaraBundle('library', activePaths);
@@ -709,16 +714,49 @@ function createActions({
       }
     },
 
+    hubBrowseImportRule: async (message) => {
+      const ruleType = String(message.ruleType || 'yara').toLowerCase();
+      const scope = String(message.scope || 'global');
+      const isYara = ruleType === 'yara';
+      const picked = await vscode.window.showOpenDialog({
+        canSelectMany: true,
+        title: `Importer des règles ${ruleType.toUpperCase()}`,
+        filters: isYara
+          ? { 'YARA Rules': ['yar', 'yara'] }
+          : { 'CAPA Rules': ['yml', 'yaml'] },
+      });
+      if (!picked?.length) {
+        hubPost('hubRuleImported', { results: [] });
+        return;
+      }
+      const results: { name: string; ok: boolean; error?: string }[] = [];
+      for (const uri of picked) {
+        const name = path.basename(uri.fsPath);
+        try {
+          const content = fs.readFileSync(uri.fsPath, 'utf8');
+          await runRulesManagerJson(
+            ['add', '--name', name, '--type', ruleType, '--content', content, '--scope', scope],
+            { timeout: 5000 },
+          );
+          results.push({ name, ok: true });
+        } catch (err) {
+          results.push({ name, ok: false, error: (err as Error).message });
+        }
+      }
+      await postRulesState();
+      hubPost('hubRuleImported', { results });
+    },
+
     hubAddUserRule: async (message) => {
       const { name, ruleType, content, scope } = message;
       try {
         const data = await runRulesManagerJson(
-          ['add', '--name', name, '--type', ruleType, '--content', content, '--scope', scope || 'project'],
+          ['add', '--name', name, '--type', ruleType, '--content', content, '--scope', scope || 'global'],
           { timeout: 5000 },
         );
         hubPost('hubRuleAdded', data);
       } catch (err) {
-        hubPost('hubRuleAdded', { error: err.message });
+        hubPost('hubRuleAdded', { error: (err as Error).message });
       }
     },
 

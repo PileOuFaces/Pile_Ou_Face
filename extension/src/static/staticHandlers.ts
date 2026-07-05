@@ -704,14 +704,19 @@ function staticHandlers(config) {
       if (message.binaryPath && payload.binaryPath == null && payload.binary_path == null) {
         payload.binaryPath = message.binaryPath;
       }
-      const result = feature
-        ? await invokePluginFeature(feature, payload, { timeout: Number(message.timeout || 120000) })
-        : {
-            ok: false,
-            error: 'feature manquante',
-            plugin_required: '',
-            feature,
-          };
+      // Inject workspace context so plugins (yara_scan, capa_scan) can locate rules via RulesManager
+      if (payload.workspaceRoot == null) payload.workspaceRoot = root;
+      if (payload.globalConfigPath == null) {
+        const gcDir = globalDir || context?.globalStorageUri?.fsPath || '';
+        if (gcDir) payload.globalConfigPath = path.join(gcDir, 'rules-config.json');
+      }
+      const featureLabel = feature.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+      const result = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: `Plugin : ${featureLabel}…`, cancellable: false },
+        () => feature
+          ? invokePluginFeature(feature, payload, { timeout: Number(message.timeout || 120000) })
+          : Promise.resolve({ ok: false, error: 'feature manquante', plugin_required: '', feature }),
+      );
       panel.webview.postMessage({
         type: 'hubPluginResult',
         requestId,
