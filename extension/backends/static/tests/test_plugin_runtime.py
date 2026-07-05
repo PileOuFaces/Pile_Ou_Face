@@ -1031,7 +1031,10 @@ class TestPoFVersioning(unittest.TestCase):
             _check_pof_compatibility(m, "1.2.0")  # must not raise
 
     def test_check_pof_compatibility_raises_when_host_is_older(self):
-        from backends.plugins.runtime import _check_pof_compatibility, PluginManifestError
+        from backends.plugins.runtime import (
+            PluginManifestError,
+            _check_pof_compatibility,
+        )
 
         with tempfile.TemporaryDirectory() as tmp:
             m = self._make_manifest(tmp, {"minPoFVersion": "2.0.0"})
@@ -1041,7 +1044,10 @@ class TestPoFVersioning(unittest.TestCase):
             self.assertIn("1.0.0", str(ctx.exception))
 
     def test_check_pof_compatibility_raises_on_invalid_version_string(self):
-        from backends.plugins.runtime import _check_pof_compatibility, PluginManifestError
+        from backends.plugins.runtime import (
+            PluginManifestError,
+            _check_pof_compatibility,
+        )
 
         with tempfile.TemporaryDirectory() as tmp:
             m = self._make_manifest(tmp, {"minPoFVersion": "not-a-semver!!"})
