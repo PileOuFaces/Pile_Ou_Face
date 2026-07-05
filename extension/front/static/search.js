@@ -434,6 +434,21 @@ document.getElementById('btnSearchExportJson')?.addEventListener('click', () => 
   URL.revokeObjectURL(url);
 });
 
+function _openRulesViewer(ruleId, ruleName) {
+  const viewer = document.getElementById('rulesViewer');
+  const form = document.getElementById('rulesAddForm');
+  const nameEl = document.getElementById('rulesViewerName');
+  const contentEl = document.getElementById('rulesViewerContent');
+  if (!viewer || !nameEl || !contentEl) return;
+  if (form) form.style.display = 'none';
+  nameEl.textContent = ruleName || '';
+  contentEl.value = 'Chargement…';
+  contentEl.readOnly = true;
+  viewer.style.display = 'block';
+  viewer.dataset.ruleId = String(ruleId);
+  vscode.postMessage({ type: 'hubGetRuleContent', ruleId, _target: 'viewer' });
+}
+
 function _renderRulesList(containerId, rules) {
   const container = document.getElementById(containerId);
   if (!container) return;
@@ -442,7 +457,7 @@ function _renderRulesList(containerId, rules) {
   if (!rules.length) {
     const hint = document.createElement('p');
     hint.className = 'hint-sm rules-empty-hint';
-    hint.textContent = 'Aucune règle — ajoutez-en une au projet ou au niveau global.';
+    hint.textContent = 'Aucun fichier — importez des fichiers .yar ou créez une règle.';
     container.appendChild(hint);
     return;
   }
@@ -456,71 +471,66 @@ function _renderRulesList(containerId, rules) {
     main.className = 'rule-item-main';
 
     const labelEl = document.createElement('label');
-    labelEl.style.cssText = 'display:flex;align-items:flex-start;gap:8px;cursor:pointer;flex:1;min-width:0';
+    labelEl.style.cssText = 'display:flex;align-items:center;gap:8px;cursor:pointer;flex:1;min-width:0';
 
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.className = 'rule-toggle-cb';
     cb.dataset.ruleId = rule.id;
     cb.checked = rule.enabled;
+    cb.title = rule.enabled ? 'Désactiver' : 'Activer pour le scan';
     cb.addEventListener('change', function() {
       vscode.postMessage({ type: 'hubToggleRule', ruleId: rule.id, enabled: cb.checked });
     });
 
-    const copy = document.createElement('div');
-    copy.className = 'rule-item-copy';
-
     const nameSpan = document.createElement('span');
     nameSpan.className = 'rule-item-name';
     nameSpan.textContent = rule.name;
-
-    const meta = document.createElement('div');
-    meta.className = 'rule-item-meta';
-
-    const scopeBadge = document.createElement('span');
-    scopeBadge.className = `rule-meta-badge ${rule.scope === 'global' ? 'is-global' : 'is-project'}`;
-    scopeBadge.textContent = rule.scope === 'global' ? 'global' : 'projet';
-    meta.appendChild(scopeBadge);
-
-    const typeBadge = document.createElement('span');
-    typeBadge.className = `rule-meta-badge ${String(rule.type || '').toLowerCase() === 'yara' ? 'is-yara' : 'is-capa'}`;
-    typeBadge.textContent = String(rule.type || '').toUpperCase();
-    meta.appendChild(typeBadge);
-
-    copy.insertBefore(nameSpan, copy.firstChild);
-    copy.insertBefore(meta, copy.children[1] || null);
+    nameSpan.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
 
     labelEl.appendChild(cb);
-    labelEl.appendChild(copy);
+    labelEl.appendChild(nameSpan);
     main.appendChild(labelEl);
 
-    const delBtn = document.createElement('button');
+    // View button
+    const viewBtn = document.createElement('button');
+    viewBtn.type = 'button';
+    viewBtn.title = 'Voir le contenu';
+    viewBtn.textContent = '▤';
+    viewBtn.style.cssText = 'background:none;border:1px solid transparent;border-radius:3px;cursor:pointer;padding:2px 5px;color:var(--vscode-foreground);opacity:0.75;font-size:12px';
+    viewBtn.addEventListener('mouseenter', function() { viewBtn.style.opacity = '1'; viewBtn.style.borderColor = 'var(--vscode-button-border, rgba(128,128,128,0.3))'; });
+    viewBtn.addEventListener('mouseleave', function() { viewBtn.style.opacity = '0.75'; viewBtn.style.borderColor = 'transparent'; });
+    viewBtn.addEventListener('click', function() { _openRulesViewer(rule.id, rule.name); });
+
+    // Edit button
     const editBtn = document.createElement('button');
     editBtn.type = 'button';
-    editBtn.className = 'btn-rule-edit';
     editBtn.title = 'Modifier';
     editBtn.textContent = '✎';
-    editBtn.style.cssText = 'background:none;border:none;cursor:pointer;padding:2px 6px;opacity:0.7';
-    editBtn.addEventListener('mouseenter', function() { editBtn.style.opacity = '1'; });
-    editBtn.addEventListener('mouseleave', function() { editBtn.style.opacity = '0.7'; });
+    editBtn.style.cssText = 'background:none;border:1px solid transparent;border-radius:3px;cursor:pointer;padding:2px 5px;color:var(--vscode-foreground);opacity:0.75;font-size:12px';
+    editBtn.addEventListener('mouseenter', function() { editBtn.style.opacity = '1'; editBtn.style.borderColor = 'var(--vscode-button-border, rgba(128,128,128,0.3))'; });
+    editBtn.addEventListener('mouseleave', function() { editBtn.style.opacity = '0.75'; editBtn.style.borderColor = 'transparent'; });
     editBtn.addEventListener('click', function() {
       vscode.postMessage({ type: 'hubGetRuleContent', ruleId: rule.id });
     });
 
+    // Delete button
+    const delBtn = document.createElement('button');
     delBtn.type = 'button';
-    delBtn.className = 'btn-rule-delete';
     delBtn.title = 'Supprimer';
-    delBtn.textContent = '🗑';
-    delBtn.style.cssText = 'background:none;border:none;cursor:pointer;padding:2px 6px;opacity:0.6';
-    delBtn.addEventListener('mouseenter', function() { delBtn.style.opacity = '1'; });
-    delBtn.addEventListener('mouseleave', function() { delBtn.style.opacity = '0.6'; });
+    delBtn.textContent = '✕';
+    delBtn.style.cssText = 'background:none;border:1px solid transparent;border-radius:3px;cursor:pointer;padding:2px 5px;color:var(--vscode-foreground);opacity:0.75;font-size:11px';
+    delBtn.addEventListener('mouseenter', function() { delBtn.style.opacity = '1'; delBtn.style.color = 'var(--vscode-errorForeground, #f14c4c)'; delBtn.style.borderColor = 'var(--vscode-button-border, rgba(128,128,128,0.3))'; });
+    delBtn.addEventListener('mouseleave', function() { delBtn.style.opacity = '0.75'; delBtn.style.color = 'var(--vscode-foreground)'; delBtn.style.borderColor = 'transparent'; });
     delBtn.addEventListener('click', function() {
-      if (!confirm('Supprimer la règle ' + rule.name + ' ?')) return;
+      if (!confirm('Supprimer ' + rule.name + ' ?')) return;
       vscode.postMessage({ type: 'hubDeleteUserRule', ruleId: rule.id });
     });
 
     const actions = document.createElement('div');
     actions.className = 'rule-item-actions';
+    actions.style.cssText = 'display:flex;align-items:center;gap:0;flex-shrink:0';
+    actions.appendChild(viewBtn);
     actions.appendChild(editBtn);
     actions.appendChild(delBtn);
 
@@ -1934,7 +1944,7 @@ function updateTypedDataActiveSelection(addr = window._lastDisasmAddr, spanLengt
 
 function setStaticLoading(containerId, msg) {
   const el = document.getElementById(containerId);
-  if (el) el.innerHTML = msg ? `<p class="loading">${escapeHtml(msg)}</p>` : '';
+  if (el) el.innerHTML = msg ? `<p class="loading">${escapeHtml(msg)}</p>` : ''; // eslint-disable-line -- msg is escaped
 }
 
 function applyHexLayoutMode() {

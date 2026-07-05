@@ -171,15 +171,51 @@ window.addEventListener('message', (event) => {
       return;
     }
     const rule = msg.rule;
+    // Viewer inline (bouton ▤)
+    const viewer = document.getElementById('rulesViewer');
+    const viewerContent = document.getElementById('rulesViewerContent');
+    if (msg._target === 'viewer' && viewer && viewerContent) {
+      viewerContent.value = String(rule.content || '');
+      viewer.dataset.ruleId = String(rule.id || '');
+      viewer.dataset.ruleName = String(rule.name || '');
+      viewer.style.display = 'block';
+      const viewerEditBtn = document.getElementById('btnRulesViewerEdit');
+      if (viewerEditBtn) viewerEditBtn.dataset.ruleId = String(rule.id || '');
+      return;
+    }
+    // Formulaire d'édition (bouton ✎)
+    document.getElementById('rulesAddForm').style.display = 'none';
+    if (viewer) viewer.style.display = 'none';
     document.getElementById('rulesEditId').value = String(rule.id || '');
     document.getElementById('rulesAddType').value = String(rule.type || 'yara');
-    document.getElementById('rulesAddScope').value = String(rule.scope || 'project');
-    document.getElementById('rulesAddFormTitle').textContent =
-      'Modifier une règle ' + String(rule.type || 'yara').toUpperCase() + (rule.scope === 'global' ? ' globale' : ' projet');
+    document.getElementById('rulesAddScope').value = String(rule.scope || 'global');
+    document.getElementById('rulesAddFormTitle').textContent = String(rule.name || rule.type || 'règle');
     document.getElementById('rulesAddName').value = String(rule.name || '');
     document.getElementById('rulesAddContent').value = String(rule.content || '');
     document.getElementById('rulesAddForm').style.display = '';
     document.getElementById('rulesAddContent')?.focus();
+    return;
+  }
+  if (msg.type === 'hubRuleImported') {
+    const results = Array.isArray(msg.results) ? msg.results : [];
+    const failed = results.filter(function(r) { return !r.ok; });
+    if (failed.length) {
+      _showToast({
+        title: failed.length + ' fichier(s) non importé(s)',
+        sub: failed.map(function(r) { return r.name; }).join(', '),
+        icon: '⚠️',
+        variant: 'error',
+        duration: 5000,
+      });
+    } else if (results.length) {
+      _showToast({
+        title: results.length + ' fichier(s) importé(s)',
+        sub: results.map(function(r) { return r.name; }).join(', '),
+        icon: '✓',
+        variant: 'success',
+        duration: 3000,
+      });
+    }
     return;
   }
   if (msg.type === 'hubOllamaModels') {

@@ -223,6 +223,16 @@ function buildRuntimeEnv(root, storageDirOrExtra, extraEnv = {}) {
     env.COMPILERS_CONFIG   = path.join(storageDir, 'compilers.json');
   }
   if (backendBase) env.PYTHONPATH = mergedExtra.PYTHONPATH || backendBase;
+  // On macOS, VS Code launched from Dock/Finder has a minimal PATH that omits
+  // Homebrew and other user-installed tool directories. Augment with common paths
+  // so subprocesses (e.g. yara, capa) are found via shutil.which().
+  if (process.platform === 'darwin') {
+    const extraDirs = ['/opt/homebrew/bin', '/usr/local/bin', '/opt/homebrew/sbin', '/usr/local/sbin'];
+    const currentPath = String(env.PATH || '');
+    const parts = currentPath ? currentPath.split(path.delimiter) : [];
+    const augmented = [...new Set([...extraDirs.filter(d => !parts.includes(d)), ...parts])].filter(Boolean);
+    env.PATH = augmented.join(path.delimiter);
+  }
   const dockerExe = resolveDockerExecutable();
   if (dockerExe && dockerExe.includes(path.sep)) {
     const dockerDir = path.dirname(dockerExe);

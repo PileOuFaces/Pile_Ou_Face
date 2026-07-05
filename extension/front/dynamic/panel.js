@@ -542,10 +542,16 @@ document.getElementById('yaraRulesPath')?.addEventListener('input', () => {
   applyYaraModeUi();
 });
 document.getElementById('btnYaraScan')?.addEventListener('click', () => {
-  vscode.postMessage({ type: 'hubError', message: 'Cette action doit être fournie par un plugin.' });
+  const bp = getStaticBinaryPath();
+  if (!bp) { vscode.postMessage({ type: 'hubError', message: 'Indiquez un binaire.' }); return; }
+  const rules = document.getElementById('yaraRulesPath')?.value?.trim() || '';
+  if (!rules) { vscode.postMessage({ type: 'hubError', message: 'Choisissez un fichier .yar ou un dossier de règles.' }); return; }
+  vscode.postMessage({ type: 'hubPluginInvoke', feature: 'yara_scan', binaryPath: bp, payload: { rulesPath: rules, rulesMode: getSelectedYaraMode() } });
 });
 document.getElementById('btnCapaScan')?.addEventListener('click', () => {
-  vscode.postMessage({ type: 'hubError', message: 'Cette action doit être fournie par un plugin.' });
+  const bp = getStaticBinaryPath();
+  if (!bp) { vscode.postMessage({ type: 'hubError', message: 'Indiquez un binaire.' }); return; }
+  vscode.postMessage({ type: 'hubPluginInvoke', feature: 'capa_scan', binaryPath: bp, payload: {} });
 });
 
 document.getElementById('capaFilterInput')?.addEventListener('input', renderCapaResults);
