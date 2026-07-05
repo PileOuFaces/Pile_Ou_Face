@@ -170,9 +170,11 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
 })();
 </script>`;
 
-function _buildPluginSrcdoc(html, inlineJs, scopedCss, pluginSlug) {
-  const styleBlock = scopedCss ? `<style>${scopedCss}</style>` : '';
-  const scriptBlock = inlineJs ? `<script>${inlineJs}<\/script>` : '';
+function _buildPluginSrcdoc(html, inlineJs, scopedCss) {
+  const safeCss = String(scopedCss || '').replace(/<\/style/gi, '<\\/style');
+  const styleBlock = safeCss ? `<style>${safeCss}</style>` : '';
+  const safeJs = String(inlineJs || '').replace(/<\/script/gi, '<\\/script');
+  const scriptBlock = safeJs ? `<script>${safeJs}</script>` : '';
   return [
     '<!DOCTYPE html><html><head>',
     '<meta charset="utf-8">',
@@ -247,16 +249,16 @@ function loadPluginWebviews(root, options: { storageDir?: string; globalDir?: st
       }
 
       // Only push a frame if there is actual webview content
-      if (!pluginHtml.trim() && !inlineJs.trim()) continue;
+      if (!pluginHtml.trim() && !inlineJs.trim() && !scopedCss.trim()) continue;
 
-      const srcdoc = _buildPluginSrcdoc(pluginHtml, inlineJs, scopedCss, pluginSlug);
+      const srcdoc = _buildPluginSrcdoc(pluginHtml, inlineJs, scopedCss);
       const frameId = `pof-plugin-frame-${pluginSlug}`;
       frames.push({ pluginId, pluginSlug, frameId, srcdoc });
     }
   }
 
   const framesHtml = frames.map((f) => {
-    const escapedSrcdoc = f.srcdoc.replace(/"/g, '&quot;');
+    const escapedSrcdoc = _escapeHtmlAttr(f.srcdoc);
     return `<iframe id="${f.frameId}" data-plugin-id="${_escapeHtmlAttr(f.pluginId)}" data-plugin-slug="${_escapeHtmlAttr(f.pluginSlug)}" class="plugin-iframe static-panel" sandbox="allow-scripts" style="border:none;width:100%;height:100%;display:none;" srcdoc="${escapedSrcdoc}"></iframe>`;
   }).join('\n');
 
