@@ -62,6 +62,7 @@ class PluginManifest:
     dependencies: dict[str, list[str]]
     manifest_path: Path
     root_path: Path
+    min_pof_version: str | None
     raw: dict[str, Any]
 
     def to_dict(self) -> dict[str, Any]:
@@ -251,5 +252,6 @@ def load_plugin_manifest(path: str | Path) -> PluginManifest:
         dependencies=_coerce_dependencies(raw.get("dependencies")),
         manifest_path=manifest_path,
         root_path=manifest_path.parent,
+        min_pof_version=_optional_string(raw, "minPoFVersion") or None,
         raw=raw,
     )
