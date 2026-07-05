@@ -19,8 +19,10 @@
   const _frames = new Map();
   /** @type {Map<string, Set<string>>} tabId → Set of plugin slugs that registered it */
   const _tabLoaders = new Map();
-  /** @type {number} incremented on each init so stale listeners self-disable */
-  let _generation = 0;
+  /** @type {Function|null} currently registered message listener (for proper removal) */
+  let _boundListener = null;
+  /** @type {symbol} unique token identifying the current registration; stale closures self-disable */
+  let _activeToken = Symbol();
 
   /**
    * Initialize the router.
@@ -28,21 +30,23 @@
    * @param {object} vscode - VS Code webview API object
    */
   function init(win, vscode) {
-    // Remove previous listener if re-initializing (e.g. tests calling init multiple times)
-    if (_win && typeof _win.removeEventListener === 'function') {
-      _win.removeEventListener('message', _onMessage);
+    // Remove the previously registered listener, if any
+    if (_win && _boundListener && typeof _win.removeEventListener === 'function') {
+      _win.removeEventListener('message', _boundListener);
     }
     _frames.clear();
     _tabLoaders.clear();
-    _generation++;
     _win = win;
     _vscode = vscode;
-    const gen = _generation;
-    win.addEventListener('message', function guardedListener(e) {
-      // Discard events from stale registrations (router re-initialized)
-      if (gen !== _generation) return;
+    // Rotate the token so any stale closure registered on a window that does not
+    // support removeEventListener (e.g. test mocks) will self-disable.
+    _activeToken = Symbol();
+    const token = _activeToken;
+    _boundListener = function (e) {
+      if (token !== _activeToken) return;
       _onMessage(e);
-    });
+    };
+    win.addEventListener('message', _boundListener);
   }
 
   /**
@@ -83,6 +87,15 @@
     contentWindow.postMessage({ __pof_host: true, payload: { __pof_reply: true, __seq: seq, result } }, '*');
   }
 
+  /**
+   * Send a reply, falling back to sourceWindow when sourceFrame is null so the
+   * plugin is never left waiting forever.
+   */
+  function _replyTo(sourceFrame, sourceWindow, seq, result) {
+    const target = sourceFrame ? sourceFrame.contentWindow : sourceWindow;
+    if (target) _reply(target, seq, result);
+  }
+
   /** Find the iframe element whose contentWindow matches the given window reference. */
   function _findFrame(sourceWindow) {
     for (const [, frame] of _frames) {
@@ -93,42 +106,46 @@
 
   /** Handle an incoming message from any window. */
   async function _onMessage(e) {
-    if (!e || !e.data || e.data.__pof_plugin !== true) return;
+    try {
+      if (!e || !e.data || e.data.__pof_plugin !== true) return;
 
-    const sourceWindow = e.source;
-    const sourceFrame = _findFrame(sourceWindow);
+      const sourceWindow = e.source;
+      const sourceFrame = _findFrame(sourceWindow);
 
-    if (e.data.__pof_call) {
-      // PoF proxy call: resolve method on window.PoF and reply
-      const { method, args, __seq: seq } = e.data;
-      const pof = (_win && _win.PoF) || (typeof window !== 'undefined' ? window.PoF : null);
+      if (e.data.__pof_call) {
+        // PoF proxy call: resolve method on window.PoF and reply
+        const { method, args, __seq: seq } = e.data;
+        const pof = (_win && _win.PoF) || (typeof window !== 'undefined' ? window.PoF : null);
 
-      if (!pof || typeof pof[method] !== 'function') {
-        if (sourceFrame) _reply(sourceFrame.contentWindow, seq, undefined);
+        if (!pof || typeof pof[method] !== 'function') {
+          _replyTo(sourceFrame, sourceWindow, seq, undefined);
+          return;
+        }
+
+        // registerTabLoader: record the mapping, no async PoF call needed
+        if (method === 'registerTabLoader') {
+          const [tabId] = args;
+          if (!_tabLoaders.has(tabId)) _tabLoaders.set(tabId, new Set());
+          if (sourceFrame) _tabLoaders.get(tabId).add(sourceFrame.dataset.pluginSlug);
+          _replyTo(sourceFrame, sourceWindow, seq, undefined);
+          return;
+        }
+
+        try {
+          const result = await Promise.resolve(pof[method](...(args || [])));
+          _replyTo(sourceFrame, sourceWindow, seq, result);
+        } catch (_) {
+          _replyTo(sourceFrame, sourceWindow, seq, undefined);
+        }
         return;
       }
 
-      // registerTabLoader: record the mapping, no async PoF call needed
-      if (method === 'registerTabLoader') {
-        const [tabId] = args;
-        if (!_tabLoaders.has(tabId)) _tabLoaders.set(tabId, new Set());
-        if (sourceFrame) _tabLoaders.get(tabId).add(sourceFrame.dataset.pluginSlug);
-        if (sourceFrame) _reply(sourceFrame.contentWindow, seq, undefined);
-        return;
+      // Regular vscode.postMessage forward
+      if (_vscode && e.data.payload != null) {
+        _vscode.postMessage(e.data.payload);
       }
-
-      try {
-        const result = await Promise.resolve(pof[method](...(args || [])));
-        if (sourceFrame) _reply(sourceFrame.contentWindow, seq, result);
-      } catch (_) {
-        if (sourceFrame) _reply(sourceFrame.contentWindow, seq, undefined);
-      }
-      return;
-    }
-
-    // Regular vscode.postMessage forward
-    if (_vscode && e.data.payload != null) {
-      _vscode.postMessage(e.data.payload);
+    } catch (_err) {
+      // swallow — plugin messages must never crash the host
     }
   }
 
