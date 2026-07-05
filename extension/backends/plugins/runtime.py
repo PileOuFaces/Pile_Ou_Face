@@ -48,8 +48,32 @@ from backends.shared.log import configure_logging, get_logger
 _log = get_logger(__name__)
 HOST_API_VERSION = 1
 DEFAULT_HOST_VERSION = "0.1.0"
+# Must stay in sync with window.PoF.version in extension/front/shared/state.js
+POF_VERSION = "1.0.0"
 _DECRYPTED_PLUGIN_CACHE: dict[str, Path] = {}
 _DECRYPTED_PLUGIN_TEMPS: list[tempfile.TemporaryDirectory[str]] = []
+
+
+def _check_pof_compatibility(manifest: PluginManifest, pof_version: str) -> None:
+    """Raise PluginManifestError if plugin requires a higher window.PoF version than the host provides."""
+    min_ver = manifest.min_pof_version
+    if not min_ver:
+        return
+    from packaging.version import InvalidVersion, Version
+
+    try:
+        required = Version(min_ver)
+        provided = Version(pof_version)
+    except InvalidVersion as exc:
+        raise PluginManifestError(
+            f"{manifest.plugin_id}: minPoFVersion invalide '{min_ver}': {exc}"
+        ) from exc
+    if provided < required:
+        raise PluginManifestError(
+            f"{manifest.plugin_id} requiert window.PoF >= {min_ver} "
+            f"(cette version de l'extension fournit {pof_version}). "
+            f"Mettez à jour l'extension."
+        )
 
 
 def _cleanup_decrypted_plugin_cache() -> None:
@@ -333,6 +357,13 @@ def attach_plugins(
     )
     for record in records:
         if record.state != "active" or record.manifest is None:
+            continue
+        try:
+            _check_pof_compatibility(record.manifest, POF_VERSION)
+        except Exception as exc:
+            _log.warning("plugin attach failed for %s: %s", record.plugin_id, exc)
+            record.state = "failed"
+            record.error = str(exc)
             continue
         entrypoint = record.manifest.entrypoints.python
         if entrypoint is None:

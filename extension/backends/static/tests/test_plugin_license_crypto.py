@@ -313,6 +313,7 @@ class TestHmacSha256InLicense(unittest.TestCase):
                 dependencies={},
                 manifest_path=manifest_path,
                 root_path=tmp_path,
+                min_pof_version=None,
                 raw={},
             )
 
@@ -417,6 +418,7 @@ class TestRuntimeAesGcmDecryption(unittest.TestCase):
             dependencies={},
             manifest_path=bundle_dir / "manifest.json",
             root_path=bundle_dir,
+            min_pof_version=None,
             raw={},
         )
 
@@ -515,6 +517,7 @@ class _LicenseEvalBase(unittest.TestCase):
             dependencies={},
             manifest_path=manifest_path,
             root_path=tmp_path,
+            min_pof_version=None,
             raw={},
         )
 

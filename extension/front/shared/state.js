@@ -559,6 +559,9 @@ function _normalizeDecompileQuality(quality) {
 // Plugin API — stable contract surface for plugin webviews.
 // See CONTRACTS_SHARED.md §Plugin Webview API.
 window.PoF = {
+  // Contract version — plugins declare minPoFVersion in plugin.json to enforce compatibility.
+  version: '1.0.0',
+
   // Returns the currently loaded binary path (empty string if none).
   getBinaryPath: () => (typeof getStaticBinaryPath === 'function' ? getStaticBinaryPath() : ''),
 

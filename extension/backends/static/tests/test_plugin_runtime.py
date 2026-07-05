@@ -976,5 +976,112 @@ class TestPluginRuntime(unittest.TestCase):
         self.assertEqual(_DECRYPTED_PLUGIN_TEMPS, [])
 
 
+class TestPoFVersioning(unittest.TestCase):
+    """Tests for window.PoF version compatibility enforcement (P1 — issue #33)."""
+
+    _BASE_MANIFEST = {
+        "id": "pof.test",
+        "name": "Test",
+        "version": "0.1.0",
+        "kind": "static",
+        "host": {"api_version": 1},
+        "entrypoints": {},
+    }
+
+    def _make_manifest(self, tmp: str, extra: dict) -> object:
+        from backends.plugins.manifest import load_plugin_manifest
+
+        p = Path(tmp) / "manifest.json"
+        p.write_text(json.dumps({**self._BASE_MANIFEST, **extra}), encoding="utf-8")
+        return load_plugin_manifest(p)
+
+    # --- manifest loading ---
+
+    def test_manifest_loads_min_pof_version(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            m = self._make_manifest(tmp, {"minPoFVersion": "1.0.0"})
+            self.assertEqual(m.min_pof_version, "1.0.0")
+
+    def test_manifest_min_pof_version_absent_is_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            m = self._make_manifest(tmp, {})
+            self.assertIsNone(m.min_pof_version)
+
+    # --- compatibility check ---
+
+    def test_check_pof_compatibility_passes_when_field_absent(self):
+        from backends.plugins.runtime import _check_pof_compatibility
+
+        with tempfile.TemporaryDirectory() as tmp:
+            m = self._make_manifest(tmp, {})
+            _check_pof_compatibility(m, "1.0.0")  # must not raise
+
+    def test_check_pof_compatibility_passes_when_equal(self):
+        from backends.plugins.runtime import _check_pof_compatibility
+
+        with tempfile.TemporaryDirectory() as tmp:
+            m = self._make_manifest(tmp, {"minPoFVersion": "1.0.0"})
+            _check_pof_compatibility(m, "1.0.0")  # must not raise
+
+    def test_check_pof_compatibility_passes_when_host_is_newer(self):
+        from backends.plugins.runtime import _check_pof_compatibility
+
+        with tempfile.TemporaryDirectory() as tmp:
+            m = self._make_manifest(tmp, {"minPoFVersion": "1.0.0"})
+            _check_pof_compatibility(m, "1.2.0")  # must not raise
+
+    def test_check_pof_compatibility_raises_when_host_is_older(self):
+        from backends.plugins.runtime import (
+            PluginManifestError,
+            _check_pof_compatibility,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            m = self._make_manifest(tmp, {"minPoFVersion": "2.0.0"})
+            with self.assertRaises(PluginManifestError) as ctx:
+                _check_pof_compatibility(m, "1.0.0")
+            self.assertIn("2.0.0", str(ctx.exception))
+            self.assertIn("1.0.0", str(ctx.exception))
+
+    def test_check_pof_compatibility_raises_on_invalid_version_string(self):
+        from backends.plugins.runtime import (
+            PluginManifestError,
+            _check_pof_compatibility,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            m = self._make_manifest(tmp, {"minPoFVersion": "not-a-semver!!"})
+            with self.assertRaises(PluginManifestError):
+                _check_pof_compatibility(m, "1.0.0")
+
+    # --- attach_plugins integration ---
+
+    def test_attach_plugins_skips_incompatible_plugin(self):
+        """A plugin requiring PoF 99.0.0 must fail gracefully without crashing others."""
+        from backends.plugins.registry import PluginRecord
+        from backends.plugins.runtime import attach_plugins
+
+        with tempfile.TemporaryDirectory() as tmp:
+            from backends.plugins.manifest import load_plugin_manifest
+
+            p = Path(tmp) / "manifest.json"
+            p.write_text(
+                json.dumps({**self._BASE_MANIFEST, "minPoFVersion": "99.0.0"}),
+                encoding="utf-8",
+            )
+            manifest = load_plugin_manifest(p)
+            record = PluginRecord(
+                plugin_id="pof.test",
+                state="active",
+                manifest=manifest,
+                root_path=Path(tmp),
+                manifest_path=Path(tmp) / "manifest.json",
+            )
+            _ctx, records = attach_plugins([record])
+            failed = next(r for r in records if r.plugin_id == "pof.test")
+            self.assertEqual(failed.state, "failed")
+            self.assertIn("99.0.0", failed.error or "")
+
+
 if __name__ == "__main__":
     unittest.main()

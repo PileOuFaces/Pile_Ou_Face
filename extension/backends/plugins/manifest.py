@@ -63,6 +63,7 @@ class PluginManifest:
     manifest_path: Path
     root_path: Path
     raw: dict[str, Any]
+    min_pof_version: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -106,6 +107,7 @@ class PluginManifest:
             "manifest_path": str(self.manifest_path),
             "root_path": str(self.root_path),
             "ui": self.raw.get("ui") or {},
+            "min_pof_version": self.min_pof_version,
         }
 
 
@@ -252,4 +254,5 @@ def load_plugin_manifest(path: str | Path) -> PluginManifest:
         manifest_path=manifest_path,
         root_path=manifest_path.parent,
         raw=raw,
+        min_pof_version=_optional_string(raw, "minPoFVersion") or None,
     )
