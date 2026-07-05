@@ -122,11 +122,74 @@ function _getPluginSearchDirs(storageDir, _globalDir) {
   return dirs;
 }
 
+const PLUGIN_BRIDGE_PREAMBLE = `<script>
+(function () {
+  var _pending = {};
+  var _seq = 0;
+  window.vscode = {
+    postMessage: function (msg) { window.parent.postMessage({ __pof_plugin: true, payload: msg }, '*'); }
+  };
+  window.addEventListener('message', function (e) {
+    if (!e.data || !e.data.__pof_host) return;
+    var msg = e.data.payload;
+    if (msg && msg.__pof_reply && _pending[msg.__seq]) {
+      _pending[msg.__seq](msg.result);
+      delete _pending[msg.__seq];
+    }
+  });
+  function _call(method, args) {
+    return new Promise(function (resolve) {
+      var seq = ++_seq;
+      _pending[seq] = resolve;
+      window.parent.postMessage({ __pof_plugin: true, __pof_call: true, method: method, args: args, __seq: seq }, '*');
+    });
+  }
+  window.PoF = {
+    version: null,
+    getBinaryPath:       function () { return _call('getBinaryPath', []); },
+    getTabCache:         function (k) { return _call('getTabCache', [k]); },
+    setTabCache:         function (k, v) { return _call('setTabCache', [k, v]); },
+    registerTabLoader:   function (tabId, fn) {
+      _call('registerTabLoader', [tabId]);
+      window.addEventListener('message', function (e) {
+        if (e.data && e.data.__pof_host && e.data.payload && e.data.payload.__pof_tabload && e.data.payload.tabId === tabId) fn(e.data.payload.binaryPath);
+      });
+    },
+    setYaraResults:      function (m, err) { return _call('setYaraResults', [m, err]); },
+    setCapaResults:      function (c, err) { return _call('setCapaResults', [c, err]); },
+    setDetectionMeta:    function (d) { return _call('setDetectionMeta', [d]); },
+    getDetectionState:   function () { return _call('getDetectionState', []); },
+    clearDetectionState: function () { return _call('clearDetectionState', []); },
+    setLoading:          function (id, msg) { return _call('setLoading', [id, msg]); },
+    renderRulesList:     function (id, rules) { return _call('renderRulesList', [id, rules]); },
+    applyYaraModeUi:     function () { return _call('applyYaraModeUi', []); },
+    getYaraMode:         function () { return _call('getYaraMode', []); },
+    setYaraMode:         function (mode, opts) { return _call('setYaraMode', [mode, opts]); },
+    saveStorage:         function (d) { return _call('saveStorage', [d]); },
+  };
+})();
+</script>`;
+
+function _buildPluginSrcdoc(html, inlineJs, scopedCss, pluginSlug) {
+  const styleBlock = scopedCss ? `<style>${scopedCss}</style>` : '';
+  const scriptBlock = inlineJs ? `<script>${inlineJs}<\/script>` : '';
+  return [
+    '<!DOCTYPE html><html><head>',
+    '<meta charset="utf-8">',
+    '<style>*{box-sizing:border-box;margin:0}body{overflow:hidden}</style>',
+    styleBlock,
+    PLUGIN_BRIDGE_PREAMBLE,
+    '</head><body>',
+    String(html || ''),
+    scriptBlock,
+    '</body></html>',
+  ].join('');
+}
+
 function loadPluginWebviews(root, options: { storageDir?: string; globalDir?: string; webviewResourceResolver?: (absPath: string) => string } = {}) {
   const { storageDir = '', globalDir = '', webviewResourceResolver } = options;
-  let styles = '';
-  let panels = '';
-  let scripts = '';
+  let groupStyles = '';
+  const frames: { pluginId: string; pluginSlug: string; frameId: string; srcdoc: string }[] = [];
 
   const searchDirs = _getPluginSearchDirs(storageDir, globalDir);
 
@@ -147,46 +210,57 @@ function loadPluginWebviews(root, options: { storageDir?: string; globalDir?: st
       const webviewEntry = manifest?.entrypoints?.webview;
       if (!webviewEntry) continue;
 
-      // CSS color for the group-tab
+      // CSS color for the group-tab (goes into host page, not srcdoc)
       const color = manifest?.ui?.tab_color;
       const family = String(manifest?.ui?.family || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
       const safeCss = (v) => (typeof v === 'string' && /^[a-zA-Z0-9#(),. %_-]+$/.test(v)) ? v : '';
       if (color && family) {
-        styles += `\n.group-tab.active[data-group="${family}"] { background: ${safeCss(color.bg)}; color: ${safeCss(color.fg)}; border-color: ${safeCss(color.border)}; }`;
+        groupStyles += `\n.group-tab.active[data-group="${family}"] { background: ${safeCss(color.bg)}; color: ${safeCss(color.fg)}; border-color: ${safeCss(color.border)}; }`;
       }
 
-      // Panel HTML
+      // Build srcdoc
+      const pluginSlug = _derivePluginSlug(pluginDir, manifest);
+      const pluginId = manifest.id || entry;
+
       const tabHtmlPath = webviewEntry.tab_html ? _resolvePluginAssetPath(pluginDir, manifest, webviewEntry.tab_html) : null;
+      let pluginHtml = '';
+      let scopedCss = '';
+
       if (tabHtmlPath && fs.existsSync(tabHtmlPath)) {
         try {
-          const pluginSlug = _derivePluginSlug(pluginDir, manifest);
           const rawHtml = fs.readFileSync(tabHtmlPath, 'utf8');
           const extracted = _extractInlineStyles(rawHtml);
-          if (extracted.styles.trim()) styles += '\n' + _scopePluginCss(extracted.styles, pluginSlug);
-          panels += '\n' + _markPluginPanels(extracted.html, pluginSlug, manifest.id || entry);
+          if (extracted.styles.trim()) scopedCss = _scopePluginCss(extracted.styles, pluginSlug);
+          pluginHtml = _markPluginPanels(extracted.html, pluginSlug, pluginId);
         } catch (_) { /* skip */ }
       }
 
-      // Scripts
+      // Collect inline JS content (always read file content for srcdoc — external URIs won't work)
+      let inlineJs = '';
       const scriptPaths = Array.isArray(webviewEntry.scripts) ? webviewEntry.scripts : [];
       for (const rel of scriptPaths) {
         const scriptPath = _resolvePluginAssetPath(pluginDir, manifest, rel);
         if (!fs.existsSync(scriptPath)) continue;
         try {
-          if (typeof webviewResourceResolver === 'function') {
-            const scriptUri = String(webviewResourceResolver(scriptPath) || '').trim();
-            if (scriptUri) {
-              scripts += `\n<script src="${scriptUri}"></script>`;
-            }
-          } else {
-            scripts += `\n<script>\n${fs.readFileSync(scriptPath, 'utf8')}\n</script>`;
-          }
+          inlineJs += `\n${fs.readFileSync(scriptPath, 'utf8')}`;
         } catch (_) { /* skip */ }
       }
+
+      // Only push a frame if there is actual webview content
+      if (!pluginHtml.trim() && !inlineJs.trim()) continue;
+
+      const srcdoc = _buildPluginSrcdoc(pluginHtml, inlineJs, scopedCss, pluginSlug);
+      const frameId = `pof-plugin-frame-${pluginSlug}`;
+      frames.push({ pluginId, pluginSlug, frameId, srcdoc });
     }
   }
 
-  return { styles: styles.trim(), panels: panels.trim(), scripts: scripts.trim() };
+  const framesHtml = frames.map((f) => {
+    const escapedSrcdoc = f.srcdoc.replace(/"/g, '&quot;');
+    return `<iframe id="${f.frameId}" data-plugin-id="${_escapeHtmlAttr(f.pluginId)}" data-plugin-slug="${_escapeHtmlAttr(f.pluginSlug)}" class="plugin-iframe static-panel" sandbox="allow-scripts" style="border:none;width:100%;height:100%;display:none;" srcdoc="${escapedSrcdoc}"></iframe>`;
+  }).join('\n');
+
+  return { groupStyles: groupStyles.trim(), frames, framesHtml: framesHtml.trim() };
 }
 
 function getWebviewContent(webview, extensionUri) {
@@ -216,11 +290,12 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', worksp
     vscode.Uri.joinPath(extensionUri, ...parts).fsPath, 'utf8'
   );
 
-  const { styles: pluginStyles, panels: pluginPanels, scripts: pluginScripts } =
+  const { groupStyles: pluginStyles, framesHtml: pluginPanels } =
     (storageDir || globalDir) ? loadPluginWebviews(workspaceRoot, {
       storageDir,
       globalDir,
-    }) : { styles: '', panels: '', scripts: '' };
+    }) : { groupStyles: '', framesHtml: '' };
+  const pluginScripts = '';
 
   const html = read('front', 'hub.html')
     .replace('{{panelDashboard}}', read('front', 'shared', 'panel-dashboard.html'))
