@@ -127,7 +127,13 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
   var _pending = {};
   var _seq = 0;
   window.vscode = {
-    postMessage: function (msg) { window.parent.postMessage({ __pof_plugin: true, payload: msg }, '*'); }
+    postMessage: function (msg) {
+      try { window.parent.postMessage({ __pof_plugin: true, payload: msg }, '*'); }
+      catch (_) {
+        try { window.parent.postMessage({ __pof_plugin: true, payload: JSON.parse(JSON.stringify(msg)) }, '*'); }
+        catch (_2) {}
+      }
+    }
   };
   window.addEventListener('message', function (e) {
     if (!e.data || !e.data.__pof_host) return;
@@ -194,31 +200,60 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
   window._saveStorage = function (data) {
     if (data && typeof data === 'object') Object.assign(window._pofSavedState, data);
   };
+  // Legacy shim: bare registerTabLoader() calls from old bundles
+  window.registerTabLoader = function (tabId, fn) {
+    if (window.PoF && typeof window.PoF.registerTabLoader === 'function') window.PoF.registerTabLoader(tabId, fn);
+  };
+  // postBinaryAwareMessage: host helper used by plugin JS
+  window.postBinaryAwareMessage = function (type, data) {
+    window.vscode.postMessage(Object.assign({ type: type, binaryPath: window._pofCurrentBinaryPath || '' }, data || {}));
+  };
+  // Host analysis globals referenced by cross-plugin code
+  window.asVI = function (v) { return (v && typeof v === 'object' ? v : {}); };
+  window.PREMIUM_TAB_FAMILY = window.PREMIUM_TAB_FAMILY || {};
+  window.normalizeHexAddress = function (addr) { return addr ? String(addr).trim() : ''; };
+  window.findSectionForAddress = function () { return null; };
+  window.getFunctionRowByAddr = function () { return null; };
+  window.findNearestFunctionStart = function () { return null; };
+  window.vaddrFromFileOffset = function () { return null; };
+  window.symbolsCache = window.symbolsCache || [];
+  window.sectionsCache = window.sectionsCache || [];
 })();
 </script>`;
 
-function _buildPluginSrcdoc(html, inlineJs, scopedCss) {
-  const safeCss = String(scopedCss || '').replace(/<\/style/gi, '<\\/style');
-  const styleBlock = safeCss ? `<style>${safeCss}</style>` : '';
+function _buildPluginSrcdoc(html, inlineJs, pluginCss, hostCss = '') {
+  const safeHost = String(hostCss || '').replace(/<\/style/gi, '<\\/style');
+  const safePlugin = String(pluginCss || '').replace(/<\/style/gi, '<\\/style');
   const safeJs = String(inlineJs || '').replace(/<\/script/gi, '<\\/script');
-  const scriptBlock = safeJs ? `<script>${safeJs}</script>` : '';
   return [
     '<!DOCTYPE html><html><head>',
     '<meta charset="utf-8">',
-    '<style>*{box-sizing:border-box;margin:0}body{overflow:hidden}.static-panel{display:none;flex-direction:column;height:100%}.static-panel.active{display:flex}</style>',
-    styleBlock,
+    '<style>*{box-sizing:border-box;margin:0}body{overflow:hidden;background:var(--vscode-editor-background,#1e1e1e);color:var(--vscode-foreground,#ccc);font-family:var(--vscode-font-family,sans-serif);font-size:var(--vscode-font-size,13px)}.static-panel{display:none;flex-direction:column;height:100%}.static-panel.active{display:flex}</style>',
+    safeHost ? `<style>${safeHost}</style>` : '',
+    safePlugin ? `<style>${safePlugin}</style>` : '',
     PLUGIN_BRIDGE_PREAMBLE,
     '</head><body>',
     String(html || ''),
-    scriptBlock,
+    safeJs ? `<script>${safeJs}</script>` : '',
     '</body></html>',
   ].join('');
 }
 
-function loadPluginWebviews(root, options: { storageDir?: string; globalDir?: string; webviewResourceResolver?: (absPath: string) => string } = {}) {
-  const { storageDir = '', globalDir = '', webviewResourceResolver } = options;
+function loadPluginWebviews(root, options: { storageDir?: string; globalDir?: string; extensionFrontDir?: string; webviewResourceResolver?: (absPath: string) => string } = {}) {
+  const { storageDir = '', globalDir = '', extensionFrontDir = '', webviewResourceResolver } = options;
   let groupStyles = '';
   const frames: { pluginId: string; pluginSlug: string; frameId: string; srcdoc: string }[] = [];
+
+  // Read host CSS once — injected into every plugin srcdoc to provide shared design system classes
+  let hostCss = '';
+  if (extensionFrontDir) {
+    for (const rel of ['base.css', path.join('static', 'decompile.css'), path.join('static', 'binary-bar.css')]) {
+      try {
+        const p = path.join(extensionFrontDir, rel);
+        if (fs.existsSync(p)) hostCss += `\n${fs.readFileSync(p, 'utf8')}`;
+      } catch (_) {}
+    }
+  }
 
   const searchDirs = _getPluginSearchDirs(storageDir, globalDir);
 
@@ -259,7 +294,9 @@ function loadPluginWebviews(root, options: { storageDir?: string; globalDir?: st
         try {
           const rawHtml = fs.readFileSync(tabHtmlPath, 'utf8');
           const extracted = _extractInlineStyles(rawHtml);
-          if (extracted.styles.trim()) scopedCss = _scopePluginCss(extracted.styles, pluginSlug);
+          // No CSS scoping inside srcdoc — the iframe already isolates the plugin.
+          // Scoping would break :root { --var } declarations in the plugin's own CSS.
+          scopedCss = extracted.styles;
           pluginHtml = _markPluginPanels(extracted.html, pluginSlug, pluginId);
         } catch (_) { /* skip */ }
       }
@@ -278,7 +315,7 @@ function loadPluginWebviews(root, options: { storageDir?: string; globalDir?: st
       // Only push a frame if there is actual webview content
       if (!pluginHtml.trim() && !inlineJs.trim() && !scopedCss.trim()) continue;
 
-      const srcdoc = _buildPluginSrcdoc(pluginHtml, inlineJs, scopedCss);
+      const srcdoc = _buildPluginSrcdoc(pluginHtml, inlineJs, scopedCss, hostCss);
       const frameId = `pof-plugin-frame-${pluginSlug}`;
       frames.push({ pluginId, pluginSlug, frameId, srcdoc });
     }
@@ -323,6 +360,7 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', worksp
     (storageDir || globalDir) ? loadPluginWebviews(workspaceRoot, {
       storageDir,
       globalDir,
+      extensionFrontDir: vscode.Uri.joinPath(extensionUri, 'front').fsPath,
     }) : { groupStyles: '', framesHtml: '' };
 
   const html = read('front', 'hub.html')
