@@ -296,7 +296,7 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', worksp
     (storageDir || globalDir) ? loadPluginWebviews(workspaceRoot, {
       storageDir,
       globalDir,
-    }) : { groupStyles: '', frames: [], framesHtml: '' };
+    }) : { groupStyles: '', framesHtml: '' };
 
   const html = read('front', 'hub.html')
     .replace('{{panelDashboard}}', read('front', 'shared', 'panel-dashboard.html'))
