@@ -279,6 +279,7 @@ function registerPluginTabs(tabRegistrations) {
     if (family)     PREMIUM_TAB_FAMILY[tabId] = family;
     if (hint)       STATIC_FLOW_HINTS[tabId]  = hint;
     if (pluginSlug) _tabIdToPluginSlug[tabId] = pluginSlug;
+    console.log('[PoF-debug] registerPluginTabs:', tabId, '→ group:', group, 'slug:', pluginSlug || '(none)');
   });
 }
 

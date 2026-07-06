@@ -159,7 +159,10 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
     registerTabLoader:   function (tabId, fn) {
       _call('registerTabLoader', [tabId]);
       window.addEventListener('message', function (e) {
-        if (e.data && e.data.__pof_host && e.data.payload && e.data.payload.__pof_tabload && e.data.payload.tabId === tabId) fn(e.data.payload.binaryPath);
+        if (e.data && e.data.__pof_host && e.data.payload && e.data.payload.__pof_tabload && e.data.payload.tabId === tabId) {
+          if (e.data.payload.binaryPath) window._pofCurrentBinaryPath = e.data.payload.binaryPath;
+          fn(e.data.payload.binaryPath);
+        }
       });
     },
     setYaraResults:      function (m, err) { return _call('setYaraResults', [m, err]); },
@@ -173,6 +176,14 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
     getYaraMode:         function () { return _call('getYaraMode', []); },
     setYaraMode:         function (mode, opts) { return _call('setYaraMode', [mode, opts]); },
     saveStorage:         function (d) { return _call('saveStorage', [d]); },
+  };
+  // Stubs for host-page globals called by legacy plugin code (before window.PoF migration)
+  window._pofCurrentBinaryPath = '';
+  window._pofSavedState = {};
+  window.getStaticBinaryPath = function () { return window._pofCurrentBinaryPath; };
+  window._loadStorage = function () { return window._pofSavedState; };
+  window._saveStorage = function (data) {
+    if (data && typeof data === 'object') Object.assign(window._pofSavedState, data);
   };
 })();
 </script>`;

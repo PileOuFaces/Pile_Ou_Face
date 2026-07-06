@@ -444,6 +444,12 @@ requestOllamaModels();
 vscode.postMessage({ type: 'hubReady' });
 
 // Initialize plugin iframe router and register all plugin frames
+console.log('[PoF-debug] hub.js init — PluginIframeRouter:', !!window.PluginIframeRouter);
+const _pluginFrames = document.querySelectorAll('iframe.plugin-iframe');
+console.log('[PoF-debug] plugin iframes found in DOM:', _pluginFrames.length);
+_pluginFrames.forEach(function (f) {
+  console.log('[PoF-debug]   iframe:', f.id, 'slug:', f.dataset.pluginSlug, 'pluginId:', f.dataset.pluginId);
+});
 if (window.PluginIframeRouter) {
   window.PluginIframeRouter.init(window, vscode);
   document.querySelectorAll('iframe.plugin-iframe').forEach(function (frame) {
