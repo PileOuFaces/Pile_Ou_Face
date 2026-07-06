@@ -260,6 +260,7 @@ function _normalizePluginStaticGroup(group, family) {
 
 // Plugin tab registration (populated via registerPluginTabs / clearPluginTabs)
 let _pluginTabRegistrations = [];
+const _tabIdToPluginSlug = {};
 
 function registerPluginTabs(tabRegistrations) {
   clearPluginTabs();
@@ -270,12 +271,14 @@ function registerPluginTabs(tabRegistrations) {
     const family = String(reg.family || '').trim();
     const group  = _normalizePluginStaticGroup(reg.group, family);
     const hint   = String(reg.hint   || '').trim();
+    const pluginSlug = String(reg.pluginSlug || '').trim();
     if (!tabId || !group) return;
     if (!GROUPS[group]) GROUPS[group] = [];
     if (!GROUPS[group].includes(tabId)) GROUPS[group].push(tabId);
-    if (label)  GROUP_LABELS[tabId]      = label;
-    if (family) PREMIUM_TAB_FAMILY[tabId] = family;
-    if (hint)   STATIC_FLOW_HINTS[tabId]  = hint;
+    if (label)      GROUP_LABELS[tabId]       = label;
+    if (family)     PREMIUM_TAB_FAMILY[tabId] = family;
+    if (hint)       STATIC_FLOW_HINTS[tabId]  = hint;
+    if (pluginSlug) _tabIdToPluginSlug[tabId] = pluginSlug;
   });
 }
 
@@ -291,8 +294,13 @@ function clearPluginTabs() {
     delete GROUP_LABELS[tabId];
     delete PREMIUM_TAB_FAMILY[tabId];
     delete STATIC_FLOW_HINTS[tabId];
+    delete _tabIdToPluginSlug[tabId];
   });
   _pluginTabRegistrations = [];
+}
+
+function getPluginSlugForTab(tabId) {
+  return _tabIdToPluginSlug[String(tabId || '')] || null;
 }
 
 // Tab loader registration — plugins register their own load handlers

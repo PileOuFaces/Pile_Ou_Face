@@ -127,12 +127,14 @@ function summarizePluginRuntimeState(payload = {}) {
         uiTabs.forEach((tab) => {
           const tabId = String(tab?.tabId || '').trim();
           if (!tabId) return;
+          const pluginSlug = String(pluginId).startsWith('pof.') ? String(pluginId).slice(4) : String(pluginId);
           allTabRegistrations.push({
             tabId,
             label: String(tab?.label || tabId),
             family: pluginFamily,
             group: String(tab?.group || pluginFamily),
             hint: String(tab?.hint || ''),
+            pluginSlug,
           });
         });
       }

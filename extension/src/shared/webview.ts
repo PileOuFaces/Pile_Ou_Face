@@ -136,6 +136,13 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
       _pending[msg.__seq](msg.result);
       delete _pending[msg.__seq];
     }
+    if (msg && msg.type === 'showTab') {
+      var tabId = String(msg.tabId || '');
+      var panelId = 'static' + tabId.split('_').map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1); }).join('');
+      document.querySelectorAll('.static-panel').forEach(function (p) { p.classList.remove('active'); });
+      var panel = document.getElementById(panelId);
+      if (panel) panel.classList.add('active');
+    }
   });
   function _call(method, args) {
     return new Promise(function (resolve) {
@@ -178,7 +185,7 @@ function _buildPluginSrcdoc(html, inlineJs, scopedCss) {
   return [
     '<!DOCTYPE html><html><head>',
     '<meta charset="utf-8">',
-    '<style>*{box-sizing:border-box;margin:0}body{overflow:hidden}</style>',
+    '<style>*{box-sizing:border-box;margin:0}body{overflow:hidden}.static-panel{display:none;flex-direction:column;height:100%}.static-panel.active{display:flex}</style>',
     styleBlock,
     PLUGIN_BRIDGE_PREAMBLE,
     '</head><body>',
@@ -259,7 +266,7 @@ function loadPluginWebviews(root, options: { storageDir?: string; globalDir?: st
 
   const framesHtml = frames.map((f) => {
     const escapedSrcdoc = _escapeHtmlAttr(f.srcdoc);
-    return `<iframe id="${f.frameId}" data-plugin-id="${_escapeHtmlAttr(f.pluginId)}" data-plugin-slug="${_escapeHtmlAttr(f.pluginSlug)}" class="plugin-iframe static-panel" sandbox="allow-scripts" style="border:none;width:100%;height:100%;display:none;" srcdoc="${escapedSrcdoc}"></iframe>`;
+    return `<iframe id="${f.frameId}" data-plugin-id="${_escapeHtmlAttr(f.pluginId)}" data-plugin-slug="${_escapeHtmlAttr(f.pluginSlug)}" class="plugin-iframe static-panel" sandbox="allow-scripts" srcdoc="${escapedSrcdoc}"></iframe>`;
   }).join('\n');
 
   return { groupStyles: groupStyles.trim(), frames, framesHtml: framesHtml.trim() };

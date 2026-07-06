@@ -168,4 +168,60 @@ describe('loadPluginWebviews', () => {
     expect(result.frames).to.deep.equal([]);
     expect(result.framesHtml).to.equal('');
   });
+
+  it('srcdoc hides .static-panel by default so only the active tab is shown inside the iframe', () => {
+    const dir = pluginDir('my-plugin');
+    const webviewDir = path.join(dir, 'webview');
+    fs.mkdirSync(webviewDir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'plugin.json'), JSON.stringify({
+      id: 'pof.my-plugin',
+      ui: { family: 'myfamily' },
+      entrypoints: { webview: { tab_html: 'webview/tab.html', scripts: [] } },
+    }));
+    fs.writeFileSync(path.join(webviewDir, 'tab.html'),
+      '<div id="staticTab1" class="static-panel"></div><div id="staticTab2" class="static-panel"></div>');
+
+    const result = loadFromStorage();
+    // The srcdoc (HTML-attribute-encoded) must contain the panel visibility CSS
+    expect(result.framesHtml).to.include('.static-panel{display:none');
+    expect(result.framesHtml).to.include('.static-panel.active{display:flex');
+  });
+
+  it('srcdoc contains the showTab message handler to switch panels inside the iframe', () => {
+    const dir = pluginDir('my-plugin');
+    const webviewDir = path.join(dir, 'webview');
+    fs.mkdirSync(webviewDir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'plugin.json'), JSON.stringify({
+      id: 'pof.my-plugin',
+      ui: { family: 'myfamily' },
+      entrypoints: { webview: { tab_html: 'webview/tab.html', scripts: [] } },
+    }));
+    fs.writeFileSync(path.join(webviewDir, 'tab.html'), '<div id="staticMyTab" class="static-panel"></div>');
+
+    const result = loadFromStorage();
+    // The srcdoc must contain the showTab handler (HTML-attribute-encoded)
+    expect(result.framesHtml).to.include('showTab');
+    expect(result.framesHtml).to.include('classList.remove');
+  });
+
+  it('iframe has no inline display:none — visibility is controlled by CSS class', () => {
+    const dir = pluginDir('my-plugin');
+    const webviewDir = path.join(dir, 'webview');
+    fs.mkdirSync(webviewDir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'plugin.json'), JSON.stringify({
+      id: 'pof.my-plugin',
+      ui: { family: 'myfamily' },
+      entrypoints: { webview: { tab_html: 'webview/tab.html', scripts: ['webview/tab.js'] } },
+    }));
+    fs.writeFileSync(path.join(webviewDir, 'tab.html'), '<div id="staticMyTab" class="static-panel">content</div>');
+    fs.writeFileSync(path.join(webviewDir, 'tab.js'), 'var x = 1;');
+
+    const result = loadFromStorage();
+    // Extract the iframe attributes that appear BEFORE srcdoc (style, class, id, etc.)
+    const beforeSrcdoc = result.framesHtml.split('srcdoc=')[0] || '';
+    expect(beforeSrcdoc).not.to.include('display:none');
+    expect(beforeSrcdoc).not.to.include('display: none');
+    // Visibility is exclusively managed via the .active CSS class
+    expect(beforeSrcdoc).to.include('class="plugin-iframe static-panel"');
+  });
 });

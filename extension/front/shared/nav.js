@@ -271,7 +271,21 @@ function showSubTab(groupId, tabId) {
   // Convert snake_case tabId to PascalCase panel ID
   const panelId = 'static' + tabId.split('_').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join('');
   const panel = document.getElementById(panelId);
-  if (panel) panel.classList.add('active');
+  if (panel) {
+    panel.classList.add('active');
+  } else {
+    // Plugin tab: find the iframe that owns this tabId and show it
+    const pluginSlug = typeof getPluginSlugForTab === 'function' ? getPluginSlugForTab(tabId) : null;
+    if (pluginSlug) {
+      const frame = document.querySelector(`iframe.plugin-iframe[data-plugin-slug="${pluginSlug}"]`);
+      if (frame) {
+        frame.classList.add('active');
+        if (window.PluginIframeRouter) {
+          window.PluginIframeRouter.dispatch(frame.dataset.pluginId, { type: 'showTab', tabId });
+        }
+      }
+    }
+  }
   _autoLoadTab(tabId);
   requestAnimationFrame(() => requestGraphFit(panel || document));
   if (tabId === 'cfg' && window._lastDisasmAddr) {
