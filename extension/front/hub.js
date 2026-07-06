@@ -444,18 +444,26 @@ requestOllamaModels();
 vscode.postMessage({ type: 'hubReady' });
 
 // Initialize plugin iframe router and register all plugin frames
-console.log('[PoF-debug] hub.js init — PluginIframeRouter:', !!window.PluginIframeRouter);
-const _pluginFrames = document.querySelectorAll('iframe.plugin-iframe');
-console.log('[PoF-debug] plugin iframes found in DOM:', _pluginFrames.length);
-_pluginFrames.forEach(function (f) {
-  console.log('[PoF-debug]   iframe:', f.id, 'slug:', f.dataset.pluginSlug, 'pluginId:', f.dataset.pluginId);
-});
 if (window.PluginIframeRouter) {
   window.PluginIframeRouter.init(window, vscode);
   document.querySelectorAll('iframe.plugin-iframe').forEach(function (frame) {
     var slug = frame.dataset.pluginSlug;
     if (slug) window.PluginIframeRouter.register(slug, frame);
   });
+  // Forward VS Code CSS variables to plugin iframes for correct theme rendering
+  var _pofCssVars = {};
+  document.head.querySelectorAll('style').forEach(function (styleEl) {
+    var re = /(--vscode-[\w-]+)\s*:\s*([^;}\n]+)/g;
+    var m;
+    while ((m = re.exec(styleEl.textContent || '')) !== null) {
+      _pofCssVars[m[1]] = m[2].trim();
+    }
+  });
+  if (Object.keys(_pofCssVars).length > 0) {
+    setTimeout(function () {
+      window.PluginIframeRouter.broadcast({ type: '__cssVars', vars: _pofCssVars });
+    }, 200);
+  }
 }
 
 // À l'ouverture : si le panel dynamic n'était pas déjà affiché (auquel cas showPanel l'a déjà init),

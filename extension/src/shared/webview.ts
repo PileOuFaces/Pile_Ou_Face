@@ -143,6 +143,15 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
       var panel = document.getElementById(panelId);
       if (panel) panel.classList.add('active');
     }
+    if (msg && msg.type === '__cssVars' && msg.vars && typeof msg.vars === 'object') {
+      var keys = Object.keys(msg.vars);
+      if (keys.length > 0) {
+        var cssText = ':root{' + keys.map(function (k) { return k + ':' + msg.vars[k]; }).join(';') + '}';
+        var styleEl = document.getElementById('__pof_css_vars');
+        if (!styleEl) { styleEl = document.createElement('style'); styleEl.id = '__pof_css_vars'; document.head.appendChild(styleEl); }
+        styleEl.textContent = cssText;
+      }
+    }
   });
   function _call(method, args) {
     return new Promise(function (resolve) {
