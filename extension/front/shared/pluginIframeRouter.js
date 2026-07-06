@@ -122,11 +122,29 @@
           return;
         }
 
-        // registerTabLoader: record the mapping, no async PoF call needed
+        // registerTabLoader: record the mapping and proxy into host state.js so
+        // callTabLoader(tabId, bp) from payload.js still reaches the plugin iframe.
         if (method === 'registerTabLoader') {
           const [tabId] = args;
           if (!_tabLoaders.has(tabId)) _tabLoaders.set(tabId, new Set());
-          if (sourceFrame) _tabLoaders.get(tabId).add(sourceFrame.dataset.pluginSlug);
+          if (sourceFrame) {
+            const slug = sourceFrame.dataset.pluginSlug;
+            _tabLoaders.get(tabId).add(slug);
+            // Register a real callback in state.js so payload.js callTabLoader still fires
+            if (pof && typeof pof.registerTabLoader === 'function') {
+              pof.registerTabLoader(tabId, function (binaryPath) {
+                for (const [, frame] of _frames) {
+                  if (frame.dataset.pluginSlug === slug) {
+                    frame.contentWindow.postMessage(
+                      { __pof_host: true, payload: { __pof_tabload: true, tabId, binaryPath } },
+                      '*'
+                    );
+                    break;
+                  }
+                }
+              });
+            }
+          }
           _replyTo(sourceFrame, sourceWindow, seq, undefined);
           return;
         }

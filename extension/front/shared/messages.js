@@ -3,6 +3,10 @@ function initMessageHandler() {
 window.addEventListener('message', (event) => {
   const msg = event.data;
   if (!msg?.type) return;
+  // Forward plugin results to the plugin's iframe (no return — other handlers also need this)
+  if (msg.type === 'hubPluginResult' && window.PluginIframeRouter) {
+    window.PluginIframeRouter.dispatch(msg.plugin_id, msg);
+  }
   if (msg.type === 'hubPrefillAiPrompt') {
     prefillOllamaPrompt(String(msg.prompt || ''));
     return;

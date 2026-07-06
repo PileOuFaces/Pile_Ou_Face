@@ -443,6 +443,15 @@ renderOllamaConversationHistory();
 requestOllamaModels();
 vscode.postMessage({ type: 'hubReady' });
 
+// Initialize plugin iframe router and register all plugin frames
+if (window.PluginIframeRouter) {
+  window.PluginIframeRouter.init(window, vscode);
+  document.querySelectorAll('iframe.plugin-iframe').forEach(function (frame) {
+    var slug = frame.dataset.pluginSlug;
+    if (slug) window.PluginIframeRouter.register(slug, frame);
+  });
+}
+
 // À l'ouverture : si le panel dynamic n'était pas déjà affiché (auquel cas showPanel l'a déjà init),
 // pré-charger le profil binaire pour que la tab soit prête quand l'utilisateur la bascule.
 const _dynamicAlreadyInit = document.getElementById('panel-dynamic')?.classList.contains('active') ?? false;
