@@ -470,28 +470,104 @@ vers le dossier de plugins à tester.
 
 ---
 
-## Webview et CSS
+## Webview et `window.PoF`
 
-Chaque plugin peut fournir un `webview/tab.html` et un `webview/tab.js`. Le
-`tab.html` peut contenir un bloc `<style>`, mais il est scope par le host au
-panel du plugin avant injection.
+Chaque plugin peut fournir un `webview/tab.html` et un `webview/tab.js`. Depuis
+la P3 (isolation iframe), **le webview d'un plugin tourne dans son propre
+`<iframe sandbox="allow-scripts allow-same-origin">`** (`srcdoc`), séparé du
+DOM du host et de celui des autres plugins. Le `tab.html` peut contenir un
+bloc `<style>` librement — il n'est plus scopé/réécrit par le host, puisque
+l'iframe l'isole déjà complètement (y compris ses propres `:root { --var }`).
 
-Règles pratiques :
+Concrètement, ça veut dire :
 
-- préfixer les classes CSS avec un nom propre au plugin ou a sa vue ;
-- éviter les overrides globaux comme `.btn`, `.static-panel`, `body` ou `table`
-  sauf si le style est volontairement limité par une classe plugin ;
-- ne pas compter sur les styles d'un autre plugin ;
-- ne pas compter sur les détails visuels du host, sauf les variables de thème
-  exposées par le host.
+- ton `tab.js` a son propre `document`, ses propres globals JS — il ne partage
+  **rien** avec le host ni avec les autres plugins (pas d'accès direct à
+  `document.getElementById` du host, pas de fonctions du host disponibles en
+  global).
+- La **seule** surface de contrat supportée pour parler au host est
+  **`window.PoF`** (injecté automatiquement dans chaque iframe de plugin) :
 
-Le host ajoute `data-plugin-scope="<slug>"` sur les panels du plugin et préfixe
-les règles CSS inline avec ce scope. Cela empêche un plugin de casser le host ou
-un autre plugin. Pour une isolation totale contre le CSS du host, il faudra une
-évolution future vers iframe ou Shadow DOM.
+  ```js
+  // Adresse binaire actuellement ouverte (synchrone)
+  const binaryPath = window.PoF?.getBinaryPath() ?? '';
 
-La preview locale des plugins applique la même règle de scoping pour éviter les
-différences de rendu les plus dangereuses entre `npm run preview` et l'extension.
+  // Cache par onglet, propre à ton plugin (clé = tabId)
+  window.PoF?.setTabCache('myTab', { binaryPath, result });
+  const cached = window.PoF?.getTabCache('myTab');
+
+  // Appelé quand l'utilisateur ouvre un nouveau binaire / active ton onglet
+  window.PoF?.registerTabLoader('myTab', (binaryPath) => {
+    vscode.postMessage({ type: 'hubPluginInvoke', feature: 'my.command', binaryPath, payload: {} });
+  });
+
+  // Indicateur de chargement dans TON propre DOM (pas de round-trip host)
+  window.PoF?.setLoading('myTabContent', 'Analyse en cours…');
+
+  // Stockage persistant propre au plugin
+  window.PoF?.saveStorage({ myPreference: 'value' });
+
+  // Navigation réelle dans le host (switch de panel/onglet, jump-to-address,
+  // reveal xrefs/strings) — voir la table d'actions ci-dessous
+  window.PoF?.navigateTo('jumpToAddr', { tab: 'disasm', addr, binaryPath });
+  ```
+
+  `window.PoF` est versionné (`window.PoF.version`, ex. `"1.1.0"`) ; déclare
+  `minPoFVersion` dans ton `plugin.json` si tu dépends d'une méthode récente.
+  Le host refuse d'attacher un plugin dont le `minPoFVersion` dépasse sa
+  propre version.
+
+  Méthodes disponibles sur `window.PoF` (référence complète — ne jamais
+  utiliser autre chose pour parler au host depuis un webview) :
+
+  | Méthode | Description |
+  |---|---|
+  | `version` | Chaîne SemVer de cette surface d'API (ex. `"1.1.0"`) |
+  | `getBinaryPath()` | Chemin du binaire actuellement ouvert, ou `''`. Synchrone. |
+  | `getTabCache(key)` | Lit une entrée de cache propre à ton plugin |
+  | `setTabCache(key, value)` | Écrit une entrée de cache propre à ton plugin |
+  | `registerTabLoader(tabId, fn)` | Appelle `fn(binaryPath)` quand l'utilisateur change de binaire ou active `tabId` |
+  | `saveStorage(data)` | Persiste des données clé/valeur propres au plugin |
+  | `setLoading(containerId, message)` | Affiche un indicateur de chargement dans un élément de **ton propre** DOM |
+  | `getGroupLabels()` | `{tabId: label}` pour tous les onglets enregistrés (tous plugins confondus) |
+  | `getTabFamilies()` | `{tabId: family}` pour tous les onglets enregistrés |
+  | `getDisabledFamilies()` | `Set` des familles que l'utilisateur a désactivées |
+  | `navigateTo(action, params)` | Exécute une action de navigation réelle côté host (fire-and-forget, voir table ci-dessous) |
+
+  Actions `navigateTo` :
+
+  | Action | Params | Effet |
+  |---|---|---|
+  | `showPanel` | `{panel}` | Change le panel principal (`static`, `dynamic`, `outils`, `options`) |
+  | `showGroup` | `{group, tab}` | Change le groupe/sous-onglet dans le panel `static` |
+  | `jumpToAddr` | `{tab, addr, binaryPath, opts}` | Navigue vers une adresse dans un onglet (disasm/cfg/callgraph/decompile/hex) |
+  | `setActiveAddress` | `{addr, spanLength, opts}` | Synchronise l'état "adresse active" du host |
+  | `ensureDecompileSources` | `{binaryPath}` | Charge sections/symboles/fonctions nécessaires avant une requête de décompilation |
+  | `syncFunctionsSelection` | `{addr}` | Sélectionne la ligne correspondante dans l'onglet Fonctions |
+  | `openXrefs` | `{addr, spanLength, mode}` | Révèle le panneau xrefs et lance la recherche pour `addr` |
+  | `openStringAt` | `{addr, spanLength}` | Révèle l'onglet Strings et va à `addr` |
+
+- Les résultats de tes commandes Python arrivent via un message `postMessage`
+  standard (`vscode.postMessage({type: 'hubPluginInvoke', feature, binaryPath, payload})`
+  côté plugin → réponse `{type: 'hubPluginResult', feature, plugin_id, result}`
+  relayée automatiquement dans **ton** iframe). Écoute-la avec
+  `window.addEventListener('message', (e) => { const msg = e.data; if (msg.type === 'hubPluginResult' && msg.feature === 'my.command') { ... } })`.
+
+- Ne compte sur **rien d'autre** que `window.PoF` et le message `hubPluginResult` —
+  pas de variable globale du host, pas de fonction déclarée par un autre
+  plugin (chaque iframe est isolé, même entre plugins). Si une capacité te
+  manque sur `window.PoF`, c'est un signal pour l'ajouter côté host plutôt que
+  de contourner (voir `CONTRACTS_SHARED.md`, section `window.PoF`, dans le
+  workspace root — c'est la référence normative et la plus à jour).
+
+> ⚠️ **La preview locale des plugins (`npm run preview`, `scripts/preview.mjs`)
+> n'utilise pas encore ce modèle iframe** — elle injecte encore le webview
+> directement dans sa propre page et fournit les anciens globals bruts
+> (`window.showPanel`, `window.tabDataCache`, etc.) au lieu de `window.PoF`.
+> Un plugin qui n'appelle plus que `window.PoF.*` (recommandé ci-dessus) ne
+> sera donc pas correctement exercé par cet outil tant qu'il n'aura pas été
+> mis à jour. Teste dans l'extension réelle (VS Code) pour valider le
+> comportement final.
 
 ---
 
