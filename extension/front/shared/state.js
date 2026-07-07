@@ -573,4 +573,59 @@ window.PoF = {
 
   // Persistent storage (defined in state.js, no lazy guard needed).
   saveStorage: (data) => _saveStorage(data),
+
+  // Navigation actions that only make sense in the host's own DOM/scope
+  // (panel/group switching, address-context sync, xrefs/strings reveal).
+  // See CONTRACTS_SHARED.md §Plugin Webview API for the full action list.
+  navigateTo: (action, params) => {
+    const p = params || {};
+    switch (action) {
+      case 'showPanel':
+        if (typeof showPanel === 'function') showPanel(p.panel);
+        break;
+      case 'showGroup':
+        if (typeof showPanel === 'function') showPanel('static');
+        if (typeof showGroup === 'function') showGroup(p.group, p.tab);
+        break;
+      case 'jumpToAddr':
+        if (typeof jumpToAddrInContextTab === 'function') jumpToAddrInContextTab(p.tab, p.addr, p.binaryPath, p.opts || {});
+        break;
+      case 'setActiveAddress':
+        if (typeof setActiveAddressContext === 'function') setActiveAddressContext(p.addr, p.spanLength, p.opts || {});
+        break;
+      case 'ensureDecompileSources':
+        if (typeof ensureDecompileSelectionSourcesLoaded === 'function') ensureDecompileSelectionSourcesLoaded(p.binaryPath);
+        break;
+      case 'syncFunctionsSelection':
+        if (typeof syncFunctionsSelectionFromContext === 'function') syncFunctionsSelectionFromContext(p.addr);
+        break;
+      case 'openXrefs': {
+        const addr = typeof normalizeHexAddress === 'function' ? normalizeHexAddress(p.addr || '') : String(p.addr || '');
+        if (!addr) break;
+        if (typeof setActiveAddressContext === 'function') setActiveAddressContext(addr, p.spanLength || 1, { preserveHexSelection: true });
+        if (typeof showPanel === 'function') showPanel('static');
+        if (typeof showGroup === 'function') showGroup('code', 'disasm');
+        const el = document.getElementById('xrefsResult');
+        const contentEl = document.getElementById('xrefsResultContent');
+        if (el) {
+          el.style.display = 'block';
+          if (contentEl) contentEl.textContent = 'Analyse des références croisées…';
+          el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+        window.vscode.postMessage({ type: 'hubLoadXrefs', addr, binaryPath: (typeof getStaticBinaryPath === 'function' ? getStaticBinaryPath() : '') || '', mode: p.mode || 'to' });
+        break;
+      }
+      case 'openStringAt': {
+        const addr = typeof normalizeHexAddress === 'function' ? normalizeHexAddress(p.addr || '') : String(p.addr || '');
+        if (!addr) break;
+        if (typeof setActiveAddressContext === 'function') setActiveAddressContext(addr, p.spanLength || 1, { preserveHexSelection: true });
+        if (typeof showPanel === 'function') showPanel('static');
+        if (typeof showGroup === 'function') showGroup('data', 'strings');
+        if (typeof focusStringsAddress === 'function') focusStringsAddress(addr, { reveal: true });
+        break;
+      }
+      default:
+        break;
+    }
+  },
 };

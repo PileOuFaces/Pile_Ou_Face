@@ -310,22 +310,64 @@ describe('PLUGIN_BRIDGE_PREAMBLE', () => {
     });
   });
 
-  describe('navigation no-ops (cross-panel actions unreachable from an isolated iframe)', () => {
-    it('showPanel/showGroup/jumpToAddrInContextTab/setActiveAddressContext/openVulnDataXrefs/openVulnStrings do not throw', () => {
+  describe('navigation via PoF.navigateTo (host-scope actions routed through the bridge)', () => {
+    it('navigateTo sends a __pof_call with the action and params', () => {
       const { win } = makeBridgeWindow();
-      expect(() => win.showPanel('static')).not.to.throw();
-      expect(() => win.showGroup('code', 'disasm')).not.to.throw();
-      expect(() => win.jumpToAddrInContextTab('disasm', '0x1', '/tmp/x.bin')).not.to.throw();
-      expect(() => win.setActiveAddressContext('0x1', 1)).not.to.throw();
-      expect(() => win.openVulnDataXrefs('0x1')).not.to.throw();
-      expect(() => win.openVulnStrings('0x1')).not.to.throw();
-      expect(() => win.ensureDecompileSelectionSourcesLoaded('/tmp/x.bin')).not.to.throw();
-      expect(() => win.syncFunctionsSelectionFromContext('0x1')).not.to.throw();
+      win.PoF.navigateTo('showGroup', { group: 'code', tab: 'disasm' });
+      const call = win.parent.postMessage.getCalls().find((c: any) => c.args[0].method === 'navigateTo');
+      expect(call).to.exist;
+      expect(call.args[0].args).to.deep.equal(['showGroup', { group: 'code', tab: 'disasm' }]);
     });
 
-    it('isStaticTabAvailable always returns false (host-only concept)', () => {
+    it('navigateTo defaults params to an empty object', () => {
       const { win } = makeBridgeWindow();
-      expect(win.isStaticTabAvailable('disasm')).to.equal(false);
+      win.PoF.navigateTo('showPanel');
+      const call = win.parent.postMessage.getCalls().find((c: any) => c.args[0].method === 'navigateTo');
+      expect(call.args[0].args).to.deep.equal(['showPanel', {}]);
+    });
+
+    it('openVulnDataXrefs/openVulnStrings delegate to PoF.navigateTo once a binary and address are known', () => {
+      const { win } = makeBridgeWindow();
+      deliverHostMessage(win, { type: '__binaryPath', binaryPath: '/tmp/x.bin' });
+      win.openVulnDataXrefs('0x1000');
+      let call = win.parent.postMessage.getCalls().find((c: any) => c.args[0].method === 'navigateTo' && c.args[0].args[0] === 'openXrefs');
+      expect(call).to.exist;
+      expect(call.args[0].args[1].addr).to.equal('0x1000');
+
+      win.openVulnStrings('0x2000');
+      call = win.parent.postMessage.getCalls().find((c: any) => c.args[0].method === 'navigateTo' && c.args[0].args[0] === 'openStringAt');
+      expect(call).to.exist;
+      expect(call.args[0].args[1].addr).to.equal('0x2000');
+    });
+
+    it('openVulnDataXrefs/openVulnStrings no-op without a loaded binary', () => {
+      const { win } = makeBridgeWindow();
+      win.openVulnDataXrefs('0x1000');
+      win.openVulnStrings('0x1000');
+      const navCalls = win.parent.postMessage.getCalls().filter((c: any) => c.args[0].method === 'navigateTo');
+      expect(navCalls.length).to.equal(0);
+    });
+  });
+
+  describe('isStaticTabAvailable', () => {
+    it('defaults to permissive (true) since availability depends on host-side binary metadata', () => {
+      const { win } = makeBridgeWindow();
+      expect(win.isStaticTabAvailable('disasm')).to.equal(true);
+    });
+  });
+
+  describe('group/family/disabled-family accessors', () => {
+    it('getGroupLabels/getTabFamilies reflect the hubPluginState sync', () => {
+      const { win } = makeBridgeWindow();
+      deliverHostMessage(win, { type: 'hubPluginState', state: { tabRegistrations: [{ tabId: 'taint', label: 'Taint', family: 'audit' }] } });
+      expect(win.PoF.getGroupLabels()).to.deep.equal({ taint: 'Taint' });
+      expect(win.PoF.getTabFamilies()).to.deep.equal({ taint: 'audit' });
+    });
+
+    it('getDisabledFamilies reads the persisted disabledFamilies as a Set', () => {
+      const { win } = makeBridgeWindow();
+      win._saveStorage({ disabledFamilies: ['malware', 'audit'] });
+      expect(win.PoF.getDisabledFamilies()).to.deep.equal(new Set(['malware', 'audit']));
     });
   });
 
