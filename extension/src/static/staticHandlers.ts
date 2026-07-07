@@ -590,21 +590,24 @@ function staticHandlers(config) {
         JSON.stringify(payload || {}),
       ], { timeout });
       if (response?.ok === true) {
-        return response.result ?? {};
+        return { pluginId: String(response.plugin_id || ''), result: response.result ?? {} };
       }
       const available = Array.isArray(response?.available_commands) ? response.available_commands : [];
       if (available.length === 0) {
-        return buildPluginRequiredPayload(featureId);
+        return { pluginId: '', result: buildPluginRequiredPayload(featureId) };
       }
       return {
-        ok: false,
-        error: String(response?.error || `Échec plugin: ${featureId}`),
-        plugin_command: String(response?.command || ''),
-        plugin_required: featureId,
-        feature: featureId,
+        pluginId: '',
+        result: {
+          ok: false,
+          error: String(response?.error || `Échec plugin: ${featureId}`),
+          plugin_command: String(response?.command || ''),
+          plugin_required: featureId,
+          feature: featureId,
+        },
       };
     } catch (error) {
-      return buildPluginRequiredPayload(featureId);
+      return { pluginId: '', result: buildPluginRequiredPayload(featureId) };
     }
   };
 
@@ -711,16 +714,17 @@ function staticHandlers(config) {
         if (gcDir) payload.globalConfigPath = path.join(gcDir, 'rules-config.json');
       }
       const featureLabel = feature.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-      const result = await vscode.window.withProgress(
+      const { pluginId, result } = await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: `Plugin : ${featureLabel}…`, cancellable: false },
         () => feature
           ? invokePluginFeature(feature, payload, { timeout: Number(message.timeout || 120000) })
-          : Promise.resolve({ ok: false, error: 'feature manquante', plugin_required: '', feature }),
+          : Promise.resolve({ pluginId: '', result: { ok: false, error: 'feature manquante', plugin_required: '', feature } }),
       );
       panel.webview.postMessage({
         type: 'hubPluginResult',
         requestId,
         feature,
+        plugin_id: pluginId,
         result,
       });
     },

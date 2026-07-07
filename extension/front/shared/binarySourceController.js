@@ -493,6 +493,9 @@
         }
         applyStaticBinarySelectionUi(bp, nextMeta);
         finalizeStaticBinarySelection(bp, nextMeta, { sameSelection, skipAutoLoad });
+        if (window.PluginIframeRouter) {
+          window.PluginIframeRouter.broadcast({ type: '__binaryPath', binaryPath: bp });
+        }
         return true;
       }
       if (msg.type === 'hubForgetRecentBinary' && msg.binaryPath) {

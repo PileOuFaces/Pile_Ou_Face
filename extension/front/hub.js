@@ -452,18 +452,24 @@ if (window.PluginIframeRouter) {
   });
   // Forward VS Code CSS variables to plugin iframes for correct theme rendering
   var _pofCssVars = {};
-  document.head.querySelectorAll('style').forEach(function (styleEl) {
-    var re = /(--vscode-[\w-]+)\s*:\s*([^;}\n]+)/g;
-    var m;
-    while ((m = re.exec(styleEl.textContent || '')) !== null) {
-      _pofCssVars[m[1]] = m[2].trim();
+  var _computedStyle = getComputedStyle(document.documentElement);
+  for (var i = 0; i < _computedStyle.length; i++) {
+    var prop = _computedStyle[i];
+    if (prop.startsWith('--vscode-')) {
+      _pofCssVars[prop] = _computedStyle.getPropertyValue(prop).trim();
     }
-  });
+  }
   if (Object.keys(_pofCssVars).length > 0) {
     setTimeout(function () {
       window.PluginIframeRouter.broadcast({ type: '__cssVars', vars: _pofCssVars });
     }, 200);
   }
+  // Forward the currently selected binary path so plugin iframes opened after
+  // a binary was already loaded don't see an empty getStaticBinaryPath().
+  setTimeout(function () {
+    var bp = typeof getStaticBinaryPath === 'function' ? getStaticBinaryPath() : '';
+    if (bp) window.PluginIframeRouter.broadcast({ type: '__binaryPath', binaryPath: bp });
+  }, 200);
 }
 
 // À l'ouverture : si le panel dynamic n'était pas déjà affiché (auquel cas showPanel l'a déjà init),

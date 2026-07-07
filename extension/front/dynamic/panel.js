@@ -528,51 +528,6 @@ document.getElementById('btnRevertAll')?.addEventListener('click', function() {
 applyHexLayoutMode();
 updateHexSelectionButtons();
 
-document.getElementById('btnYaraBrowse')?.addEventListener('click', () => {
-  vscode.postMessage({ type: 'requestRulesSelection', target: 'manual' });
-});
-document.querySelectorAll('input[name="yaraRulesMode"]').forEach((input) => {
-  input.addEventListener('change', () => {
-    if (!input.checked) return;
-    setSelectedYaraMode(input.value);
-  });
-});
-document.getElementById('yaraRulesPath')?.addEventListener('input', () => {
-  _saveStorage({ yaraRulesPath: document.getElementById('yaraRulesPath')?.value || '' });
-  applyYaraModeUi();
-});
-document.getElementById('btnYaraScan')?.addEventListener('click', () => {
-  vscode.postMessage({ type: 'hubError', message: 'Cette action doit être fournie par un plugin.' });
-});
-document.getElementById('btnCapaScan')?.addEventListener('click', () => {
-  vscode.postMessage({ type: 'hubError', message: 'Cette action doit être fournie par un plugin.' });
-});
-
-document.getElementById('capaFilterInput')?.addEventListener('input', renderCapaResults);
-document.getElementById('capaNamespaceFilter')?.addEventListener('change', renderCapaResults);
-document.getElementById('yaraFilterInput')?.addEventListener('input', renderYaraResults);
-document.getElementById('btnCapaExportJson')?.addEventListener('click', () => {
-  downloadDetectionJson('capa-results.json', {
-    binaryPath: getStaticBinaryPath(),
-    capabilities: detectionUiState.capaCapabilities,
-    error: detectionUiState.capaError || null,
-  });
-});
-document.getElementById('btnYaraExportJson')?.addEventListener('click', () => {
-  downloadDetectionJson('yara-results.json', {
-    binaryPath: getStaticBinaryPath(),
-    rulesMode: getSelectedYaraMode(),
-    rulesPath: document.getElementById('yaraRulesPath')?.value?.trim() || '',
-    matches: detectionUiState.yaraMatches,
-    error: detectionUiState.yaraError || null,
-  });
-});
-setSelectedYaraMode(detectionUiState.yaraMode, { skipSave: true });
-const initialYaraPathInput = document.getElementById('yaraRulesPath');
-if (initialYaraPathInput && _loadStorage().yaraRulesPath) {
-  initialYaraPathInput.value = String(_loadStorage().yaraRulesPath || '');
-}
-applyYaraModeUi();
 
 // Décompilateur : auto-décompile quand on change de fonction
 document.getElementById('decompileAddrSelect')?.addEventListener('change', () => {

@@ -124,10 +124,15 @@ function _getPluginSearchDirs(storageDir, _globalDir) {
 
 const PLUGIN_BRIDGE_PREAMBLE = `<script>
 (function () {
+  console.log('[PoF-iframe] bridge script starting…');
+  window.onerror = function (message, source, lineno, colno, error) {
+    console.error('[PoF-iframe] uncaught error:', message, source, lineno, colno, error && error.stack);
+  };
   var _pending = {};
   var _seq = 0;
   window.vscode = {
     postMessage: function (msg) {
+      console.log('[PoF-iframe] vscode.postMessage ->', msg);
       try { window.parent.postMessage({ __pof_plugin: true, payload: msg }, '*'); }
       catch (_) {
         try { window.parent.postMessage({ __pof_plugin: true, payload: JSON.parse(JSON.stringify(msg)) }, '*'); }
@@ -135,6 +140,29 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
       }
     }
   };
+  var _showTabReceived = false;
+  function _activatePanel(tabId) {
+    _showTabReceived = true;
+    var panelId = 'static' + String(tabId || '').split('_').map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1); }).join('');
+    console.log('[PoF-iframe] showTab received:', tabId, '-> panelId:', panelId, 'found:', !!document.getElementById(panelId));
+    document.querySelectorAll('.static-panel').forEach(function (p) { p.classList.remove('active'); });
+    var panel = document.getElementById(panelId);
+    if (panel) {
+      panel.classList.add('active');
+      var diag = document.getElementById('__pof_diag');
+      if (diag) diag.style.display = 'none';
+    }
+  }
+  // Fallback: if showTab never arrives (postMessage blocked), auto-show first panel
+  setTimeout(function () {
+    if (_showTabReceived) return;
+    var first = document.querySelector('.static-panel');
+    if (first) {
+      first.classList.add('active');
+      var diag = document.getElementById('__pof_diag');
+      if (diag) diag.textContent = 'postMessage blocked — auto-showed: ' + (first.id || '?');
+    }
+  }, 600);
   window.addEventListener('message', function (e) {
     if (!e.data || !e.data.__pof_host) return;
     var msg = e.data.payload;
@@ -143,11 +171,10 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
       delete _pending[msg.__seq];
     }
     if (msg && msg.type === 'showTab') {
-      var tabId = String(msg.tabId || '');
-      var panelId = 'static' + tabId.split('_').map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1); }).join('');
-      document.querySelectorAll('.static-panel').forEach(function (p) { p.classList.remove('active'); });
-      var panel = document.getElementById(panelId);
-      if (panel) panel.classList.add('active');
+      _activatePanel(msg.tabId);
+    }
+    if (msg && msg.type === '__binaryPath' && typeof msg.binaryPath === 'string') {
+      window._pofCurrentBinaryPath = msg.binaryPath;
     }
     if (msg && msg.type === '__cssVars' && msg.vars && typeof msg.vars === 'object') {
       var keys = Object.keys(msg.vars);
@@ -158,12 +185,30 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
         styleEl.textContent = cssText;
       }
     }
+    // Re-dispatch the unwrapped payload so the plugin's own message listeners
+    // (written against the original, non-iframe contract) keep working unchanged.
+    if (msg && !msg.__pof_reply) {
+      console.log('[PoF-iframe] dispatching unwrapped message to plugin listeners:', msg);
+      window.dispatchEvent(new MessageEvent('message', { data: msg }));
+    }
   });
   function _call(method, args) {
+    console.log('[PoF-iframe] PoF call ->', method, args);
     return new Promise(function (resolve) {
       var seq = ++_seq;
       _pending[seq] = resolve;
-      window.parent.postMessage({ __pof_plugin: true, __pof_call: true, method: method, args: args, __seq: seq }, '*');
+      var msg = { __pof_plugin: true, __pof_call: true, method: method, args: args, __seq: seq };
+      // The host's PluginIframeRouter may not be initialized yet when this iframe's
+      // own script runs (iframe srcdoc loads independently of the parent's script
+      // execution order) — retry a few times until the pending call is resolved.
+      var attempts = 0;
+      var trySend = function () {
+        if (!_pending[seq]) return; // already resolved
+        attempts++;
+        window.parent.postMessage(msg, '*');
+        if (attempts < 8) setTimeout(trySend, 250);
+      };
+      trySend();
     });
   }
   window.PoF = {
@@ -175,6 +220,7 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
       _call('registerTabLoader', [tabId]);
       window.addEventListener('message', function (e) {
         if (e.data && e.data.__pof_host && e.data.payload && e.data.payload.__pof_tabload && e.data.payload.tabId === tabId) {
+          console.log('[PoF-iframe] tabload received for', tabId, 'binaryPath:', e.data.payload.binaryPath);
           if (e.data.payload.binaryPath) window._pofCurrentBinaryPath = e.data.payload.binaryPath;
           fn(e.data.payload.binaryPath);
         }
@@ -211,6 +257,22 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
   // Host analysis globals referenced by cross-plugin code
   window.asVI = function (v) { return (v && typeof v === 'object' ? v : {}); };
   window.PREMIUM_TAB_FAMILY = window.PREMIUM_TAB_FAMILY || {};
+  window.GROUP_LABELS = window.GROUP_LABELS || {};
+  // Mirror the host's registerPluginTabs(): populate label/family lookups for
+  // every tab across all plugins, so cross-plugin display code (e.g. cross-analysis
+  // showing "source: audit") doesn't need direct access to the host's own state.
+  window.addEventListener('message', function (e) {
+    if (!e.data || !e.data.__pof_host) return;
+    var msg = e.data.payload;
+    if (!msg || msg.type !== 'hubPluginState' || !msg.state) return;
+    var regs = Array.isArray(msg.state.tabRegistrations) ? msg.state.tabRegistrations : [];
+    regs.forEach(function (reg) {
+      var tabId = String(reg.tabId || '').trim();
+      if (!tabId) return;
+      if (reg.label) window.GROUP_LABELS[tabId] = reg.label;
+      if (reg.family) window.PREMIUM_TAB_FAMILY[tabId] = reg.family;
+    });
+  });
   window.normalizeHexAddress = function (addr) { return addr ? String(addr).trim() : ''; };
   window.findSectionForAddress = function () { return null; };
   window.getFunctionRowByAddr = function () { return null; };
@@ -218,6 +280,584 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
   window.vaddrFromFileOffset = function () { return null; };
   window.symbolsCache = window.symbolsCache || [];
   window.sectionsCache = window.sectionsCache || [];
+  window.tabDataCache = window.tabDataCache || {};
+  window.functionListCache = window.functionListCache || [];
+  window.functionsUiState = window.functionsUiState || { selectedAddr: '' };
+
+  // ── Code-navigation helpers (mirrors vulnerability-audit-pro/webview/tab.ts) ──
+  // These plugins used to share one global scope with vulnerability-audit-pro
+  // before iframe isolation; provided here so every plugin can resolve addresses
+  // without duplicating this logic. Address caches are always empty in an
+  // isolated iframe, so these gracefully return '' / false instead of crashing.
+  function _isExecutableSection(section) {
+    if (!section || typeof section !== 'object') return false;
+    var name = String(section.name || '').trim().toLowerCase();
+    if (!name) return false;
+    if (name === '__text' || name === '.text') return true;
+    if (name === '__stubs' || name === '.plt' || name === '.plt.sec') return true;
+    if (name === '.init' || name === '.fini' || name === '.init.text' || name === '.fini.text') return true;
+    if (name.indexOf('.text.') === 0) return true;
+    if (name.slice(-5) === '_text') return true;
+    return false;
+  }
+  function _findFunctionRowByName(name, rows) {
+    var normalized = String(name || '').trim().toLowerCase();
+    var list = Array.isArray(rows) ? rows : (window.functionListCache || []);
+    if (!normalized) return null;
+    for (var i = 0; i < list.length; i++) {
+      var e = list[i] || {};
+      var candidates = [e.name, e.function, e.label];
+      for (var j = 0; j < candidates.length; j++) {
+        if (String(candidates[j] || '').trim().toLowerCase() === normalized) return e;
+      }
+    }
+    return null;
+  }
+  function _findFunctionAddressByName(name) {
+    var row = _findFunctionRowByName(name, null);
+    if (row && row.addr) return window.normalizeHexAddress(String(row.addr));
+    return '';
+  }
+  function _findEnclosingFunctionAddr(addr) {
+    var normalized = window.normalizeHexAddress(String(addr || ''));
+    if (!normalized) return '';
+    var exact = window.getFunctionRowByAddr(normalized);
+    if (exact && exact.addr) return window.normalizeHexAddress(exact.addr);
+    return window.normalizeHexAddress(window.findNearestFunctionStart(normalized) || '');
+  }
+  window.isCodeNavigationAddress = function (addr) {
+    var normalized = window.normalizeHexAddress(String(addr || ''));
+    if (!normalized) return false;
+    var section = window.findSectionForAddress(normalized);
+    if (_isExecutableSection(section)) return true;
+    if (window.getFunctionRowByAddr(normalized)) return true;
+    var syms = window.symbolsCache || [];
+    for (var i = 0; i < syms.length; i++) {
+      var type = String(syms[i].type || '').toLowerCase();
+      if ((type === 't' || type === 'f') && window.normalizeHexAddress(String(syms[i].addr || '')) === normalized) return true;
+    }
+    return false;
+  };
+  window.getPrimaryCodeNavigationAddr = function (item) {
+    if (!item || typeof item !== 'object') {
+      var row = window.getFunctionRowByAddr(String(item || ''));
+      return (row && row.addr) || '';
+    }
+    var related = item.related || {};
+    var callerFunctions = Array.isArray(related.caller_functions) ? related.caller_functions : [];
+    var patchTargets = Array.isArray(related.patch_targets) ? related.patch_targets : [];
+    var nestedBehavior = Array.isArray(related.behavior) ? related.behavior : [];
+    var nestedAnti = Array.isArray(related.anti_analysis) ? related.anti_analysis : [];
+    var directCandidates = [
+      item.function_addr,
+      (callerFunctions[0] || {}).function_addr,
+      (window.getFunctionRowByAddr(String(item.addr || '')) || {}).addr,
+    ];
+    for (var i = 0; i < directCandidates.length; i++) {
+      var n1 = window.normalizeHexAddress(String(directCandidates[i] || ''));
+      if (n1) return n1;
+    }
+    var firstNonDataPatch = patchTargets.filter(function (t) { return String((t || {}).kind || '').toLowerCase() !== 'data'; })[0];
+    var enclosingCandidates = [
+      (related.callsites || [])[0] && related.callsites[0].addr,
+      (callerFunctions[0] || {}).callsite_addr,
+      firstNonDataPatch && firstNonDataPatch.addr,
+    ];
+    for (var j = 0; j < enclosingCandidates.length; j++) {
+      var n2 = _findEnclosingFunctionAddr(enclosingCandidates[j] || '');
+      if (n2) return n2;
+    }
+    var nameCandidates = [item.function]
+      .concat(callerFunctions.map(function (e) { return e.name; }))
+      .concat(nestedBehavior.map(function (e) { return e.function; }))
+      .concat(nestedAnti.map(function (e) { return e.function; }));
+    for (var k = 0; k < nameCandidates.length; k++) {
+      var n3 = _findFunctionAddressByName(nameCandidates[k]);
+      if (n3) return n3;
+    }
+    var proofDossiers = Array.isArray(item.proof_dossiers) ? item.proof_dossiers : [];
+    for (var m = 0; m < proofDossiers.length; m++) {
+      var nested = window.getPrimaryCodeNavigationAddr(proofDossiers[m]);
+      if (nested) return nested;
+    }
+    return '';
+  };
+  window.getPrimaryNavigationOffset = function (item) {
+    var i = item || {};
+    var related = i.related || {};
+    var candidates = [
+      i.offset, i.offset_hex, i.file_offset, i.fileOffset,
+      Array.isArray(related.behavior) && related.behavior[0] ? related.behavior[0].offset : '',
+      Array.isArray(related.anti_analysis) && related.anti_analysis[0] ? related.anti_analysis[0].offset : '',
+      Array.isArray(i.evidence) && i.evidence[0] ? i.evidence[0].offset : '',
+    ];
+    for (var i2 = 0; i2 < candidates.length; i2++) {
+      var normalized = window.normalizeHexLiteral(candidates[i2]);
+      if (normalized) return normalized;
+    }
+    return '';
+  };
+  window.resolveOffsetToVirtualAddress = function (offset) {
+    var normalizedOffset = window.normalizeHexLiteral(offset);
+    if (!normalizedOffset) return '';
+    var sections = window.sectionsCache || [];
+    return window.normalizeHexAddress(window.vaddrFromFileOffset(normalizedOffset, sections) || '');
+  };
+  window.getPrimaryNavigationLocation = function (item) {
+    var i = item || {};
+    var related = i.related || {};
+    var callsites = Array.isArray(related.callsites) ? related.callsites : [];
+    var patchTargets = Array.isArray(related.patch_targets) ? related.patch_targets : [];
+    var findingAddr = window.normalizeHexAddress(String(i.addr || i.function_addr || ''));
+    var callsiteAddr = window.normalizeHexAddress(String((callsites[0] || {}).addr || ''));
+    var patchAddr = window.normalizeHexAddress(String((patchTargets[0] || {}).addr || ''));
+    var behaviorArr = Array.isArray(related.behavior) ? related.behavior : [];
+    var antiArr = Array.isArray(related.anti_analysis) ? related.anti_analysis : [];
+    var behaviorEntry = behaviorArr.filter(function (e) { return e && e.addr; })[0] || {};
+    var antiEntry = antiArr.filter(function (e) { return e && e.addr; })[0] || {};
+    var offset = window.getPrimaryNavigationOffset(item);
+    var derivedAddr = window.resolveOffsetToVirtualAddress(offset);
+    return {
+      addr: callsiteAddr || findingAddr || patchAddr || window.normalizeHexAddress(behaviorEntry.addr || '') || window.normalizeHexAddress(antiEntry.addr || '') || derivedAddr || '',
+      offset: offset,
+    };
+  };
+  window.pickCodeAddressFromXrefs = function (payload) {
+    var refs = Array.isArray((payload || {}).refs) ? payload.refs : [];
+    for (var i = 0; i < refs.length; i++) {
+      var candidates = [refs[i].function_addr, refs[i].from_addr];
+      for (var j = 0; j < candidates.length; j++) {
+        var normalized = window.normalizeHexAddress(String(candidates[j] || ''));
+        if (normalized && window.isCodeNavigationAddress(normalized)) return normalized;
+      }
+    }
+    return '';
+  };
+  var _xrefRequestSeq = 0;
+  window.requestAddressXrefs = function (addr, mode) {
+    mode = mode || 'to';
+    var normalized = window.normalizeHexAddress(String(addr || ''));
+    var binaryPath = window.getStaticBinaryPath();
+    if (!normalized || !binaryPath) return Promise.resolve({ refs: [], targets: [], addr: normalized, mode: mode });
+    var requestKey = 'xref_' + (++_xrefRequestSeq);
+    return new Promise(function (resolve) {
+      setTimeout(function () { resolve({ refs: [], targets: [], addr: normalized, mode: mode, timeout: true }); }, 6000);
+      window.vscode.postMessage({ type: 'hubLoadXrefs', addr: normalized, binaryPath: binaryPath, mode: mode, requestKey: requestKey });
+    });
+  };
+  window.withTemporaryButtonState = function (button, busyLabel, task) {
+    if (!button || button.disabled) return Promise.resolve();
+    var originalLabel = button.textContent;
+    button.disabled = true;
+    button.classList.add('btn--loading');
+    if (busyLabel) button.textContent = busyLabel;
+    return Promise.resolve().then(function () { return task(); }).finally(function () {
+      button.disabled = false;
+      button.classList.remove('btn--loading');
+      button.textContent = originalLabel;
+    });
+  };
+  // Jumping to strings/xrefs panels requires the HOST's own DOM — no-op gracefully.
+  window.openVulnDataXrefs = function () {};
+  window.openVulnStrings = function () {};
+
+  // ── Shared plugin panel rendering helpers (mirrors front/static/search.js) ──
+  window.normalizePluginPanelPayload = function (raw, arrayKeys) {
+    arrayKeys = arrayKeys || [];
+    if (Array.isArray(raw)) {
+      return { result: {}, items: raw, proofDossiers: [], summary: {}, error: null };
+    }
+    var result = raw && typeof raw === 'object' ? raw : {};
+    var items = [];
+    for (var i = 0; i < arrayKeys.length; i++) {
+      var key = arrayKeys[i];
+      if (Array.isArray(result[key])) { items = result[key]; break; }
+    }
+    return {
+      result: result,
+      items: items,
+      proofDossiers: Array.isArray(result.proof_dossiers) ? result.proof_dossiers : [],
+      summary: result.summary && typeof result.summary === 'object' ? result.summary : {},
+      error: result.error || null,
+    };
+  };
+  function _collectEvidenceSummaries(value, maxItems) {
+    maxItems = maxItems || 3;
+    var pick = function (entry) {
+      return String(
+        entry.summary || entry.evidence || entry.description || entry.url
+        || entry.uri || entry.ip || entry.domain || entry.host || entry.api || entry.value || ''
+      ).trim();
+    };
+    if (Array.isArray(value)) {
+      var out = [];
+      for (var i = 0; i < value.length; i++) {
+        var entry = value[i];
+        var text = '';
+        if (!entry) text = '';
+        else if (typeof entry === 'string') text = entry;
+        else if (typeof entry === 'object') text = pick(entry);
+        if (text) out.push(text);
+      }
+      return out.slice(0, maxItems);
+    }
+    if (value && typeof value === 'object') {
+      var summary = pick(value);
+      return summary ? [summary] : [];
+    }
+    if (typeof value === 'string' && value.trim()) return [value.trim()];
+    return [];
+  }
+  window.formatPremiumEvidence = function (value, fallback) {
+    fallback = fallback === undefined ? '—' : fallback;
+    var parts = _collectEvidenceSummaries(value);
+    if (parts.length) return parts.join(' ; ');
+    if (value === null || value === undefined || value === '') return fallback;
+    return String(value);
+  };
+  window.buildNavigableAddrNode = function (addr) {
+    var text = String(addr || '').trim();
+    if (!text) return document.createTextNode('—');
+    if (!/^0x[0-9a-f]+$/i.test(text)) return document.createTextNode(text);
+    var code = document.createElement('code');
+    code.className = 'addr-link';
+    code.dataset.addr = text;
+    code.textContent = text;
+    code.style.cursor = 'pointer';
+    code.addEventListener('click', function () {
+      var binaryPath = window.getStaticBinaryPath();
+      if (!binaryPath) return;
+      window.vscode.postMessage({ type: 'hubGoToAddress', addr: text, binaryPath: binaryPath });
+    });
+    return code;
+  };
+  window.renderVulnProofDossiers = function (dossiers, opts) {
+    opts = opts || {};
+    var kindLabel = opts.kindLabel || {};
+    var confidenceColor = opts.confidenceColor || {};
+    var severityColor = opts.severityColor || {};
+    if (!Array.isArray(dossiers) || dossiers.length === 0) return null;
+    var grid = document.createElement('div');
+    grid.className = 'vuln-dossier-grid';
+    var exploitClass = function (level) {
+      if (level === 'HIGH') return 'is-high';
+      if (level === 'MEDIUM') return 'is-medium';
+      return 'is-low';
+    };
+    var severityClass = function (level) {
+      if (level === 'CRITICAL') return 'is-critical';
+      if (level === 'HIGH') return 'is-high';
+      if (level === 'MEDIUM') return 'is-medium';
+      return 'is-low';
+    };
+    var makeBadge = function (label, value, extraClass, color) {
+      var badge = document.createElement('span');
+      badge.className = ('vuln-dossier-badge ' + (extraClass || '')).trim();
+      if (color) badge.style.color = color;
+      badge.textContent = label + ' ' + value;
+      return badge;
+    };
+    dossiers.slice(0, 6).forEach(function (rawDossier) {
+      var dossier = window.asVI(rawDossier);
+      var related = window.asVI(dossier.related);
+      var card = document.createElement('article');
+      card.className = 'modern-card vuln-dossier-card';
+      var head = document.createElement('div');
+      head.className = 'vuln-dossier-head';
+      var titleWrap = document.createElement('div');
+      var title = document.createElement('h4');
+      title.className = 'vuln-dossier-title';
+      title.textContent = String(dossier.function || '?');
+      var subtitle = document.createElement('p');
+      subtitle.className = 'vuln-dossier-subtitle';
+      var findingCount = Number(dossier.finding_count || 0);
+      var callsiteCount = Array.isArray(related.callsites) ? related.callsites.length : 0;
+      var relatedListCounts = Object.entries(related)
+        .filter(function (e) { return ['apis', 'families', 'callsites', 'patch_targets'].indexOf(e[0]) === -1 && Array.isArray(e[1]); })
+        .map(function (e) { return [e[0], e[1].length]; });
+      var relatedTotal = relatedListCounts.reduce(function (total, e) { return total + e[1]; }, 0);
+      subtitle.textContent = findingCount + ' signal' + (findingCount > 1 ? 'aux' : '') + ' · ' + callsiteCount + ' callsite' + (callsiteCount > 1 ? 's' : '') + ' · ' + relatedTotal + ' corrélation' + (relatedTotal > 1 ? 's' : '');
+      titleWrap.append(title, subtitle);
+      var badges = document.createElement('div');
+      badges.className = 'vuln-dossier-badges';
+      var exploitability = window.asVI(dossier.exploitability);
+      var exploitScore = Number(exploitability.score || 0);
+      var exploitLevel = String(exploitability.level || 'LOW');
+      var dossierKind = String(dossier.kind || '');
+      var dossierConfidence = String(dossier.confidence || '');
+      var dossierSeverity = String(dossier.severity || '');
+      badges.append(
+        makeBadge('Preuve', kindLabel[dossierKind] || dossierKind || 'Signal'),
+        makeBadge('Confiance', dossierConfidence || '?', exploitClass(dossierConfidence), confidenceColor[dossierConfidence] || ''),
+        makeBadge('Exploit', exploitScore ? (exploitLevel + ' ' + exploitScore) : exploitLevel, exploitClass(exploitLevel)),
+        makeBadge('Sévérité', dossierSeverity || '?', severityClass(dossierSeverity), severityColor[dossierSeverity] || '')
+      );
+      relatedListCounts.slice(0, 3).forEach(function (e) {
+        if (e[1]) badges.append(makeBadge(String(e[0]), String(e[1])));
+      });
+      head.append(titleWrap, badges);
+      card.appendChild(head);
+      var relatedApis = Array.isArray(related.apis) ? related.apis.filter(Boolean) : [];
+      if (relatedApis.length) {
+        var apiSection = document.createElement('section');
+        apiSection.className = 'vuln-dossier-section';
+        var apiLabel = document.createElement('div');
+        apiLabel.className = 'vuln-dossier-label';
+        apiLabel.textContent = 'APIs concernées';
+        var apiRow = document.createElement('div');
+        apiRow.className = 'vuln-dossier-pill-row';
+        relatedApis.slice(0, 6).forEach(function (api) {
+          var pill = document.createElement('span');
+          pill.className = 'vuln-dossier-pill';
+          pill.textContent = String(api);
+          apiRow.appendChild(pill);
+        });
+        apiSection.append(apiLabel, apiRow);
+        card.appendChild(apiSection);
+      }
+      var relatedFamilies = Array.isArray(related.families) ? related.families.filter(Boolean) : [];
+      if (relatedFamilies.length) {
+        var famSection = document.createElement('section');
+        famSection.className = 'vuln-dossier-section';
+        var famLabel = document.createElement('div');
+        famLabel.className = 'vuln-dossier-label';
+        famLabel.textContent = 'Familles de techniques';
+        var famRow = document.createElement('div');
+        famRow.className = 'vuln-dossier-pill-row';
+        relatedFamilies.slice(0, 6).forEach(function (family) {
+          var pill = document.createElement('span');
+          pill.className = 'vuln-dossier-pill';
+          pill.textContent = String(family);
+          famRow.appendChild(pill);
+        });
+        famSection.append(famLabel, famRow);
+        card.appendChild(famSection);
+      }
+      var drivers = Array.isArray(exploitability.drivers) ? exploitability.drivers.filter(Boolean) : [];
+      if (drivers.length) {
+        var drvSection = document.createElement('section');
+        drvSection.className = 'vuln-dossier-section';
+        var drvLabel = document.createElement('div');
+        drvLabel.className = 'vuln-dossier-label';
+        drvLabel.textContent = 'Facteurs';
+        var drvList = document.createElement('ul');
+        drvList.className = 'vuln-dossier-list';
+        drivers.slice(0, 4).forEach(function (driver) {
+          var item = document.createElement('li');
+          item.textContent = String(driver);
+          drvList.appendChild(item);
+        });
+        drvSection.append(drvLabel, drvList);
+        card.appendChild(drvSection);
+      }
+      var nextSteps = Array.isArray(dossier.next_steps) ? dossier.next_steps.filter(Boolean) : [];
+      if (nextSteps.length) {
+        var stepSection = document.createElement('section');
+        stepSection.className = 'vuln-dossier-section';
+        var stepLabel = document.createElement('div');
+        stepLabel.className = 'vuln-dossier-label';
+        stepLabel.textContent = 'Étapes suggérées';
+        var stepList = document.createElement('ul');
+        stepList.className = 'vuln-dossier-list';
+        nextSteps.slice(0, 4).forEach(function (step) {
+          var item = document.createElement('li');
+          item.textContent = String(step);
+          stepList.appendChild(item);
+        });
+        stepSection.append(stepLabel, stepList);
+        card.appendChild(stepSection);
+      }
+      var evidence = Array.isArray(dossier.evidence) ? dossier.evidence.filter(function (item) { return item && typeof item === 'object' && item.summary; }) : [];
+      if (evidence.length) {
+        var evSection = document.createElement('section');
+        evSection.className = 'vuln-dossier-section';
+        var evLabel = document.createElement('div');
+        evLabel.className = 'vuln-dossier-label';
+        evLabel.textContent = 'Preuves';
+        var evList = document.createElement('ul');
+        evList.className = 'vuln-dossier-list';
+        evidence.slice(0, 4).forEach(function (entry) {
+          var e = window.asVI(entry);
+          var item = document.createElement('li');
+          item.textContent = String(e.summary);
+          evList.appendChild(item);
+        });
+        evSection.append(evLabel, evList);
+        card.appendChild(evSection);
+      }
+      Object.entries(related).forEach(function (kv) {
+        var key = kv[0]; var value = kv[1];
+        if (['apis', 'families', 'callsites', 'patch_targets'].indexOf(key) !== -1 || !Array.isArray(value)) return;
+        var signals = value.filter(function (item) { return item && typeof item === 'object'; });
+        if (!signals.length) return;
+        var sigSection = document.createElement('section');
+        sigSection.className = 'vuln-dossier-section';
+        var sigLabel = document.createElement('div');
+        sigLabel.className = 'vuln-dossier-label';
+        sigLabel.textContent = 'Corrélation ' + String(key);
+        var sigList = document.createElement('ul');
+        sigList.className = 'vuln-dossier-list';
+        signals.slice(0, 3).forEach(function (rawSignal) {
+          var signal = window.asVI(rawSignal);
+          var item = document.createElement('li');
+          var label = signal.category || signal.technique || signal.kind || signal.name || 'SIGNAL';
+          var detail = signal.description || signal.summary || window.formatPremiumEvidence(signal.evidence, '');
+          item.textContent = label + (detail ? (': ' + detail) : '');
+          sigList.appendChild(item);
+        });
+        sigSection.append(sigLabel, sigList);
+        card.appendChild(sigSection);
+      });
+      var callsites = Array.isArray(related.callsites) ? related.callsites.filter(function (item) {
+        var i = window.asVI(item);
+        return i.addr;
+      }) : [];
+      if (callsites.length) {
+        var csSection = document.createElement('section');
+        csSection.className = 'vuln-dossier-section';
+        var csLabel = document.createElement('div');
+        csLabel.className = 'vuln-dossier-label';
+        csLabel.textContent = 'Navigation rapide';
+        var csLinks = document.createElement('div');
+        csLinks.className = 'vuln-dossier-links';
+        callsites.slice(0, 4).forEach(function (rawCallsite) {
+          var callsite = window.asVI(rawCallsite);
+          var wrapper = document.createElement('span');
+          var code = document.createElement('code');
+          code.className = 'addr-link';
+          var csAddr = String(callsite.addr || '');
+          code.dataset.addr = csAddr;
+          code.textContent = csAddr;
+          wrapper.appendChild(code);
+          if (callsite.line !== undefined && callsite.line !== null) wrapper.append(':' + callsite.line);
+          csLinks.appendChild(wrapper);
+        });
+        csSection.append(csLabel, csLinks);
+        card.appendChild(csSection);
+      }
+      var patchTargets = Array.isArray(related.patch_targets) ? related.patch_targets.filter(function (item) {
+        var i = window.asVI(item);
+        return i.addr;
+      }) : [];
+      if (patchTargets.length) {
+        var ptSection = document.createElement('section');
+        ptSection.className = 'vuln-dossier-section';
+        var ptLabel = document.createElement('div');
+        ptLabel.className = 'vuln-dossier-label';
+        ptLabel.textContent = 'Offsets patchables';
+        var ptLinks = document.createElement('div');
+        ptLinks.className = 'vuln-dossier-links';
+        patchTargets.slice(0, 4).forEach(function (rawTarget) {
+          var target = window.asVI(rawTarget);
+          var wrapper = document.createElement('span');
+          var node = window.buildNavigableAddrNode(String(target.addr || ''));
+          wrapper.appendChild(node);
+          ptLinks.appendChild(wrapper);
+        });
+        ptSection.append(ptLabel, ptLinks);
+        card.appendChild(ptSection);
+      }
+      if (dossier.needs_review) {
+        var review = document.createElement('p');
+        review.className = 'hint hint-warn';
+        review.textContent = 'Revue manuelle recommandée pour confirmer le contexte réel.';
+        card.appendChild(review);
+      }
+      grid.appendChild(card);
+    });
+    return grid;
+  };
+  window.appendProofDossierSection = function (nodes, dossiers, opts) {
+    opts = opts || {};
+    var hintText = opts.hintText || 'Dossiers de preuve par fonction interne. Les adresses ci-dessous sont cliquables pour naviguer dans le désassemblage.';
+    var kindLabel = opts.kindLabel || {};
+    var confidenceColor = opts.confidenceColor || { HIGH: '#c72e2e', MEDIUM: '#c47a00', LOW: '#0e639c' };
+    var severityColor = opts.severityColor || { CRITICAL: '#c72e2e', HIGH: '#c47a00', MEDIUM: '#b5a000', LOW: '#0e639c' };
+    if (!Array.isArray(dossiers) || !dossiers.length) return;
+    var hint = document.createElement('p');
+    hint.className = 'hint';
+    hint.textContent = hintText;
+    nodes.push(hint);
+    var cards = window.renderVulnProofDossiers(dossiers, { kindLabel: kindLabel, confidenceColor: confidenceColor, severityColor: severityColor });
+    if (cards) nodes.push(cards);
+  };
+  window.getDisabledFamilies = function () {
+    var raw = window._loadStorage().disabledFamilies;
+    return new Set(Array.isArray(raw) ? raw : []);
+  };
+  window.parseNumericAddress = function (value) {
+    if (value == null) return null;
+    if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+    var text = String(value).trim().toLowerCase();
+    if (!text) return null;
+    var parsed = text.startsWith('0x') ? parseInt(text, 16) : parseInt(text, 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  window.normalizeHexLiteral = function (value) {
+    var numeric = window.parseNumericAddress(value);
+    if (!Number.isFinite(numeric)) return '';
+    return '0x' + numeric.toString(16);
+  };
+  window.setStaticLoading = function (containerId, msg) {
+    var el = document.getElementById(containerId);
+    if (!el) return;
+    el.replaceChildren();
+    if (msg) {
+      var p = document.createElement('p');
+      p.className = 'loading';
+      p.textContent = msg;
+      el.appendChild(p);
+    }
+  };
+  // Cross-panel navigation (jump to disasm/decompile/functions) requires switching
+  // the HOST's own panels — not reachable from an isolated iframe. No-op gracefully
+  // instead of throwing so the rest of the plugin's rendering still completes.
+  window.showPanel = function () {};
+  window.showGroup = function () {};
+  window.isStaticTabAvailable = function () { return false; };
+  window.jumpToAddrInContextTab = function () {};
+  window.setActiveAddressContext = function () {};
+  window.ensureDecompileSelectionSourcesLoaded = function () {};
+  window.syncFunctionsSelectionFromContext = function () {};
+  // Function-review metadata (priority/notes per function address).
+  window.findAnnotationForAddress = function () { return null; };
+  window.isAnnotationEntryEmpty = function (entry) {
+    return !entry || (!entry.comment && !entry.name && !entry.reviewStatus && !entry.reviewNotes);
+  };
+  window.getFunctionReviewLabel = function (status) {
+    if (status === 'important') return 'Prioritaire';
+    if (status === 'todo') return 'À revoir';
+    if (status === 'in_progress') return 'En cours';
+    if (status === 'reviewed') return 'Reviewée';
+    return 'Sans revue';
+  };
+  window.getFunctionReviewNotes = function (entry) {
+    return String((entry && (entry.reviewNotes || entry.review_notes)) || '').trim();
+  };
+  window.buildFunctionReviewHint = function (status, notes, updated, fallbackHint) {
+    fallbackHint = fallbackHint || '';
+    var dateText = updated ? new Date(updated).toLocaleString('fr-FR') : '';
+    var noteText = String(notes || '').trim();
+    if (noteText && dateText) return noteText + ' (' + dateText + ')';
+    if (noteText) return noteText;
+    if (status && status !== 'unreviewed' && dateText) {
+      return 'Statut manuel ' + window.getFunctionReviewLabel(status).toLowerCase() + ' enregistré le ' + dateText;
+    }
+    return String(fallbackHint).trim();
+  };
+  window.persistFunctionReview = function (entry, reviewStatus, reviewNotes) {
+    reviewNotes = reviewNotes || '';
+    var addr = window.normalizeHexAddress((entry && entry.addr) || '');
+    var binaryPath = window.getStaticBinaryPath();
+    if (!addr || !binaryPath) return;
+    window.vscode.postMessage({
+      type: 'hubSaveFunctionReview',
+      binaryPath: binaryPath,
+      addr: addr,
+      reviewStatus: String(reviewStatus || '').trim(),
+      reviewNotes: String(reviewNotes || '').trim(),
+    });
+  };
 })();
 </script>`;
 
@@ -233,6 +873,7 @@ function _buildPluginSrcdoc(html, inlineJs, pluginCss, hostCss = '') {
     safePlugin ? `<style>${safePlugin}</style>` : '',
     PLUGIN_BRIDGE_PREAMBLE,
     '</head><body>',
+    '<div id="__pof_diag" style="position:fixed;top:0;left:0;right:0;z-index:9999;background:#c00;color:#fff;font-size:11px;padding:2px 6px;font-family:monospace">iframe loaded — waiting for showTab…</div>',
     String(html || ''),
     safeJs ? `<script>${safeJs}</script>` : '',
     '</body></html>',
@@ -323,7 +964,7 @@ function loadPluginWebviews(root, options: { storageDir?: string; globalDir?: st
 
   const framesHtml = frames.map((f) => {
     const escapedSrcdoc = _escapeHtmlAttr(f.srcdoc);
-    return `<iframe id="${f.frameId}" data-plugin-id="${_escapeHtmlAttr(f.pluginId)}" data-plugin-slug="${_escapeHtmlAttr(f.pluginSlug)}" class="plugin-iframe static-panel" sandbox="allow-scripts" srcdoc="${escapedSrcdoc}"></iframe>`;
+    return `<iframe id="${f.frameId}" data-plugin-id="${_escapeHtmlAttr(f.pluginId)}" data-plugin-slug="${_escapeHtmlAttr(f.pluginSlug)}" class="plugin-iframe static-panel" sandbox="allow-scripts allow-same-origin" srcdoc="${escapedSrcdoc}"></iframe>`;
   }).join('\n');
 
   return { groupStyles: groupStyles.trim(), frames, framesHtml: framesHtml.trim() };

@@ -60,7 +60,7 @@ describe('loadPluginWebviews', () => {
     expect(result.frames).to.have.length(1);
     expect(result.frames[0].pluginSlug).to.equal('my-plugin');
     expect(result.framesHtml).to.include('id="pof-plugin-frame-my-plugin"');
-    expect(result.framesHtml).to.include('sandbox="allow-scripts"');
+    expect(result.framesHtml).to.include('sandbox="allow-scripts allow-same-origin"');
     expect(result.framesHtml).to.include('__pof_plugin');   // bridge preamble present
     expect(result.framesHtml).to.include('myPanel');         // plugin HTML present
     expect(result.framesHtml).to.include('var x = 1');       // plugin script present

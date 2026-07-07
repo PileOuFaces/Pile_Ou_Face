@@ -191,15 +191,6 @@ let ollamaUiState = {
 };
 let currentBinaryMeta = null;
 let pendingStaticQuickAction = '';
-let detectionUiState = {
-  capaCapabilities: [],
-  capaError: '',
-  yaraMatches: [],
-  yaraError: '',
-  yaraMode: String(_loadStorage().yaraRulesMode || 'library'),
-  activeYaraCount: 0,
-  rulesError: '',
-};
 let functionsUiState = {
   sort: String(_loadStorage().functionsSort || 'priority_desc'),
   quickFilter: String(_loadStorage().functionsQuickFilter || 'all'),
@@ -580,37 +571,6 @@ window.PoF = {
 
   // Binary change hook — fn(binaryPath: string) is called when the user opens a new binary.
   registerTabLoader: (tabId, fn) => registerTabLoader(tabId, fn),
-
-  // Detection state writers (host keeps detectionUiState private; plugins call these).
-  setYaraResults: (matches, error) => {
-    detectionUiState.yaraMatches = Array.isArray(matches) ? matches : [];
-    detectionUiState.yaraError = String(error || '');
-    if (typeof renderYaraResults === 'function') renderYaraResults();
-  },
-  setCapaResults: (capabilities, error) => {
-    detectionUiState.capaCapabilities = Array.isArray(capabilities) ? capabilities : [];
-    detectionUiState.capaError = String(error || '');
-    if (typeof renderCapaResults === 'function') renderCapaResults();
-  },
-  setDetectionMeta: (data) => {
-    if (!data) return;
-    if ('rulesError' in data) detectionUiState.rulesError = String(data.rulesError || '');
-    if ('activeYaraCount' in data) detectionUiState.activeYaraCount = Number(data.activeYaraCount || 0);
-    if ('yaraMode' in data) detectionUiState.yaraMode = String(data.yaraMode || 'library');
-    if ('capaError' in data) detectionUiState.capaError = String(data.capaError || '');
-    if ('yaraError' in data) detectionUiState.yaraError = String(data.yaraError || '');
-  },
-
-  // Read a snapshot of detection state (for exports, verdict computation).
-  getDetectionState: () => ({ ...detectionUiState }),
-
-  // Reset detection results (called on binary change).
-  clearDetectionState: () => {
-    detectionUiState.capaCapabilities = [];
-    detectionUiState.capaError = '';
-    detectionUiState.yaraMatches = [];
-    detectionUiState.yaraError = '';
-  },
 
   // UI helpers (defined in search.js, resolved lazily at call-time).
   setLoading: (containerId, msg) => {

@@ -496,6 +496,7 @@ def invoke_plugin_command(
             {
                 "ok": True,
                 "command": command_name,
+                "plugin_id": source_plugin_id,
                 "result": result,
             },
             context,
