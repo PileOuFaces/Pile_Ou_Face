@@ -139,7 +139,9 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
   }
   window.PoF = {
     version: null,
-    getBinaryPath:       function () { return _call('getBinaryPath', []); },
+    // Synchronous: mirrors the __binaryPath broadcast already cached locally,
+    // no round-trip needed (and plugin code written pre-iframe expects a string, not a Promise).
+    getBinaryPath:       function () { return window._pofCurrentBinaryPath || ''; },
     getTabCache:         function (k) { return _call('getTabCache', [k]); },
     setTabCache:         function (k, v) { return _call('setTabCache', [k, v]); },
     registerTabLoader:   function (tabId, fn) {
@@ -152,6 +154,16 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
       });
     },
     saveStorage:         function (d) { return _call('saveStorage', [d]); },
+    // Local (in-iframe) loading indicator — the plugin's own DOM, no host round-trip needed.
+    setLoading:          function (containerId, message) {
+      var el = document.getElementById(containerId);
+      if (!el) return;
+      el.replaceChildren();
+      var p = document.createElement('p');
+      p.className = 'loading-state';
+      p.textContent = message || 'Chargement…';
+      el.appendChild(p);
+    },
   };
   // Stubs for host-page globals called by legacy plugin code (before window.PoF migration)
   window._pofCurrentBinaryPath = '';

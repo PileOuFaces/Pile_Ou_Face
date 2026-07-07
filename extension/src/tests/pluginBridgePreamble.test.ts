@@ -358,13 +358,19 @@ describe('PLUGIN_BRIDGE_PREAMBLE', () => {
   });
 
   describe('window.PoF proxy calls', () => {
-    it('getBinaryPath sends a __pof_call and resolves once the host replies', async () => {
+    it('getBinaryPath is synchronous and reflects the last __binaryPath broadcast', () => {
       const { win } = makeBridgeWindow();
-      const promise = win.PoF.getBinaryPath();
-      const call = win.parent.postMessage.getCalls().find((c: any) => c.args[0].method === 'getBinaryPath');
-      expect(call).to.exist;
-      deliverHostMessage(win, { __pof_reply: true, __seq: call.args[0].__seq, result: '/tmp/x.bin' });
-      expect(await promise).to.equal('/tmp/x.bin');
+      expect(win.PoF.getBinaryPath()).to.equal('');
+      deliverHostMessage(win, { type: '__binaryPath', binaryPath: '/tmp/x.bin' });
+      expect(win.PoF.getBinaryPath()).to.equal('/tmp/x.bin');
+    });
+
+    it('setLoading replaces the target container with a loading message', () => {
+      const { win } = makeBridgeWindow('<div id="yaraContent">stale content</div>');
+      const container = win.document.getElementById('yaraContent');
+      win.PoF.setLoading('yaraContent', 'Scan en cours…');
+      expect(container.textContent).to.equal('Scan en cours…');
+      expect(container.querySelector('.loading-state')).to.exist;
     });
   });
 });
