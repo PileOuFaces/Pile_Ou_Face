@@ -617,12 +617,18 @@ def _script_timeout(seconds: float) -> Any:
 
 
 @contextlib.contextmanager
-def _patched_runtime(fake_pwn: ModuleType, source_file_name: str) -> Any:
+def _patched_runtime(
+    fake_pwn: ModuleType,
+    source_file_name: str,
+    *,
+    allowed_read_paths: frozenset[str] = frozenset(),
+) -> Any:
     patched: list[tuple[Any, str, Any]] = []
     saved_modules = {name: sys.modules.get(name) for name in ("pwn",)}
     saved_stdin = sys.stdin
     saved_argv = sys.argv[:]
     saved_cwd = os.getcwd()
+    real_open = builtins.open
 
     def patch_attr(target: Any, name: str, value: Any) -> None:
         previous = getattr(target, name)
@@ -632,8 +638,30 @@ def _patched_runtime(fake_pwn: ModuleType, source_file_name: str) -> Any:
     def blocked_process(*_args: Any, **_kwargs: Any) -> Any:
         raise RuntimeError("subprocess bloque pendant l'analyse pwntools")
 
+    def blocked_filesystem_mutation(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("ecriture disque bloquee pendant l'analyse pwntools")
+
     def blocked_socket(*_args: Any, **_kwargs: Any) -> Any:
         raise RuntimeError("reseau bloque pendant l'analyse pwntools")
+
+    def guarded_open(file: Any, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+        # A pwntools script only ever legitimately needs read access to the
+        # binary being analyzed (ELF(path) parsing) — nothing in this
+        # payload-preview tool needs arbitrary filesystem reads or any
+        # writes at all. Everything else is blocked outright.
+        if any(flag in mode for flag in ("w", "a", "+", "x")):
+            raise RuntimeError("ecriture disque bloquee pendant l'analyse pwntools")
+        try:
+            resolved = os.path.abspath(os.fspath(file))
+        except TypeError:
+            raise RuntimeError(
+                "lecture disque bloquee pendant l'analyse pwntools"
+            ) from None
+        if resolved not in allowed_read_paths:
+            raise RuntimeError(
+                f"lecture disque bloquee pendant l'analyse pwntools: {file!r}"
+            )
+        return real_open(file, mode, *args, **kwargs)
 
     sys.modules["pwn"] = fake_pwn
     sys.stdin = io.StringIO("")
@@ -646,6 +674,13 @@ def _patched_runtime(fake_pwn: ModuleType, source_file_name: str) -> Any:
     patch_attr(subprocess, "check_output", blocked_process)
     patch_attr(socket, "socket", blocked_socket)
     patch_attr(socket, "create_connection", blocked_socket)
+    patch_attr(builtins, "open", guarded_open)
+    patch_attr(os, "remove", blocked_filesystem_mutation)
+    patch_attr(os, "unlink", blocked_filesystem_mutation)
+    patch_attr(os, "rename", blocked_filesystem_mutation)
+    patch_attr(os, "mkdir", blocked_filesystem_mutation)
+    patch_attr(os, "makedirs", blocked_filesystem_mutation)
+    patch_attr(os, "rmdir", blocked_filesystem_mutation)
     patch_attr(
         os,
         "system",
@@ -715,10 +750,17 @@ def analyze_script_text(
 
     normalized_script_root = os.path.abspath(script_root) if script_root else ""
     normalized_script_args = [os.fspath(arg) for arg in (script_args or [])]
+    # A script only ever needs read access to paths the host already resolved
+    # and explicitly passed in (the target binary) — nothing else.
+    allowed_read_paths = frozenset(
+        os.path.abspath(arg) for arg in normalized_script_args if os.path.isfile(arg)
+    )
 
     @contextlib.contextmanager
     def _runtime_context() -> Any:
-        with _patched_runtime(fake_pwn, source_file_name):
+        with _patched_runtime(
+            fake_pwn, source_file_name, allowed_read_paths=allowed_read_paths
+        ):
             sys.argv = [source_file_name, *normalized_script_args]
             if normalized_script_root and os.path.isdir(normalized_script_root):
                 os.chdir(normalized_script_root)

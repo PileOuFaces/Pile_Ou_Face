@@ -237,6 +237,7 @@
         </div>
         <div class="form-field">
           <label>Script pwntools</label>
+          <p class="hint">Le script est analysé localement dans un bac à sable : réseau, sous-processus et accès disque (hors lecture du binaire analysé) sont bloqués — aucune exploitation réelle n'est lancée.</p>
           <textarea id="payloadPwntoolsScriptInput" class="input-inner dynamic-code-input" rows="10" spellcheck="false" placeholder='from pwn import *&#10;payload = b"A"*64 + p32(0xdeadbeef)&#10;io = process("./chall")&#10;io.sendline(payload)'></textarea>
         </div>
         <p id="payloadPwntoolsScriptWarning" class="hint"></p>
