@@ -66,7 +66,7 @@ describe('loadPluginWebviews', () => {
     expect(result.framesHtml).to.include('var x = 1');       // plugin script present
   });
 
-  it('scopes plugin inline styles to plugin panels', () => {
+  it('inlines plugin styles into the iframe srcdoc unscoped', () => {
     const dir = pluginDir('my-plugin');
     const webviewDir = path.join(dir, 'webview');
     fs.mkdirSync(webviewDir, { recursive: true });
@@ -86,12 +86,15 @@ describe('loadPluginWebviews', () => {
     `);
 
     const result = loadFromStorage();
-    // Scoped styles are inside the srcdoc, which is stored as an HTML attribute value.
-    // Double-quotes inside the attribute are escaped to &quot;, so the assertion must match that.
-    expect(result.framesHtml).to.include(':where([data-plugin-scope=&quot;my-plugin&quot;]');
+    // The iframe already isolates each plugin, so its CSS is inlined as-is (no
+    // per-plugin selector scoping — that would break the plugin's own :root{--var}
+    // declarations). Scoped styles are inside the srcdoc, stored as an HTML
+    // attribute value, so double-quotes inside are escaped to &quot;.
+    expect(result.framesHtml).to.include('.btn { color: red; }');
+    expect(result.framesHtml).to.include('#myPanel .item { color: blue; }');
     expect(result.framesHtml).to.include('@keyframes plugin-spin');
-    // The outer groupStyles should NOT contain per-plugin scoped CSS
-    expect(result.groupStyles).not.to.include(':where([data-plugin-scope');
+    // The outer groupStyles (host page, not the iframe) never receives plugin CSS.
+    expect(result.groupStyles).to.equal('');
   });
 
   it('inlines script content even when a resolver is provided', () => {
