@@ -465,6 +465,26 @@ class TestPluginRuntime(unittest.TestCase):
         )
         self.assertEqual(paths, [Path("/tmp/home/.pile-ou-face/plugins").resolve()])
 
+    def test_default_plugin_search_paths_workspace_discovery_can_be_disabled(self):
+        """MCP-style callers (cwd is an arbitrary checked-out repo, not
+        necessarily the user's own machine setup) must be able to opt out of
+        the cwd/.pile-ou-face/plugins fallback entirely, so a plugin planted
+        in a repo's .pile-ou-face/plugins/ isn't silently auto-attached just
+        because the MCP server happens to run with that cwd."""
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "project"
+            workspace_root = project / ".pile-ou-face"
+            workspace_root.mkdir(parents=True)
+            paths = default_plugin_search_paths(
+                cwd=project,
+                home=Path(tmp) / "home",
+                env={},
+                allow_workspace_discovery=False,
+            )
+        self.assertEqual(
+            paths, [(Path(tmp) / "home" / ".pile-ou-face" / "plugins").resolve()]
+        )
+
     def test_default_plugin_search_paths_env_overrides_legacy_fallbacks(self):
         paths = default_plugin_search_paths(
             cwd="/tmp/project",

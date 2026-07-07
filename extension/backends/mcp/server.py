@@ -715,7 +715,7 @@ def _python_exe() -> str:
     return venv_python if os.path.isfile(venv_python) else sys.executable
 
 
-def _plugin_runtime_records() -> list[Any]:
+def _plugin_runtime_records() -> dict[str, Any]:
     from backends.plugins.runtime import (
         HOST_API_VERSION as plugin_api_version,
     )
@@ -727,7 +727,9 @@ def _plugin_runtime_records() -> list[Any]:
     payload = collect_runtime_state(
         host_version=SERVER_VERSION,
         api_version=plugin_api_version,
-        search_paths=default_plugin_search_paths(cwd=ROOT),
+        search_paths=default_plugin_search_paths(
+            cwd=ROOT, allow_workspace_discovery=False
+        ),
         attach=True,
     )
     return payload
@@ -1312,7 +1314,7 @@ def _call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         else:
             raise ValueError("payload doit être un objet")
         records = build_plugin_registry(
-            default_plugin_search_paths(cwd=ROOT),
+            default_plugin_search_paths(cwd=ROOT, allow_workspace_discovery=False),
             host_version=SERVER_VERSION,
             api_version=plugin_api_version,
         )

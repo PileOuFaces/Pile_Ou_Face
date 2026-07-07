@@ -112,6 +112,7 @@ def default_plugin_search_paths(
     cwd: str | Path | None = None,
     home: str | Path | None = None,
     env: dict[str, str] | None = None,
+    allow_workspace_discovery: bool = True,
 ) -> list[Path]:
     env_map = env or os.environ
     extra = str(env_map.get(f"{_LICENSE_ENV_PREFIX}_PLUGIN_PATH", "") or "").strip()
@@ -126,8 +127,14 @@ def default_plugin_search_paths(
     cwd_path = Path(cwd or Path.cwd()).expanduser().resolve()
     home_path = Path(home or Path.home()).expanduser().resolve()
     if not paths:
+        # allow_workspace_discovery=False skips the cwd/.pile-ou-face/plugins
+        # fallback entirely — a caller that doesn't control what directory it
+        # runs in (e.g. an MCP server, whose cwd may be an arbitrary checked-
+        # out repo) must not silently auto-attach whatever plugins happen to
+        # sit in that repo's .pile-ou-face/plugins/. Only an explicit
+        # BINHOST_PLUGIN_PATH or the user's own home directory count then.
         workspace_root = cwd_path / ".pile-ou-face"
-        if workspace_root.is_dir():
+        if allow_workspace_discovery and workspace_root.is_dir():
             paths = [workspace_root / "plugins"]
         else:
             paths = [home_path / ".pile-ou-face" / "plugins"]

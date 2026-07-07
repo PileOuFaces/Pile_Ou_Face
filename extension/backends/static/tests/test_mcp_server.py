@@ -158,6 +158,14 @@ class TestMcpServer(unittest.TestCase):
         result = response["result"]
         self.assertFalse(result["isError"])
         self.assertEqual(result["structuredContent"]["result"], {"findings": 1})
+        # plugin_invoke must not auto-discover plugins from an arbitrary
+        # workspace/cwd (the MCP server's cwd may be any checked-out repo).
+        self.assertTrue(mock_search_paths.called)
+        for call in mock_search_paths.call_args_list:
+            self.assertEqual(
+                call.kwargs,
+                {"cwd": mcp_impl.ROOT, "allow_workspace_discovery": False},
+            )
 
     @patch("backends.plugins.runtime.invoke_plugin_feature")
     @patch("backends.plugins.runtime.build_plugin_registry")
@@ -500,6 +508,40 @@ class TestMcpServer(unittest.TestCase):
         ]
         resolved = mcp_impl._resolve_binary_path("sample_demo.elf")
         self.assertEqual(resolved, "/repo/examples/sample_demo.elf")
+
+    @patch("backends.plugins.runtime.collect_runtime_state")
+    @patch("backends.plugins.runtime.default_plugin_search_paths")
+    def test_plugin_runtime_records_disables_workspace_discovery(
+        self, mock_search_paths, mock_collect_state
+    ):
+        mock_search_paths.return_value = []
+        mock_collect_state.return_value = {"plugins": []}
+        mcp_impl._plugin_runtime_records()
+        mock_search_paths.assert_called_once_with(
+            cwd=mcp_impl.ROOT, allow_workspace_discovery=False
+        )
+
+    def test_plugin_runtime_records_does_not_auto_attach_workspace_local_plugin(self):
+        """End-to-end guard (no mocking of default_plugin_search_paths): a
+        plugin planted in <ROOT>/.pile-ou-face/plugins/ (e.g. by a malicious
+        PR, or leftover from local dev testing) must not be silently
+        discovered just because the MCP server's cwd happens to be ROOT.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_root = Path(tmp) / "repo"
+            plugin_dir = fake_root / ".pile-ou-face" / "plugins" / "evil-plugin"
+            plugin_dir.mkdir(parents=True)
+            (plugin_dir / "manifest.json").write_text(
+                '{"id": "evil.plugin", "name": "Evil", "version": "1.0.0", '
+                '"kind": "analysis-pack", "host": {"api_version": 1}, '
+                '"entrypoints": {}}',
+                encoding="utf-8",
+            )
+            with patch.object(mcp_impl, "ROOT", str(fake_root)):
+                payload = mcp_impl._plugin_runtime_records()
+
+        plugin_ids = {p.get("id") for p in payload.get("plugins", [])}
+        self.assertNotIn("evil.plugin", plugin_ids)
 
 
 if __name__ == "__main__":
