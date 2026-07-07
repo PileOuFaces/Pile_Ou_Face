@@ -166,6 +166,9 @@ class TestMcpServer(unittest.TestCase):
                 call.kwargs,
                 {"cwd": mcp_impl.ROOT, "allow_workspace_discovery": False},
             )
+        # plugin_invoke must require explicit user consent before executing
+        # a plugin's Python code.
+        self.assertEqual(mock_invoke.call_args.kwargs.get("require_consent"), True)
 
     @patch("backends.plugins.runtime.invoke_plugin_feature")
     @patch("backends.plugins.runtime.build_plugin_registry")
@@ -209,6 +212,9 @@ class TestMcpServer(unittest.TestCase):
         result = response["result"]
         self.assertFalse(result["isError"])
         self.assertEqual(result["structuredContent"]["result"], {"items": []})
+        self.assertEqual(
+            mock_invoke_feature.call_args.kwargs.get("require_consent"), True
+        )
 
     @patch("backends.mcp.server._dynamic_plugin_tool_routes")
     @patch("backends.plugins.runtime.invoke_plugin_feature")

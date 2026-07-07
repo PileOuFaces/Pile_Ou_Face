@@ -698,6 +698,21 @@ function staticHandlers(config) {
         });
       }
     },
+    hubGrantPluginConsent: async (message = {}) => {
+      const pluginId = String(message.pluginId || message.plugin_id || '').trim();
+      if (!pluginId) return;
+      try {
+        await runPluginRuntime(['consent-grant', pluginId]);
+      } catch (error) {
+        panel.webview.postMessage({
+          type: 'hubPluginState',
+          state: emptyPluginUiState(String(error?.message || error || 'runtime indisponible')),
+        });
+        return;
+      }
+      // Re-fetch full state so the freshly-approved plugin flips to "active".
+      await handlers.hubLoadPluginState();
+    },
     hubPluginInvoke: async (message = {}) => {
       const feature = String(message.feature || message.featureId || '').trim();
       const requestId = String(message.requestId || message.id || '');

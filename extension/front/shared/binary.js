@@ -247,7 +247,7 @@ function renderPluginManager(state = pluginUiState) {
       const licenseUnlocked = !plugin.licenseRequired || unlockedStatuses.has(String(plugin.licenseStatus || '').trim());
       const cardModifier = plugin.state === 'active'
         ? 'active'
-        : (!licenseUnlocked ? 'locked' : 'error');
+        : (plugin.state === 'pending_consent' ? 'locked' : (!licenseUnlocked ? 'locked' : 'error'));
       const licenseVariant = (!licenseUnlocked)
         ? 'locked'
         : (plugin.licenseRequired ? 'info' : 'active');
@@ -258,7 +258,9 @@ function renderPluginManager(state = pluginUiState) {
         : 'Cliquer pour désactiver ce plugin (masque les onglets et l\'analyse croisée)';
       const stateBadge = plugin.state === 'active' && plugin.id && !!plugin.family
         ? `<button class="plugin-badge plugin-badge--${isSoftDisabled ? 'disabled' : 'active'} plugin-state-toggle" data-plugin-family="${escapeHtml(plugin.family)}" title="${escapeHtml(toggleTitle)}">${isSoftDisabled ? 'inactif' : 'active'}</button>`
-        : _pluginBadge(plugin.state || 'unknown', stateVariant);
+        : (plugin.state === 'pending_consent'
+          ? _pluginBadge('en attente d’autorisation', 'warning')
+          : _pluginBadge(plugin.state || 'unknown', stateVariant));
       const badges = [
         stateBadge,
         _pluginBadge(plugin.licenseRequired ? 'licence' : 'gratuit', licenseVariant),
@@ -285,6 +287,7 @@ function renderPluginManager(state = pluginUiState) {
               ${plugin.licensePath ? `<div class="plugin-card-meta-row"><strong>Fichier licence</strong><code>${escapeHtml(plugin.licensePath)}</code></div>` : ''}
               ${plugin.rootPath ? `<div class="plugin-card-meta-row"><strong>Dossier</strong><code>${escapeHtml(plugin.rootPath)}</code></div>` : ''}
               ${plugin.licenseMode === 'pofplug' && !licenseUnlocked ? `<div class="plugin-card-meta-row"><button class="btn btn-primary btn-sm" onclick="if(typeof showPanel==='function')showPanel('options')">Se connecter →</button></div>` : ''}
+              ${plugin.state === 'pending_consent' ? `<div class="plugin-card-meta-row"><button class="btn btn-primary btn-sm plugin-consent-grant" data-plugin-id="${escapeHtml(plugin.id || '')}">Autoriser ce plugin</button></div>` : ''}
             </div>
           </div>
           ${hasFooter ? `
@@ -311,6 +314,15 @@ function renderPluginManager(state = pluginUiState) {
         tabDataCache.cross_analysis = null;
         renderPluginManager(state);
         showGroup(getActiveStaticGroup(), getActiveStaticTab());
+      });
+    });
+    listEl.querySelectorAll('.plugin-consent-grant').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const pluginId = btn.dataset.pluginId;
+        if (!pluginId) return;
+        btn.disabled = true;
+        btn.textContent = 'Autorisation…';
+        vscode.postMessage({ type: 'hubGrantPluginConsent', pluginId });
       });
     });
   }
