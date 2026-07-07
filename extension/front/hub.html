@@ -22,7 +22,7 @@
   <link rel="stylesheet" href="{{optionsCssUri}}">
   <link rel="stylesheet" href="{{graphicalStackHubCssUri}}">
   <link rel="stylesheet" href="{{dynamicRuntimeLayoutCssUri}}">
-  <style>{{pluginStyles}}</style>
+  <style>iframe.plugin-iframe{display:none;border:none;width:100%;height:100%}iframe.plugin-iframe.active{display:flex}{{pluginGroupStyles}}</style>
 </head>
 <body>
   <div class="hub">
@@ -382,8 +382,8 @@
   <script src="{{sharedSettingsUri}}"></script>
   <script src="{{sharedAnnotationsUri}}"></script>
   <script src="{{sharedAccountUri}}"></script>
+  <script src="{{pluginIframeRouterUri}}"></script>
   <script src="{{scriptUri}}"></script>
-  {{pluginScripts}}
   <script src="{{dynamicRuntimeWorkspaceLayoutControllerUri}}"></script>
   <script type="module" src="{{runtimeModuleUri}}"></script>
 </body>

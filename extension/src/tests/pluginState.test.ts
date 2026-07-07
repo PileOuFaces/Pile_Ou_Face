@@ -175,6 +175,38 @@ describe("plugin state helpers", () => {
     expect(state.plugins[0]?.commands).to.deep.equal(["demo.d.run"]);
   });
 
+  it("includes pluginSlug in tabRegistrations so the iframe router can map tabId to its frame", () => {
+    const state = summarizePluginRuntimeState({
+      attached: { commands: [], command_sources: {} },
+      summary: { active: 1 },
+      plugins: [
+        {
+          id: "pof.malware-triage-pro",
+          state: "active",
+          manifest: {
+            name: "Malware Triage Pro",
+            version: "1.0.0",
+            kind: "analysis-pack",
+            ui: {
+              family: "malware",
+              tabs: [
+                { tabId: "detection", label: "Detection", group: "malware" },
+                { tabId: "packer",    label: "Packer",    group: "malware" },
+              ],
+            },
+            capabilities: { analysis: ["malware.detect"] },
+          },
+        },
+      ],
+    });
+
+    expect(state.tabRegistrations).to.have.length(2);
+    state.tabRegistrations.forEach((reg) => {
+      expect(reg.pluginSlug).to.equal("malware-triage-pro");
+    });
+    expect(state.tabRegistrations.map((r) => r.tabId)).to.deep.equal(["detection", "packer"]);
+  });
+
   it("returns a safe empty state when plugin loading fails", () => {
     const state = emptyPluginUiState("runtime unavailable");
 

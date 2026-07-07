@@ -3,6 +3,19 @@ function initMessageHandler() {
 window.addEventListener('message', (event) => {
   const msg = event.data;
   if (!msg?.type) return;
+  // Forward plugin results to the plugin's iframe (no return — other handlers also need this)
+  if (msg.type === 'hubPluginResult' && window.PluginIframeRouter) {
+    window.PluginIframeRouter.dispatch(msg.plugin_id, msg);
+  }
+  // Generic host replies (e.g. file picker, rules manager) that plugin iframes may also be waiting on
+  const BROADCAST_TO_PLUGINS = new Set([
+    'hubPickedFile', 'hubRulesList', 'hubRulesPath', 'hubRuleContent',
+    'hubRuleToggled', 'hubRuleAdded', 'hubRuleUpdated', 'hubRuleDeleted',
+    'hubPluginState',
+  ]);
+  if (BROADCAST_TO_PLUGINS.has(msg.type) && window.PluginIframeRouter) {
+    window.PluginIframeRouter.broadcast(msg);
+  }
   if (msg.type === 'hubPrefillAiPrompt') {
     prefillOllamaPrompt(String(msg.prompt || ''));
     return;
@@ -147,53 +160,6 @@ window.addEventListener('message', (event) => {
         duration: 5200,
       });
     }
-    return;
-  }
-  if (msg.type === 'hubRulesPath' && msg.rulesPath) {
-    const el = document.getElementById('yaraRulesPath');
-    if (el) {
-      el.value = msg.rulesPath;
-      _saveStorage({ yaraRulesPath: msg.rulesPath });
-      setSelectedYaraMode('manual');
-    }
-    applyYaraModeUi();
-    return;
-  }
-  if (msg.type === 'hubRuleContent') {
-    if (msg.error || !msg.rule) {
-      _showToast({
-        title: 'Ouverture de la règle impossible',
-        sub: String(msg.error || 'Règle introuvable'),
-        icon: '⚠️',
-        variant: 'error',
-        duration: 4200,
-      });
-      return;
-    }
-    const rule = msg.rule;
-    // Viewer inline (bouton ▤)
-    const viewer = document.getElementById('rulesViewer');
-    const viewerContent = document.getElementById('rulesViewerContent');
-    if (msg._target === 'viewer' && viewer && viewerContent) {
-      viewerContent.value = String(rule.content || '');
-      viewer.dataset.ruleId = String(rule.id || '');
-      viewer.dataset.ruleName = String(rule.name || '');
-      viewer.style.display = 'block';
-      const viewerEditBtn = document.getElementById('btnRulesViewerEdit');
-      if (viewerEditBtn) viewerEditBtn.dataset.ruleId = String(rule.id || '');
-      return;
-    }
-    // Formulaire d'édition (bouton ✎)
-    document.getElementById('rulesAddForm').style.display = 'none';
-    if (viewer) viewer.style.display = 'none';
-    document.getElementById('rulesEditId').value = String(rule.id || '');
-    document.getElementById('rulesAddType').value = String(rule.type || 'yara');
-    document.getElementById('rulesAddScope').value = String(rule.scope || 'global');
-    document.getElementById('rulesAddFormTitle').textContent = String(rule.name || rule.type || 'règle');
-    document.getElementById('rulesAddName').value = String(rule.name || '');
-    document.getElementById('rulesAddContent').value = String(rule.content || '');
-    document.getElementById('rulesAddForm').style.display = '';
-    document.getElementById('rulesAddContent')?.focus();
     return;
   }
   if (msg.type === 'hubRuleImported') {
@@ -1072,7 +1038,7 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubXrefs') {
-    if (msg.requestKey && _pendingXrefRequests.has(msg.requestKey)) {
+    if (msg.requestKey && typeof _pendingXrefRequests !== 'undefined' && _pendingXrefRequests.has(msg.requestKey)) {
       const pending = _pendingXrefRequests.get(msg.requestKey);
       _pendingXrefRequests.delete(msg.requestKey);
       clearTimeout(pending.timeoutId);

@@ -112,6 +112,7 @@ describe("staticHandlers plugin bridge", () => {
       type: "hubPluginResult",
       requestId: "req-1",
       feature: "demo_feature",
+      plugin_id: "",
       result: { ok: true, value: 42 },
     });
   });
@@ -128,6 +129,7 @@ describe("staticHandlers plugin bridge", () => {
       type: "hubPluginResult",
       requestId: "req-2",
       feature: "",
+      plugin_id: "",
       result: {
         ok: false,
         error: "feature manquante",
