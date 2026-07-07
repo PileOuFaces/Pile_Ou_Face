@@ -154,6 +154,15 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
       });
     },
     saveStorage:         function (d) { return _call('saveStorage', [d]); },
+    // Navigation actions that only make sense in the host's own DOM/scope —
+    // see CONTRACTS_SHARED.md for the action list. Fire-and-forget (no reply expected).
+    navigateTo:          function (action, params) { return _call('navigateTo', [action, params || {}]); },
+    // Group/family display metadata for every registered tab, kept in sync
+    // locally from the hubPluginState broadcast — no round-trip needed.
+    getGroupLabels:      function () { return Object.assign({}, window.GROUP_LABELS); },
+    getTabFamilies:      function () { return Object.assign({}, window.PREMIUM_TAB_FAMILY); },
+    // User's disabled-family preference, persisted locally via saveStorage.
+    getDisabledFamilies: function () { return window.getDisabledFamilies(); },
     // Local (in-iframe) loading indicator — the plugin's own DOM, no host round-trip needed.
     setLoading:          function (containerId, message) {
       var el = document.getElementById(containerId);
@@ -384,9 +393,21 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
       button.textContent = originalLabel;
     });
   };
-  // Jumping to strings/xrefs panels requires the HOST's own DOM — no-op gracefully.
-  window.openVulnDataXrefs = function () {};
-  window.openVulnStrings = function () {};
+  // Jumping to strings/xrefs panels lives in the host's own DOM — delegate via PoF.navigateTo.
+  window.openVulnDataXrefs = function (addr) {
+    var binaryPath = window.PoF.getBinaryPath();
+    var normalized = window.normalizeHexAddress(String(addr || ''));
+    if (!binaryPath || !normalized) return;
+    var span = window.getKnownSpanLengthForAddress ? window.getKnownSpanLengthForAddress(normalized) : 1;
+    window.PoF.navigateTo('openXrefs', { addr: normalized, spanLength: span, mode: 'to' });
+  };
+  window.openVulnStrings = function (addr) {
+    var binaryPath = window.PoF.getBinaryPath();
+    var normalized = window.normalizeHexAddress(String(addr || ''));
+    if (!binaryPath || !normalized) return;
+    var span = window.getKnownSpanLengthForAddress ? window.getKnownSpanLengthForAddress(normalized) : 1;
+    window.PoF.navigateTo('openStringAt', { addr: normalized, spanLength: span });
+  };
 
   // ── Shared plugin panel rendering helpers (mirrors front/static/search.js) ──
   window.normalizePluginPanelPayload = function (raw, arrayKeys) {
@@ -739,13 +760,10 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
   // Cross-panel navigation (jump to disasm/decompile/functions) requires switching
   // the HOST's own panels — not reachable from an isolated iframe. No-op gracefully
   // instead of throwing so the rest of the plugin's rendering still completes.
-  window.showPanel = function () {};
-  window.showGroup = function () {};
-  window.isStaticTabAvailable = function () { return false; };
-  window.jumpToAddrInContextTab = function () {};
-  window.setActiveAddressContext = function () {};
-  window.ensureDecompileSelectionSourcesLoaded = function () {};
-  window.syncFunctionsSelectionFromContext = function () {};
+  // Availability can't be resolved locally (depends on host-side binary metadata);
+  // default to permissive so buttons aren't permanently disabled — a downstream
+  // error message on an unsupported combo beats blocking the feature entirely.
+  window.isStaticTabAvailable = function () { return true; };
   // Function-review metadata (priority/notes per function address).
   window.findAnnotationForAddress = function () { return null; };
   window.isAnnotationEntryEmpty = function (entry) {
