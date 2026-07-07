@@ -126,7 +126,6 @@
         // callTabLoader(tabId, bp) from payload.js still reaches the plugin iframe.
         if (method === 'registerTabLoader') {
           const [tabId] = args;
-          console.log('[PoF-router] registerTabLoader call for tabId:', tabId, 'sourceFrame found:', !!sourceFrame, 'pof.registerTabLoader is function:', pof && typeof pof.registerTabLoader === 'function');
           if (!_tabLoaders.has(tabId)) _tabLoaders.set(tabId, new Set());
           if (sourceFrame) {
             const slug = sourceFrame.dataset.pluginSlug;

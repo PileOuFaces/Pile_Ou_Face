@@ -124,15 +124,13 @@ function _getPluginSearchDirs(storageDir, _globalDir) {
 
 const PLUGIN_BRIDGE_PREAMBLE = `<script>
 (function () {
-  console.log('[PoF-iframe] bridge script starting…');
   window.onerror = function (message, source, lineno, colno, error) {
-    console.error('[PoF-iframe] uncaught error:', message, source, lineno, colno, error && error.stack);
+    console.error('[PoF-plugin] uncaught error:', message, source, lineno, colno, error && error.stack);
   };
   var _pending = {};
   var _seq = 0;
   window.vscode = {
     postMessage: function (msg) {
-      console.log('[PoF-iframe] vscode.postMessage ->', msg);
       try { window.parent.postMessage({ __pof_plugin: true, payload: msg }, '*'); }
       catch (_) {
         try { window.parent.postMessage({ __pof_plugin: true, payload: JSON.parse(JSON.stringify(msg)) }, '*'); }
@@ -140,29 +138,12 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
       }
     }
   };
-  var _showTabReceived = false;
   function _activatePanel(tabId) {
-    _showTabReceived = true;
     var panelId = 'static' + String(tabId || '').split('_').map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1); }).join('');
-    console.log('[PoF-iframe] showTab received:', tabId, '-> panelId:', panelId, 'found:', !!document.getElementById(panelId));
     document.querySelectorAll('.static-panel').forEach(function (p) { p.classList.remove('active'); });
     var panel = document.getElementById(panelId);
-    if (panel) {
-      panel.classList.add('active');
-      var diag = document.getElementById('__pof_diag');
-      if (diag) diag.style.display = 'none';
-    }
+    if (panel) panel.classList.add('active');
   }
-  // Fallback: if showTab never arrives (postMessage blocked), auto-show first panel
-  setTimeout(function () {
-    if (_showTabReceived) return;
-    var first = document.querySelector('.static-panel');
-    if (first) {
-      first.classList.add('active');
-      var diag = document.getElementById('__pof_diag');
-      if (diag) diag.textContent = 'postMessage blocked — auto-showed: ' + (first.id || '?');
-    }
-  }, 600);
   window.addEventListener('message', function (e) {
     if (!e.data || !e.data.__pof_host) return;
     var msg = e.data.payload;
@@ -188,12 +169,10 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
     // Re-dispatch the unwrapped payload so the plugin's own message listeners
     // (written against the original, non-iframe contract) keep working unchanged.
     if (msg && !msg.__pof_reply) {
-      console.log('[PoF-iframe] dispatching unwrapped message to plugin listeners:', msg);
       window.dispatchEvent(new MessageEvent('message', { data: msg }));
     }
   });
   function _call(method, args) {
-    console.log('[PoF-iframe] PoF call ->', method, args);
     return new Promise(function (resolve) {
       var seq = ++_seq;
       _pending[seq] = resolve;
@@ -220,22 +199,11 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
       _call('registerTabLoader', [tabId]);
       window.addEventListener('message', function (e) {
         if (e.data && e.data.__pof_host && e.data.payload && e.data.payload.__pof_tabload && e.data.payload.tabId === tabId) {
-          console.log('[PoF-iframe] tabload received for', tabId, 'binaryPath:', e.data.payload.binaryPath);
           if (e.data.payload.binaryPath) window._pofCurrentBinaryPath = e.data.payload.binaryPath;
           fn(e.data.payload.binaryPath);
         }
       });
     },
-    setYaraResults:      function (m, err) { return _call('setYaraResults', [m, err]); },
-    setCapaResults:      function (c, err) { return _call('setCapaResults', [c, err]); },
-    setDetectionMeta:    function (d) { return _call('setDetectionMeta', [d]); },
-    getDetectionState:   function () { return _call('getDetectionState', []); },
-    clearDetectionState: function () { return _call('clearDetectionState', []); },
-    setLoading:          function (id, msg) { return _call('setLoading', [id, msg]); },
-    renderRulesList:     function (id, rules) { return _call('renderRulesList', [id, rules]); },
-    applyYaraModeUi:     function () { return _call('applyYaraModeUi', []); },
-    getYaraMode:         function () { return _call('getYaraMode', []); },
-    setYaraMode:         function (mode, opts) { return _call('setYaraMode', [mode, opts]); },
     saveStorage:         function (d) { return _call('saveStorage', [d]); },
   };
   // Stubs for host-page globals called by legacy plugin code (before window.PoF migration)
@@ -873,7 +841,6 @@ function _buildPluginSrcdoc(html, inlineJs, pluginCss, hostCss = '') {
     safePlugin ? `<style>${safePlugin}</style>` : '',
     PLUGIN_BRIDGE_PREAMBLE,
     '</head><body>',
-    '<div id="__pof_diag" style="position:fixed;top:0;left:0;right:0;z-index:9999;background:#c00;color:#fff;font-size:11px;padding:2px 6px;font-family:monospace">iframe loaded — waiting for showTab…</div>',
     String(html || ''),
     safeJs ? `<script>${safeJs}</script>` : '',
     '</body></html>',
@@ -1185,5 +1152,6 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', worksp
 module.exports = {
   getWebviewContent,
   getHubContent,
-  loadPluginWebviews
+  loadPluginWebviews,
+  PLUGIN_BRIDGE_PREAMBLE
 };

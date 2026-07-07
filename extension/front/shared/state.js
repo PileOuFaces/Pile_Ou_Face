@@ -270,7 +270,6 @@ function registerPluginTabs(tabRegistrations) {
     if (family)     PREMIUM_TAB_FAMILY[tabId] = family;
     if (hint)       STATIC_FLOW_HINTS[tabId]  = hint;
     if (pluginSlug) _tabIdToPluginSlug[tabId] = pluginSlug;
-    console.log('[PoF-debug] registerPluginTabs:', tabId, '→ group:', group, 'slug:', pluginSlug || '(none)');
   });
 }
 
@@ -571,21 +570,6 @@ window.PoF = {
 
   // Binary change hook — fn(binaryPath: string) is called when the user opens a new binary.
   registerTabLoader: (tabId, fn) => registerTabLoader(tabId, fn),
-
-  // UI helpers (defined in search.js, resolved lazily at call-time).
-  setLoading: (containerId, msg) => {
-    if (typeof setStaticLoading === 'function') setStaticLoading(containerId, msg);
-  },
-  renderRulesList: (containerId, rules) => {
-    if (typeof _renderRulesList === 'function') _renderRulesList(containerId, rules);
-  },
-  applyYaraModeUi: () => {
-    if (typeof applyYaraModeUi === 'function') applyYaraModeUi();
-  },
-  getYaraMode: () => (typeof getSelectedYaraMode === 'function' ? getSelectedYaraMode() : 'library'),
-  setYaraMode: (mode, opts) => {
-    if (typeof setSelectedYaraMode === 'function') setSelectedYaraMode(mode, opts);
-  },
 
   // Persistent storage (defined in state.js, no lazy guard needed).
   saveStorage: (data) => _saveStorage(data),

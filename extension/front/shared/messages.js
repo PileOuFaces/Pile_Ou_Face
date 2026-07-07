@@ -39,7 +39,6 @@ window.addEventListener('message', (event) => {
   if (msg.type === 'hubPluginState') {
     clearPluginTabs();
     const incomingState = msg.state && typeof msg.state === 'object' ? msg.state : {};
-    console.log('[PoF-debug] hubPluginState received — tabRegistrations:', JSON.stringify(incomingState.tabRegistrations || []));
     registerPluginTabs(incomingState.tabRegistrations || []);
     pluginUiState = { ...pluginUiState, ...incomingState };
     renderPluginManager(pluginUiState);
