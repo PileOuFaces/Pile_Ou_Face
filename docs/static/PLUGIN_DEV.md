@@ -810,6 +810,26 @@ Les commandes peuvent aussi apparaître directement dans `tools/list` sous le no
 
 ---
 
+## Distribution : dossier brut, pas de bundle `.pofplug`
+
+Aujourd'hui, il n'existe **aucun outil public** pour produire un bundle
+`.pofplug` (le format zippé utilisé pour les 4 plugins maison premium — leur
+outil de packaging vit dans un dépôt privé). La façon supportée de distribuer
+un plugin communautaire est le **dossier brut** :
+
+1. Publie ton plugin comme un dépôt git normal (dossier avec `manifest.json`,
+   `plugin_main.py`, `webview/`, etc. — la structure décrite plus haut).
+2. L'utilisateur clone/télécharge ce dossier, puis l'installe via
+   *Options → Plugins → Installer…* dans l'extension (accepte un dossier, pas
+   seulement un zip), ou en le plaçant directement dans
+   `<storageUri>/plugins/<plugin_id>/` (voir "Installation locale pour les
+   tests" plus haut — le même mécanisme sert à l'installation finale).
+
+C'est délibérément le chemin recommandé pour l'instant plutôt que d'essayer de
+répliquer l'outil de compilation/packaging premium : un plugin ouvert n'a pas
+besoin de compilation à bytecode ni de chiffrement, et un dossier brut clair
+est plus simple à auditer pour un utilisateur prudent qu'un binaire zippé.
+
 ## Limites actuelles du host
 
 Le host open source ne supporte pas encore :
@@ -817,3 +837,23 @@ Le host open source ne supporte pas encore :
 - la saisie manuelle d'une clé courte pour activer un plugin
 - la compilation ou l'obfuscation des plugins tiers
 - la révocation ou l'activation en ligne
+- un outil public de packaging en bundle `.pofplug` (voir section
+  "Distribution" ci-dessus — utilise un dossier brut en attendant)
+- un générateur de squelette (`plugin_builder.py new` ou équivalent) — il faut
+  recopier la structure décrite dans ce guide à la main
+- un registre/annuaire centralisé des plugins communautaires disponibles
+
+### Surface Python au-delà de `backends.plugin_api`
+
+`backends.plugin_api` (7 symboles stables : `get_logger`, `configure_logging`,
+`build_offset_to_vaddr`, `ArchInfo`, `FeatureSupport`,
+`detect_binary_arch_from_path`, `get_feature_support`, `get_raw_arch_info`) est
+la **seule** surface Python dont la stabilité est garantie entre versions du
+host. D'autres modules `backends.*` existent et fonctionnent (désassemblage,
+décompilation, gestion de règles YARA…), mais leur usage n'est pas couvert par
+une promesse de compatibilité — le host peut les faire évoluer sans préavis.
+Si ton plugin en a besoin, importe-les à l'intérieur d'une fonction (jamais en
+top-level de `plugin_main.py`, voir "Isolation des imports" plus haut) et
+attends-toi à devoir ajuster ton code lors d'une mise à jour du host. Si une
+capacité te semble devoir être stable, ouvre une discussion — c'est un signal
+pour l'ajouter à `backends.plugin_api`.
