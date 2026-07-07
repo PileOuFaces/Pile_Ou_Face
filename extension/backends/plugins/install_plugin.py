@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import stat
 import sys
 import tempfile
 from pathlib import Path
@@ -16,19 +17,53 @@ if str(ROOT) not in sys.path:
 
 from backends.plugins.manifest import PluginManifestError, load_plugin_manifest
 
+# Defense-in-depth cap against decompression-bomb bundles — a legitimate
+# plugin bundle (source + small data files) has no business being this large.
+_MAX_TOTAL_UNCOMPRESSED_BYTES = 200 * 1024 * 1024  # 200 MiB
+_MAX_MEMBER_COUNT = 5000
+
 
 class PluginInstallError(ValueError):
     """Plugin install error."""
 
 
+def _is_symlink_member(member: ZipInfo) -> bool:
+    # external_attr's high 16 bits hold the Unix file mode when the archive
+    # was created on a Unix system (create_system == 3). A symlink member's
+    # "content" is its target path, and naively recreating it (or anything
+    # that follows it later) could point outside the extraction root.
+    mode = member.external_attr >> 16
+    return stat.S_ISLNK(mode)
+
+
 def _safe_members(members: list[ZipInfo]) -> None:
+    if len(members) > _MAX_MEMBER_COUNT:
+        raise PluginInstallError(
+            f"Bundle invalide: trop d'entrées ({len(members)} > {_MAX_MEMBER_COUNT})."
+        )
+    total_size = 0
     for member in members:
         name = member.filename
         if not name or name.startswith("/"):
             raise PluginInstallError(f"Entrée archive invalide: {name!r}")
-        target = Path(name)
-        if any(part == ".." for part in target.parts):
+        # Reject backslashes explicitly rather than relying on Path() only
+        # splitting on the current platform's separator — a POSIX host
+        # parses "..\\..\\evil" as a single (harmless) literal filename, but
+        # the same bundle installed on Windows would traverse directories.
+        # Don't rely on platform quirks to keep you safe by accident.
+        if "\\" in name:
             raise PluginInstallError(f"Entrée archive dangereuse: {name!r}")
+        target = Path(name)
+        if target.is_absolute() or any(part == ".." for part in target.parts):
+            raise PluginInstallError(f"Entrée archive dangereuse: {name!r}")
+        if _is_symlink_member(member):
+            raise PluginInstallError(f"Entrée archive dangereuse (symlink): {name!r}")
+        total_size += member.file_size
+        if total_size > _MAX_TOTAL_UNCOMPRESSED_BYTES:
+            raise PluginInstallError(
+                "Bundle invalide: taille décompressée totale dépasse "
+                f"{_MAX_TOTAL_UNCOMPRESSED_BYTES // (1024 * 1024)} MiB."
+            )
 
 
 def _resolve_source_root(
