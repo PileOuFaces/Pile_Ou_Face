@@ -26,6 +26,12 @@ if str(ROOT) not in sys.path:
 
 import contextlib
 
+from backends.plugins.consent import (
+    default_consent_path,
+    ensure_consent_baseline,
+    is_plugin_consented,
+    load_consent_store,
+)
 from backends.plugins.license import (
     _ENV_PREFIX as _LICENSE_ENV_PREFIX,
 )
@@ -356,14 +362,30 @@ def attach_plugins(
     host_version: str = DEFAULT_HOST_VERSION,
     api_version: int = HOST_API_VERSION,
     license_search_paths: list[Path] | None = None,
+    consent_path: str | Path | None = None,
+    require_consent: bool = False,
 ) -> tuple[PluginContext, list[PluginRecord]]:
     context = PluginContext(
         host_version=host_version,
         api_version=api_version,
         paths={"cwd": str(Path.cwd()), "home": str(Path.home())},
     )
+    resolved_consent_path = consent_path or default_consent_path()
+    consent_store: dict[str, dict[str, Any]] = {}
+    if require_consent:
+        ensure_consent_baseline(records, resolved_consent_path)
+        consent_store = load_consent_store(resolved_consent_path)
     for record in records:
         if record.state != "active" or record.manifest is None:
+            continue
+        if require_consent and not is_plugin_consented(
+            record.plugin_id, record.manifest.version, consent_store
+        ):
+            record.state = "pending_consent"
+            record.error = (
+                "Consentement requis avant d'exécuter ce plugin — "
+                "voir Options > Plugins pour l'autoriser."
+            )
             continue
         try:
             _check_pof_compatibility(record.manifest, POF_VERSION)
@@ -431,12 +453,16 @@ def invoke_plugin_command(
     host_version: str = DEFAULT_HOST_VERSION,
     api_version: int = HOST_API_VERSION,
     license_search_paths: list[Path] | None = None,
+    consent_path: str | Path | None = None,
+    require_consent: bool = False,
 ) -> tuple[dict[str, Any], PluginContext, list[PluginRecord]]:
     context, attached_records = attach_plugins(
         records,
         host_version=host_version,
         api_version=api_version,
         license_search_paths=license_search_paths,
+        consent_path=consent_path,
+        require_consent=require_consent,
     )
     command_name = str(command_id or "").strip()
     if not command_name:
@@ -666,12 +692,16 @@ def invoke_plugin_feature(
     host_version: str = DEFAULT_HOST_VERSION,
     api_version: int = HOST_API_VERSION,
     license_search_paths: list[Path] | None = None,
+    consent_path: str | Path | None = None,
+    require_consent: bool = False,
 ) -> tuple[dict[str, Any], PluginContext, list[PluginRecord]]:
     context, attached_records = attach_plugins(
         records,
         host_version=host_version,
         api_version=api_version,
         license_search_paths=license_search_paths,
+        consent_path=consent_path,
+        require_consent=require_consent,
     )
     feature_name = str(feature or "").strip()
     command_name = resolve_plugin_command_for_feature(
@@ -738,6 +768,8 @@ def collect_runtime_state(
     license_search_paths: list[Path] | None = None,
     disabled_plugin_ids: list[str] | None = None,
     attach: bool = False,
+    consent_path: str | Path | None = None,
+    require_consent: bool = False,
 ) -> dict[str, Any]:
     effective_paths = search_paths or default_plugin_search_paths(cwd=Path.cwd())
     effective_license_paths = license_search_paths or default_license_search_paths(
@@ -757,6 +789,8 @@ def collect_runtime_state(
             host_version=host_version,
             api_version=api_version,
             license_search_paths=effective_license_paths,
+            consent_path=consent_path,
+            require_consent=require_consent,
         )
     payload: dict[str, Any] = {
         "host_version": host_version,
@@ -788,6 +822,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
         search_paths=search_paths,
         disabled_plugin_ids=disabled,
         attach=bool(args.attach),
+        require_consent=True,
     )
     print(json.dumps(payload, indent=2, ensure_ascii=False))
     return 0
@@ -866,6 +901,7 @@ def _cmd_invoke(args: argparse.Namespace) -> int:
         host_version=args.host_version,
         api_version=args.api_version,
         license_search_paths=license_search_paths,
+        require_consent=True,
     )
     response["host_version"] = args.host_version
     response["api_version"] = args.api_version
@@ -894,12 +930,69 @@ def _cmd_invoke_feature(args: argparse.Namespace) -> int:
         host_version=args.host_version,
         api_version=args.api_version,
         license_search_paths=license_search_paths,
+        require_consent=True,
     )
     response["host_version"] = args.host_version
     response["api_version"] = args.api_version
     response["plugins"] = [record.to_dict() for record in records]
     response["attached"] = context.snapshot()
     print(json.dumps(response, indent=2, ensure_ascii=False))
+    return 0
+
+
+def _consent_path_from_args(args: argparse.Namespace) -> Path:
+    override = str(getattr(args, "consent_path", "") or "").strip()
+    if override:
+        return Path(override).expanduser()
+    return default_consent_path(cwd=Path.cwd())
+
+
+def _cmd_consent_list(args: argparse.Namespace) -> int:
+    from backends.plugins.consent import load_consent_store
+
+    store = load_consent_store(_consent_path_from_args(args))
+    print(json.dumps(store, indent=2, ensure_ascii=False, sort_keys=True))
+    return 0
+
+
+def _cmd_consent_grant(args: argparse.Namespace) -> int:
+    from backends.plugins.consent import grant_plugin_consent
+
+    records = _build_registry_from_args(args)
+    record = get_plugin_record(records, args.plugin_id)
+    if record is None or record.manifest is None:
+        print(
+            json.dumps(
+                {"ok": False, "error": f"Plugin introuvable: {args.plugin_id}"},
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return 0
+    store = grant_plugin_consent(
+        record.plugin_id, record.manifest.version, _consent_path_from_args(args)
+    )
+    print(
+        json.dumps(
+            {"ok": True, "plugin_id": record.plugin_id, "consent": store},
+            indent=2,
+            ensure_ascii=False,
+        )
+    )
+    return 0
+
+
+def _cmd_consent_revoke(args: argparse.Namespace) -> int:
+    from backends.plugins.consent import revoke_plugin_consent
+
+    store = revoke_plugin_consent(args.plugin_id, _consent_path_from_args(args))
+    print(
+        json.dumps(
+            {"ok": True, "plugin_id": args.plugin_id, "consent": store},
+            indent=2,
+            ensure_ascii=False,
+        )
+    )
     return 0
 
 
@@ -949,6 +1042,28 @@ def build_arg_parser() -> argparse.ArgumentParser:
     invoke_feature_parser.add_argument("--paths", nargs="*", default=[])
     invoke_feature_parser.add_argument("--disable", default="")
     invoke_feature_parser.set_defaults(func=_cmd_invoke_feature)
+
+    consent_list_parser = sub.add_parser(
+        "consent-list", help="Lister les consentements plugins enregistrés"
+    )
+    consent_list_parser.add_argument("--consent-path", default="")
+    consent_list_parser.set_defaults(func=_cmd_consent_list)
+
+    consent_grant_parser = sub.add_parser(
+        "consent-grant", help="Autoriser explicitement un plugin à s'exécuter"
+    )
+    consent_grant_parser.add_argument("plugin_id")
+    consent_grant_parser.add_argument("--paths", nargs="*", default=[])
+    consent_grant_parser.add_argument("--disable", default="")
+    consent_grant_parser.add_argument("--consent-path", default="")
+    consent_grant_parser.set_defaults(func=_cmd_consent_grant)
+
+    consent_revoke_parser = sub.add_parser(
+        "consent-revoke", help="Révoquer le consentement d'un plugin"
+    )
+    consent_revoke_parser.add_argument("plugin_id")
+    consent_revoke_parser.add_argument("--consent-path", default="")
+    consent_revoke_parser.set_defaults(func=_cmd_consent_revoke)
 
     return parser
 

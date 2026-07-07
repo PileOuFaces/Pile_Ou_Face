@@ -716,6 +716,7 @@ def _python_exe() -> str:
 
 
 def _plugin_runtime_records() -> dict[str, Any]:
+    from backends.plugins.consent import default_consent_path
     from backends.plugins.runtime import (
         HOST_API_VERSION as plugin_api_version,
     )
@@ -730,6 +731,8 @@ def _plugin_runtime_records() -> dict[str, Any]:
         search_paths=default_plugin_search_paths(
             cwd=ROOT, allow_workspace_discovery=False
         ),
+        consent_path=default_consent_path(cwd=ROOT, allow_workspace_discovery=False),
+        require_consent=True,
         attach=True,
     )
     return payload
@@ -1292,6 +1295,7 @@ def _call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return _ensure_ok(payload)
 
     if name == "plugin_invoke":
+        from backends.plugins.consent import default_consent_path
         from backends.plugins.runtime import (
             HOST_API_VERSION as plugin_api_version,
         )
@@ -1318,6 +1322,9 @@ def _call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             host_version=SERVER_VERSION,
             api_version=plugin_api_version,
         )
+        mcp_consent_path = default_consent_path(
+            cwd=ROOT, allow_workspace_discovery=False
+        )
         if feature_id:
             response, context, attached_records = invoke_plugin_feature(
                 records,
@@ -1325,6 +1332,8 @@ def _call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
                 payload_dict,
                 host_version=SERVER_VERSION,
                 api_version=plugin_api_version,
+                consent_path=mcp_consent_path,
+                require_consent=True,
             )
         else:
             response, context, attached_records = invoke_plugin_command(
@@ -1333,6 +1342,8 @@ def _call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
                 payload_dict,
                 host_version=SERVER_VERSION,
                 api_version=plugin_api_version,
+                consent_path=mcp_consent_path,
+                require_consent=True,
             )
         response["plugins"] = [record.to_dict() for record in attached_records]
         response["attached"] = context.snapshot()
