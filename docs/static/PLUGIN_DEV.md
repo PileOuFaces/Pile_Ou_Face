@@ -39,6 +39,20 @@ mon-plugin/
     └── (clés publiques, extras)
 ```
 
+### Générer ce squelette automatiquement
+
+Depuis le repo host (`extension/`) :
+
+```bash
+python -m backends.plugins.scaffold /chemin/vers/mon-plugin \
+  --id acme.mon-plugin --name "Mon Plugin" [--with-webview]
+```
+
+Génère `manifest.json`, `python/plugin_main.py`, `README.md`, et (avec
+`--with-webview`) `webview/tab.html` + `webview/tab.js` déjà câblés sur
+`window.PoF` (voir plus bas). Valide ensuite avec
+`python -m backends.plugins.runtime validate /chemin/vers/mon-plugin`.
+
 ---
 
 ## Format `manifest.json`
@@ -839,8 +853,6 @@ Le host open source ne supporte pas encore :
 - la révocation ou l'activation en ligne
 - un outil public de packaging en bundle `.pofplug` (voir section
   "Distribution" ci-dessus — utilise un dossier brut en attendant)
-- un générateur de squelette (`plugin_builder.py new` ou équivalent) — il faut
-  recopier la structure décrite dans ce guide à la main
 - un registre/annuaire centralisé des plugins communautaires disponibles
 
 ### Surface Python au-delà de `backends.plugin_api`
