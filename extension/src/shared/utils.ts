@@ -53,7 +53,9 @@ function resolveProjectRoot(root) {
         return candidate;
       }
     }
-  } catch (_) {}
+  } catch (err) {
+    logDebug(`[resolveProjectRoot] readdirSync(${absValue}) a échoué: ${err.message || err}`);
+  }
   return absValue;
 }
 
@@ -64,7 +66,9 @@ function findGitRoot(dir) {
     const entries = fs.readdirSync(dir, { withFileTypes: true });
     const gitSubs = entries.filter(e => e.isDirectory() && fs.existsSync(path.join(dir, e.name, '.git')));
     if (gitSubs.length === 1) return path.join(dir, gitSubs[0].name);
-  } catch (_) {}
+  } catch (err) {
+    logDebug(`[findGitRoot] readdirSync(${dir}) a échoué: ${err.message || err}`);
+  }
   return dir;
 }
 
