@@ -32,6 +32,7 @@ const {
   setExtensionPath,
   ensureStorageDir,
   getGlobalStorageDir,
+  logError,
 } = require('./shared/utils');
 const { readTraceJson, writeTraceJson, setViewMode, loadTraceFromWorkspace } = require('./shared/trace');
 const { payloadToHex, parseStdinExpression } = require('./shared/payload');
@@ -44,6 +45,39 @@ const { resolveAuthServerUrl } = require('./shared/authConfig');
 const logger = require('./shared/logger');
 
 const decorationTypes = new Map();
+
+// Filet de sécurité : capture les erreurs qui échapperaient aux catch locaux
+// (promesses non gérées, exceptions non catchées) et les logue via le canal
+// de l'extension au lieu de les laisser invisibles dans la console Extension Host.
+let _unhandledRejectionHandler = null;
+let _uncaughtExceptionHandler = null;
+
+function _formatUnhandledError(prefix, err) {
+  const detail = err && err.stack ? err.stack : String(err);
+  return `[${prefix}] ${detail}`;
+}
+
+// Séparé de l'abonnement process.on(...) pour rester testable directement
+// (invoquer la logique sans dépendre du système d'événements réel de Node,
+// qui est aussi utilisé par le test runner lui-même).
+function _handleGlobalError(prefix, err) {
+  logError(_formatUnhandledError(prefix, err));
+}
+
+function _registerGlobalErrorHandlers() {
+  if (_unhandledRejectionHandler) return;
+  _unhandledRejectionHandler = (reason) => _handleGlobalError('unhandledRejection', reason);
+  _uncaughtExceptionHandler = (err) => _handleGlobalError('uncaughtException', err);
+  process.on('unhandledRejection', _unhandledRejectionHandler);
+  process.on('uncaughtException', _uncaughtExceptionHandler);
+}
+
+function _unregisterGlobalErrorHandlers() {
+  if (_unhandledRejectionHandler) process.off('unhandledRejection', _unhandledRejectionHandler);
+  if (_uncaughtExceptionHandler) process.off('uncaughtException', _uncaughtExceptionHandler);
+  _unhandledRejectionHandler = null;
+  _uncaughtExceptionHandler = null;
+}
 
 
 function _migrateFromLegacyPofDir(root, storageDir, globalDir) {
@@ -91,6 +125,7 @@ function _migrateFromLegacyPofDir(root, storageDir, globalDir) {
  */
 function activate(context) {
   setExtensionPath(context.extensionPath);
+  _registerGlobalErrorHandlers();
   const storageDir  = ensureStorageDir(context);
   const globalDir   = getGlobalStorageDir(context);
 
@@ -205,6 +240,7 @@ function activate(context) {
  * @brief Desactive l'extension (hook VS Code).
  */
 function deactivate() {
+  _unregisterGlobalErrorHandlers();
   for (const deco of decorationTypes.values()) {
     deco.dispose();
   }
@@ -216,5 +252,9 @@ module.exports = {
   deactivate,
   loadTraceFromWorkspace,
   payloadToHex,
-  parseStdinExpression
+  parseStdinExpression,
+  _registerGlobalErrorHandlers,
+  _unregisterGlobalErrorHandlers,
+  _formatUnhandledError,
+  _handleGlobalError,
 };
