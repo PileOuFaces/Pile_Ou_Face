@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // @ts-nocheck
 
+const { logWarning } = require('../../shared/utils');
+
 function createGraphRenderers({
   panel,
   analysisCtx,
@@ -56,7 +58,9 @@ function createGraphRenderers({
       functions = rawFunctions
         .map((fn: any) => ({ ...fn, instrCount: instrCount.get(fn.addr) || 0 }))
         .sort((a: any, b: any) => b.instrCount - a.instrCount);
-    } catch (_) {}
+    } catch (err) {
+      logWarning(`[loadFunctionsForCfg] parsing de ${mappingPath} échoué: ${err.message || err}`);
+    }
     if (functions.length === 0) {
       try {
         let discPath = discoveredPath;
@@ -78,7 +82,9 @@ function createGraphRenderers({
             .map((fn: any) => ({ ...fn, instrCount: 0 }))
             .sort((a: any, b: any) => (b.confidence_score || 0) - (a.confidence_score || 0));
         }
-      } catch (_) {}
+      } catch (err) {
+        logWarning(`[loadFunctionsForCfg] fallback discover-functions échoué: ${err.message || err}`);
+      }
     }
     return functions;
   };

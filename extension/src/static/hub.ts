@@ -11,7 +11,7 @@ const path = require('path');
 const crypto = require('crypto');
 const cp = require('child_process');
 const { getHubContent } = require('../shared/webview');
-const { buildRuntimeEnv, resolveProjectRoot, getExtensionPath } = require('../shared/utils');
+const { buildRuntimeEnv, resolveProjectRoot, getExtensionPath, logDebug } = require('../shared/utils');
 const { AuthService } = require('../shared/authService');
 const { resolveAuthServerUrl } = require('../shared/authConfig');
 const {
@@ -414,7 +414,11 @@ function createHub(config) {
         if (err) { reject(err.message ? err : new Error(String(err))); return; }
         try {
           const data = fs.readFileSync(tmpFile, 'utf8');
-          try { fs.unlinkSync(tmpFile); } catch (_) {}
+          try {
+            fs.unlinkSync(tmpFile);
+          } catch (err) {
+            logDebug(`[runPythonJsonViaFile] suppression du fichier temporaire échouée (${tmpFile}): ${err.message || err}`);
+          }
           resolve(JSON.parse(data));
         } catch (e) { reject(e); }
       });

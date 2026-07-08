@@ -7,6 +7,7 @@
 const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
+const { logDebug } = require('./utils');
 
 function _readJsonIfExists(filePath) {
   try {
@@ -836,7 +837,9 @@ function loadPluginWebviews(root, options: { storageDir?: string; globalDir?: st
       try {
         const p = path.join(extensionFrontDir, rel);
         if (fs.existsSync(p)) hostCss += `\n${fs.readFileSync(p, 'utf8')}`;
-      } catch (_) {}
+      } catch (err) {
+        logDebug(`[loadPluginWebviews] lecture CSS échouée pour ${rel}: ${err.message || err}`);
+      }
     }
   }
 

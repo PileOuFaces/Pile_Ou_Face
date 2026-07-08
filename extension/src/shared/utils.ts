@@ -9,8 +9,19 @@ const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
 const cp = require('child_process');
+const logger = require('./logger');
 
 const logChannel = vscode.window.createOutputChannel('Pile ou Face');
+
+function logAt(level, message) {
+  if (!logger.shouldLog(level)) return;
+  logChannel.appendLine(logger.formatLine(level, logger.redact(message)));
+}
+
+const logDebug = (message) => logAt('debug', message);
+const logInfo = (message) => logAt('info', message);
+const logWarning = (message) => logAt('warning', message);
+const logError = (message) => logAt('error', message);
 
 const TEMP_DIR_NAME = '.pile-ou-face';
 
@@ -42,7 +53,9 @@ function resolveProjectRoot(root) {
         return candidate;
       }
     }
-  } catch (_) {}
+  } catch (err) {
+    logDebug(`[resolveProjectRoot] readdirSync(${absValue}) a échoué: ${err.message || err}`);
+  }
   return absValue;
 }
 
@@ -53,7 +66,9 @@ function findGitRoot(dir) {
     const entries = fs.readdirSync(dir, { withFileTypes: true });
     const gitSubs = entries.filter(e => e.isDirectory() && fs.existsSync(path.join(dir, e.name, '.git')));
     if (gitSubs.length === 1) return path.join(dir, gitSubs[0].name);
-  } catch (_) {}
+  } catch (err) {
+    logDebug(`[findGitRoot] readdirSync(${dir}) a échoué: ${err.message || err}`);
+  }
   return dir;
 }
 
@@ -217,6 +232,9 @@ function buildRuntimeEnv(root, storageDirOrExtra, extraEnv = {}) {
   }
   const backendBase = _extensionPath || path.resolve(String(root || '').trim());
   const env = { ...process.env, ...mergedExtra };
+  if (!mergedExtra.BINHOST_LOG_LEVEL) {
+    env.BINHOST_LOG_LEVEL = logger.mapLevelToEnv(logger.getLevel());
+  }
   if (storageDir) {
     env.POF_STORAGE_DIR    = storageDir;
     env.DECOMPILERS_CONFIG = path.join(storageDir, 'decompilers.json');
@@ -349,6 +367,10 @@ function escapeHtml(s) {
 
 module.exports = {
   logChannel,
+  logDebug,
+  logInfo,
+  logWarning,
+  logError,
   TEMP_DIR_NAME,
   getTempDir,
   ensureTempDir,

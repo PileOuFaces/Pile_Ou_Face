@@ -15,7 +15,7 @@ const path = require('path');
 const http = require('http');
 const https = require('https');
 const readline = require('readline');
-const { detectPythonExecutable, buildRuntimeEnv, resolveDockerExecutable } = require('../shared/utils');
+const { detectPythonExecutable, buildRuntimeEnv, resolveDockerExecutable, logDebug, logWarning } = require('../shared/utils');
 const { emptyPluginUiState, summarizePluginRuntimeState } = require('./pluginState');
 const { AuthService } = require('../shared/authService');
 const { resolveAuthServerUrl } = require('../shared/authConfig');
@@ -47,7 +47,11 @@ function _collectProcessOutput(command, args, options = {}) {
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
-      try { proc.kill('SIGTERM'); } catch (_) {}
+      try {
+        proc.kill('SIGTERM');
+      } catch (err) {
+        logDebug(`[_collectProcessOutput] kill(${command}) après timeout a échoué: ${err.message || err}`);
+      }
       resolve({ code: -1, stdout, stderr: stderr || 'timeout' });
     }, timeoutMs);
     proc.stdout?.on('data', (chunk) => { stdout += chunk.toString(); });
@@ -279,7 +283,11 @@ async function _checkDockerImageUpdate(image, platform = '', options = {}) {
   }
 
   let localPayload = null;
-  try { localPayload = JSON.parse(local.stdout || '[]'); } catch (_) {}
+  try {
+    localPayload = JSON.parse(local.stdout || '[]');
+  } catch (err) {
+    logDebug(`[docker image status] parsing "image inspect" échoué pour ${image}: ${err.message || err}`);
+  }
   const localMeta = _readLocalDockerImageMetadata(localPayload);
   const localDigests = localMeta.localDigests;
   if (localDigests.length === 0) {
@@ -306,7 +314,11 @@ async function _checkDockerImageUpdate(image, platform = '', options = {}) {
   );
   if (remote.code === 0) {
     let remotePayload = null;
-    try { remotePayload = JSON.parse(remote.stdout || '{}'); } catch (_) {}
+    try {
+      remotePayload = JSON.parse(remote.stdout || '{}');
+    } catch (err) {
+      logDebug(`[docker image status] parsing "manifest inspect" échoué pour ${image}: ${err.message || err}`);
+    }
     remoteDigests = Array.from(new Set([
       ...remoteDigests,
       ..._extractRemoteManifestDigests(remotePayload),
@@ -416,7 +428,9 @@ function staticHandlers(config) {
     const base = normalizedKind ? path.join(baseDir, normalizedKind) : baseDir;
     try {
       if (!fs.existsSync(base)) fs.mkdirSync(base, { recursive: true });
-    } catch (_) {}
+    } catch (err) {
+      logWarning(`[getHostArtifactRoot] création du dossier ${base} échouée: ${err.message || err}`);
+    }
     return base;
   };
   const buildPythonEnv = () => {
