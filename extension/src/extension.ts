@@ -41,6 +41,7 @@ const { registerStaticCommands } = require('./static/commands');
 const { registerDecompilerCommands } = require('./static/decompilerCommands');
 const { AuthService } = require('./shared/authService');
 const { resolveAuthServerUrl } = require('./shared/authConfig');
+const logger = require('./shared/logger');
 
 const decorationTypes = new Map();
 
@@ -92,6 +93,17 @@ function activate(context) {
   setExtensionPath(context.extensionPath);
   const storageDir  = ensureStorageDir(context);
   const globalDir   = getGlobalStorageDir(context);
+
+  const applyLogLevelFromConfig = () => {
+    const level = vscode.workspace.getConfiguration('pileOuFace').get('logLevel', 'warning');
+    logger.setLevel(level);
+  };
+  applyLogLevelFromConfig();
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('pileOuFace.logLevel')) applyLogLevelFromConfig();
+    })
+  );
 
   // Ensure Python dependencies are installed at startup
   const folders = vscode.workspace.workspaceFolders;

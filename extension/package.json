@@ -119,6 +119,11 @@
         "command": "pileOuFace.decompilerOpenConfig",
         "title": "Pile ou Face: Ouvrir la config des décompilateurs",
         "category": "Pile ou Face"
+      },
+      {
+        "command": "pileOuFace.showLogs",
+        "title": "Pile ou Face: Afficher les logs",
+        "category": "Pile ou Face"
       }
     ],
     "menus": {
@@ -193,6 +198,10 @@
           "when": "true"
         },
         {
+          "command": "pileOuFace.showLogs",
+          "when": "true"
+        },
+        {
           "command": "pileOuFace.decompilerTest",
           "when": "true"
         },
@@ -246,6 +255,12 @@
           "type": "string",
           "default": "https://auth.pileouface.io",
           "description": "URL du serveur d'authentification Pile Ou Face"
+        },
+        "pileOuFace.logLevel": {
+          "type": "string",
+          "enum": ["debug", "info", "warning", "error"],
+          "default": "warning",
+          "description": "Niveau de log de l'extension et des backends Python qu'elle lance (propagé via BINHOST_LOG_LEVEL)."
         }
       }
     }
