@@ -46,11 +46,14 @@ const logger = require('./shared/logger');
 
 const decorationTypes = new Map();
 
-// Filet de sécurité : capture les erreurs qui échapperaient aux catch locaux
-// (promesses non gérées, exceptions non catchées) et les logue via le canal
-// de l'extension au lieu de les laisser invisibles dans la console Extension Host.
+// Filet de sécurité : capture les promesses rejetées non gérées et les logue
+// via le canal de l'extension au lieu de les laisser invisibles dans la
+// console Extension Host. Volontairement limité à unhandledRejection —
+// uncaughtException supprimerait le comportement par défaut de Node (qui
+// laisse l'extension continuer dans un état potentiellement incohérent après
+// une exception non catchée) pour un simple gain de visibilité ; le risque
+// sur la stabilité ne vaut pas le compromis.
 let _unhandledRejectionHandler = null;
-let _uncaughtExceptionHandler = null;
 
 function _formatUnhandledError(prefix, err) {
   const detail = err && err.stack ? err.stack : String(err);
@@ -67,16 +70,12 @@ function _handleGlobalError(prefix, err) {
 function _registerGlobalErrorHandlers() {
   if (_unhandledRejectionHandler) return;
   _unhandledRejectionHandler = (reason) => _handleGlobalError('unhandledRejection', reason);
-  _uncaughtExceptionHandler = (err) => _handleGlobalError('uncaughtException', err);
   process.on('unhandledRejection', _unhandledRejectionHandler);
-  process.on('uncaughtException', _uncaughtExceptionHandler);
 }
 
 function _unregisterGlobalErrorHandlers() {
   if (_unhandledRejectionHandler) process.off('unhandledRejection', _unhandledRejectionHandler);
-  if (_uncaughtExceptionHandler) process.off('uncaughtException', _uncaughtExceptionHandler);
   _unhandledRejectionHandler = null;
-  _uncaughtExceptionHandler = null;
 }
 
 
