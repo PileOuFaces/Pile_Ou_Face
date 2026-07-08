@@ -5,3 +5,7 @@ node_modules/
 coverage/
 dist/
 .worktrees/
+
+# Overlay de config produit du build commercial officiel (jamais dans l'OSS).
+# La source ne versionne que product.default.json (neutre).
+product.json
