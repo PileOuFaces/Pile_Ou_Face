@@ -384,7 +384,10 @@ def test_gemini_streams_text_and_usage(monkeypatch):
             chunks.append,
         )
 
-    assert ":streamGenerateContent?alt=sse&key=" in captured_request["request"].full_url
+    request = captured_request["request"]
+    assert request.full_url.endswith(":streamGenerateContent?alt=sse")
+    assert "key=" not in request.full_url
+    assert request.get_header("X-goog-api-key") == "test"
     assert chunks == ["Bon", "jour"]
     assert result["text"] == "Bonjour"
     assert result["usage"]["total_tokens"] == 10
@@ -418,3 +421,38 @@ def test_openai_model_list_excludes_non_chat_models(monkeypatch):
         urllib.request, "urlopen", lambda req, timeout=None: mock_response
     )
     assert _fetch_models("openai", "sk-test") == ["gpt-5"]
+
+
+def test_gemini_model_list_uses_api_key_header(monkeypatch):
+    import urllib.request
+
+    mock_response = MagicMock()
+    mock_response.read.return_value = json.dumps(
+        {
+            "models": [
+                {
+                    "name": "models/gemini-test",
+                    "supportedGenerationMethods": ["generateContent"],
+                },
+                {
+                    "name": "models/gemini-embed",
+                    "supportedGenerationMethods": ["embedContent"],
+                },
+            ]
+        }
+    ).encode()
+    mock_response.__enter__ = lambda s: s
+    mock_response.__exit__ = MagicMock(return_value=False)
+    captured_request = {}
+
+    def fake_urlopen(req, timeout=None):
+        captured_request["request"] = req
+        return mock_response
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    assert _fetch_models("gemini", "test") == ["gemini-test"]
+    request = captured_request["request"]
+    assert request.full_url == "https://generativelanguage.googleapis.com/v1beta/models"
+    assert "key=" not in request.full_url
+    assert request.get_header("X-goog-api-key") == "test"
