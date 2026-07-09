@@ -28,7 +28,11 @@ from backends.dynamic.pipeline.audit import (
     build_stack_evidence_audit,
     write_audit_json,
 )
-from backends.dynamic.pipeline.diagnostics import _is_win_addr, build_diagnostics
+from backends.dynamic.pipeline.diagnostics import (
+    _has_control_corruption_evidence,
+    _is_win_addr,
+    build_diagnostics,
+)
 from backends.dynamic.pipeline.stack_model import _hex, build_dynamic_analysis
 
 try:
@@ -474,6 +478,13 @@ def _build_crash_report(
         meta=meta,
         code_ranges=code_ranges,
     )
+    if classification == "fatal_crash" and not _has_control_corruption_evidence(analysis or {}, payload_offset):
+        # No overflow reached a control slot, no write was flagged on one, and
+        # the faulting bytes don't match the configured payload: this isn't a
+        # vulnerability, it's execution running past a boundary the emulator
+        # doesn't model (classic hello-world/printf-only: main returns into
+        # un-emulated libc and Unicorn faults on the fetch).
+        classification = "benign_termination" if instruction_text.lower().startswith("ret") else "emulator_stop"
     function_meta = (
         analysis.get("function")
         if isinstance(analysis, dict) and isinstance(analysis.get("function"), dict)
@@ -501,8 +512,14 @@ def _build_crash_report(
         or "Crash runtime Unicorn.",
         "suspectOverwrittenSlot": suspect_slot,
         "suspectBytes": suspect_bytes,
-        "payloadOffset": payload_offset,
-        "probableSource": _trace_probable_source(meta),
+        # Never assert a payload/input link without evidence: benign_termination
+        # and emulator_stop are, by construction, the no-evidence outcomes.
+        "payloadOffset": None if classification in ("benign_termination", "emulator_stop") else payload_offset,
+        "probableSource": (
+            None
+            if classification in ("benign_termination", "emulator_stop")
+            else _trace_probable_source(meta)
+        ),
         "classification": classification,
         "retTarget": _hex(ret_target) if ret_target is not None else None,
     }
@@ -606,12 +623,22 @@ def run_pipeline(
         meta,
         disasm_lines=disasm.get("lines") if disasm else None,
     )
+    trace_meta = trace.get("meta") if isinstance(trace, dict) and isinstance(trace.get("meta"), dict) else {}
+    steps_executed = _parse_int(trace_meta.get("steps"))
+    configured_max_steps = _parse_int(getattr(config, "max_steps", None))
+    max_steps_reached = bool(
+        crash is None
+        and steps_executed is not None
+        and configured_max_steps
+        and steps_executed >= configured_max_steps
+    )
     diagnostics = build_diagnostics(
         snapshots,
         analysis_by_step,
         meta,
         disasm_lines=disasm.get("lines") if disasm else None,
         crash=crash,
+        max_steps_reached=max_steps_reached,
     )
     write_audit_json(
         output_path,
@@ -623,6 +650,7 @@ def run_pipeline(
                 "meta": meta,
                 "disasm_lines": disasm.get("lines") if disasm else None,
                 "crash": crash,
+                "max_steps_reached": max_steps_reached,
             },
             "output": diagnostics,
         },
