@@ -98,7 +98,11 @@ class AuthService {
     if (!refreshToken) { return false; }
     try {
       const data = await this._postJson(this.serverUrl, '/auth/refresh', { refresh_token: refreshToken });
-      await this._store(data.access_token, refreshToken, data.content_keys);
+      // Le serveur peut faire tourner le refresh token (rotation + détection de
+      // réutilisation, cf. Pile_ou_Face_auth#9) — toujours stocker celui renvoyé
+      // s'il y en a un, sinon garder l'ancien (compat avec un serveur qui n'a
+      // pas encore la rotation).
+      await this._store(data.access_token, data.refresh_token || refreshToken, data.content_keys);
       this._scheduleRefresh();
       return true;
     } catch { return false; }
@@ -131,7 +135,7 @@ class AuthService {
     }
     try {
       const data = await this._postJson(this.serverUrl, '/auth/refresh', { refresh_token: refreshToken });
-      await this._store(data.access_token, refreshToken, data.content_keys || {});
+      await this._store(data.access_token, data.refresh_token || refreshToken, data.content_keys || {});
       return { refreshed: true, revoked: false };
     } catch (err) {
       const status = err?.status ?? 0;
