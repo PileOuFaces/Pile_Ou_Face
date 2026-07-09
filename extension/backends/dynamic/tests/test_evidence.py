@@ -26,17 +26,28 @@ from backends.dynamic.pipeline.audit.evidence import (
 )
 
 
-def _write_snapshot(rbp: int, write_addr: int, size: int, external_symbol: str = "strcpy") -> dict:
+def _write_snapshot(
+    rbp: int, write_addr: int, size: int, external_symbol: str = "strcpy"
+) -> dict:
     return {
         "func": "main",
         "cpu": {
             "before": {"registers": {"rbp": hex(rbp)}},
             "after": {"registers": {"rbp": hex(rbp)}},
         },
-        "effects": {"kind": "call", "external_symbol": external_symbol, "external_simulated": True},
+        "effects": {
+            "kind": "call",
+            "external_symbol": external_symbol,
+            "external_simulated": True,
+        },
         "memory": {
             "writes": [
-                {"addr": hex(write_addr), "size": size, "bytes": "41" * size, "source": "external"},
+                {
+                    "addr": hex(write_addr),
+                    "size": size,
+                    "bytes": "41" * size,
+                    "source": "external",
+                },
             ],
             "reads": [],
         },
@@ -70,7 +81,13 @@ class TestEvidenceBufferSize(unittest.TestCase):
         size must NOT default to 8 -- it should fall back to an estimated
         bound (distance to the saved rbp at offset 0), clearly separate from
         a proven size."""
-        entry = {"offset": -0x60, "size": 8, "size_is_exact": False, "source": "auto", "name": "var_60"}
+        entry = {
+            "offset": -0x60,
+            "size": 8,
+            "size_is_exact": False,
+            "source": "auto",
+            "name": "var_60",
+        }
         slot = _slot_from_frame_entry(entry, "probable_local")
         self.assertEqual(slot["offset"], -0x60)
         self.assertIsNone(slot["size"])
@@ -84,7 +101,12 @@ class TestEvidenceBufferSize(unittest.TestCase):
         # stay independent of size: proven start + proven sink is enough to
         # call it a buffer, without needing -- or fabricating -- a size.
         slot["passed_as_call_argument"] = [
-            {"call_addr": "0x1000", "target": "strcpy", "argument_index": 0, "register": "rdi"}
+            {
+                "call_addr": "0x1000",
+                "target": "strcpy",
+                "argument_index": 0,
+                "register": "rdi",
+            }
         ]
         scored = _score_slot(slot, "main", [])
         self.assertEqual(scored["classification"], "buffer")
@@ -97,7 +119,9 @@ class TestEvidenceBufferSize(unittest.TestCase):
         of the whole object's size."""
         rbp = 0x7FFF0000
         offset = -0x60
-        slot = _slot_from_access({"base": "rbp", "offset": offset, "expression": "[rbp-0x60]"})
+        slot = _slot_from_access(
+            {"base": "rbp", "offset": offset, "expression": "[rbp-0x60]"}
+        )
         slots = {slot["key"]: slot}
 
         snapshot = _write_snapshot(rbp, rbp + offset, size=44, external_symbol="strcpy")
@@ -114,7 +138,9 @@ class TestEvidenceBufferSize(unittest.TestCase):
         be reported as an exact size from a runtime write alone."""
         rbp = 0x7FFF0000
         offset = -0x40
-        slot = _slot_from_access({"base": "rbp", "offset": offset, "expression": "[rbp-0x40]"})
+        slot = _slot_from_access(
+            {"base": "rbp", "offset": offset, "expression": "[rbp-0x40]"}
+        )
         slots = {slot["key"]: slot}
 
         snapshot = _write_snapshot(rbp, rbp + offset, size=31, external_symbol="read")

@@ -278,7 +278,9 @@ def _stack_evidence_summary(meta: dict) -> dict | None:
     return summary
 
 
-def _function_matches_evidence_buffer(function_info: dict | None, evidence_buffer: dict) -> bool:
+def _function_matches_evidence_buffer(
+    function_info: dict | None, evidence_buffer: dict
+) -> bool:
     if not isinstance(evidence_buffer, dict):
         return False
     expected_name = str(evidence_buffer.get("function") or "").strip()
@@ -289,17 +291,27 @@ def _function_matches_evidence_buffer(function_info: dict | None, evidence_buffe
     function_addr = _parse_int(function_info.get("addr"))
     if expected_name and function_name and expected_name == function_name:
         return True
-    if expected_addr is not None and function_addr is not None and expected_addr == function_addr:
+    if (
+        expected_addr is not None
+        and function_addr is not None
+        and expected_addr == function_addr
+    ):
         return True
     return not expected_name and expected_addr is None
 
 
-def _evidence_buffers_for_function(meta: dict, function_info: dict | None) -> list[dict]:
+def _evidence_buffers_for_function(
+    meta: dict, function_info: dict | None
+) -> list[dict]:
     summary = _stack_evidence_summary(meta)
     if summary is None:
         return []
     buffers = [item for item in summary.get("buffers", []) if isinstance(item, dict)]
-    matched = [item for item in buffers if _function_matches_evidence_buffer(function_info, item)]
+    matched = [
+        item
+        for item in buffers
+        if _function_matches_evidence_buffer(function_info, item)
+    ]
     if matched:
         return matched
     if not function_info and len(buffers) == 1:
@@ -315,7 +327,9 @@ def _evidence_slots_for_function(meta: dict, function_info: dict | None) -> list
     if summary is None:
         return []
     slots = [item for item in summary.get("slots", []) if isinstance(item, dict)]
-    matched = [item for item in slots if _function_matches_evidence_buffer(function_info, item)]
+    matched = [
+        item for item in slots if _function_matches_evidence_buffer(function_info, item)
+    ]
     if matched:
         return matched
     if not function_info and len(slots) == 1:
@@ -829,7 +843,9 @@ def _evidence_typed_regions(
     return added
 
 
-def _evidence_buffer_regions(bp: int | None, meta: dict, function_info: dict | None) -> list[dict]:
+def _evidence_buffer_regions(
+    bp: int | None, meta: dict, function_info: dict | None
+) -> list[dict]:
     if bp is None:
         return []
     regions = []
@@ -888,7 +904,9 @@ def _static_regions(
     # it belongs to this call yet -- saved_bp/return_address stay
     # unconditional below since they don't depend on allocation.
     if frame_allocated:
-        for entry in frame.get("vars", []) if isinstance(frame.get("vars"), list) else []:
+        for entry in (
+            frame.get("vars", []) if isinstance(frame.get("vars"), list) else []
+        ):
             offset = _parse_int(entry.get("offset"))
             size = _parse_int(entry.get("size")) or 1
             if offset is None:
@@ -908,7 +926,9 @@ def _static_regions(
                     size_exact=bool(entry.get("size_is_exact", True)),
                 )
             )
-        for entry in frame.get("args", []) if isinstance(frame.get("args"), list) else []:
+        for entry in (
+            frame.get("args", []) if isinstance(frame.get("args"), list) else []
+        ):
             offset = _parse_int(entry.get("offset"))
             size = _parse_int(entry.get("size")) or word_size
             if offset is None:
@@ -1199,7 +1219,14 @@ def _slot_role_label(
     # DWARF/config-declared sizes).
     if bp is not None and start < bp:
         if buffer_region is not None and start >= buffer_region["end"]:
-            return "padding", f"padding_{bp - start:x}h", start - bp, 0.55, "heuristic", False
+            return (
+                "padding",
+                f"padding_{bp - start:x}h",
+                start - bp,
+                0.55,
+                "heuristic",
+                False,
+            )
         return "unknown", f"stack_{bp - start:x}h", start - bp, 0.4, "heuristic", False
     if bp is not None and start >= bp + (
         8 if any(region["size"] == 8 for region in regions) else 4
@@ -1266,7 +1293,14 @@ def _build_slots(
     func_addr = _parse_int(function_info.get("addr")) if function_info else None
     frame = resolver.frame_for_function(func_addr)
     convention = resolver.convention_for_function(func_addr) or {}
-    regions = _static_regions(frame, bp, word_size, meta, function_info=function_info, frame_allocated=frame_allocated)
+    regions = _static_regions(
+        frame,
+        bp,
+        word_size,
+        meta,
+        function_info=function_info,
+        frame_allocated=frame_allocated,
+    )
 
     # Validate heuristic buffer: only keep "buffer" role when there is real evidence.
     # Without evidence, reclassify as local to avoid misleading the user.
@@ -1751,7 +1785,9 @@ def build_dynamic_analysis(
                 )
                 normalized_ip = (
                     ip - resolver.load_base
-                    if ip is not None and resolver.load_base > 0 and ip >= resolver.load_base
+                    if ip is not None
+                    and resolver.load_base > 0
+                    and ip >= resolver.load_base
                     else ip
                 )
                 # True only when we can PROVE this is the function's entry
@@ -1772,13 +1808,14 @@ def build_dynamic_analysis(
                 frame_allocated_by_function[function_key] = False
             elif _is_prologue_mov_bp_sp(instr_text):
                 frame_pointer_ready_by_function[function_key] = True
-            elif (
-                frame_pointer_ready_by_function.get(function_key)
-                and _is_stack_alloc_instruction(instr_text)
-            ):
+            elif frame_pointer_ready_by_function.get(
+                function_key
+            ) and _is_stack_alloc_instruction(instr_text):
                 frame_allocated_by_function[function_key] = True
         frame_allocated = (
-            frame_allocated_by_function.get(function_key, True) if function_key else True
+            frame_allocated_by_function.get(function_key, True)
+            if function_key
+            else True
         )
 
         analysis = _build_slots(

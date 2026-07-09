@@ -3,9 +3,8 @@
 
 from __future__ import annotations
 
-import warnings
 import os
-from typing import Optional
+import warnings
 
 from backends.dynamic.core.interfaces import TraceConfigLike
 
@@ -18,7 +17,10 @@ from .asm_analysis import (
 from .evidence import build_inferred_frame_audit
 
 try:
-    from backends.dynamic.engine.unicorn.elf import parse_elf_header, parse_program_headers
+    from backends.dynamic.engine.unicorn.elf import (
+        parse_elf_header,
+        parse_program_headers,
+    )
 except Exception:
     parse_elf_header = None
     parse_program_headers = None
@@ -159,8 +161,12 @@ def _relocation_payload(relocation) -> dict:
         "type": _enum_name(_safe_attr(relocation, "type", "")),
         "addend": safe_int(_safe_attr(relocation, "addend", None)),
         "size": safe_int(_safe_attr(relocation, "size", None)),
-        "symbol": str(_safe_attr(symbol, "name", "") or "") if symbol is not None else None,
-        "section": str(_safe_attr(section, "name", "") or "") if section is not None else None,
+        "symbol": str(_safe_attr(symbol, "name", "") or "")
+        if symbol is not None
+        else None,
+        "section": str(_safe_attr(section, "name", "") or "")
+        if section is not None
+        else None,
     }
 
 
@@ -186,7 +192,9 @@ def _lief_elf_layout(binary_path: str) -> dict:
         layout["errors"].append({"stage": "lief_parse", "message": str(exc)})
         return layout
     if binary is None:
-        layout["errors"].append({"stage": "lief_parse", "message": "lief returned null"})
+        layout["errors"].append(
+            {"stage": "lief_parse", "message": "lief returned null"}
+        )
         return layout
     if not isinstance(binary, lief.ELF.Binary):
         layout["errors"].append({"stage": "format", "message": "not an ELF binary"})
@@ -227,7 +235,9 @@ def _lief_elf_layout(binary_path: str) -> dict:
         try:
             relocation_sets.extend(list(getattr(binary, attr, []) or []))
         except Exception as exc:
-            layout["errors"].append({"stage": f"relocations.{attr}", "message": str(exc)})
+            layout["errors"].append(
+                {"stage": f"relocations.{attr}", "message": str(exc)}
+            )
     seen_relocations = set()
     for relocation in relocation_sets:
         payload = _relocation_payload(relocation)
@@ -245,7 +255,7 @@ def build_elf_layout_audit(
     code: bytes,
     config: TraceConfigLike,
     trace: dict,
-    disassembly: Optional[list[dict]],
+    disassembly: list[dict] | None,
     functions: list[dict],
 ) -> dict:
     trace_meta = trace.get("meta", {}) if isinstance(trace, dict) else {}
@@ -293,9 +303,13 @@ def build_elf_layout_audit(
                 load_base=runtime_base,
             )
         except Exception as exc:
-            audit["errors"].append({"stage": "elf_header_program_headers", "message": str(exc)})
+            audit["errors"].append(
+                {"stage": "elf_header_program_headers", "message": str(exc)}
+            )
     else:
-        audit["errors"].append({"stage": "elf_header_program_headers", "message": "ELF parser unavailable"})
+        audit["errors"].append(
+            {"stage": "elf_header_program_headers", "message": "ELF parser unavailable"}
+        )
 
     layout = _lief_elf_layout(binary_path)
     for key in (
@@ -312,7 +326,9 @@ def build_elf_layout_audit(
 
     audit["functions"] = functions
     plt_symbols = audit_plt_symbols(binary_path)
-    audit["external_call_targets"] = {hex(addr): name for addr, name in sorted(plt_symbols.items())}
+    audit["external_call_targets"] = {
+        hex(addr): name for addr, name in sorted(plt_symbols.items())
+    }
     audit["stack_relevant_instructions"] = stack_relevant_instructions(
         audit["disassembly"],
         audit["functions"],

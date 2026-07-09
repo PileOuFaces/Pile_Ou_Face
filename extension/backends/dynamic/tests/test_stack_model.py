@@ -173,7 +173,9 @@ class TestDynamicStackModel(unittest.TestCase):
         window_start = 0x0F00
         window = bytearray(b"\x00" * 0x400)
 
-        def _snap(step, text, mnemonic, operands, rsp_before, rbp_before, rsp_after, rbp_after):
+        def _snap(
+            step, text, mnemonic, operands, rsp_before, rbp_before, rsp_after, rbp_after
+        ):
             return {
                 "step": step,
                 "func": "main",
@@ -190,7 +192,13 @@ class TestDynamicStackModel(unittest.TestCase):
                     "arch": "x86_64",
                     "word_size": word,
                     "endian": "little",
-                    "aliases": {"sp": "rsp", "bp": "rbp", "fp": "rbp", "ip": "rip", "lr": None},
+                    "aliases": {
+                        "sp": "rsp",
+                        "bp": "rbp",
+                        "fp": "rbp",
+                        "ip": "rip",
+                        "lr": None,
+                    },
                     "before": {
                         "registers": {
                             "rsp": hex(rsp_before),
@@ -219,21 +227,36 @@ class TestDynamicStackModel(unittest.TestCase):
 
         # push rbp: rbp unchanged (still the caller's), rsp decrements one word.
         snap_push = _snap(
-            1, "push rbp", "push", "rbp",
-            rsp_before=rbp_new + word, rbp_before=rbp_caller,
-            rsp_after=rbp_new, rbp_after=rbp_caller,
+            1,
+            "push rbp",
+            "push",
+            "rbp",
+            rsp_before=rbp_new + word,
+            rbp_before=rbp_caller,
+            rsp_after=rbp_new,
+            rbp_after=rbp_caller,
         )
         # mov rbp, rsp: rbp becomes this call's own frame base, nothing reserved yet.
         snap_mov = _snap(
-            2, "mov rbp, rsp", "mov", "rbp, rsp",
-            rsp_before=rbp_new, rbp_before=rbp_caller,
-            rsp_after=rbp_new, rbp_after=rbp_new,
+            2,
+            "mov rbp, rsp",
+            "mov",
+            "rbp, rsp",
+            rsp_before=rbp_new,
+            rbp_before=rbp_caller,
+            rsp_after=rbp_new,
+            rbp_after=rbp_new,
         )
         # sub rsp, 0x70: locals/buffers now have reserved storage.
         snap_sub = _snap(
-            3, "sub rsp, 0x70", "sub", "rsp, 0x70",
-            rsp_before=rbp_new, rbp_before=rbp_new,
-            rsp_after=rbp_new - 0x70, rbp_after=rbp_new,
+            3,
+            "sub rsp, 0x70",
+            "sub",
+            "rsp, 0x70",
+            rsp_before=rbp_new,
+            rbp_before=rbp_new,
+            rsp_after=rbp_new - 0x70,
+            rbp_after=rbp_new,
         )
 
         meta = {
@@ -247,7 +270,9 @@ class TestDynamicStackModel(unittest.TestCase):
         }
         disasm = [{"addr": "0x401000", "text": "nop"}]
 
-        analysis = build_dynamic_analysis([snap_push, snap_mov, snap_sub], meta, str(__file__), disasm)
+        analysis = build_dynamic_analysis(
+            [snap_push, snap_mov, snap_sub], meta, str(__file__), disasm
+        )
 
         step1 = analysis["1"]
         self.assertIsNone(step1["buffer"])
@@ -288,7 +313,9 @@ class TestDynamicStackModel(unittest.TestCase):
         window_start = 0x0F00
         window = bytearray(b"\x00" * 0x400)
 
-        def _snap(step, text, mnemonic, operands, rsp_before, rbp_before, rsp_after, rbp_after):
+        def _snap(
+            step, text, mnemonic, operands, rsp_before, rbp_before, rsp_after, rbp_after
+        ):
             return {
                 "step": step,
                 "func": "main",
@@ -305,7 +332,13 @@ class TestDynamicStackModel(unittest.TestCase):
                     "arch": "x86_64",
                     "word_size": word,
                     "endian": "little",
-                    "aliases": {"sp": "rsp", "bp": "rbp", "fp": "rbp", "ip": "rip", "lr": None},
+                    "aliases": {
+                        "sp": "rsp",
+                        "bp": "rbp",
+                        "fp": "rbp",
+                        "ip": "rip",
+                        "lr": None,
+                    },
                     "before": {
                         "registers": {
                             "rsp": hex(rsp_before),
@@ -333,19 +366,34 @@ class TestDynamicStackModel(unittest.TestCase):
             }
 
         snap_push = _snap(
-            1, "push rbp", "push", "rbp",
-            rsp_before=rbp_new + word, rbp_before=rbp_caller,
-            rsp_after=rbp_new, rbp_after=rbp_caller,
+            1,
+            "push rbp",
+            "push",
+            "rbp",
+            rsp_before=rbp_new + word,
+            rbp_before=rbp_caller,
+            rsp_after=rbp_new,
+            rbp_after=rbp_caller,
         )
         snap_mov = _snap(
-            2, "mov rbp, rsp", "mov", "rbp, rsp",
-            rsp_before=rbp_new, rbp_before=rbp_caller,
-            rsp_after=rbp_new, rbp_after=rbp_new,
+            2,
+            "mov rbp, rsp",
+            "mov",
+            "rbp, rsp",
+            rsp_before=rbp_new,
+            rbp_before=rbp_caller,
+            rsp_after=rbp_new,
+            rbp_after=rbp_new,
         )
         snap_sub = _snap(
-            3, "sub rsp, 0x70", "sub", "rsp, 0x70",
-            rsp_before=rbp_new, rbp_before=rbp_new,
-            rsp_after=rbp_new - 0x70, rbp_after=rbp_new,
+            3,
+            "sub rsp, 0x70",
+            "sub",
+            "rsp, 0x70",
+            rsp_before=rbp_new,
+            rbp_before=rbp_new,
+            rsp_after=rbp_new - 0x70,
+            rbp_after=rbp_new,
         )
 
         meta = {
@@ -381,7 +429,9 @@ class TestDynamicStackModel(unittest.TestCase):
         }
         disasm = [{"addr": "0x401000", "text": "nop"}]
 
-        analysis = build_dynamic_analysis([snap_push, snap_mov, snap_sub], meta, str(__file__), disasm)
+        analysis = build_dynamic_analysis(
+            [snap_push, snap_mov, snap_sub], meta, str(__file__), disasm
+        )
 
         # Test 2: before frame allocation (push rbp), no buffer evidence at all.
         step1 = analysis["1"]

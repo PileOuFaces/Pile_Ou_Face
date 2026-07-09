@@ -600,7 +600,9 @@ class TestBenignTerminationClassification(unittest.TestCase):
         analysis["frame"]["slots"][2].update(
             {
                 "valueHex": ret_value,
-                "bytesHex": _hex_bytes(bytes.fromhex(ret_value.replace("0x", "").zfill(16))[::-1]),
+                "bytesHex": _hex_bytes(
+                    bytes.fromhex(ret_value.replace("0x", "").zfill(16))[::-1]
+                ),
                 # No recentWrite/changed/flags: this slot was never touched.
             }
         )
@@ -614,19 +616,31 @@ class TestBenignTerminationClassification(unittest.TestCase):
         # why the narrow zero-address guard alone doesn't catch this shape.
         libc_return_addr = "0x7ffff7a52083"
         analysis = self._no_evidence_analysis(libc_return_addr)
-        meta = {"arch_bits": 64, "word_size": 8, "functions": []}  # no payload configured at all
+        meta = {
+            "arch_bits": 64,
+            "word_size": 8,
+            "functions": [],
+        }  # no payload configured at all
         crash = _build_crash_report(
             {
                 "type": "unmapped_fetch",
                 "step": 1,
                 "instructionAddress": "0x401050",
                 "instructionText": "ret",
-                "registers": {"rip": libc_return_addr, "rsp": "0x7fffffffdf80", "rbp": "0x7fffffffe000"},
+                "registers": {
+                    "rip": libc_return_addr,
+                    "rsp": "0x7fffffffdf80",
+                    "rbp": "0x7fffffffe000",
+                },
                 "rip": libc_return_addr,
                 "faultAddress": libc_return_addr,
                 "reason": "Retour vers une adresse non mappee.",
             },
-            [_snapshot(step=1, instr="ret", mnemonic="ret", after_rip=libc_return_addr)],
+            [
+                _snapshot(
+                    step=1, instr="ret", mnemonic="ret", after_rip=libc_return_addr
+                )
+            ],
             {"1": analysis},
             meta,
             [{"addr": "0x401000"}, {"addr": "0x401100"}],
@@ -637,7 +651,11 @@ class TestBenignTerminationClassification(unittest.TestCase):
         self.assertIsNone(crash["payloadOffset"])
 
         diagnostics = build_diagnostics(
-            [_snapshot(step=1, instr="ret", mnemonic="ret", after_rip=libc_return_addr)],
+            [
+                _snapshot(
+                    step=1, instr="ret", mnemonic="ret", after_rip=libc_return_addr
+                )
+            ],
             {"1": analysis},
             meta,
             [{"addr": "0x401000"}, {"addr": "0x401100"}],
@@ -647,7 +665,9 @@ class TestBenignTerminationClassification(unittest.TestCase):
         self.assertNotIn("fatal_crash", kinds)
         self.assertNotIn("return_address_corrupted", kinds)
         self.assertIn("benign_termination", kinds)
-        benign = next(diag for diag in diagnostics if diag["kind"] == "benign_termination")
+        benign = next(
+            diag for diag in diagnostics if diag["kind"] == "benign_termination"
+        )
         self.assertEqual(benign["severity"], "info")
         self.assertIsNone(benign.get("probableSource"))
 
@@ -666,7 +686,11 @@ class TestBenignTerminationClassification(unittest.TestCase):
                 "step": 2,
                 "instructionAddress": "0x401060",
                 "instructionText": "ret",
-                "registers": {"rip": unmapped_addr, "rsp": "0x7fffffffdf80", "rbp": "0x7fffffffe000"},
+                "registers": {
+                    "rip": unmapped_addr,
+                    "rsp": "0x7fffffffdf80",
+                    "rbp": "0x7fffffffe000",
+                },
                 "rip": unmapped_addr,
                 "faultAddress": unmapped_addr,
                 "reason": "Retour vers une adresse non mappee.",
@@ -676,9 +700,24 @@ class TestBenignTerminationClassification(unittest.TestCase):
             meta,
             [{"addr": "0x401000"}, {"addr": "0x401100"}],
         )
-        diagnostics = build_diagnostics([snap], {"2": analysis}, meta, [{"addr": "0x401000"}, {"addr": "0x401100"}], crash=crash)
+        diagnostics = build_diagnostics(
+            [snap],
+            {"2": analysis},
+            meta,
+            [{"addr": "0x401000"}, {"addr": "0x401100"}],
+            crash=crash,
+        )
         kinds = {diag["kind"] for diag in diagnostics}
-        self.assertEqual(kinds & {"fatal_crash", "buffer_overflow", "return_address_corrupted", "control_hijack"}, set())
+        self.assertEqual(
+            kinds
+            & {
+                "fatal_crash",
+                "buffer_overflow",
+                "return_address_corrupted",
+                "control_hijack",
+            },
+            set(),
+        )
 
     def test_retaddr_overwrite_stays_fatal_with_evidence(self):
         # Regression: real evidence (overflow reaching return_address + a
@@ -701,21 +740,40 @@ class TestBenignTerminationClassification(unittest.TestCase):
             "frontier": "0x7fffffffe010",
         }
         analysis["delta"]["writes"] = [
-            {"addr": "0x7fffffffdfc0", "size": 80, "bytes": _hex_bytes(b"A" * 80), "source": "external"}
+            {
+                "addr": "0x7fffffffdfc0",
+                "size": 80,
+                "bytes": _hex_bytes(b"A" * 80),
+                "source": "external",
+            }
         ]
-        meta = {"arch_bits": 64, "word_size": 8, "payload_hex": _hex_bytes(b"A" * 80), "payload_target": "stdin", "functions": []}
+        meta = {
+            "arch_bits": 64,
+            "word_size": 8,
+            "payload_hex": _hex_bytes(b"A" * 80),
+            "payload_target": "stdin",
+            "functions": [],
+        }
         crash = _build_crash_report(
             {
                 "type": "unmapped_fetch",
                 "step": 1,
                 "instructionAddress": "0x401050",
                 "instructionText": "ret",
-                "registers": {"rip": "0x4141414141414141", "rsp": "0x7fffffffdf80", "rbp": "0x7fffffffe000"},
+                "registers": {
+                    "rip": "0x4141414141414141",
+                    "rsp": "0x7fffffffdf80",
+                    "rbp": "0x7fffffffe000",
+                },
                 "rip": "0x4141414141414141",
                 "faultAddress": "0x4141414141414141",
                 "reason": "Retour vers une adresse non mappee.",
             },
-            [_snapshot(step=1, instr="ret", mnemonic="ret", after_rip="0x4141414141414141")],
+            [
+                _snapshot(
+                    step=1, instr="ret", mnemonic="ret", after_rip="0x4141414141414141"
+                )
+            ],
             {"1": analysis},
             meta,
             [{"addr": "0x401000"}, {"addr": "0x401100"}],
@@ -724,7 +782,11 @@ class TestBenignTerminationClassification(unittest.TestCase):
         self.assertIsNotNone(crash["probableSource"])
 
         diagnostics = build_diagnostics(
-            [_snapshot(step=1, instr="ret", mnemonic="ret", after_rip="0x4141414141414141")],
+            [
+                _snapshot(
+                    step=1, instr="ret", mnemonic="ret", after_rip="0x4141414141414141"
+                )
+            ],
             {"1": analysis},
             meta,
             [{"addr": "0x401000"}, {"addr": "0x401100"}],
@@ -753,9 +815,19 @@ class TestBenignTerminationClassification(unittest.TestCase):
             "frontier": "0x7fffffffe008",
         }
         analysis["delta"]["writes"] = [
-            {"addr": "0x7fffffffdfc0", "size": 72, "bytes": _hex_bytes(b"B" * 72), "source": "external"}
+            {
+                "addr": "0x7fffffffdfc0",
+                "size": 72,
+                "bytes": _hex_bytes(b"B" * 72),
+                "source": "external",
+            }
         ]
-        meta = {"arch_bits": 64, "word_size": 8, "payload_hex": _hex_bytes(b"B" * 72), "payload_target": "stdin"}
+        meta = {
+            "arch_bits": 64,
+            "word_size": 8,
+            "payload_hex": _hex_bytes(b"B" * 72),
+            "payload_target": "stdin",
+        }
 
         diagnostics = build_diagnostics(
             [_snapshot()],
@@ -765,11 +837,15 @@ class TestBenignTerminationClassification(unittest.TestCase):
         )
         kinds = {diag["kind"] for diag in diagnostics}
         self.assertIn("saved_bp_corrupted", kinds)
-        saved_bp = next(diag for diag in diagnostics if diag["kind"] == "saved_bp_corrupted")
+        saved_bp = next(
+            diag for diag in diagnostics if diag["kind"] == "saved_bp_corrupted"
+        )
         self.assertEqual(saved_bp["severity"], "warning")
 
     def test_max_steps_reached_produces_clear_diagnostic_without_crash(self):
-        snap = _snapshot(step=500, instr="mov eax, ebx", mnemonic="mov", after_rip="0x401200")
+        snap = _snapshot(
+            step=500, instr="mov eax, ebx", mnemonic="mov", after_rip="0x401200"
+        )
         analysis = _base_analysis()
         meta = {"arch_bits": 64, "word_size": 8}
 

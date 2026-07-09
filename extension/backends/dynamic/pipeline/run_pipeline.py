@@ -133,7 +133,9 @@ def _stack_evidence_summary(stack_evidence: dict | None) -> dict | None:
     if not isinstance(stack_evidence, dict):
         return None
     functions_payload = stack_evidence.get("functions", [])
-    functions_available = isinstance(functions_payload, list) and bool(functions_payload)
+    functions_available = isinstance(functions_payload, list) and bool(
+        functions_payload
+    )
     buffers = []
     slots = []
     local_slots = []
@@ -149,7 +151,11 @@ def _stack_evidence_summary(stack_evidence: dict | None) -> dict | None:
         # every scored candidate: probable_local, stack_argument, register_argument,
         # stack_slot, buffer. It is the single source stack_model.py types slots from,
         # including confirmed buffers and rejected buffer candidates.
-        for slot in function.get("local_slots", []) if isinstance(function.get("local_slots"), list) else []:
+        for slot in (
+            function.get("local_slots", [])
+            if isinstance(function.get("local_slots"), list)
+            else []
+        ):
             if not isinstance(slot, dict):
                 continue
             kind = str(slot.get("kind") or "")
@@ -191,7 +197,8 @@ def _stack_evidence_summary(stack_evidence: dict | None) -> dict | None:
         "available": functions_available,
         "buffer_count": len(buffers),
         "buffer_offsets": [
-            item.get("offset_label") or f"{item.get('base') or 'rbp'}{int(item['offset']):+#x}"
+            item.get("offset_label")
+            or f"{item.get('base') or 'rbp'}{int(item['offset']):+#x}"
             for item in buffers
         ],
         "buffers": buffers,
@@ -478,13 +485,19 @@ def _build_crash_report(
         meta=meta,
         code_ranges=code_ranges,
     )
-    if classification == "fatal_crash" and not _has_control_corruption_evidence(analysis or {}, payload_offset):
+    if classification == "fatal_crash" and not _has_control_corruption_evidence(
+        analysis or {}, payload_offset
+    ):
         # No overflow reached a control slot, no write was flagged on one, and
         # the faulting bytes don't match the configured payload: this isn't a
         # vulnerability, it's execution running past a boundary the emulator
         # doesn't model (classic hello-world/printf-only: main returns into
         # un-emulated libc and Unicorn faults on the fetch).
-        classification = "benign_termination" if instruction_text.lower().startswith("ret") else "emulator_stop"
+        classification = (
+            "benign_termination"
+            if instruction_text.lower().startswith("ret")
+            else "emulator_stop"
+        )
     function_meta = (
         analysis.get("function")
         if isinstance(analysis, dict) and isinstance(analysis.get("function"), dict)
@@ -514,7 +527,9 @@ def _build_crash_report(
         "suspectBytes": suspect_bytes,
         # Never assert a payload/input link without evidence: benign_termination
         # and emulator_stop are, by construction, the no-evidence outcomes.
-        "payloadOffset": None if classification in ("benign_termination", "emulator_stop") else payload_offset,
+        "payloadOffset": None
+        if classification in ("benign_termination", "emulator_stop")
+        else payload_offset,
         "probableSource": (
             None
             if classification in ("benign_termination", "emulator_stop")
@@ -580,8 +595,12 @@ def run_pipeline(
     if audit_enabled():
         meta["debug"] = {
             **(meta.get("debug") if isinstance(meta.get("debug"), dict) else {}),
-            "evidence_buffer_count": (stack_evidence_summary or {}).get("buffer_count", 0),
-            "evidence_buffer_offsets": (stack_evidence_summary or {}).get("buffer_offsets", []),
+            "evidence_buffer_count": (stack_evidence_summary or {}).get(
+                "buffer_count", 0
+            ),
+            "evidence_buffer_offsets": (stack_evidence_summary or {}).get(
+                "buffer_offsets", []
+            ),
         }
         analysis_meta["debug"] = meta["debug"]
         write_audit_json(
@@ -607,7 +626,10 @@ def run_pipeline(
         disasm_lines=disasm.get("lines") if disasm else None,
     )
     write_audit_json(output_path, "06-analysis-by-step.json", analysis_by_step)
-    if getattr(config, "buffer_offset", None) is not None and getattr(config, "buffer_size", None) is not None:
+    if (
+        getattr(config, "buffer_offset", None) is not None
+        and getattr(config, "buffer_size", None) is not None
+    ):
         meta["buffer_source"] = "user"
     elif any(
         isinstance(step_analysis, dict) and step_analysis.get("buffer") is not None
@@ -623,7 +645,11 @@ def run_pipeline(
         meta,
         disasm_lines=disasm.get("lines") if disasm else None,
     )
-    trace_meta = trace.get("meta") if isinstance(trace, dict) and isinstance(trace.get("meta"), dict) else {}
+    trace_meta = (
+        trace.get("meta")
+        if isinstance(trace, dict) and isinstance(trace.get("meta"), dict)
+        else {}
+    )
     steps_executed = _parse_int(trace_meta.get("steps"))
     configured_max_steps = _parse_int(getattr(config, "max_steps", None))
     max_steps_reached = bool(

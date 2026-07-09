@@ -6,7 +6,6 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
-from typing import Optional
 
 STACK_RELEVANT_CALLS = {
     "strcpy",
@@ -32,7 +31,7 @@ BUFFER_PROOF_SINKS = {
 X86_64_ARG_REGS = ("rdi", "rsi", "rdx", "rcx", "r8", "r9")
 
 
-def safe_int(value) -> Optional[int]:
+def safe_int(value) -> int | None:
     try:
         if value is None:
             return None
@@ -43,12 +42,12 @@ def safe_int(value) -> Optional[int]:
         return None
 
 
-def safe_hex(value) -> Optional[str]:
+def safe_hex(value) -> str | None:
     parsed = safe_int(value)
     return hex(parsed) if parsed is not None else None
 
 
-def line_addr(line: dict) -> Optional[int]:
+def line_addr(line: dict) -> int | None:
     return safe_int(line.get("addr")) if isinstance(line, dict) else None
 
 
@@ -70,7 +69,7 @@ def function_ranges(functions: list[dict]) -> list[dict]:
     return ranges
 
 
-def function_for_addr(ranges: list[dict], addr: Optional[int]) -> Optional[dict]:
+def function_for_addr(ranges: list[dict], addr: int | None) -> dict | None:
     if addr is None:
         return None
     for entry in ranges:
@@ -123,7 +122,7 @@ def stack_accesses_from_operands(operands: str) -> list[dict]:
     return out
 
 
-def call_target_name(operands: str, plt_symbols: dict[int, str]) -> Optional[str]:
+def call_target_name(operands: str, plt_symbols: dict[int, str]) -> str | None:
     normalized = re.sub(r"\s+", "", operands.lower())
     name = re.sub(r"^.*<([^>@]+)(?:@[^>]*)?>.*$", r"\1", normalized)
     if name != normalized:
@@ -134,7 +133,7 @@ def call_target_name(operands: str, plt_symbols: dict[int, str]) -> Optional[str
     return None
 
 
-def instruction_kind(line: dict, plt_symbols: dict[int, str]) -> Optional[str]:
+def instruction_kind(line: dict, plt_symbols: dict[int, str]) -> str | None:
     mnemonic = str(line.get("mnemonic") or "").strip().lower()
     operands = str(line.get("operands") or "").strip()
     normalized_operands = re.sub(r"\s+", "", operands.lower())
@@ -175,7 +174,11 @@ def stack_relevant_instructions(
         addr = line_addr(line)
         fn = function_for_addr(ranges, addr)
         operands = str(line.get("operands") or "").strip()
-        call_target = call_target_name(operands, plt_symbols) if kind == "call_stack_relevant_function" else None
+        call_target = (
+            call_target_name(operands, plt_symbols)
+            if kind == "call_stack_relevant_function"
+            else None
+        )
         out.append(
             {
                 "addr": safe_hex(addr),
@@ -195,14 +198,14 @@ def register_name(value: str) -> str:
     return str(value or "").strip().lower().lstrip("%")
 
 
-def dest_reg_from_operands(operands: str) -> Optional[str]:
+def dest_reg_from_operands(operands: str) -> str | None:
     first = str(operands or "").split(",", 1)[0].strip()
     if re.fullmatch(r"%?[a-z][a-z0-9]*", first, re.IGNORECASE):
         return register_name(first)
     return None
 
 
-def source_reg_from_mov(operands: str) -> Optional[str]:
+def source_reg_from_mov(operands: str) -> str | None:
     parts = str(operands or "").split(",", 1)
     if len(parts) != 2:
         return None

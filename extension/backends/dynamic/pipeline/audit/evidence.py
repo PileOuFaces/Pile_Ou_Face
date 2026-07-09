@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import os
-from typing import Optional
 
 from backends.dynamic.core.interfaces import TraceConfigLike
 
@@ -46,7 +45,9 @@ def _slot_confidence(source: str) -> float:
     return 0.5
 
 
-def _frame_audit_for_function(binary_path: str, function: dict, relevant: list[dict]) -> Optional[dict]:
+def _frame_audit_for_function(
+    binary_path: str, function: dict, relevant: list[dict]
+) -> dict | None:
     addr = safe_int(function.get("addr"))
     if addr is None or analyse_stack_frame is None:
         return None
@@ -101,7 +102,9 @@ def _frame_audit_for_function(binary_path: str, function: dict, relevant: list[d
         slots.append(
             {
                 "name": str(entry.get("name") or ""),
-                "kind": "stack_argument" if entry.get("offset") is not None else "register_argument",
+                "kind": "stack_argument"
+                if entry.get("offset") is not None
+                else "register_argument",
                 "offset": safe_int(entry.get("offset")),
                 "size": safe_int(entry.get("size")),
                 "source": source,
@@ -135,7 +138,7 @@ def build_inferred_frame_audit(
     binary_path: str,
     functions: list[dict],
     relevant: list[dict],
-    start_symbol: Optional[str],
+    start_symbol: str | None,
 ) -> dict:
     frames = []
     for function in functions:
@@ -144,9 +147,23 @@ def build_inferred_frame_audit(
             frames.append(frame)
     selected = None
     if start_symbol:
-        selected = next((frame for frame in frames if frame.get("function", {}).get("name") == start_symbol), None)
+        selected = next(
+            (
+                frame
+                for frame in frames
+                if frame.get("function", {}).get("name") == start_symbol
+            ),
+            None,
+        )
     if selected is None:
-        selected = next((frame for frame in frames if frame.get("function", {}).get("name") == "main"), None)
+        selected = next(
+            (
+                frame
+                for frame in frames
+                if frame.get("function", {}).get("name") == "main"
+            ),
+            None,
+        )
     if selected is None and frames:
         selected = frames[0]
     selected = selected or {
@@ -169,7 +186,9 @@ def build_inferred_frame_audit(
     }
 
 
-def _slot_label(slot: dict | None = None, base: str | None = None, offset: Optional[int] = None) -> str:
+def _slot_label(
+    slot: dict | None = None, base: str | None = None, offset: int | None = None
+) -> str:
     if slot is not None:
         base = str(slot.get("base") or base or "stack")
         offset = safe_int(slot.get("offset"))
@@ -216,7 +235,7 @@ def _stack_access_payload(access: dict, line: dict, kind: str) -> dict:
     }
 
 
-def _slot_key(base: str, offset: Optional[int]) -> str:
+def _slot_key(base: str, offset: int | None) -> str:
     if offset is None:
         return f"{base}:unknown"
     return f"{base}:{offset:+d}"
@@ -245,7 +264,9 @@ def _slot_from_frame_entry(entry: dict, kind: str) -> dict:
         "key": _slot_key(base, offset),
         "base": base,
         "offset": offset,
-        "offset_label": f"{base}{offset:+#x}" if offset is not None and base != "register" else None,
+        "offset_label": f"{base}{offset:+#x}"
+        if offset is not None and base != "register"
+        else None,
         "size": size,
         "size_source": source if size is not None else "unknown",
         "observed_write_size": None,
@@ -332,17 +353,25 @@ def _frame_slots(binary_path: str, function: dict) -> tuple[dict, list[dict]]:
     for entry in frame.get("vars", []) if isinstance(frame, dict) else []:
         _merge_slot(slots, _slot_from_frame_entry(entry, "probable_local"))
     for entry in frame.get("args", []) if isinstance(frame, dict) else []:
-        kind = "stack_argument" if entry.get("offset") is not None else "register_argument"
+        kind = (
+            "stack_argument" if entry.get("offset") is not None else "register_argument"
+        )
         _merge_slot(slots, _slot_from_frame_entry(entry, kind))
     return frame, list(slots.values())
 
 
-def _line_in_function_ranges(disassembly: list[dict], function: dict, ranges: list[dict]) -> list[dict]:
+def _line_in_function_ranges(
+    disassembly: list[dict], function: dict, ranges: list[dict]
+) -> list[dict]:
     start = safe_int(function.get("addr"))
     if start is None:
         return []
     range_entry = next(
-        (entry for entry in ranges if entry.get("function", {}).get("addr") == function.get("addr")),
+        (
+            entry
+            for entry in ranges
+            if entry.get("function", {}).get("addr") == function.get("addr")
+        ),
         None,
     )
     end = range_entry.get("end") if range_entry else None
@@ -404,7 +433,11 @@ def _track_static_slot_evidence(
                     confidence=0.65,
                     function=function_name,
                     slot=slot_name,
-                    claim="local_slot" if base.endswith("bp") and safe_int(access.get("offset")) is not None and safe_int(access.get("offset")) < 0 else "stack_slot",
+                    claim="local_slot"
+                    if base.endswith("bp")
+                    and safe_int(access.get("offset")) is not None
+                    and safe_int(access.get("offset")) < 0
+                    else "stack_slot",
                     evidence=evidence,
                     reason="Instruction references a stack-relative address.",
                 )
@@ -521,7 +554,9 @@ def _config_payload_sources(config: TraceConfigLike) -> list[dict]:
         sources.append({"source": "argv1_data", "bytes": argv1_data})
     argv1 = getattr(config, "argv1", None)
     if argv1 is not None:
-        sources.append({"source": "argv1", "bytes": str(argv1).encode("utf-8", errors="ignore")})
+        sources.append(
+            {"source": "argv1", "bytes": str(argv1).encode("utf-8", errors="ignore")}
+        )
     stack_payload = getattr(config, "stack_payload", None)
     if stack_payload:
         try:
@@ -563,11 +598,15 @@ def _access_bytes(access: dict) -> bytes:
 def _snapshot_registers(snapshot: dict, stage: str) -> dict:
     cpu = snapshot.get("cpu") if isinstance(snapshot.get("cpu"), dict) else {}
     payload = cpu.get(stage) if isinstance(cpu.get(stage), dict) else {}
-    registers = payload.get("registers") if isinstance(payload.get("registers"), dict) else {}
+    registers = (
+        payload.get("registers") if isinstance(payload.get("registers"), dict) else {}
+    )
     return {str(key).lower(): safe_int(value) for key, value in registers.items()}
 
 
-def _slot_overlaps_access(slot: dict, offset: Optional[int], size: int, base: str = "rbp") -> bool:
+def _slot_overlaps_access(
+    slot: dict, offset: int | None, size: int, base: str = "rbp"
+) -> bool:
     if offset is None or slot.get("base") != base:
         return False
     slot_offset = safe_int(slot.get("offset"))
@@ -590,29 +629,54 @@ def _attach_runtime_accesses(
             continue
         before = _snapshot_registers(snapshot, "before")
         after = _snapshot_registers(snapshot, "after")
-        rbp = after.get("rbp") or before.get("rbp") or after.get("ebp") or before.get("ebp")
-        rsp = after.get("rsp") or before.get("rsp") or after.get("esp") or before.get("esp")
-        effects = snapshot.get("effects") if isinstance(snapshot.get("effects"), dict) else {}
+        rbp = (
+            after.get("rbp")
+            or before.get("rbp")
+            or after.get("ebp")
+            or before.get("ebp")
+        )
+        rsp = (
+            after.get("rsp")
+            or before.get("rsp")
+            or after.get("esp")
+            or before.get("esp")
+        )
+        effects = (
+            snapshot.get("effects") if isinstance(snapshot.get("effects"), dict) else {}
+        )
         if str(effects.get("kind") or "") == "call" or effects.get("external_symbol"):
             runtime_calls.append(
                 {
                     "step": snapshot.get("step"),
                     "addr": snapshot.get("rip") or snapshot.get("eip"),
-                    "target": effects.get("external_symbol") or effects.get("call_target"),
+                    "target": effects.get("external_symbol")
+                    or effects.get("call_target"),
                     "instruction": snapshot.get("instr"),
                     "argument_registers_before_call": {
-                        reg: safe_hex(before.get(reg)) for reg in X86_64_ARG_REGS if before.get(reg) is not None
+                        reg: safe_hex(before.get(reg))
+                        for reg in X86_64_ARG_REGS
+                        if before.get(reg) is not None
                     },
                     "external_simulated": bool(effects.get("external_simulated")),
                 }
             )
-        memory = snapshot.get("memory") if isinstance(snapshot.get("memory"), dict) else {}
+        memory = (
+            snapshot.get("memory") if isinstance(snapshot.get("memory"), dict) else {}
+        )
         for access_kind in ("writes", "reads"):
-            for access in memory.get(access_kind, []) if isinstance(memory.get(access_kind), list) else []:
+            for access in (
+                memory.get(access_kind, [])
+                if isinstance(memory.get(access_kind), list)
+                else []
+            ):
                 addr = safe_int(access.get("addr"))
                 size = safe_int(access.get("size")) or 1
-                offset_rbp = addr - rbp if addr is not None and rbp is not None else None
-                offset_rsp = addr - rsp if addr is not None and rsp is not None else None
+                offset_rbp = (
+                    addr - rbp if addr is not None and rbp is not None else None
+                )
+                offset_rsp = (
+                    addr - rsp if addr is not None and rsp is not None else None
+                )
                 write_bytes = _access_bytes(access)
                 payload_hit = _payload_overlap(write_bytes, payload_sources)
                 runtime_entry = {
@@ -630,7 +694,11 @@ def _attach_runtime_accesses(
                 matched = False
                 for slot in slots.values():
                     if _slot_overlaps_access(slot, offset_rbp, size, "rbp"):
-                        target = "runtime_writes" if access_kind == "writes" else "runtime_reads"
+                        target = (
+                            "runtime_writes"
+                            if access_kind == "writes"
+                            else "runtime_reads"
+                        )
                         slot[target].append(runtime_entry)
                         if payload_hit:
                             slot["payload_overlap"] = True
@@ -650,12 +718,20 @@ def _attach_runtime_accesses(
                     slot = _merge_slot(
                         slots,
                         {
-                            **_slot_from_access({"base": "rbp", "offset": offset_rbp, "expression": f"[rbp{offset_rbp:+#x}]"}),
+                            **_slot_from_access(
+                                {
+                                    "base": "rbp",
+                                    "offset": offset_rbp,
+                                    "expression": f"[rbp{offset_rbp:+#x}]",
+                                }
+                            ),
                             "size": size,
                             "size_source": "observed_write",
                         },
                     )
-                    target = "runtime_writes" if access_kind == "writes" else "runtime_reads"
+                    target = (
+                        "runtime_writes" if access_kind == "writes" else "runtime_reads"
+                    )
                     slot[target].append(runtime_entry)
                     if payload_hit:
                         slot["payload_overlap"] = True
@@ -673,22 +749,28 @@ def _attach_runtime_accesses(
     return runtime_calls
 
 
-def _observed_write_size(slot: dict) -> Optional[int]:
+def _observed_write_size(slot: dict) -> int | None:
     """Aggregate span of runtime writes landing in this slot, from its lowest
     write offset to its highest write end. Reflects bytes actually observed
     written at runtime (e.g. a strcpy source string + NUL, or a read() of N
     bytes) -- it is evidence of what happened during this trace, not a proof
     of the slot's declared/exact size."""
-    writes = [w for w in slot.get("runtime_writes", []) if safe_int(w.get("offset_rbp")) is not None]
+    writes = [
+        w
+        for w in slot.get("runtime_writes", [])
+        if safe_int(w.get("offset_rbp")) is not None
+    ]
     if not writes:
         return None
     starts = [safe_int(w["offset_rbp"]) for w in writes]
-    ends = [safe_int(w["offset_rbp"]) + max(1, safe_int(w.get("size")) or 1) for w in writes]
+    ends = [
+        safe_int(w["offset_rbp"]) + max(1, safe_int(w.get("size")) or 1) for w in writes
+    ]
     span = max(ends) - min(starts)
     return span if span > 0 else None
 
 
-def _estimate_slot_bound(slot: dict, rbp_offsets: list[int]) -> Optional[int]:
+def _estimate_slot_bound(slot: dict, rbp_offsets: list[int]) -> int | None:
     """Distance from this slot's start to the next known rbp-relative offset
     (another slot, or the saved rbp at offset 0) -- an upper bound only, never
     a proven size."""
@@ -716,7 +798,9 @@ def _finalize_slot_size(slot: dict, rbp_offsets: list[int]) -> None:
     """
     if str(slot.get("size_source") or "") in _EXACT_SIZE_SOURCES:
         slot["size_confidence"] = "exact"
-        slot["size_reason"] = "size confirmed by source/DWARF type or ABI register width"
+        slot["size_reason"] = (
+            "size confirmed by source/DWARF type or ABI register width"
+        )
         slot["observed_write_size"] = _observed_write_size(slot)
         return
 
@@ -730,9 +814,13 @@ def _finalize_slot_size(slot: dict, rbp_offsets: list[int]) -> None:
 
     reasons = ["no exact size available (no source/DWARF, no ABI register)"]
     if observed is not None:
-        reasons.append(f"observed_write_size={observed} (bytes written during this trace, not a declared size)")
+        reasons.append(
+            f"observed_write_size={observed} (bytes written during this trace, not a declared size)"
+        )
     if bound is not None:
-        reasons.append(f"estimated_bound<={bound} (upper bound to the next slot/saved-rbp, not a size)")
+        reasons.append(
+            f"estimated_bound<={bound} (upper bound to the next slot/saved-rbp, not a size)"
+        )
     slot["size_reason"] = "; ".join(reasons)
 
 
@@ -742,7 +830,8 @@ def _finalize_function_slot_sizes(slots: dict[str, dict]) -> None:
         | {
             safe_int(item.get("offset"))
             for item in slots.values()
-            if str(item.get("base") or "") == "rbp" and safe_int(item.get("offset")) is not None
+            if str(item.get("base") or "") == "rbp"
+            and safe_int(item.get("offset")) is not None
         }
     )
     for slot in slots.values():
@@ -753,9 +842,13 @@ def _looks_like_char_array_slot(slot: dict) -> bool:
     type_name = str(slot.get("type") or "").lower()
     name = str(slot.get("name") or "").lower()
     return (
-        ("char" in type_name or "byte" in type_name or "uint8" in type_name)
-        and ("[" in type_name or "array" in type_name or slot.get("size"))
-    ) or name in {"buf", "buff", "buffer"} or name.startswith(("buf_", "buffer_"))
+        (
+            ("char" in type_name or "byte" in type_name or "uint8" in type_name)
+            and ("[" in type_name or "array" in type_name or slot.get("size"))
+        )
+        or name in {"buf", "buff", "buffer"}
+        or name.startswith(("buf_", "buffer_"))
+    )
 
 
 def _score_slot(slot: dict, function_name: str, evidence_entries: list[dict]) -> dict:
@@ -764,7 +857,11 @@ def _score_slot(slot: dict, function_name: str, evidence_entries: list[dict]) ->
     is_buffer = False
     confidence = "low"
 
-    if str(slot.get("source") or "").lower() in {"dwarf", "source", "source_c"} and _looks_like_char_array_slot(slot):
+    if str(slot.get("source") or "").lower() in {
+        "dwarf",
+        "source",
+        "source_c",
+    } and _looks_like_char_array_slot(slot):
         is_buffer = True
         confidence = "exact"
         sources.append(str(slot.get("source")))
@@ -785,7 +882,13 @@ def _score_slot(slot: dict, function_name: str, evidence_entries: list[dict]) ->
         is_buffer = True
         confidence = "high" if confidence != "exact" else confidence
         sources.append("libc_call")
-        targets = sorted({str(item.get("target")) for item in slot["passed_as_call_argument"] if item.get("target")})
+        targets = sorted(
+            {
+                str(item.get("target"))
+                for item in slot["passed_as_call_argument"]
+                if item.get("target")
+            }
+        )
         reasons.append(f"slot address is passed as destination to {', '.join(targets)}")
         for proof in slot["passed_as_call_argument"]:
             evidence_entries.append(
@@ -801,8 +904,11 @@ def _score_slot(slot: dict, function_name: str, evidence_entries: list[dict]) ->
             )
 
     payload_writes = [
-        item for item in slot.get("runtime_writes", [])
-        if item.get("payload_overlap") and item.get("offset_rbp") is not None and item.get("offset_rbp") < 0
+        item
+        for item in slot.get("runtime_writes", [])
+        if item.get("payload_overlap")
+        and item.get("offset_rbp") is not None
+        and item.get("offset_rbp") < 0
     ]
     if payload_writes:
         is_buffer = True
@@ -830,7 +936,9 @@ def _score_slot(slot: dict, function_name: str, evidence_entries: list[dict]) ->
 
     if not reasons:
         if slot.get("size") and safe_int(slot.get("size")) >= 16:
-            reasons.append("rejected: size >= 16 is not enough without source/libc/runtime payload proof")
+            reasons.append(
+                "rejected: size >= 16 is not enough without source/libc/runtime payload proof"
+            )
         elif slot.get("asm_instructions"):
             reasons.append("ASM stack access only; no buffer destination proof")
         else:
@@ -838,7 +946,13 @@ def _score_slot(slot: dict, function_name: str, evidence_entries: list[dict]) ->
 
     slot["evidence_sources"] = sorted(set(filter(None, sources)))
     slot["confidence"] = confidence
-    slot["classification"] = "buffer" if is_buffer else ("probable_local" if slot.get("kind") == "probable_local" else "stack_slot")
+    slot["classification"] = (
+        "buffer"
+        if is_buffer
+        else (
+            "probable_local" if slot.get("kind") == "probable_local" else "stack_slot"
+        )
+    )
     slot["reason"] = "; ".join(reasons)
     return slot
 
@@ -856,7 +970,11 @@ def build_stack_evidence_audit(
     output = {
         "binary": _normalize_path(binary_path),
         "payload_sources": [
-            {"source": item["source"], "byteLength": len(item.get("bytes") or b""), "hex": (item.get("bytes") or b"").hex()}
+            {
+                "source": item["source"],
+                "byteLength": len(item.get("bytes") or b""),
+                "hex": (item.get("bytes") or b"").hex(),
+            }
             for item in payload_sources
         ],
         "functions": [],
@@ -875,12 +993,14 @@ def build_stack_evidence_audit(
         frame, frame_slots = _frame_slots(binary_path, function)
         slots = {slot["key"]: slot for slot in frame_slots}
         function_lines = _line_in_function_ranges(disassembly, function, ranges)
-        frame_allocations, rbp_accesses, rsp_accesses, static_call_sites = _track_static_slot_evidence(
-            function_name,
-            function_lines,
-            slots,
-            plt_symbols,
-            evidence_entries,
+        frame_allocations, rbp_accesses, rsp_accesses, static_call_sites = (
+            _track_static_slot_evidence(
+                function_name,
+                function_lines,
+                slots,
+                plt_symbols,
+                evidence_entries,
+            )
         )
         runtime_call_sites = _attach_runtime_accesses(
             function_name,
@@ -890,9 +1010,20 @@ def build_stack_evidence_audit(
             evidence_entries,
         )
         _finalize_function_slot_sizes(slots)
-        scored = [_score_slot(slot, function_name, evidence_entries) for slot in slots.values()]
-        scored.sort(key=lambda slot: (safe_int(slot.get("offset")) is None, safe_int(slot.get("offset")) or 0, slot.get("key")))
-        inferred_buffers = [slot for slot in scored if slot.get("classification") == "buffer"]
+        scored = [
+            _score_slot(slot, function_name, evidence_entries)
+            for slot in slots.values()
+        ]
+        scored.sort(
+            key=lambda slot: (
+                safe_int(slot.get("offset")) is None,
+                safe_int(slot.get("offset")) or 0,
+                slot.get("key"),
+            )
+        )
+        inferred_buffers = [
+            slot for slot in scored if slot.get("classification") == "buffer"
+        ]
         rejected = [
             {
                 "key": slot.get("key"),
@@ -907,21 +1038,26 @@ def build_stack_evidence_audit(
             if slot.get("classification") != "buffer"
         ]
         call_sites = static_call_sites
-        runtime_by_addr = {str(item.get("addr") or ""): item for item in runtime_call_sites}
+        runtime_by_addr = {
+            str(item.get("addr") or ""): item for item in runtime_call_sites
+        }
         for call_site in call_sites:
             runtime = runtime_by_addr.get(str(call_site.get("addr") or ""))
             if runtime:
                 call_site["runtime"] = runtime
         known_static_addrs = {str(item.get("addr") or "") for item in call_sites}
         call_sites.extend(
-            item for item in runtime_call_sites
+            item
+            for item in runtime_call_sites
             if str(item.get("addr") or "") not in known_static_addrs
         )
         output["functions"].append(
             {
                 "name": function.get("name"),
                 "addr": function.get("addr"),
-                "frame_size": safe_int(frame.get("frame_size")) if isinstance(frame, dict) else 0,
+                "frame_size": safe_int(frame.get("frame_size"))
+                if isinstance(frame, dict)
+                else 0,
                 "frame_allocations": frame_allocations,
                 "rbp_accesses": rbp_accesses,
                 "rsp_accesses": rsp_accesses,

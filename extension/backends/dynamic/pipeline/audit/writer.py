@@ -6,14 +6,13 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
-from typing import Optional
 
 
 def audit_enabled() -> bool:
     return os.environ.get("POF_RUNTRACE_AUDIT") == "1"
 
 
-def audit_dir(output_path: Optional[str]) -> Optional[str]:
+def audit_dir(output_path: str | None) -> str | None:
     if not audit_enabled():
         return None
     configured = os.environ.get("POF_RUNTRACE_AUDIT_DIR")
@@ -40,7 +39,7 @@ def jsonable(value):
     return value
 
 
-def write_audit_json(output_path: Optional[str], name: str, payload) -> None:
+def write_audit_json(output_path: str | None, name: str, payload) -> None:
     directory = audit_dir(output_path)
     if not directory:
         return

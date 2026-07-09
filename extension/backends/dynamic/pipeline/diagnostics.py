@@ -414,9 +414,7 @@ def _diagnose_crash(
         if isinstance(crash.get("suspectOverwrittenSlot"), dict)
         else None
     )
-    slot_kind = (
-        str(slot.get("kind") or "").strip().lower() if isinstance(slot, dict) else ""
-    )
+    
     function_meta = (
         analysis.get("function") if isinstance(analysis.get("function"), dict) else {}
     )
@@ -482,11 +480,17 @@ def _diagnose_crash(
         ):
             kind = "fatal_crash"
         elif looks_like_control_divert:
-            kind = "benign_termination" if instruction_text.startswith("ret") else "emulator_stop"
+            kind = (
+                "benign_termination"
+                if instruction_text.startswith("ret")
+                else "emulator_stop"
+            )
         else:
             kind = "runtime_crash"
         severity = "error" if kind in ("fatal_crash", "runtime_crash") else "info"
-        confidence = 0.96 if kind == "fatal_crash" else 0.88 if kind == "runtime_crash" else 0.5
+        confidence = (
+            0.96 if kind == "fatal_crash" else 0.88 if kind == "runtime_crash" else 0.5
+        )
         ret_target = None
         message = str(crash.get("reason") or "Crash runtime Unicorn.").strip()
 
@@ -539,7 +543,9 @@ def _diagnose_crash(
             else str(crash.get("probableSource") or _probable_source({}, meta)).strip()
             or None
         ),
-        "payloadOffset": None if kind in ("benign_termination", "emulator_stop") else crash.get("payloadOffset"),
+        "payloadOffset": None
+        if kind in ("benign_termination", "emulator_stop")
+        else crash.get("payloadOffset"),
         "confidence": confidence,
         "registers": registers,
         "crashType": crash_type or None,
@@ -747,7 +753,9 @@ def _overflow_reaches(analysis: dict, slot_kind: str) -> bool:
     return bool(_overflow_has_runtime_evidence(analysis) and slot_kind in reached)
 
 
-def _has_control_corruption_evidence(analysis: dict, payload_offset: int | None) -> bool:
+def _has_control_corruption_evidence(
+    analysis: dict, payload_offset: int | None
+) -> bool:
     """True only when there is real evidence a control slot (return address or
     saved bp) was tampered with: an overflow that reached it, a runtime write
     flagged on it, or the faulting bytes matching the configured payload.
