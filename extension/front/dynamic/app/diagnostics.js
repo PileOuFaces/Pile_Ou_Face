@@ -56,6 +56,14 @@ export function crashDiagnosticForStep(crash, step) {
     kind = 'fatal_crash';
     severity = 'error';
     confidence = 0.96;
+  } else if (classification === 'benign_termination' || classification === 'emulator_stop') {
+    // Backend already proved there is no corruption evidence (no overflow
+    // reaching a control slot, no flagged write, no payload match) for this
+    // crash -- never reclassify it as fatal_crash from raw instruction/type
+    // heuristics below.
+    kind = classification;
+    severity = 'info';
+    confidence = 0.5;
   } else {
     kind = crashType === 'unmapped_fetch'
       || instructionText.startsWith('ret')
@@ -212,6 +220,12 @@ export function diagnosticKindLabel(kind) {
       return 'Acces a la fonction cible';
     case 'runtime_crash':
       return 'Crash runtime';
+    case 'benign_termination':
+      return "Fin d'execution normale";
+    case 'emulator_stop':
+      return "Limite de l'emulateur";
+    case 'max_steps_reached':
+      return "Limite de pas d'execution atteinte";
     default:
       return 'Diagnostic runtime';
   }
