@@ -79,7 +79,6 @@
 #panel-runtime .controls,
 #panel-runtime .panel-header,
 #panel-runtime .stack-browser-header,
-#panel-runtime .stack-detail-header,
 #panel-runtime .block-header,
 #panel-runtime .simple-stack-header,
 #panel-runtime .frame-slot-summary {
@@ -1115,13 +1114,6 @@
   gap: var(--space-2);
 }
 
-#panel-runtime .stack-detail-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-
 #panel-runtime .stack-detail-heading {
   display: flex;
   flex-direction: column;
@@ -1169,13 +1161,6 @@
   font-size: 0.64rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-}
-
-#panel-runtime .stack-detail-body {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
 }
 
 #panel-runtime .stack-detail-row {
@@ -1856,7 +1841,6 @@
 
   #panel-runtime .frame-slot-summary,
 #panel-runtime .simple-stack-header,
-#panel-runtime .stack-detail-header,
 #panel-runtime .block-body,
 #panel-runtime .block-header {
     flex-direction: column;

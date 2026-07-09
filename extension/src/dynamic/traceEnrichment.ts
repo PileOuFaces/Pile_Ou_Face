@@ -199,6 +199,11 @@ function formatStackOffset(base, offset) {
 
 function buildBufferHint({ stackAddress, functionName, callName, callAddress }) {
   if (!stackAddress || !Number.isFinite(stackAddress.offset)) return null;
+  // This is a disassembly-regex guess (a `lea`/`mov` feeding a known
+  // dangerous call), never backend Evidence Model data -- it must never be
+  // presented as strongly as real evidence. See detectDangerousLocalBufferHints
+  // for the check that suppresses this entirely when the backend already
+  // has a reliable role at this exact (function, offset).
   return {
     kind: 'buffer',
     label: 'buffer',
@@ -208,9 +213,35 @@ function buildBufferHint({ stackAddress, functionName, callName, callAddress }) 
     offsetLabel: formatStackOffset(stackAddress.base || 'rbp', stackAddress.offset),
     call: callName || '',
     callAddress: formatAddress(callAddress),
-    source: 'static',
-    confidence: 'high'
+    source: 'pedagogy_fallback',
+    confidence: 'low'
   };
+}
+
+// Roles the backend Evidence Model actually classifies (stack_model.py).
+// When one of these already exists at a given (function, offset), this
+// file must act as a pure fallback: never emit a hint that could contradict
+// or "enrich" a slot the backend has already answered for.
+const RELIABLE_BACKEND_ROLES = new Set(['buffer', 'local', 'argument', 'saved_bp', 'return_address']);
+
+function collectBackendResolvedOffsets(trace) {
+  const resolved = new Set();
+  const analysisByStep = trace?.analysisByStep && typeof trace.analysisByStep === 'object'
+    ? trace.analysisByStep
+    : {};
+  Object.values(analysisByStep).forEach((analysis) => {
+    const functionKey = normalizeFunctionNameForCompare(displayFunctionName(analysis?.function?.name || ''));
+    if (!functionKey) return;
+    const slots = Array.isArray(analysis?.frame?.slots) ? analysis.frame.slots : [];
+    slots.forEach((slot) => {
+      const role = String(slot?.role || slot?.classification || '').trim().toLowerCase();
+      if (!RELIABLE_BACKEND_ROLES.has(role)) return;
+      const offset = parseSignedImmediate(slot?.offsetFromBp);
+      if (offset === null) return;
+      resolved.add(`${functionKey}:${offset}`);
+    });
+  });
+  return resolved;
 }
 
 function readSnapshotIp(snapshot) {
@@ -331,6 +362,7 @@ function detectDangerousLocalBufferHints(trace, { functionRanges = null } = {}) 
   const disasm = Array.isArray(trace?.meta?.disasm) ? trace.meta.disasm : [];
   if (!disasm.length) return [];
   const ranges = functionRanges || buildFunctionRanges(trace, []);
+  const backendResolvedOffsets = collectBackendResolvedOffsets(trace);
   const sorted = disasm
     .map((entry, index) => ({ entry, index, addr: readDisasmAddress(entry), instr: extractInstrText(entry) }))
     .filter((item) => item.instr)
@@ -379,6 +411,11 @@ function detectDangerousLocalBufferHints(trace, { functionRanges = null } = {}) 
       callAddress: item.addr
     });
     if (!hint) return;
+    // The backend already classified this exact slot -- this file is a
+    // fallback only, so it must never suggest a role that could contradict
+    // (or "re-confirm with less certainty") what the backend already knows.
+    const hintFunctionKey = normalizeFunctionNameForCompare(hint.function);
+    if (backendResolvedOffsets.has(`${hintFunctionKey}:${hint.offset}`)) return;
     const key = [
       normalizeFunctionNameForCompare(hint.function),
       hint.base,
