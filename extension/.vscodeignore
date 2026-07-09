@@ -5,8 +5,11 @@ src/tests/
 out-test/
 .nyc_output/
 coverage/
-dist/
+out/
 node_modules/
+esbuild.js
+package-lock.json
+scripts/
 .gitignore
 .eslintrc*
 eslint.config.*
