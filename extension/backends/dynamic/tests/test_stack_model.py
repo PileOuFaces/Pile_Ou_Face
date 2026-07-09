@@ -145,6 +145,10 @@ class TestDynamicStackModel(unittest.TestCase):
 
         self.assertEqual(step["buffer"]["start"], hex(buffer_start))
         self.assertEqual(step["buffer"]["size"], rbp - buffer_start)
+        # A size inferred purely from an observed runtime write span is never
+        # proof of the object's true declared size -- must not be reported
+        # as exact.
+        self.assertFalse(step["buffer"]["size_exact"])
         self.assertTrue(step["overflow"]["active"])
         self.assertEqual(step["overflow"]["controlRisk"], "return_address")
         self.assertIn("saved_bp", step["overflow"]["reached"])
@@ -259,6 +263,14 @@ class TestDynamicStackModel(unittest.TestCase):
         step3 = analysis["3"]
         self.assertIsNotNone(step3["buffer"])
         self.assertEqual(step3["buffer"]["start"], hex(rbp_new - 0x60))
+        # Config-declared (meta.buffer_offset/buffer_size): a real, proven
+        # size -- an observed runtime write must never be allowed to
+        # override it downstream (frontend guard, ported separately).
+        self.assertTrue(step3["buffer"]["size_exact"])
+        buffer_slot = next(
+            slot for slot in step3["frame"]["slots"] if slot["role"] == "buffer"
+        )
+        self.assertTrue(buffer_slot["size_exact"])
 
     def test_leave_keeps_frame_control_addresses_on_last_valid_bp(self):
         word = 4

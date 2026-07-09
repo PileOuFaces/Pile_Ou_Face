@@ -610,6 +610,7 @@ def _region_entry(
     offset: int | None = None,
     size: int | None = None,
     confidence: float = 0.9,
+    size_exact: bool = True,
 ) -> dict:
     return {
         "start": start,
@@ -620,6 +621,7 @@ def _region_entry(
         "offset": offset,
         "size": size if size is not None else max(1, end - start),
         "confidence": confidence,
+        "size_exact": size_exact,
     }
 
 
@@ -662,6 +664,7 @@ def _guess_buffer_region(frame: dict, bp: int | None, meta: dict) -> dict | None
                 offset=buffer_offset,
                 size=buffer_size,
                 confidence=confidence,
+                size_exact=True,
             )
 
     best = None
@@ -682,6 +685,7 @@ def _guess_buffer_region(frame: dict, bp: int | None, meta: dict) -> dict | None
                 offset=offset,
                 size=size,
                 confidence=0.7,
+                size_exact=bool(entry.get("size_is_exact", True)),
             ),
         )
         if best is None or candidate > best:
@@ -722,6 +726,7 @@ def _static_regions(
                     offset=offset,
                     size=size,
                     confidence=0.92 if entry.get("source") == "dwarf" else 0.85,
+                    size_exact=bool(entry.get("size_is_exact", True)),
                 )
             )
         for entry in frame.get("args", []) if isinstance(frame.get("args"), list) else []:
@@ -740,6 +745,7 @@ def _static_regions(
                     offset=offset,
                     size=size,
                     confidence=0.82,
+                    size_exact=bool(entry.get("size_is_exact", True)),
                 )
             )
 
@@ -808,6 +814,7 @@ def _runtime_buffer_region(
                 offset=addr - bp,
                 size=buffer_size,
                 confidence=0.76,
+                size_exact=False,
             ),
         )
         if best is None or candidate[0] > best[0]:
@@ -963,7 +970,7 @@ def _slot_role_label(
     bp: int | None,
     buffer_region: dict | None,
     frame_allocated: bool = True,
-) -> tuple[str | None, str, int | None, float, str]:
+) -> tuple[str | None, str, int | None, float, str, bool]:
     matches = [
         region
         for region in regions
@@ -989,6 +996,7 @@ def _slot_role_label(
             best.get("offset"),
             float(best.get("confidence") or 0.75),
             best.get("source") or "static",
+            bool(best.get("size_exact", True)),
         )
 
     # No known region covers this segment. Before the frame is fully
@@ -999,22 +1007,26 @@ def _slot_role_label(
     # entirely rather than manufacture unknown/argument/padding noise this
     # early.
     if not frame_allocated:
-        return None, "", None, 0.0, "unknown"
+        return None, "", None, 0.0, "unknown", False
 
+    # These are all heuristic guesses about a memory range with no static/
+    # evidence backing -- never claim size_exact here (reserved for source/
+    # DWARF/config-declared sizes).
     if bp is not None and start < bp:
         if buffer_region is not None and start >= buffer_region["end"]:
-            return "padding", f"padding_{bp - start:x}h", start - bp, 0.55, "heuristic"
-        return "unknown", f"stack_{bp - start:x}h", start - bp, 0.4, "heuristic"
+            return "padding", f"padding_{bp - start:x}h", start - bp, 0.55, "heuristic", False
+        return "unknown", f"stack_{bp - start:x}h", start - bp, 0.4, "heuristic", False
     if bp is not None and start >= bp + (
         8 if any(region["size"] == 8 for region in regions) else 4
     ):
-        return "argument", f"arg_{start - bp:x}", start - bp, 0.45, "heuristic"
+        return "argument", f"arg_{start - bp:x}", start - bp, 0.45, "heuristic", False
     return (
         "unknown",
         f"slot_{start:x}",
         start - bp if bp is not None else None,
         0.25,
         "memory",
+        False,
     )
 
 
@@ -1162,7 +1174,7 @@ def _build_slots(
         data = [curr_map.get(address, 0) for address in range(left, right)]
         if not data:
             continue
-        role, label, bp_offset, confidence, source = _slot_role_label(
+        role, label, bp_offset, confidence, source, size_exact = _slot_role_label(
             left, right, regions, bp, buffer_region, frame_allocated=frame_allocated
         )
         # No known region and the frame isn't allocated yet -- _slot_role_label
@@ -1204,6 +1216,7 @@ def _build_slots(
             "start": _hex(left),
             "end": _hex(right),
             "size": right - left,
+            "size_exact": size_exact,
             "role": role,
             "label": resolver.rename_for(left) or label,
             "source": source,
@@ -1280,6 +1293,7 @@ def _build_slots(
             "start": _hex(buffer_region["start"]),
             "end": _hex(buffer_region["end"]),
             "size": buffer_region["size"],
+            "size_exact": bool(buffer_region.get("size_exact", True)),
         }
         if buffer_region is not None
         else None,
