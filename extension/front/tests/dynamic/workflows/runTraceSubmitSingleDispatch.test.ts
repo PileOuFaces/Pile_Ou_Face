@@ -1,0 +1,97 @@
+const { expect } = require('chai');
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+
+describe('dynamic/workflows run trace submit dispatch', () => {
+  it('panel.js no longer attaches a legacy submit listener to #traceForm', () => {
+    const source = fs.readFileSync(
+      path.resolve(__dirname, '../../../dynamic/panel.js'),
+      'utf8'
+    );
+    // Regression guard for the "one click = two runTrace posts" bug: the
+    // form submit is owned exclusively by runTraceController.js now.
+    expect(source).to.not.match(/form\?\.addEventListener\(\s*['"]submit['"]/);
+  });
+
+  it('a single submit dispatch on the trace form posts exactly one runTrace message', () => {
+    const controller = loadRunTraceController();
+    const posted: unknown[] = [];
+    const form = createMockElement();
+
+    controller.initRunTraceController({
+      document: { getElementById: () => null },
+      form,
+      postMessage: (message: unknown) => posted.push(message),
+      runBtn: createMockElement(),
+      binaryPathInput: createMockElement({ value: '/tmp/pof/challenge' }),
+      dynamicSourcePathInput: createMockElement(),
+      dynamicPayloadTargetMode: createMockElement(),
+      btnDynamicSelectBinary: createMockElement(),
+      btnDynamicSelectSource: createMockElement(),
+      payloadBuilderInput: createMockElement()
+    });
+
+    // Exactly one listener should have been registered for 'submit'.
+    expect(form.listenerCountFor('submit')).to.equal(1);
+
+    form.dispatchEvent({ type: 'submit', preventDefault: () => {} });
+
+    const runTraceMessages = posted.filter((message: any) => message?.type === 'runTrace');
+    expect(runTraceMessages).to.have.length(1);
+  });
+
+  function loadRunTraceController() {
+    const source = fs.readFileSync(
+      path.resolve(__dirname, '../../../dynamic/runTraceController.js'),
+      'utf8'
+    );
+    const context: any = { window: {}, console };
+    context.window.POFHub = {};
+    vm.runInNewContext(source, context, { filename: 'runTraceController.js' });
+    return context.window.POFHubRunTraceController;
+  }
+
+  function createMockElement(initial: Record<string, any> = {}) {
+    const listeners: Record<string, Function[]> = {};
+    const classNames = new Set<string>();
+
+    return {
+      value: initial.value ?? '',
+      checked: initial.checked ?? false,
+      disabled: initial.disabled ?? false,
+      textContent: initial.textContent ?? '',
+      classList: {
+        add(...names: string[]) {
+          names.forEach((name) => classNames.add(name));
+        },
+        remove(...names: string[]) {
+          names.forEach((name) => classNames.delete(name));
+        },
+        contains(name: string) {
+          return classNames.has(name);
+        },
+        toggle(name: string, force?: boolean) {
+          const shouldAdd = force ?? !classNames.has(name);
+          shouldAdd ? classNames.add(name) : classNames.delete(name);
+          return shouldAdd;
+        }
+      },
+      addEventListener(type: string, handler: Function) {
+        (listeners[type] = listeners[type] || []).push(handler);
+      },
+      removeEventListener(type: string, handler: Function) {
+        listeners[type] = (listeners[type] || []).filter((entry) => entry !== handler);
+      },
+      dispatchEvent(event: any) {
+        event.target = event.target || this;
+        event.currentTarget = this;
+        (listeners[event.type] || []).forEach((handler) => handler(event));
+        return event.defaultPrevented !== true;
+      },
+      listenerCountFor(type: string) {
+        return (listeners[type] || []).length;
+      }
+    };
+  }
+});
