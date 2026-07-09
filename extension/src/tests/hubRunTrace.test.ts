@@ -507,6 +507,81 @@ describe('hub runTrace isolation', () => {
     expect(writeTraceJson.firstCall.args[1].meta.payload_target_reason).to.contain('scanf import');
   });
 
+  it('includes analysisByStep in dynamicTraceReady, the same field the standalone visualizer gets via init', async () => {
+    existsSyncStub.withArgs('/repo/examples/rootme2.elf').returns(true);
+
+    sinon.stub(cp, 'execFile').callsFake((_cmd, args, _opts, callback) => {
+      const script = String(args?.[0] || '');
+      if (script.includes('headers')) {
+        callback(null, JSON.stringify({ format: 'ELF', bits: 64, type: 'EXEC' }));
+        return;
+      }
+      if (script.includes('symbols')) {
+        callback(null, JSON.stringify([{ name: 'main', type: 'T' }]));
+        return;
+      }
+      callback(null, '{}');
+    });
+
+    const analysisByStepFixture = {
+      '1': {
+        frame: { slots: [], basePointer: '0x1000', stackPointer: '0xff8', frameSize: 0x70 },
+        control: { savedBpAddr: '0x1000', retAddrAddr: '0x1008' }
+      }
+    };
+
+    runCommand.callsFake(async (_command, args) => {
+      outputPaths.add(args[args.indexOf('--output') + 1]);
+    });
+    readTraceJson.callsFake((targetPath) => ({
+      snapshots: [{ step: 1, func: 'main' }],
+      risks: [],
+      meta: { output_path: targetPath },
+      analysisByStep: analysisByStepFixture
+    }));
+
+    const openHub = createHub({
+      context: {
+        extensionUri: {},
+        subscriptions: [],
+        workspaceState: { get: () => ({}), update: async () => {} },
+        globalState: { get: () => ({}), update: async () => {} }
+      },
+      logChannel: { appendLine: () => {}, append: () => {} },
+      getTempDir: () => '/tmp/pof',
+      ensureTempDir: () => '/tmp/pof',
+      runCommand,
+      detectPythonExecutable: () => '/usr/bin/python3',
+      ensureStaticAsm,
+      readTraceJson,
+      writeTraceJson,
+      setViewMode: () => {},
+      payloadToHex: () => '',
+      parseStdinExpression: (input) => String(input || ''),
+      check32BitToolchain: () => ({ ok: true }),
+      openVisualizerWebview
+    });
+
+    openHub();
+
+    await onMessage({
+      type: 'runTrace',
+      config: {
+        traceMode: 'dynamic',
+        useExistingBinary: true,
+        binaryPath: 'examples/rootme2.elf',
+        payloadTargetMode: 'auto'
+      }
+    });
+
+    const dynamicTraceReadyMessage = panel.webview.postMessage.getCalls()
+      .map((call) => call.args[0])
+      .find((message) => message.type === 'dynamicTraceReady');
+
+    expect(dynamicTraceReadyMessage).to.exist;
+    expect(dynamicTraceReadyMessage.analysisByStep).to.deep.equal(analysisByStepFixture);
+  });
+
   it('passes generated payload bytes through stdin-hex and persists input meta', async () => {
     existsSyncStub.withArgs('/repo/examples/rootme1.elf').returns(true);
 
