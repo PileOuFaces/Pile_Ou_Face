@@ -307,7 +307,12 @@ export function normalizeStaticSeed(seed, {
   return normalized;
 }
 
-export function buildSyntheticSeeds({ observations, existingEntries, functionName, bpRegister, bpAddress, meta, frameScope } = {}) {
+export function buildSyntheticSeeds({ observations, existingEntries, functionName, bpRegister, bpAddress, meta, frameScope, frameIsReady = true } = {}) {
+  // Before the frame is set up, "unmatched observations" are just the raw
+  // snapshot.stack memory-window dump (no Evidence backing at all) -- never
+  // synthesize seeds from it, regardless of what findStructuralGapForObservation
+  // would otherwise accept.
+  if (!frameIsReady) return [];
   const seeds = [];
   const candidates = [...(Array.isArray(observations) ? observations : [])]
     .filter((item) => item.offset !== null && item.size > 0)
