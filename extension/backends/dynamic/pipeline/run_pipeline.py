@@ -590,7 +590,7 @@ def run_pipeline(
         disasm_lines=disasm.get("lines") if disasm else None,
     )
     write_audit_json(output_path, "06-analysis-by-step.json", analysis_by_step)
-    if config.buffer_offset is not None and config.buffer_size is not None:
+    if getattr(config, "buffer_offset", None) is not None and getattr(config, "buffer_size", None) is not None:
         meta["buffer_source"] = "user"
     elif any(
         isinstance(step_analysis, dict) and step_analysis.get("buffer") is not None
