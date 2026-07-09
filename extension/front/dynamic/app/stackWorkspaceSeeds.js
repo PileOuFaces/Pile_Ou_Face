@@ -380,9 +380,13 @@ export function seedFromObservation(observation, bpAddress, { synthetic, kindOve
     confidence: readConfidence(observation?.modelConfidence) ?? readConfidence(observation?.confidence),
     isSynthetic: Boolean(synthetic),
     // Passthrough only, never derived/defaulted here -- so a reliable
-    // backend size verdict already on the observation survives onto the
-    // seed for normalizeSeed / applyRecoveredExtentToSeed to see.
-    size_exact: observation?.size_exact
+    // backend role/size verdict already on the observation survives onto
+    // the seed for normalizeSeed / applyRecoveredExtentToSeed to see.
+    size_exact: observation?.size_exact,
+    observed_write_size: observation?.observed_write_size,
+    estimated_bound: observation?.estimated_bound,
+    classification: observation?.classification,
+    evidenceClassification: observation?.evidenceClassification
   };
 }
 
@@ -483,7 +487,14 @@ export function normalizeSeed(seed) {
     // reach the code (e.g. stackWorkspaceAnchoring.js) deciding whether a
     // heuristic is still allowed to touch it.
     role: seed?.role,
+    classification: seed?.classification,
+    evidenceClassification: seed?.evidenceClassification,
+    semanticRole: seed?.semanticRole,
     size_exact: seed?.size_exact,
+    observed_write_size: seed?.observed_write_size,
+    estimated_bound: seed?.estimated_bound,
+    reason: seed?.reason,
+    evidenceReason: seed?.evidenceReason,
     seedContributors: normalizeSeedContributors(seed?.seedContributors, {
       offset,
       size,

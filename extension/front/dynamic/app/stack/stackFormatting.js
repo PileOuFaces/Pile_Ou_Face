@@ -513,6 +513,13 @@ export function buildSemanticStackItems(analysis) {
     // Whether `size` is a proven exact size or just a drawn-to-bound
     // estimate -- set by the backend, never guessed here from label text.
     size_exact: typeof slot.size_exact === 'boolean' ? slot.size_exact : true,
+    // Passthrough only, never derived/defaulted here -- so a backend
+    // Evidence verdict on this slot survives downstream (stackWorkspaceCore
+    // / RuntimeEvidence) instead of being silently dropped.
+    observed_write_size: slot.observed_write_size,
+    estimated_bound: slot.estimated_bound,
+    classification: slot.classification,
+    evidenceClassification: slot.evidenceClassification,
     value: slot.valueHex ?? slot.bytesHex ?? slot.valueDisplay ?? '??',
     valueDisplay: slot.valueDisplay ?? slot.valueHex ?? slot.bytesHex ?? '??',
     label: slot.label ?? `slot_${index}`,
@@ -663,9 +670,13 @@ export function buildSimpleSourceItems(sorted, context) {
       confidence: Number.isFinite(Number(item.confidence)) ? Number(item.confidence) : null,
       activePointers: Array.isArray(item.activePointers) ? item.activePointers : [],
       // Passthrough only, never derived/defaulted here -- carries the
-      // backend's size_exact verdict through to stackWorkspaceCore /
-      // RuntimeEvidence instead of dropping it.
-      size_exact: item.size_exact
+      // backend Evidence verdict (when present) through to
+      // stackWorkspaceCore / RuntimeEvidence instead of dropping it.
+      size_exact: item.size_exact,
+      observed_write_size: item.observed_write_size,
+      estimated_bound: item.estimated_bound,
+      classification: item.classification,
+      evidenceClassification: item.evidenceClassification
     });
   });
 

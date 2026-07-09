@@ -111,7 +111,11 @@ export function buildRuntimeObservations(slots, bpAddress) {
         // resolveReliableBackendRole (stackWorkspaceClassification.js) and
         // the backend-size checks (stackWorkspaceAnchoring.js) see the
         // same Evidence verdict that was on the original backend slot.
-        size_exact: slot?.size_exact
+        classification: slot?.classification,
+        evidenceClassification: slot?.evidenceClassification,
+        size_exact: slot?.size_exact,
+        observed_write_size: slot?.observed_write_size,
+        estimated_bound: slot?.estimated_bound
       };
     })
     .filter((item) => item.offset !== null || item.start !== null);
