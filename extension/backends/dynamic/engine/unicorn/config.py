@@ -41,8 +41,8 @@ class TraceConfig:
     stdin_data: bytes
     # Optional RBP-relative offset of a buffer to highlight.
     buffer_offset: int | None
-    # Size (bytes) of the highlighted buffer.
-    buffer_size: int
+    # Optional size (bytes) of the highlighted buffer.
+    buffer_size: int | None
     # Optional symbol name to start from (e.g. main).
     start_symbol: str | None
     # Optional argv[1] string injected into the initial stack.

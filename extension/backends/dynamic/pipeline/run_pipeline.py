@@ -22,6 +22,12 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from backends.dynamic.core.interfaces import ExecutionEngine, TraceConfigLike
+from backends.dynamic.pipeline.audit import (
+    audit_enabled,
+    build_elf_layout_audit,
+    build_stack_evidence_audit,
+    write_audit_json,
+)
 from backends.dynamic.pipeline.diagnostics import _is_win_addr, build_diagnostics
 from backends.dynamic.pipeline.stack_model import _hex, build_dynamic_analysis
 
@@ -117,6 +123,80 @@ def _parse_int(value) -> int | None:
         return int(text, 10)
     except ValueError:
         return None
+
+
+def _stack_evidence_summary(stack_evidence: dict | None) -> dict | None:
+    if not isinstance(stack_evidence, dict):
+        return None
+    functions_payload = stack_evidence.get("functions", [])
+    functions_available = isinstance(functions_payload, list) and bool(functions_payload)
+    buffers = []
+    slots = []
+    local_slots = []
+    stack_arguments = []
+    register_arguments = []
+    rejected_candidates = []
+    for function in functions_payload if functions_available else []:
+        if not isinstance(function, dict):
+            continue
+        function_name = function.get("name")
+        function_addr = function.get("addr")
+        # local_slots (the evidence function key, not the summary bucket below) holds
+        # every scored candidate: probable_local, stack_argument, register_argument,
+        # stack_slot, buffer. It is the single source stack_model.py types slots from,
+        # including confirmed buffers and rejected buffer candidates.
+        for slot in function.get("local_slots", []) if isinstance(function.get("local_slots"), list) else []:
+            if not isinstance(slot, dict):
+                continue
+            kind = str(slot.get("kind") or "")
+            offset = _parse_int(slot.get("offset"))
+            if offset is None and kind != "register_argument":
+                continue
+            entry = {
+                "function": function_name,
+                "function_addr": function_addr,
+                "key": slot.get("key"),
+                "base": slot.get("base") or "rbp",
+                "offset": offset,
+                "offset_label": slot.get("offset_label"),
+                "size": _parse_int(slot.get("size")),
+                "size_source": slot.get("size_source"),
+                "observed_write_size": _parse_int(slot.get("observed_write_size")),
+                "estimated_bound": _parse_int(slot.get("estimated_bound")),
+                "size_confidence": slot.get("size_confidence"),
+                "size_reason": slot.get("size_reason"),
+                "kind": slot.get("kind"),
+                "classification": slot.get("classification"),
+                "confidence": slot.get("confidence"),
+                "evidence_sources": slot.get("evidence_sources") or [],
+                "reason": slot.get("reason"),
+            }
+            slots.append(entry)
+            classification = str(entry["classification"] or "")
+            if classification == "buffer" and offset is not None:
+                buffers.append(entry)
+            else:
+                rejected_candidates.append(entry)
+            if kind == "probable_local":
+                local_slots.append(entry)
+            elif kind == "stack_argument":
+                stack_arguments.append(entry)
+            elif kind == "register_argument":
+                register_arguments.append(entry)
+    return {
+        "available": functions_available,
+        "buffer_count": len(buffers),
+        "buffer_offsets": [
+            item.get("offset_label") or f"{item.get('base') or 'rbp'}{int(item['offset']):+#x}"
+            for item in buffers
+        ],
+        "buffers": buffers,
+        "slots": slots,
+        "local_slots": local_slots,
+        "stack_arguments": stack_arguments,
+        "register_arguments": register_arguments,
+        "rejected_candidates": rejected_candidates,
+    }
 
 
 def _trace_probable_source(meta: dict) -> str:
@@ -437,28 +517,79 @@ def run_pipeline(
 ) -> dict:
     code = _load_binary(binary_path)
     runtime = engine if engine is not None else _default_engine()
+    write_audit_json(output_path, "02-trace-config.json", config)
     trace = runtime.trace_binary(code, config, binary_path)
+    write_audit_json(output_path, "03-unicorn-raw-result.json", trace)
     risks: list[dict] = []
     disasm = None
     if output_path:
         disasm_path = _derive_disasm_path(output_path)
         disasm = _build_disasm(binary_path, output_path=disasm_path)
+    functions = _load_function_symbols(binary_path)
+    if audit_enabled():
+        write_audit_json(
+            output_path,
+            "03a-elf-layout-and-analysis.json",
+            build_elf_layout_audit(
+                binary_path,
+                code,
+                config,
+                trace,
+                disasm.get("lines") if disasm else None,
+                functions,
+            ),
+        )
     meta = {
         **trace.get("meta", {}),
         "dynamic_model_version": 2,
         "binary": _normalize_path(binary_path),
         "source": _normalize_path(source_path) if source_path else None,
-        "functions": _load_function_symbols(binary_path),
+        "functions": functions,
         "disasm_path": os.path.abspath(disasm.get("path")) if disasm else None,
         "disasm": disasm.get("lines") if disasm else None,
     }
     snapshots = trace.get("snapshots", [])
+    stack_evidence_audit = build_stack_evidence_audit(
+        binary_path,
+        config,
+        snapshots,
+        functions,
+        disasm.get("lines") if disasm else [],
+    )
+    stack_evidence_summary = _stack_evidence_summary(stack_evidence_audit)
+    analysis_meta = dict(meta)
+    if stack_evidence_summary is not None:
+        analysis_meta["_stack_evidence"] = stack_evidence_summary
+    if audit_enabled():
+        meta["debug"] = {
+            **(meta.get("debug") if isinstance(meta.get("debug"), dict) else {}),
+            "evidence_buffer_count": (stack_evidence_summary or {}).get("buffer_count", 0),
+            "evidence_buffer_offsets": (stack_evidence_summary or {}).get("buffer_offsets", []),
+        }
+        analysis_meta["debug"] = meta["debug"]
+        write_audit_json(
+            output_path,
+            "03b-stack-evidence.json",
+            stack_evidence_audit,
+        )
+    write_audit_json(output_path, "04-snapshots-raw.json", snapshots)
+    write_audit_json(
+        output_path,
+        "05-stack-model-input.json",
+        {
+            "snapshots": snapshots,
+            "meta": analysis_meta,
+            "binary_path": binary_path,
+            "disasm_lines": disasm.get("lines") if disasm else None,
+        },
+    )
     analysis_by_step = build_dynamic_analysis(
         snapshots,
-        meta,
+        analysis_meta,
         binary_path,
         disasm_lines=disasm.get("lines") if disasm else None,
     )
+    write_audit_json(output_path, "06-analysis-by-step.json", analysis_by_step)
     if config.buffer_offset is not None and config.buffer_size is not None:
         meta["buffer_source"] = "user"
     elif any(
@@ -481,6 +612,20 @@ def run_pipeline(
         meta,
         disasm_lines=disasm.get("lines") if disasm else None,
         crash=crash,
+    )
+    write_audit_json(
+        output_path,
+        "07-diagnostics-input-output.json",
+        {
+            "input": {
+                "snapshots": snapshots,
+                "analysis_by_step": analysis_by_step,
+                "meta": meta,
+                "disasm_lines": disasm.get("lines") if disasm else None,
+                "crash": crash,
+            },
+            "output": diagnostics,
+        },
     )
     return {
         "snapshots": snapshots,
@@ -601,7 +746,7 @@ def _main(argv: list[str] | None = None) -> int:
         "--buffer-offset", type=int, default=None, help="Buffer offset from RBP"
     )
     parser.add_argument(
-        "--buffer-size", type=int, default=0, help="Buffer size in bytes"
+        "--buffer-size", type=int, default=None, help="Buffer size in bytes"
     )
     parser.add_argument(
         "--start-symbol", default=None, help="Start at symbol (e.g. main)"
