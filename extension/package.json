@@ -42,7 +42,7 @@
     "onStartupFinished",
     "onLanguage:asm"
   ],
-  "main": "./out/extension.js",
+  "main": "./dist/extension.js",
   "contributes": {
     "commands": [
       {
@@ -258,7 +258,12 @@
         },
         "pileOuFace.logLevel": {
           "type": "string",
-          "enum": ["debug", "info", "warning", "error"],
+          "enum": [
+            "debug",
+            "info",
+            "warning",
+            "error"
+          ],
           "default": "warning",
           "description": "Niveau de log de l'extension et des backends Python qu'elle lance (propagé via BINHOST_LOG_LEVEL)."
         }
@@ -266,9 +271,11 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run build",
-    "build": "tsc -p tsconfig.json",
-    "build:watch": "tsc -p tsconfig.json --watch",
+    "vscode:prepublish": "npm run package",
+    "build": "npm run typecheck && node esbuild.js",
+    "build:watch": "node esbuild.js --watch",
+    "package": "npm run typecheck && node esbuild.js --production",
+    "test:bundle": "npm run package && tsx scripts/smoke-bundle.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
@@ -292,6 +299,7 @@
     "@vscode/vsce": "^3.3.2",
     "c8": "^10.1.3",
     "chai": "^4.3.10",
+    "esbuild": "^0.28.1",
     "eslint": "^9.39.2",
     "eslint-config-prettier": "^10.1.8",
     "jsdom": "^29.1.1",

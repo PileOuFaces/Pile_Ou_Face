@@ -25,7 +25,12 @@ const NEUTRAL_CONFIG = Object.freeze({ authProviderUrl: '', collabProviderUrl: '
 let _cache = null;
 
 function _extensionRoot() {
-  // Compilé vers out/shared/productConfig.js → la racine extension est deux niveaux au-dessus.
+  // Bundle esbuild : dist/extension.js → racine un niveau au-dessus.
+  // Build tsc historique : out/shared/productConfig.js → deux niveaux.
+  const bundledRoot = path.join(__dirname, '..');
+  if (fs.existsSync(path.join(bundledRoot, 'product.default.json'))) {
+    return bundledRoot;
+  }
   return path.join(__dirname, '..', '..');
 }
 
