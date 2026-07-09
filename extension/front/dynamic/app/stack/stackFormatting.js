@@ -417,8 +417,17 @@ export function toSafeNumber(addr, rsp) {
   return Number(delta);
 }
 
-export function buildModelRegions(model, rbp, meta = {}) {
+export function buildModelRegions(model, rbp, meta = {}, frameIsReady = true) {
   if (rbp === null) return [];
+  // model.locals (mcp.model, backend/pedagogy.ts) is a trace-wide, per-
+  // function aggregate: it already knows about buffers/args/locals the
+  // current invocation will only actually reserve at a later step. Before
+  // the frame is allocated at THIS step, none of that is legitimate
+  // evidence yet -- surfacing it here would leak buffer/arg/local regions
+  // (and the offset-based legacy fallback below) straight into
+  // resolveSemanticRole/buildSimpleSourceItems, upstream of and bypassing
+  // the Core-level trustedModelSeeds gating entirely.
+  if (!frameIsReady) return [];
 
   const regions = [];
   if (model && Array.isArray(model.locals)) {

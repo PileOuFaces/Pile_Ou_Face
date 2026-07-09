@@ -8,6 +8,7 @@ import { diagnosticsForStackSlot } from './diagnostics.js';
 import { addrKey, readPointer, readU32, toBigIntAddr } from './memory.js';
 import { buildSimplifiedStackViewModel } from './stackSimpleModel.js';
 import { buildStackWorkspaceModel } from './stackWorkspaceModel.js';
+import { isFrameReadyAtCurrentStep } from './stackWorkspaceCore.js';
 import { renderStackEmptyState } from './stackEmptyState.js';
 import { toHex } from './utils.js';
 
@@ -83,7 +84,12 @@ export function renderStack(stackItems, regMap, meta, options = {}) {
   const analysisBufferStart = toBigIntAddr(analysis?.buffer?.start);
   const analysisBufferEnd = toBigIntAddr(analysis?.buffer?.end);
   const semanticSlots = buildSemanticStackItems(analysis);
-  const modelRegions = buildModelRegions(model, rbp, meta);
+  // Same Evidence-readiness check the workspace Core uses (frame pointer
+  // set up AND frame allocated at this step) -- computed here, before
+  // sourceSlots exist yet, from analysis + the analysis-derived
+  // semanticSlots (never from model.locals itself).
+  const frameIsReady = isFrameReadyAtCurrentStep(analysis, semanticSlots);
+  const modelRegions = buildModelRegions(model, rbp, meta, frameIsReady);
   const bufferRegion = modelRegions.find((region) => region.role === 'buffer') ?? null;
   const modifiedRegion = modelRegions.find((region) => region.role === 'modified') ?? null;
   const bufferStart = bufferRegion?.start ?? analysisBufferStart;
