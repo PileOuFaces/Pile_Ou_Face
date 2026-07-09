@@ -1030,15 +1030,30 @@ plugin.offensive.func_similarity.run
 **Rôle** : Gestionnaire centralisé des règles YARA et CAPA par projet.
 
 **Ce qu'il fait** :
-- Stocke les règles dans `.pile-ou-face/rules/` (dans le projet)
+- Stocke les règles dans le dossier d'etat passe au gestionnaire ; dans
+  l'extension, la configuration est stockee cote `globalStorageUri` ou
+  `storageDir`, pas dans un chemin projet impose.
 - Gère un fichier de config `rules-config.json` (activer/désactiver les règles)
 - Supporte un config global (partagé entre projets)
 - Opérations : `list`, `toggle`, `add`, `delete`
 
 **Structure de répertoire** :
 ```
+<state-dir>/
+├── rules-config.json
+└── rules/
+    ├── yara/
+    │   ├── my_rule.yar
+    │   └── ransomware_detect.yar
+    └── capa/
+        └── custom_capability.yml
+```
+
+Un lancement CLI peut choisir explicitement un dossier projet :
+
+```
 projet/
-└── .pile-ou-face/
+└── <state-dir>/
     ├── rules-config.json
     └── rules/
         ├── yara/
@@ -1138,7 +1153,9 @@ En cas d'erreur :
 **Rôle** : Stocke des annotations persistantes (commentaires, renommages) sur les adresses d'un binaire.
 
 **Ce qu'il fait** :
-- Stocke les annotations dans le cache SQLite `.pfdb` interne sous `.pile-ou-face/pfdb/`
+- Stocke les annotations dans le cache SQLite `pfdb/`. Dans l'extension VS Code,
+  ce dossier est sous `context.storageUri`; en CLI direct, `default_cache_path()`
+  peut utiliser un fallback `.pile-ou-face/pfdb/`.
 - 2 types d'annotation : `comment` (texte libre) et `rename` (alias de fonction)
 - Les annotations persistent entre sessions et sont liées au binaire par son chemin
 - Façade haut niveau sur `DisasmCache`

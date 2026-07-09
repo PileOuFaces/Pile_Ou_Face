@@ -164,16 +164,28 @@ Le runtime plugin gere la discovery, la validation de manifest, l'attachement Py
 
 ## Cache et persistance
 
-Le projet evite de recalculer certaines analyses lourdes.
+Le projet evite de recalculer certaines analyses lourdes. Dans l'extension VS
+Code, le dossier de reference est `context.storageUri`, c'est-a-dire le
+`workspaceStorage` de VS Code pour le workspace courant :
+
+```text
+<workspaceStorage>/<workspace-id>/PileOuFaces.stack-visualizer/
+```
+
+Le dossier projet `.pile-ou-face/` reste un fallback de compatibilite pour
+certains lancements CLI, MCP ou artefacts de developpement ; ce n'est pas le
+stockage principal de l'extension.
 
 Elements persistants :
 
-- `.pile-ou-face/static_cache/` : caches par binaire;
-- `.pile-ou-face/annotations/` : labels, commentaires, bookmarks;
-- `.pile-ou-face/decompile_cache/` : pseudo-C mis en cache;
-- `.pile-ou-face/pfdb/` : base d'analyse SQLite selon les modules;
-- `.pile-ou-face/structs.json` : definitions de structs/unions/enums;
-- `.pile-ou-face/patches/` : patchs persistants.
+- `static_cache/` : caches par binaire;
+- `annotations/` : labels, commentaires, bookmarks;
+- `decompile_cache/` : pseudo-C mis en cache;
+- `pfdb/` : base d'analyse SQLite selon les modules;
+- `patches/` : patchs persistants;
+- `plugins/` : plugins installes par l'extension;
+- `licenses/` : licences importees dans le workspace;
+- `decompilers.json` : configuration des decompilateurs.
 
 ## Formats supportes
 

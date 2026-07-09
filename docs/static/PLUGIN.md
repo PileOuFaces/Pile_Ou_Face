@@ -65,10 +65,11 @@ Dans l'extension VS Code, les plugins sont installes et charges depuis le
 ```
 
 Le host public ne doit pas lire ni documenter un dossier de plugins sous
-`.pile-ou-face/plugins`. Le dossier `.pile-ou-face/` reste reserve aux artefacts
-du projet et aux caches d'analyse. Les plugins installes par l'extension vivent
-dans le stockage VS Code du workspace pour eviter de polluer le repository et
-pour permettre a deux workspaces differents d'avoir des plugins differents.
+`.pile-ou-face/plugins`. Le dossier `.pile-ou-face/` peut encore servir a des
+lancements CLI, MCP ou artefacts de developpement, mais les caches, plugins et
+licences utilises par l'extension vivent dans le stockage VS Code du workspace
+pour eviter de polluer le repository et pour permettre a deux workspaces
+differents d'avoir des plugins differents.
 
 Pour les tests CLI hors VS Code, la recherche peut etre forcee explicitement avec
 `$POF_PLUGIN_PATH`.
@@ -135,8 +136,11 @@ Le host public sait aussi maintenant importer une licence depuis `Options > Plug
 Les fichiers de licence sont copies dans :
 
 ```text
-~/.pile-ou-face/licenses/
+<workspaceStorage>/<workspace-id>/PileOuFaces.stack-visualizer/licenses/
 ```
+
+Le runtime garde aussi `~/.pile-ou-face/licenses/` comme emplacement global
+compatible pour les usages CLI et les licences hors-ligne deja installees.
 
 Le front de l'extension scanne uniquement `context.storageUri/plugins/`. Pour un test runtime hors VS Code, utiliser `BINHOST_PLUGIN_PATH` vers le dossier de plugins a tester.
 
@@ -289,7 +293,9 @@ Usage :
 - `status` permet au plugin de remonter un etat comme `locked`, `unlocked`, `expired` ;
 - `message` permet d'afficher un diagnostic lisible dans l'UI du host.
 - `public_key` ou `public_key_path` fournit la cle publique servant a verifier la signature ;
-- `license_filename` permet de fixer le nom du fichier attendu dans `~/.pile-ou-face/licenses/` ;
+- `license_filename` permet de fixer le nom du fichier attendu dans
+  `context.storageUri/licenses/` ou dans le fallback global
+  `~/.pile-ou-face/licenses/` ;
 - `machine_bound` impose que la licence corresponde a l'identifiant machine courant.
 
 ## Ce que le host sait deja faire
@@ -303,7 +309,7 @@ Le host public sait deja :
 - conserver le plugin chiffre au repos dans `context.storageUri/plugins/` ;
 - ne dechiffrer le payload du plugin qu'au moment de l'attachement runtime ;
 - bloquer l'attachement d'un plugin tant que la licence est absente, invalide, expiree ou liee a une autre machine ;
-- importer une licence depuis l'UI vers `~/.pile-ou-face/licenses/` ;
+- importer une licence depuis l'UI vers `context.storageUri/licenses/` ;
 - exposer l'identifiant machine courant via `python3 backends/plugins/runtime.py machine-id` ;
 - afficher ces informations dans `Options > Plugins` ;
 - compter les plugins verrouilles ;
