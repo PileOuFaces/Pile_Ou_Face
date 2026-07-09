@@ -250,6 +250,14 @@ export function classifyTrustedSeedKind({ rawKind, label, typeName, offset, func
 }
 
 export function classifyObservationSeedKind(observation, functionName, bpRegister, meta) {
+  // Backend-provided role is authoritative once it's one we recognize,
+  // checked across every field name the pipeline may carry it under. Never
+  // re-derive buffer/local/argument from label, type, size, a CTF sentinel
+  // pattern, or payload overlap alone once the backend has already
+  // classified this slot.
+  const reliableRole = resolveReliableBackendRole(observation);
+  if (reliableRole) return reliableRole;
+
   const kind = normalizeEntryKind(observation?.kind || observation?.role);
   const label = firstNonEmpty(observation?.modelName, observation?.label);
   const typeName = firstNonEmpty(observation?.modelType, observation?.typeName);
