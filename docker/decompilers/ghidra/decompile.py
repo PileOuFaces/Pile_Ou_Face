@@ -4,11 +4,10 @@
 Usage: python decompile.py --binary <path> [--addr 0x1234] [--full]
 Sortie JSON: [{"addr": "0x...", "name": "...", "code": "..."}]
 """
+
 import argparse
 import json
-import sys
 import tempfile
-from pathlib import Path
 
 
 def _decompile_fn(decomp_ifc, fn, monitor):
@@ -16,7 +15,12 @@ def _decompile_fn(decomp_ifc, fn, monitor):
     try:
         res = decomp_ifc.decompileFunction(fn, 60, monitor)
     except Exception as exc:
-        return {"addr": addr_str, "name": str(fn.getName()), "code": "", "error": str(exc)}
+        return {
+            "addr": addr_str,
+            "name": str(fn.getName()),
+            "code": "",
+            "error": str(exc),
+        }
     if res and res.decompileCompleted():
         df = res.getDecompiledFunction()
         code = str(df.getC()) if df else ""
@@ -26,7 +30,12 @@ def _decompile_fn(decomp_ifc, fn, monitor):
         err_msg = str(res.getErrorMessage() or "") if res else ""
     except Exception:
         pass
-    return {"addr": addr_str, "name": str(fn.getName()), "code": "", "error": err_msg or "decompilation non completee"}
+    return {
+        "addr": addr_str,
+        "name": str(fn.getName()),
+        "code": "",
+        "error": err_msg or "decompilation non completee",
+    }
 
 
 def run(binary: str, addr: str = "", full: bool = False) -> list[dict]:
@@ -37,7 +46,9 @@ def run(binary: str, addr: str = "", full: bool = False) -> list[dict]:
 
     try:
         with tempfile.TemporaryDirectory(prefix="pof_ghidra_") as proj_dir:
-            with pyghidra.open_program(binary, analyze=True, project_location=proj_dir) as flat_api:
+            with pyghidra.open_program(
+                binary, analyze=True, project_location=proj_dir
+            ) as flat_api:
                 from ghidra.app.decompiler import DecompInterface, DecompileOptions
                 from ghidra.util.task import ConsoleTaskMonitor
 

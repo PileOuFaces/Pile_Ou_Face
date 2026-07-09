@@ -414,7 +414,7 @@ def _diagnose_crash(
         if isinstance(crash.get("suspectOverwrittenSlot"), dict)
         else None
     )
-    
+
     function_meta = (
         analysis.get("function") if isinstance(analysis.get("function"), dict) else {}
     )

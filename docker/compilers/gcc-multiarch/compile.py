@@ -6,6 +6,7 @@ Sortie JSON: {"output_path": "...", "compiler_used": "gcc-multiarch", ...}
 
 Tout le code gcc-spécifique vit ici — jamais dans le moteur générique.
 """
+
 import argparse
 import json
 import subprocess
@@ -13,32 +14,32 @@ import sys
 
 TARGET_COMPILER: dict[str, str] = {
     # x86 / x86-64
-    "elf-x64":      "x86_64-linux-gnu-gcc",
-    "elf-x86":      "i686-linux-gnu-gcc",
+    "elf-x64": "x86_64-linux-gnu-gcc",
+    "elf-x86": "i686-linux-gnu-gcc",
     # ARM / AArch64
-    "elf-arm64":    "aarch64-linux-gnu-gcc",
-    "elf-arm":      "arm-linux-gnueabihf-gcc",
+    "elf-arm64": "aarch64-linux-gnu-gcc",
+    "elf-arm": "arm-linux-gnueabihf-gcc",
     # Windows (MinGW)
-    "pe-x64":       "x86_64-w64-mingw32-gcc",
-    "pe-x86":       "i686-w64-mingw32-gcc",
+    "pe-x64": "x86_64-w64-mingw32-gcc",
+    "pe-x86": "i686-w64-mingw32-gcc",
     # MIPS
-    "elf-mips":     "mips-linux-gnu-gcc",
-    "elf-mipsel":   "mipsel-linux-gnu-gcc",
+    "elf-mips": "mips-linux-gnu-gcc",
+    "elf-mipsel": "mipsel-linux-gnu-gcc",
     "elf-mips64el": "mips64el-linux-gnuabi64-gcc",
     # PowerPC
-    "elf-ppc":      "powerpc-linux-gnu-gcc",
-    "elf-ppc64":    "powerpc64-linux-gnu-gcc",
-    "elf-ppc64le":  "powerpc64le-linux-gnu-gcc",
+    "elf-ppc": "powerpc-linux-gnu-gcc",
+    "elf-ppc64": "powerpc64-linux-gnu-gcc",
+    "elf-ppc64le": "powerpc64le-linux-gnu-gcc",
     # SPARC64
-    "elf-sparc64":  "sparc64-linux-gnu-gcc",
+    "elf-sparc64": "sparc64-linux-gnu-gcc",
     # RISC-V 64
-    "elf-riscv64":  "riscv64-linux-gnu-gcc",
+    "elf-riscv64": "riscv64-linux-gnu-gcc",
     # IBM SystemZ
-    "elf-s390x":    "s390x-linux-gnu-gcc",
+    "elf-s390x": "s390x-linux-gnu-gcc",
     # Motorola M68K
-    "elf-m68k":     "m68k-linux-gnu-gcc",
+    "elf-m68k": "m68k-linux-gnu-gcc",
     # SuperH SH4
-    "elf-sh4":      "sh4-linux-gnu-gcc",
+    "elf-sh4": "sh4-linux-gnu-gcc",
 }
 # g++ variant (replace -gcc with -g++ where available; falls back gracefully)
 CPP_COMPILER: dict[str, str] = {
@@ -51,7 +52,9 @@ for _t in _CPP_USE_GCC:
         CPP_COMPILER[_t] = TARGET_COMPILER[_t]
 
 
-def run(src: str, lang: str, target: str, output: str, flags: list[str] | None = None) -> dict:
+def run(
+    src: str, lang: str, target: str, output: str, flags: list[str] | None = None
+) -> dict:
     compiler_map = CPP_COMPILER if lang == "cpp" else TARGET_COMPILER
     compiler = compiler_map.get(target)
     if not compiler:
@@ -83,11 +86,11 @@ if __name__ == "__main__":
     parser.add_argument("--lang", required=True)
     parser.add_argument("--target", required=True)
     parser.add_argument("--output", required=True)
-    parser.add_argument("--flags", default="[]",
-                        help="Flags extra encodés en JSON")
+    parser.add_argument("--flags", default="[]", help="Flags extra encodés en JSON")
     args = parser.parse_args()
     try:
         import json as _json
+
         flags = _json.loads(args.flags) if args.flags and args.flags != "[]" else None
     except Exception:
         flags = None

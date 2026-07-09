@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Adapter Rust pour Pile ou Face."""
+
 import argparse
 import json
 import subprocess
@@ -7,26 +8,28 @@ import sys
 
 # rustup target triple → (triple, cross-linker)
 TARGET_TRIPLE: dict[str, tuple[str, str]] = {
-    "elf-x64":      ("x86_64-unknown-linux-gnu",         ""),
-    "elf-arm64":    ("aarch64-unknown-linux-gnu",         "aarch64-linux-gnu-gcc"),
-    "elf-arm":      ("armv7-unknown-linux-gnueabihf",     "arm-linux-gnueabihf-gcc"),
-    "pe-x64":       ("x86_64-pc-windows-gnu",             "x86_64-w64-mingw32-gcc"),
-    "macho-arm64":  ("aarch64-apple-darwin",              ""),
-    "macho-x64":    ("x86_64-apple-darwin",               ""),
+    "elf-x64": ("x86_64-unknown-linux-gnu", ""),
+    "elf-arm64": ("aarch64-unknown-linux-gnu", "aarch64-linux-gnu-gcc"),
+    "elf-arm": ("armv7-unknown-linux-gnueabihf", "arm-linux-gnueabihf-gcc"),
+    "pe-x64": ("x86_64-pc-windows-gnu", "x86_64-w64-mingw32-gcc"),
+    "macho-arm64": ("aarch64-apple-darwin", ""),
+    "macho-x64": ("x86_64-apple-darwin", ""),
     # PowerPC
-    "elf-ppc":      ("powerpc-unknown-linux-gnu",         "powerpc-linux-gnu-gcc"),
-    "elf-ppc64":    ("powerpc64-unknown-linux-gnu",       "powerpc64-linux-gnu-gcc"),
-    "elf-ppc64le":  ("powerpc64le-unknown-linux-gnu",     "powerpc64le-linux-gnu-gcc"),
+    "elf-ppc": ("powerpc-unknown-linux-gnu", "powerpc-linux-gnu-gcc"),
+    "elf-ppc64": ("powerpc64-unknown-linux-gnu", "powerpc64-linux-gnu-gcc"),
+    "elf-ppc64le": ("powerpc64le-unknown-linux-gnu", "powerpc64le-linux-gnu-gcc"),
     # SPARC64
-    "elf-sparc64":  ("sparc64-unknown-linux-gnu",         "sparc64-linux-gnu-gcc"),
+    "elf-sparc64": ("sparc64-unknown-linux-gnu", "sparc64-linux-gnu-gcc"),
     # RISC-V 64
-    "elf-riscv64":  ("riscv64gc-unknown-linux-gnu",       "riscv64-linux-gnu-gcc"),
+    "elf-riscv64": ("riscv64gc-unknown-linux-gnu", "riscv64-linux-gnu-gcc"),
     # SystemZ
-    "elf-s390x":    ("s390x-unknown-linux-gnu",           "s390x-linux-gnu-gcc"),
+    "elf-s390x": ("s390x-unknown-linux-gnu", "s390x-linux-gnu-gcc"),
 }
 
 
-def run(src: str, _lang: str, target: str, output: str, flags: list[str] | None = None) -> dict:
+def run(
+    src: str, _lang: str, target: str, output: str, flags: list[str] | None = None
+) -> dict:
     entry = TARGET_TRIPLE.get(target)
     if not entry:
         return {"error": f"Target non supporté: {target}"}

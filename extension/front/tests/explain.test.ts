@@ -22,12 +22,12 @@ describe('dynamic/explain — crash classification must match the backend, never
   let explainBody: any;
   let originalDocument: any;
   let tmpModulePath: string | null = null;
+  let tmpRenderModulePath: string | null = null;
 
   before(async () => {
     originalDocument = (global as any).document;
-    // render.js (imported by explain.js) also imports the real dom.js,
-    // which calls document.getElementById('panel-runtime') at module load.
-    (global as any).document = { createElement: () => makeFakeElement(), getElementById: () => null, querySelector: () => null };
+    // explain.js/render.js call document.createElement(...) directly (not via dom.js).
+    (global as any).document = { createElement: () => makeFakeElement() };
 
     explainBody = {
       children: [] as any[],
@@ -35,6 +35,22 @@ describe('dynamic/explain — crash classification must match the backend, never
       appendChild(child: any) { this.children.push(child); return child; }
     };
     (globalThis as any).__explainDom = { explainBody };
+
+    // render.js (imported by explain.js) also imports the real dom.js, whose
+    // `dom` export is created once at module load and cached for the whole
+    // process (ESM singleton). Importing it here with a throwaway document
+    // would permanently poison that shared singleton for every other test
+    // file that runs later in the same suite. Stub it out here too, the same
+    // way explain.js's own `dom` import is stubbed below, so the real dom.js
+    // is never loaded by this suite.
+    const renderModulePath = path.resolve(__dirname, '../dynamic/app/render.js');
+    let renderSource = fs.readFileSync(renderModulePath, 'utf8');
+    renderSource = renderSource.replace(
+      /^import \{ dom \}.*$/m,
+      'const dom = globalThis.__explainDom;'
+    );
+    tmpRenderModulePath = path.resolve(__dirname, '../dynamic/app/__test_render_tmp.mjs');
+    fs.writeFileSync(tmpRenderModulePath, renderSource);
 
     // A data: URL has no base path, so explain.js's own relative imports
     // (./diagnostics.js, ./render.js) can't resolve from one -- write the
@@ -46,6 +62,10 @@ describe('dynamic/explain — crash classification must match the backend, never
       /^import \{ dom \}.*$/m,
       'const dom = globalThis.__explainDom;'
     );
+    source = source.replace(
+      /^import \{ explainStackEffect \} from '\.\/render\.js';$/m,
+      "import { explainStackEffect } from './__test_render_tmp.mjs';"
+    );
     tmpModulePath = path.resolve(__dirname, '../dynamic/app/__test_explain_tmp.mjs');
     fs.writeFileSync(tmpModulePath, source);
     mod = await import(pathToFileURL(tmpModulePath).href);
@@ -53,6 +73,7 @@ describe('dynamic/explain — crash classification must match the backend, never
 
   after(() => {
     (global as any).document = originalDocument;
+    if (tmpRenderModulePath && fs.existsSync(tmpRenderModulePath)) fs.unlinkSync(tmpRenderModulePath);
     if (tmpModulePath && fs.existsSync(tmpModulePath)) fs.unlinkSync(tmpModulePath);
   });
 

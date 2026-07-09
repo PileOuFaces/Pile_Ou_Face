@@ -3,7 +3,10 @@
 Usage: python decompile.py --binary <path> [--addr 0x1234] [--full]
 Sortie JSON: [{"addr": "0x...", "name": "...", "code": "..."}]
 """
-import argparse, json, sys
+
+import argparse
+import json
+
 
 def run(binary, addr="", full=False):
     try:
@@ -16,7 +19,7 @@ def run(binary, addr="", full=False):
         return [{"error": f"angr load: {e}"}]
     results = []
     try:
-        cfg = p.analyses.CFGFast(normalize=True, show_progressbar=False)
+        p.analyses.CFGFast(normalize=True, show_progressbar=False)
         if addr:
             a = int(addr, 16) if addr.startswith("0x") else int(addr)
             try:
@@ -25,7 +28,11 @@ def run(binary, addr="", full=False):
                 return [{"error": f"fonction introuvable à {addr}"}]
             fns = [fn]
         else:
-            fns = [f for f in p.kb.functions.values() if not f.is_plt and not f.is_simprocedure]
+            fns = [
+                f
+                for f in p.kb.functions.values()
+                if not f.is_plt and not f.is_simprocedure
+            ]
         for fn in fns:
             try:
                 d = p.analyses.Decompiler(fn)
@@ -36,6 +43,7 @@ def run(binary, addr="", full=False):
     except Exception as e:
         return [{"error": str(e)}]
     return results or [{"error": "aucune fonction"}]
+
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
