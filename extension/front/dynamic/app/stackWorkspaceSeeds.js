@@ -307,7 +307,12 @@ export function normalizeStaticSeed(seed, {
   return normalized;
 }
 
-export function buildSyntheticSeeds({ observations, existingEntries, functionName, bpRegister, bpAddress, meta, frameScope } = {}) {
+export function buildSyntheticSeeds({ observations, existingEntries, functionName, bpRegister, bpAddress, meta, frameScope, frameIsReady = true } = {}) {
+  // Before the frame is set up, "unmatched observations" are just the raw
+  // snapshot.stack memory-window dump (no Evidence backing at all) -- never
+  // synthesize seeds from it, regardless of what findStructuralGapForObservation
+  // would otherwise accept.
+  if (!frameIsReady) return [];
   const seeds = [];
   const candidates = [...(Array.isArray(observations) ? observations : [])]
     .filter((item) => item.offset !== null && item.size > 0)
@@ -373,7 +378,15 @@ export function seedFromObservation(observation, bpAddress, { synthetic, kindOve
     nameSource: synthetic ? 'fallback' : normalizeSource(observation?.modelSource || observation?.source),
     typeName: firstNonEmpty(observation?.modelType, observation?.typeName),
     confidence: readConfidence(observation?.modelConfidence) ?? readConfidence(observation?.confidence),
-    isSynthetic: Boolean(synthetic)
+    isSynthetic: Boolean(synthetic),
+    // Passthrough only, never derived/defaulted here -- so a reliable
+    // backend role/size verdict already on the observation survives onto
+    // the seed for normalizeSeed / applyRecoveredExtentToSeed to see.
+    size_exact: observation?.size_exact,
+    observed_write_size: observation?.observed_write_size,
+    estimated_bound: observation?.estimated_bound,
+    classification: observation?.classification,
+    evidenceClassification: observation?.evidenceClassification
   };
 }
 
@@ -469,6 +482,19 @@ export function normalizeSeed(seed) {
     typeName: clean(seed?.typeName),
     confidence: readConfidence(seed?.confidence),
     isSynthetic: Boolean(seed?.isSynthetic),
+    // Passthrough only -- never derived or defaulted here -- so that a
+    // reliable backend role/size verdict already on this seed survives to
+    // reach the code (e.g. stackWorkspaceAnchoring.js) deciding whether a
+    // heuristic is still allowed to touch it.
+    role: seed?.role,
+    classification: seed?.classification,
+    evidenceClassification: seed?.evidenceClassification,
+    semanticRole: seed?.semanticRole,
+    size_exact: seed?.size_exact,
+    observed_write_size: seed?.observed_write_size,
+    estimated_bound: seed?.estimated_bound,
+    reason: seed?.reason,
+    evidenceReason: seed?.evidenceReason,
     seedContributors: normalizeSeedContributors(seed?.seedContributors, {
       offset,
       size,

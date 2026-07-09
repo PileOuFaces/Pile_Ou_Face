@@ -50,6 +50,10 @@ function buildSections(snap, meta, analysis, mcp, diagnostics = [], crash = null
       ? { label: 'ACCES CIBLE', text: buildRetWinText(crash), severity: 'success' }
       : classification === 'control_hijack'
       ? { label: 'DETOURNEMENT', text: buildCrashText(crash), severity: 'warning' }
+      : classification === 'benign_termination' || classification === 'emulator_stop'
+      // Backend already proved there is no corruption evidence for this
+      // classification -- never render it as "CRASH DETECTE".
+      ? { label: diagnosticKindLabel(classification).toUpperCase(), text: buildCrashText(crash), severity: 'info' }
       : { label: 'CRASH DETECTE', text: buildCrashText(crash), severity: 'error' }
     : null;
   const suppressDiagnostic = diagnostic

@@ -1,36 +1,8 @@
 
-// Dynamic: form submit
-form?.addEventListener('submit', (e) => {
-  e.preventDefault();
-  const binaryPath = binaryPathInput?.value?.trim() || '';
-  if (!binaryPath) {
-    setDynamicTraceStatus('Chemin binaire requis.');
-    return;
-  }
-
-  if (runBtn) runBtn.disabled = true;
-  setDynamicTraceStatus('Trace en cours...');
-  vscode.postMessage({
-    type: 'runTrace',
-    config: {
-      traceMode: 'dynamic',
-      useExistingBinary: true,
-      binaryPath,
-      sourcePath: dynamicSourcePathInput?.value?.trim() || '',
-      archBits: dynamicTraceInitState.archBits,
-      pie: dynamicTraceInitState.pie,
-      bufferOffset: String(dynamicTraceInitState.profile.bufferOffset ?? ''),
-      bufferSize: String(dynamicTraceInitState.profile.bufferSize ?? ''),
-      maxSteps: String(dynamicTraceInitState.profile.maxSteps ?? 800),
-      startSymbol: String(dynamicTraceInitState.profile.startSymbol || ''),
-      stopSymbol: String(dynamicTraceInitState.profile.stopSymbol || ''),
-      injectPayload: !!(argvPayloadInput?.value?.trim()),
-      payloadExpr: argvPayloadInput?.value?.trim() || '',
-      payloadTargetMode: getDynamicPayloadTargetMode(),
-      payloadTarget: getDynamicPayloadTargetMode(),
-    }
-  });
-});
+// Dynamic: form submit is handled by runTraceController.js
+// (initRunTraceController -> handleSubmit), wired from hub.js. Do not
+// attach a second listener to #traceForm here -- see
+// extension/front/dynamic/runTraceController.js.
 
 // Offset calculator — initialized by staticToolsWidgetsController.init() in hub.js
 function updateOffsetCalc() {

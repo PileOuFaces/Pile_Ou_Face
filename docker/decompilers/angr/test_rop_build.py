@@ -8,6 +8,7 @@ The bundled test binary (testdata/vuln_x64.elf) is an intentionally vulnerable
 x86_64 ELF compiled with -fno-stack-protector -no-pie on Ubuntu 20.04 / glibc 2.31.
 It contains a pop rdi; ret gadget (from __libc_csu_init) and system() in its PLT.
 """
+
 import json
 import subprocess
 import sys
@@ -21,7 +22,9 @@ PYTHON = "/opt/pof-venv/bin/python3"
 def run(goal: str) -> dict:
     proc = subprocess.run(
         [PYTHON, SCRIPT, "--binary", BINARY, "--goal", goal],
-        capture_output=True, text=True, timeout=120,
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
     assert proc.returncode == 0, f"exit {proc.returncode}: {proc.stderr[:300]}"
     data = json.loads(proc.stdout.strip())
@@ -48,37 +51,49 @@ def assert_valid(result: dict, goal: str) -> None:
 def test_ret2syscall_x64() -> None:
     r = run("ret2syscall_x64")
     assert_valid(r, "ret2syscall_x64")
-    status = f"{len(r['chain'])} gadgets" if r["ok"] else f"no gadgets ({r['error'][:60]})"
+    status = (
+        f"{len(r['chain'])} gadgets" if r["ok"] else f"no gadgets ({r['error'][:60]})"
+    )
     print(f"  ret2syscall_x64: {status}")
 
 
 def test_ret2libc_x64() -> None:
     r = run("ret2libc_x64")
     assert_valid(r, "ret2libc_x64")
-    status = f"{len(r['chain'])} gadgets" if r["ok"] else f"no gadgets ({r['error'][:60]})"
+    status = (
+        f"{len(r['chain'])} gadgets" if r["ok"] else f"no gadgets ({r['error'][:60]})"
+    )
     print(f"  ret2libc_x64: {status}")
 
 
 def test_stack_pivot() -> None:
     r = run("stack_pivot")
     assert_valid(r, "stack_pivot")
-    status = f"{len(r['chain'])} gadgets" if r["ok"] else f"no gadgets ({r['error'][:60]})"
+    status = (
+        f"{len(r['chain'])} gadgets" if r["ok"] else f"no gadgets ({r['error'][:60]})"
+    )
     print(f"  stack_pivot: {status}")
 
 
 def test_unknown_goal() -> None:
     proc = subprocess.run(
         [PYTHON, SCRIPT, "--binary", BINARY, "--goal", "bad_goal"],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     data = json.loads(proc.stdout.strip())
     assert data["ok"] is False
     assert "Unknown goal" in data["error"]
-    print(f"  unknown_goal: rejected correctly")
+    print("  unknown_goal: rejected correctly")
 
 
 if __name__ == "__main__":
-    tests = [test_ret2syscall_x64, test_ret2libc_x64, test_stack_pivot, test_unknown_goal]
+    tests = [
+        test_ret2syscall_x64,
+        test_ret2libc_x64,
+        test_stack_pivot,
+        test_unknown_goal,
+    ]
     failed = []
     for t in tests:
         try:

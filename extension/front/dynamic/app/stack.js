@@ -8,6 +8,7 @@ import { diagnosticsForStackSlot } from './diagnostics.js';
 import { addrKey, readPointer, readU32, toBigIntAddr } from './memory.js';
 import { buildSimplifiedStackViewModel } from './stackSimpleModel.js';
 import { buildStackWorkspaceModel } from './stackWorkspaceModel.js';
+import { isFrameReadyAtCurrentStep } from './stackWorkspaceCore.js';
 import { renderStackEmptyState } from './stackEmptyState.js';
 import { toHex } from './utils.js';
 
@@ -83,7 +84,12 @@ export function renderStack(stackItems, regMap, meta, options = {}) {
   const analysisBufferStart = toBigIntAddr(analysis?.buffer?.start);
   const analysisBufferEnd = toBigIntAddr(analysis?.buffer?.end);
   const semanticSlots = buildSemanticStackItems(analysis);
-  const modelRegions = buildModelRegions(model, rbp, meta);
+  // Same Evidence-readiness check the workspace Core uses (frame pointer
+  // set up AND frame allocated at this step) -- computed here, before
+  // sourceSlots exist yet, from analysis + the analysis-derived
+  // semanticSlots (never from model.locals itself).
+  const frameIsReady = isFrameReadyAtCurrentStep(analysis, semanticSlots);
+  const modelRegions = buildModelRegions(model, rbp, meta, frameIsReady);
   const bufferRegion = modelRegions.find((region) => region.role === 'buffer') ?? null;
   const modifiedRegion = modelRegions.find((region) => region.role === 'modified') ?? null;
   const bufferStart = bufferRegion?.start ?? analysisBufferStart;
@@ -683,9 +689,6 @@ function renderDetailPanel(detailModel, { onCloseDetail, emptyText } = {}) {
   const article = document.createElement('article');
   article.className = 'stack-detail-card';
 
-  const header = document.createElement('div');
-  header.className = 'stack-detail-header';
-
   const titleWrap = document.createElement('div');
   titleWrap.className = 'stack-detail-heading';
 
@@ -732,28 +735,6 @@ function renderDetailPanel(detailModel, { onCloseDetail, emptyText } = {}) {
   header.appendChild(actions);
 
   article.appendChild(header);
-
-  const body = document.createElement('div');
-  body.className = 'stack-detail-body';
-  (Array.isArray(detailModel.rows) ? detailModel.rows : []).forEach((row) => {
-    const item = document.createElement('div');
-    item.className = 'stack-detail-row';
-
-    const label = document.createElement('div');
-    label.className = 'stack-detail-label';
-    label.textContent = row.label;
-    item.appendChild(label);
-
-    const value = document.createElement('div');
-    value.className = 'stack-detail-value';
-    value.textContent = row.value;
-    item.appendChild(value);
-
-    body.appendChild(item);
-  });
-  article.appendChild(body);
-
-  dom.stackDetail.appendChild(article);
 }
 
 function renderDetailPlaceholder(emptyText = 'Cliquez sur un slot pour afficher plus de details.') {

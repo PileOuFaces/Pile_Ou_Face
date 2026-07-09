@@ -78,7 +78,6 @@ body.dynamic-view {
 .controls,
 .panel-header,
 .stack-browser-header,
-.stack-detail-header,
 .block-header,
 .simple-stack-header,
 .frame-slot-summary {
@@ -1114,13 +1113,6 @@ body.dynamic-view {
   gap: var(--space-2);
 }
 
-.stack-detail-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-
 .stack-detail-heading {
   display: flex;
   flex-direction: column;
@@ -1168,13 +1160,6 @@ body.dynamic-view {
   font-size: 0.64rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-}
-
-.stack-detail-body {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
 }
 
 .stack-detail-row {
@@ -1855,7 +1840,6 @@ body.dynamic-view {
 
   .frame-slot-summary,
   .simple-stack-header,
-  .stack-detail-header,
   .block-body,
   .block-header {
     flex-direction: column;

@@ -103,8 +103,11 @@ describe('dynamic trace enrichment', () => {
       offsetLabel: 'rbp-0x20',
       call: 'strcpy',
       callAddress: '0x401180',
-      source: 'static',
-      confidence: 'high'
+      // This is a disassembly-regex guess, never backend Evidence Model
+      // data: it must read as a low-confidence pedagogical fallback, not
+      // as strongly as real evidence.
+      source: 'pedagogy_fallback',
+      confidence: 'low'
     });
 
     const enrichment = buildTraceAddressEnrichment(trace);
@@ -131,7 +134,7 @@ describe('dynamic trace enrichment', () => {
       base: 'rbp',
       offset: -0x30,
       call: 'gets',
-      source: 'static'
+      source: 'pedagogy_fallback'
     });
   });
 

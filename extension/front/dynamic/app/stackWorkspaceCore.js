@@ -199,6 +199,43 @@ function annotateFrameModelResolution(frameModel, modelResolution) {
   return frameModel;
 }
 
+const FRAME_READINESS_CONTROL_ROLES = new Set(['saved_bp', 'control', 'return_address', 'ret']);
+
+// Whether the current invocation's own frame is actually set up at this
+// step -- i.e. `mov rbp, rsp` has executed. Priority order:
+// 1. An explicit backend signal (analysis.frame.frameReady), if ever added.
+// 2. analysis.frame.slots, when it is a real array -- this is the backend's
+//    own per-step Evidence, already gated server-side (only saved_bp/
+//    return_address are emitted before the frame is ready), so any other
+//    role in it is itself proof the frame is ready. This must be checked
+//    BEFORE the frontend `slots`, because that top-level array can also
+//    contain the raw, ungated snapshot.stack dump (legacy fallback,
+//    injectControlSlots) merged in when analysis.frame.slots was empty --
+//    that dump has no Evidence backing at all and must never be read as
+//    "frame ready".
+// 3. If analysis.frame exists (a real object) but has no slots array at
+//    all -- e.g. hand-built fixtures that only care about model.locals --
+//    fall back to the already-materialized per-step `slots`.
+// 4. If analysis / analysis.frame is absent entirely, there is no Evidence
+//    signal whatsoever for this step yet (e.g. analysisByStep not populated
+//    for this step). Never trust the frontend `slots` fallback in that
+//    case either -- it may just be the ungated snapshot.stack dump -- so
+//    default to "not ready".
+export function isFrameReadyAtCurrentStep(analysis, slots) {
+  if (typeof analysis?.frame?.frameReady === 'boolean') return analysis.frame.frameReady;
+  const hasNonControlRole = (role) => {
+    const normalized = String(role || '').toLowerCase();
+    return Boolean(normalized) && !FRAME_READINESS_CONTROL_ROLES.has(normalized);
+  };
+  if (Array.isArray(analysis?.frame?.slots)) {
+    return analysis.frame.slots.some((slot) => hasNonControlRole(slot?.role));
+  }
+  if (!analysis?.frame || typeof analysis.frame !== 'object') return false;
+  return (Array.isArray(slots) ? slots : []).some((slot) => (
+    hasNonControlRole(slot?.semanticRole || slot?.role || slot?.kind)
+  ));
+}
+
 function findFirstStepForFunction(snapshots, functionName) {
   if (!functionName || !Array.isArray(snapshots)) return null;
   const index = snapshots.findIndex((snap) => sameFunction(snap?.func, functionName));
@@ -268,13 +305,21 @@ export function buildCanonicalFrameModel({
     bpAddress,
     wordSize
   });
-  const trustedModelSeeds = buildTrustedModelSeeds({
-    model,
-    functionName,
-    bpRegister,
-    bpAddress,
-    meta
-  });
+  // model.locals (mcp.model) is a trace-wide, per-function aggregate -- it
+  // already contains locals/buffers/arguments the backend will only
+  // actually resolve at a later step. Never surface them as seeds (and
+  // never let them widen buildFrameScope below) before the frame itself is
+  // established at the CURRENT step.
+  const frameIsReady = isFrameReadyAtCurrentStep(analysis, slots);
+  const trustedModelSeeds = frameIsReady
+    ? buildTrustedModelSeeds({
+        model,
+        functionName,
+        bpRegister,
+        bpAddress,
+        meta
+      })
+    : [];
   const preliminaryFrameScope = buildFrameScope({
     analysis,
     snapshot,
@@ -361,7 +406,8 @@ export function buildCanonicalFrameModel({
     bpRegister,
     bpAddress,
     meta,
-    frameScope
+    frameScope,
+    frameIsReady
   });
 
   const rawEntryBases = [...runtimeEvidence.entries, ...syntheticEntries]

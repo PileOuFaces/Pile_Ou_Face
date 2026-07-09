@@ -9,10 +9,10 @@
 from __future__ import print_function
 import json
 
-args = getScriptArgs()
+args = getScriptArgs()  # noqa: F821 — injected by Ghidra's Python runtime
 output_file = args[0] if len(args) > 0 else "/tmp/pof_result.json"
 mode_arg = args[1] if len(args) > 1 else ""
-full_mode = (mode_arg == "full")
+full_mode = mode_arg == "full"
 
 results = []
 decomp_ifc = None
@@ -23,13 +23,13 @@ try:
     decomp_ifc = DecompInterface()
     opts = DecompileOptions()
     decomp_ifc.setOptions(opts)
-    decomp_ifc.openProgram(currentProgram)
+    decomp_ifc.openProgram(currentProgram)  # noqa: F821 — injected by Ghidra
 
-    fm = currentProgram.getFunctionManager()
+    fm = currentProgram.getFunctionManager()  # noqa: F821 — injected by Ghidra
 
     def decompile_fn(fn):
         addr_str = "0x%x" % fn.getEntryPoint().getOffset()
-        res = decomp_ifc.decompileFunction(fn, 60, monitor)
+        res = decomp_ifc.decompileFunction(fn, 60, monitor)  # noqa: F821 — injected by Ghidra
         if res and res.decompileCompleted():
             df = res.getDecompiledFunction()
             code = str(df.getC()) if df else ""
@@ -39,7 +39,13 @@ try:
             err_msg = str(res.getErrorMessage() or "") if res else "timeout"
         except Exception:
             pass
-        return {"addr": addr_str, "name": str(fn.getName()), "code": "", "error": err_msg or "decompilation non completee (voir logs analyzeHeadless)"}
+        return {
+            "addr": addr_str,
+            "name": str(fn.getName()),
+            "code": "",
+            "error": err_msg
+            or "decompilation non completee (voir logs analyzeHeadless)",
+        }
 
     if full_mode:
         for fn in fm.getFunctions(True):
@@ -51,7 +57,7 @@ try:
         target_fn = None
         if mode_arg and mode_arg != "full":
             try:
-                addr_obj = currentProgram.getAddressFactory().getAddress(mode_arg)
+                addr_obj = currentProgram.getAddressFactory().getAddress(mode_arg)  # noqa: F821 — injected by Ghidra
                 target_fn = fm.getFunctionContaining(addr_obj)
                 if target_fn is None:
                     target_fn = fm.getFunctionAt(addr_obj)
@@ -82,4 +88,5 @@ try:
         fout.write(json.dumps(results))
 except Exception as write_exc:
     import sys
+
     print("pof_script_write_error: " + str(write_exc), file=sys.stderr)

@@ -48,6 +48,53 @@ import {
   sameFunction
 } from './stackWorkspaceUtils.js';
 
+// The 5 roles the backend actually classifies (see stack_model.py: role is
+// always one of these, or "padding"/"unknown" for genuinely unclassified
+// filler). "modified"/"padding"/"slot" are UI-only concepts derived from
+// heuristics, never asserted by the backend, so they are deliberately
+// excluded here -- they must stay in the heuristic fallback path, not be
+// treated as already-reliable.
+const KNOWN_BACKEND_ROLES = new Set(['buffer', 'local', 'argument', 'saved_bp', 'return_address']);
+
+function isKnownBackendRole(role) {
+  return KNOWN_BACKEND_ROLES.has(role);
+}
+
+// normalizeEntryKind (stackWorkspaceUtils.js) does not know every alias the
+// backend/evidence layer uses for the same role -- e.g. "probable_local"/
+// "stack_argument"/"register_argument", or "saved_rbp"/bare "return".
+// Extended here, locally, rather than in the shared utility.
+function normalizeBackendRoleAlias(raw) {
+  const text = clean(raw).toLowerCase();
+  if (text === 'probable_local') return 'local';
+  if (text === 'stack_argument' || text === 'register_argument') return 'argument';
+  if (text === 'saved_rbp') return 'saved_bp';
+  if (text === 'return') return 'return_address';
+  return normalizeEntryKind(raw);
+}
+
+/**
+ * @brief Reads the most reliable backend-provided role for an item, trying
+ * every field name the backend/evidence pipeline may carry it under, in
+ * priority order. Returns null when none of them carry a role this UI
+ * recognizes -- callers must then fall back to label/type/size heuristics,
+ * never treat an unrecognized value as if it were reliable.
+ */
+export function resolveReliableBackendRole(source) {
+  const candidates = [
+    source?.role,
+    source?.classification,
+    source?.evidenceClassification,
+    source?.semanticRole,
+    source?.kind
+  ];
+  for (const candidate of candidates) {
+    const normalized = normalizeBackendRoleAlias(candidate);
+    if (isKnownBackendRole(normalized)) return normalized;
+  }
+  return null;
+}
+
 export function reclassifyNegativeArgumentSpills({ seeds, observations, registerArguments, snapshot, wordSize, frameScope } = {}) {
   if (!frameScope?.ownerMatches) {
     return [...(Array.isArray(seeds) ? seeds : [])].map((seed) => normalizeSeed(seed)).filter(Boolean);
@@ -203,6 +250,14 @@ export function classifyTrustedSeedKind({ rawKind, label, typeName, offset, func
 }
 
 export function classifyObservationSeedKind(observation, functionName, bpRegister, meta) {
+  // Backend-provided role is authoritative once it's one we recognize,
+  // checked across every field name the pipeline may carry it under. Never
+  // re-derive buffer/local/argument from label, type, size, a CTF sentinel
+  // pattern, or payload overlap alone once the backend has already
+  // classified this slot.
+  const reliableRole = resolveReliableBackendRole(observation);
+  if (reliableRole) return reliableRole;
+
   const kind = normalizeEntryKind(observation?.kind || observation?.role);
   const label = firstNonEmpty(observation?.modelName, observation?.label);
   const typeName = firstNonEmpty(observation?.modelType, observation?.typeName);

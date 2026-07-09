@@ -1275,6 +1275,10 @@ function createHub(config) {
             crash: trace.crash && typeof trace.crash === 'object' ? trace.crash : null,
             diagnostics: Array.isArray(trace.diagnostics) ? trace.diagnostics : [],
             risks: Array.isArray(trace.risks) ? trace.risks : [],
+            // Same field the standalone visualizer's 'init' message carries
+            // (visualizer.ts::sendInitToWebview) -- the embedded Hub Runtime
+            // view must see the same per-step Evidence, not just snapshots.
+            analysisByStep: trace.analysisByStep && typeof trace.analysisByStep === 'object' ? trace.analysisByStep : {},
             enrichment: trace.enrichment && typeof trace.enrichment === 'object' ? trace.enrichment : {},
             tracePath: isolatedJsonPath,
           });

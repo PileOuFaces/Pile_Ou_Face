@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Adapter Go pour Pile ou Face."""
+
 import argparse
 import json
 import os
@@ -9,30 +10,32 @@ import sys
 # (GOOS, GOARCH) — Go natively supports cross-compilation via env vars
 TARGET_ENV: dict[str, tuple[str, str]] = {
     # Standard
-    "elf-x64":      ("linux",   "amd64"),
-    "elf-x86":      ("linux",   "386"),
-    "elf-arm64":    ("linux",   "arm64"),
-    "elf-arm":      ("linux",   "arm"),
-    "pe-x64":       ("windows", "amd64"),
-    "pe-x86":       ("windows", "386"),
-    "macho-arm64":  ("darwin",  "arm64"),
-    "macho-x64":    ("darwin",  "amd64"),
+    "elf-x64": ("linux", "amd64"),
+    "elf-x86": ("linux", "386"),
+    "elf-arm64": ("linux", "arm64"),
+    "elf-arm": ("linux", "arm"),
+    "pe-x64": ("windows", "amd64"),
+    "pe-x86": ("windows", "386"),
+    "macho-arm64": ("darwin", "arm64"),
+    "macho-x64": ("darwin", "amd64"),
     # MIPS
-    "elf-mips":     ("linux",   "mips"),
-    "elf-mipsel":   ("linux",   "mipsle"),
-    "elf-mips64":   ("linux",   "mips64"),
-    "elf-mips64el": ("linux",   "mips64le"),
+    "elf-mips": ("linux", "mips"),
+    "elf-mipsel": ("linux", "mipsle"),
+    "elf-mips64": ("linux", "mips64"),
+    "elf-mips64el": ("linux", "mips64le"),
     # PowerPC
-    "elf-ppc64":    ("linux",   "ppc64"),
-    "elf-ppc64le":  ("linux",   "ppc64le"),
+    "elf-ppc64": ("linux", "ppc64"),
+    "elf-ppc64le": ("linux", "ppc64le"),
     # RISC-V 64
-    "elf-riscv64":  ("linux",   "riscv64"),
+    "elf-riscv64": ("linux", "riscv64"),
     # IBM SystemZ
-    "elf-s390x":    ("linux",   "s390x"),
+    "elf-s390x": ("linux", "s390x"),
 }
 
 
-def run(src: str, _lang: str, target: str, output: str, flags: list[str] | None = None) -> dict:
+def run(
+    src: str, _lang: str, target: str, output: str, flags: list[str] | None = None
+) -> dict:
     env_pair = TARGET_ENV.get(target)
     if not env_pair:
         return {"error": f"Target non supporté: {target}"}

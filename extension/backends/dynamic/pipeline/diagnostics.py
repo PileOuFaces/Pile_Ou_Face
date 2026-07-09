@@ -53,6 +53,7 @@ def build_diagnostics(
     meta: dict,
     disasm_lines: list[dict] | None = None,
     crash: dict | None = None,
+    max_steps_reached: bool = False,
 ) -> list[dict]:
     """Build deterministic crash/error diagnostics from trace enrichment."""
     diagnostics: list[dict] = []
@@ -105,6 +106,11 @@ def build_diagnostics(
             code_ranges=code_ranges,
         )
     )
+
+    # A trace truncated by the step budget is not a crash: it must never be
+    # reported when there's already a genuine crash for this run.
+    if max_steps_reached and crash is None:
+        diagnostics.append(_max_steps_diagnostic(snapshots))
 
     deduped = _dedupe_diagnostics(diagnostics)
     _attach_to_analysis(analysis_by_step, deduped)
@@ -333,22 +339,43 @@ def _diagnose_invalid_control_flow(
         if after_regs.get(name) is not None
     }
     bytes_hex = _value_bytes_hex(target, _word_size(meta))
+    payload_offset = _payload_offset(meta, bytes_hex)
+    if _has_control_corruption_evidence(analysis, payload_offset):
+        kind = "fatal_crash"
+        classification = "fatal_crash"
+        severity = "error"
+        message = f"{ip_name.upper()} devient non executable apres {mnemonic}"
+        probable_source = _probable_source(snapshot, meta)
+        confidence = 0.9 if _looks_like_user_pattern(target) else 0.78
+    else:
+        kind = "benign_termination" if mnemonic == "ret" else "emulator_stop"
+        classification = kind
+        severity = "info"
+        message = (
+            f"{ip_name.upper()} quitte la zone de code connue apres {mnemonic}, "
+            "sans preuve de corruption (aucun overflow, aucune ecriture suspecte, "
+            "aucune correspondance payload) -- probablement une fin d'execution "
+            "ou une limite de l'emulateur, pas une vulnerabilite."
+        )
+        probable_source = None
+        payload_offset = None
+        confidence = 0.5
     diag = {
-        "severity": "error",
-        "kind": "fatal_crash",
-        "classification": "fatal_crash",
+        "severity": severity,
+        "kind": kind,
+        "classification": classification,
         "step": step,
         "function": _function_name(snapshot, analysis),
         "instructionAddress": _instruction_address(snapshot),
         "responsibleInstructionAddress": _instruction_address(snapshot),
-        "message": f"{ip_name.upper()} devient non executable apres {mnemonic}",
+        "message": message,
         "slot": _slot_for_invalid_flow(analysis, target),
         "before": _hex(before_ip),
         "after": _hex(target),
         "bytes": bytes_hex,
-        "probableSource": _probable_source(snapshot, meta),
-        "payloadOffset": _payload_offset(meta, bytes_hex),
-        "confidence": 0.9 if _looks_like_user_pattern(target) else 0.78,
+        "probableSource": probable_source,
+        "payloadOffset": payload_offset,
+        "confidence": confidence,
         "registers": regs,
     }
     return [_clean_diag(diag)]
@@ -387,9 +414,7 @@ def _diagnose_crash(
         if isinstance(crash.get("suspectOverwrittenSlot"), dict)
         else None
     )
-    slot_kind = (
-        str(slot.get("kind") or "").strip().lower() if isinstance(slot, dict) else ""
-    )
+
     function_meta = (
         analysis.get("function") if isinstance(analysis.get("function"), dict) else {}
     )
@@ -429,20 +454,43 @@ def _diagnose_crash(
         confidence = 0.96
         ret_target = None
         message = str(crash.get("reason") or "Crash fatal Unicorn.").strip()
+    elif classification in ("benign_termination", "emulator_stop"):
+        # run_pipeline._build_crash_report already downgraded this from
+        # fatal_crash after finding zero corruption evidence (no overflow
+        # reaching a control slot, no flagged write, no payload match) --
+        # render it as informational, never as a crash/vulnerability.
+        kind = classification
+        severity = "info"
+        confidence = 0.5
+        ret_target = None
+        message = str(
+            crash.get("reason")
+            or "Fin d'execution hors zone de code connue, sans preuve de corruption."
+        ).strip()
     else:
-        kind = (
-            "fatal_crash"
-            if crash_type == "unmapped_fetch"
+        looks_like_control_divert = (
+            crash_type == "unmapped_fetch"
             or instruction_text.startswith("ret")
             or instruction_text.startswith("jmp")
             or instruction_text.startswith("call")
             or (ip_value is not None and not _is_code_address(ip_value, code_ranges))
-            else "runtime_crash"
         )
-        if slot_kind == "return_address" and kind != "fatal_crash":
+        if looks_like_control_divert and _has_control_corruption_evidence(
+            analysis, crash.get("payloadOffset")
+        ):
+            kind = "fatal_crash"
+        elif looks_like_control_divert:
+            kind = (
+                "benign_termination"
+                if instruction_text.startswith("ret")
+                else "emulator_stop"
+            )
+        else:
             kind = "runtime_crash"
-        severity = "error"
-        confidence = 0.96 if kind == "fatal_crash" else 0.88
+        severity = "error" if kind in ("fatal_crash", "runtime_crash") else "info"
+        confidence = (
+            0.96 if kind == "fatal_crash" else 0.88 if kind == "runtime_crash" else 0.5
+        )
         ret_target = None
         message = str(crash.get("reason") or "Crash runtime Unicorn.").strip()
 
@@ -486,11 +534,18 @@ def _diagnose_crash(
         "before": None,
         "after": after_value,
         "bytes": bytes_hex,
-        "probableSource": str(
-            crash.get("probableSource") or _probable_source({}, meta)
-        ).strip()
-        or None,
-        "payloadOffset": crash.get("payloadOffset"),
+        # No source is ever asserted without evidence: benign_termination and
+        # emulator_stop are, by construction, cases where nothing ties the
+        # event to any configured input.
+        "probableSource": (
+            None
+            if kind in ("benign_termination", "emulator_stop")
+            else str(crash.get("probableSource") or _probable_source({}, meta)).strip()
+            or None
+        ),
+        "payloadOffset": None
+        if kind in ("benign_termination", "emulator_stop")
+        else crash.get("payloadOffset"),
         "confidence": confidence,
         "registers": registers,
         "crashType": crash_type or None,
@@ -698,6 +753,30 @@ def _overflow_reaches(analysis: dict, slot_kind: str) -> bool:
     return bool(_overflow_has_runtime_evidence(analysis) and slot_kind in reached)
 
 
+def _has_control_corruption_evidence(
+    analysis: dict, payload_offset: int | None
+) -> bool:
+    """True only when there is real evidence a control slot (return address or
+    saved bp) was tampered with: an overflow that reached it, a runtime write
+    flagged on it, or the faulting bytes matching the configured payload.
+
+    Without this, "the target isn't a known code address" just means
+    execution ran past a boundary the emulator doesn't model -- e.g. `main`
+    returning into un-emulated libc on a plain hello-world/printf-only binary
+    -- not a vulnerability. Used to gate `fatal_crash` in both the terminal
+    crash report (run_pipeline._build_crash_report) and the in-trace invalid
+    control-flow check below, so the two paths never disagree.
+    """
+    if payload_offset is not None:
+        return True
+    for slot_kind in ("return_address", "saved_bp"):
+        if _overflow_reaches(analysis, slot_kind):
+            return True
+        if _slot_has_write_signal(_slot_for_kind(analysis, slot_kind), analysis):
+            return True
+    return False
+
+
 def _analysis_writes(analysis: dict) -> list[dict]:
     delta = analysis.get("delta") if isinstance(analysis.get("delta"), dict) else {}
     writes = delta.get("writes") if isinstance(delta.get("writes"), list) else []
@@ -891,6 +970,27 @@ def _function_name(snapshot: dict, analysis: dict) -> str | None:
     )
     name = str(function.get("name") or snapshot.get("func") or "").strip()
     return name or None
+
+
+def _max_steps_diagnostic(snapshots: list[dict]) -> dict:
+    last_snapshot = snapshots[-1] if isinstance(snapshots, list) and snapshots else {}
+    step = _step_number(last_snapshot, max(0, len(snapshots) - 1)) if snapshots else 0
+    return _clean_diag(
+        {
+            "severity": "info",
+            "kind": "max_steps_reached",
+            "step": step,
+            "function": _function_name(last_snapshot, {}),
+            "instructionAddress": _instruction_address(last_snapshot),
+            "message": "Limite de pas d'execution atteinte : le trace a ete tronque, ce n'est pas un crash.",
+            "before": None,
+            "after": None,
+            "bytes": "",
+            "probableSource": None,
+            "payloadOffset": None,
+            "confidence": 1.0,
+        }
+    )
 
 
 def _register_map(snapshot: dict, stage: str) -> dict[str, int]:
