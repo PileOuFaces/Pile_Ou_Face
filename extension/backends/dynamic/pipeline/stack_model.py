@@ -285,6 +285,17 @@ def _is_prologue_mov_bp_sp(instr_text: str) -> bool:
     return operand in ("rbp, rsp", "ebp, esp")
 
 
+def _is_stack_alloc_instruction(instr_text: str) -> bool:
+    """True when the instruction reserves stack space for locals/buffers
+    (`sub rsp, N` / `sub esp, N`), regardless of the immediate value."""
+    parts = instr_text.lower().split(None, 1)
+    if not parts or parts[0] != "sub":
+        return False
+    operand = parts[1].strip() if len(parts) > 1 else ""
+    register = operand.split(",", 1)[0].strip()
+    return register in ("rsp", "esp")
+
+
 def _instruction_text(snapshot: dict) -> str:
     if isinstance(snapshot.get("instruction"), dict):
         return str(snapshot["instruction"].get("text") or "").strip()
@@ -679,48 +690,58 @@ def _guess_buffer_region(frame: dict, bp: int | None, meta: dict) -> dict | None
 
 
 def _static_regions(
-    frame: dict, bp: int | None, word_size: int, meta: dict
+    frame: dict,
+    bp: int | None,
+    word_size: int,
+    meta: dict,
+    frame_allocated: bool = True,
 ) -> list[dict]:
     if bp is None:
         return []
     regions: list[dict] = []
-    for entry in frame.get("vars", []) if isinstance(frame.get("vars"), list) else []:
-        offset = _parse_int(entry.get("offset"))
-        size = _parse_int(entry.get("size")) or 1
-        if offset is None:
-            continue
-        role = "local"
-        label = _safe_name(str(entry.get("name") or ""), f"local_{abs(offset):x}h")
-        regions.append(
-            _region_entry(
-                start=bp + offset,
-                end=bp + offset + max(1, size),
-                role=role,
-                label=label,
-                source=str(entry.get("source") or "static"),
-                offset=offset,
-                size=size,
-                confidence=0.92 if entry.get("source") == "dwarf" else 0.85,
+    # Locals/args/buffer only exist once this invocation's own frame has
+    # actually reserved stack space for them (`sub rsp, N`). Before that,
+    # `bp` may be set up (or even still be the caller's) but nothing below
+    # it belongs to this call yet -- saved_bp/return_address stay
+    # unconditional below since they don't depend on allocation.
+    if frame_allocated:
+        for entry in frame.get("vars", []) if isinstance(frame.get("vars"), list) else []:
+            offset = _parse_int(entry.get("offset"))
+            size = _parse_int(entry.get("size")) or 1
+            if offset is None:
+                continue
+            role = "local"
+            label = _safe_name(str(entry.get("name") or ""), f"local_{abs(offset):x}h")
+            regions.append(
+                _region_entry(
+                    start=bp + offset,
+                    end=bp + offset + max(1, size),
+                    role=role,
+                    label=label,
+                    source=str(entry.get("source") or "static"),
+                    offset=offset,
+                    size=size,
+                    confidence=0.92 if entry.get("source") == "dwarf" else 0.85,
+                )
             )
-        )
-    for entry in frame.get("args", []) if isinstance(frame.get("args"), list) else []:
-        offset = _parse_int(entry.get("offset"))
-        size = _parse_int(entry.get("size")) or word_size
-        if offset is None:
-            continue
-        label = _safe_name(str(entry.get("name") or ""), f"arg_{offset:x}")
-        regions.append(
-            _region_entry(
-                start=bp + offset,
-                end=bp + offset + max(1, size),
-                role="argument",
-                label=label,
-                source=str(entry.get("source") or "static"),
-                offset=offset,
-                size=size,
-                confidence=0.82,
+        for entry in frame.get("args", []) if isinstance(frame.get("args"), list) else []:
+            offset = _parse_int(entry.get("offset"))
+            size = _parse_int(entry.get("size")) or word_size
+            if offset is None:
+                continue
+            label = _safe_name(str(entry.get("name") or ""), f"arg_{offset:x}")
+            regions.append(
+                _region_entry(
+                    start=bp + offset,
+                    end=bp + offset + max(1, size),
+                    role="argument",
+                    label=label,
+                    source=str(entry.get("source") or "static"),
+                    offset=offset,
+                    size=size,
+                    confidence=0.82,
+                )
             )
-        )
 
     regions.append(
         _region_entry(
@@ -747,9 +768,10 @@ def _static_regions(
         )
     )
 
-    buffer_region = _guess_buffer_region(frame, bp, meta)
-    if buffer_region is not None:
-        regions.append(buffer_region)
+    if frame_allocated:
+        buffer_region = _guess_buffer_region(frame, bp, meta)
+        if buffer_region is not None:
+            regions.append(buffer_region)
     return regions
 
 
@@ -758,8 +780,9 @@ def _runtime_buffer_region(
     bp: int | None,
     word_size: int,
     existing_buffer: dict | None,
+    frame_allocated: bool = True,
 ) -> dict | None:
-    if bp is None:
+    if bp is None or not frame_allocated:
         return existing_buffer
     writes = _access_list(snapshot, "writes")
     best = None
@@ -939,7 +962,8 @@ def _slot_role_label(
     regions: list[dict],
     bp: int | None,
     buffer_region: dict | None,
-) -> tuple[str, str, int | None, float, str]:
+    frame_allocated: bool = True,
+) -> tuple[str | None, str, int | None, float, str]:
     matches = [
         region
         for region in regions
@@ -966,6 +990,16 @@ def _slot_role_label(
             float(best.get("confidence") or 0.75),
             best.get("source") or "static",
         )
+
+    # No known region covers this segment. Before the frame is fully
+    # allocated (`sub rsp, N` observed), this fallback is a pure guess about
+    # raw memory content -- `bp` may not even be this invocation's real
+    # frame base yet, so a "gap" found here is frequently just unrelated
+    # caller-frame content. A None role tells the caller to skip the slot
+    # entirely rather than manufacture unknown/argument/padding noise this
+    # early.
+    if not frame_allocated:
+        return None, "", None, 0.0, "unknown"
 
     if bp is not None and start < bp:
         if buffer_region is not None and start >= buffer_region["end"]:
@@ -1020,6 +1054,7 @@ def _build_slots(
     resolver: StaticTraceResolver,
     function_info: dict | None,
     frame_bp: int | None = None,
+    frame_allocated: bool = True,
 ) -> dict:
     arch_bits = _parse_int(meta.get("arch_bits")) or 64
     word_size = _parse_int(meta.get("word_size")) or (8 if arch_bits == 64 else 4)
@@ -1034,7 +1069,7 @@ def _build_slots(
     func_addr = _parse_int(function_info.get("addr")) if function_info else None
     frame = resolver.frame_for_function(func_addr)
     convention = resolver.convention_for_function(func_addr) or {}
-    regions = _static_regions(frame, bp, word_size, meta)
+    regions = _static_regions(frame, bp, word_size, meta, frame_allocated=frame_allocated)
 
     # Validate heuristic buffer: only keep "buffer" role when there is real evidence.
     # Without evidence, reclassify as local to avoid misleading the user.
@@ -1052,7 +1087,9 @@ def _build_slots(
     buffer_region = next(
         (region for region in regions if region["role"] == "buffer"), None
     )
-    runtime_buffer = _runtime_buffer_region(snapshot, bp, word_size, buffer_region)
+    runtime_buffer = _runtime_buffer_region(
+        snapshot, bp, word_size, buffer_region, frame_allocated=frame_allocated
+    )
     if runtime_buffer is not None and runtime_buffer is not buffer_region:
         regions = [region for region in regions if region["role"] != "buffer"]
         regions.append(runtime_buffer)
@@ -1126,8 +1163,13 @@ def _build_slots(
         if not data:
             continue
         role, label, bp_offset, confidence, source = _slot_role_label(
-            left, right, regions, bp, buffer_region
+            left, right, regions, bp, buffer_region, frame_allocated=frame_allocated
         )
+        # No known region and the frame isn't allocated yet -- _slot_role_label
+        # refused to guess (see its own docstring); nothing to show here, not
+        # even as unknown/padding noise.
+        if role is None:
+            continue
         # Skip unknown/padding gaps that have no writes and no changes from the
         # previous step — they are just alignment filler with no signal value.
         if role in ("unknown", "padding"):
@@ -1468,6 +1510,13 @@ def build_dynamic_analysis(
     resolver = StaticTraceResolver(binary_path, meta, disasm_lines or [])
     analysis_by_step: dict[str, dict] = {}
     stable_frame_bp_by_function: dict[str, int] = {}
+    # Frame-readiness state machine, per function invocation (function_key):
+    # frame_pointer_ready = mov rbp,rsp has executed (bp is this call's own).
+    # frame_allocated = frame_pointer_ready AND sub rsp,N has executed (locals/
+    # buffers actually reserved). Locals/buffers must wait for the latter;
+    # saved_bp/return_address never depend on either.
+    frame_pointer_ready_by_function: dict[str, bool] = {}
+    frame_allocated_by_function: dict[str, bool] = {}
 
     for index, snapshot in enumerate(snapshots):
         prev_snapshot = snapshots[index - 1] if index > 0 else None
@@ -1493,6 +1542,46 @@ def build_dynamic_analysis(
         if function_key and _is_plausible_frame_bp(frame_bp, snapshot, meta, word_size):
             stable_frame_bp_by_function[function_key] = int(frame_bp)
 
+        if function_key:
+            instr_text = _instruction_text(snapshot)
+            if function_key not in frame_pointer_ready_by_function:
+                function_addr = (
+                    _parse_int(function_info.get("addr"))
+                    if isinstance(function_info, dict)
+                    else None
+                )
+                normalized_ip = (
+                    ip - resolver.load_base
+                    if ip is not None and resolver.load_base > 0 and ip >= resolver.load_base
+                    else ip
+                )
+                # True only when we can PROVE this is the function's entry
+                # instruction (address match) -- default to "not ready".
+                # Otherwise (unresolved, or trace genuinely starts mid-
+                # function) keep the historical permissive default so a
+                # trace that never observes a prologue still works.
+                is_function_entry_instruction = (
+                    function_addr is not None
+                    and normalized_ip is not None
+                    and normalized_ip == function_addr
+                )
+                default_ready = not is_function_entry_instruction
+                frame_pointer_ready_by_function[function_key] = default_ready
+                frame_allocated_by_function[function_key] = default_ready
+            if _is_prologue_push_bp(instr_text):
+                frame_pointer_ready_by_function[function_key] = False
+                frame_allocated_by_function[function_key] = False
+            elif _is_prologue_mov_bp_sp(instr_text):
+                frame_pointer_ready_by_function[function_key] = True
+            elif (
+                frame_pointer_ready_by_function.get(function_key)
+                and _is_stack_alloc_instruction(instr_text)
+            ):
+                frame_allocated_by_function[function_key] = True
+        frame_allocated = (
+            frame_allocated_by_function.get(function_key, True) if function_key else True
+        )
+
         analysis = _build_slots(
             snapshot,
             prev_snapshot,
@@ -1500,6 +1589,7 @@ def build_dynamic_analysis(
             resolver,
             function_info,
             frame_bp=frame_bp,
+            frame_allocated=frame_allocated,
         )
         analysis["overflow"] = _overflow_summary(analysis)
         analysis["explanationBullets"] = _build_explanation(snapshot, analysis)
