@@ -228,4 +228,72 @@ describe("AuthService.refreshKeysIfStale()", () => {
     expect(store["pof.auth.refreshToken"]).to.equal(undefined);
     expect(store["pof.auth.email"]).to.equal(undefined);
   });
+
+  it("stores the rotated refresh_token when the server returns one", async () => {
+    const old = Date.now() - TTL - 5000;
+    const { svc, store } = makeAuthService({
+      storedKeys: { "pof.plugin-x": "key==" },
+      storedValidatedAt: old,
+      refreshResponse: {
+        access_token: "new-tok",
+        refresh_token: "rotated-refresh",
+        content_keys: {},
+      },
+    });
+
+    await svc.refreshKeysIfStale(TTL);
+
+    expect(store["pof.auth.refreshToken"]).to.equal("rotated-refresh");
+  });
+
+  it("keeps the existing refresh token when the server doesn't rotate it (back-compat)", async () => {
+    const old = Date.now() - TTL - 5000;
+    const { svc, store } = makeAuthService({
+      storedKeys: { "pof.plugin-x": "key==" },
+      storedValidatedAt: old,
+      refreshResponse: { access_token: "new-tok", content_keys: {} },
+    });
+
+    await svc.refreshKeysIfStale(TTL);
+
+    expect(store["pof.auth.refreshToken"]).to.equal("fake-refresh");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// New suite — refresh() rotation (Pile_ou_Face_auth#9)
+// ---------------------------------------------------------------------------
+describe("AuthService.refresh() — refresh token rotation", () => {
+  afterEach(() => {
+    sinon.restore();
+    const mod = require("../shared/authService");
+    mod.AuthService._instance = null;
+  });
+
+  it("stores the rotated refresh_token when the server returns one", async () => {
+    const { svc, store } = makeAuthService({
+      refreshResponse: {
+        access_token: "new-tok",
+        refresh_token: "rotated-refresh",
+        content_keys: {},
+      },
+    });
+
+    const ok = await svc.refresh();
+
+    expect(ok).to.equal(true);
+    expect(store["pof.auth.refreshToken"]).to.equal("rotated-refresh");
+    expect(store["pof.auth.accessToken"]).to.equal("new-tok");
+  });
+
+  it("keeps the existing refresh token when the server doesn't rotate it (back-compat)", async () => {
+    const { svc, store } = makeAuthService({
+      refreshResponse: { access_token: "new-tok", content_keys: {} },
+    });
+
+    const ok = await svc.refresh();
+
+    expect(ok).to.equal(true);
+    expect(store["pof.auth.refreshToken"]).to.equal("fake-refresh");
+  });
 });
