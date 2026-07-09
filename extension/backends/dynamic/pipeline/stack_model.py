@@ -267,6 +267,62 @@ def _has_buffer_evidence(snapshot: dict, bp: int | None, meta: dict) -> bool:
     return False
 
 
+def _stack_evidence_summary(meta: dict) -> dict | None:
+    summary = meta.get("_stack_evidence")
+    if not isinstance(summary, dict):
+        return None
+    if summary.get("available") is False:
+        return None
+    if not isinstance(summary.get("buffers"), list):
+        return None
+    return summary
+
+
+def _function_matches_evidence_buffer(function_info: dict | None, evidence_buffer: dict) -> bool:
+    if not isinstance(evidence_buffer, dict):
+        return False
+    expected_name = str(evidence_buffer.get("function") or "").strip()
+    expected_addr = _parse_int(evidence_buffer.get("function_addr"))
+    if not function_info:
+        return not expected_name and expected_addr is None
+    function_name = str(function_info.get("name") or "").strip()
+    function_addr = _parse_int(function_info.get("addr"))
+    if expected_name and function_name and expected_name == function_name:
+        return True
+    if expected_addr is not None and function_addr is not None and expected_addr == function_addr:
+        return True
+    return not expected_name and expected_addr is None
+
+
+def _evidence_buffers_for_function(meta: dict, function_info: dict | None) -> list[dict]:
+    summary = _stack_evidence_summary(meta)
+    if summary is None:
+        return []
+    buffers = [item for item in summary.get("buffers", []) if isinstance(item, dict)]
+    matched = [item for item in buffers if _function_matches_evidence_buffer(function_info, item)]
+    if matched:
+        return matched
+    if not function_info and len(buffers) == 1:
+        return buffers
+    return []
+
+
+def _evidence_slots_for_function(meta: dict, function_info: dict | None) -> list[dict]:
+    """All Evidence-scored slots for a function: probable_local, stack_argument,
+    register_argument, stack_slot, and buffer. Superset of `_evidence_buffers_for_function`,
+    used to type non-buffer slots (including rejected buffer candidates)."""
+    summary = _stack_evidence_summary(meta)
+    if summary is None:
+        return []
+    slots = [item for item in summary.get("slots", []) if isinstance(item, dict)]
+    matched = [item for item in slots if _function_matches_evidence_buffer(function_info, item)]
+    if matched:
+        return matched
+    if not function_info and len(slots) == 1:
+        return slots
+    return []
+
+
 def _is_prologue_push_bp(instr_text: str) -> bool:
     """True when the instruction is `push rbp` / `push ebp`."""
     parts = instr_text.lower().split(None, 1)
@@ -693,11 +749,134 @@ def _guess_buffer_region(frame: dict, bp: int | None, meta: dict) -> dict | None
     return best[2] if best else None
 
 
+_EVIDENCE_CONFIDENCE_VALUES: dict[str, float] = {
+    "exact": 0.97,
+    "high": 0.85,
+    "medium": 0.7,
+    "low": 0.5,
+}
+
+
+def _evidence_confidence_value(confidence) -> float:
+    if isinstance(confidence, (int, float)) and not isinstance(confidence, bool):
+        return max(0.0, min(1.0, float(confidence)))
+    return _EVIDENCE_CONFIDENCE_VALUES.get(str(confidence or "").lower(), 0.5)
+
+
+# Evidence "kind" values that map onto an existing output role. Buffers are
+# deliberately excluded: buffer regions are only ever created by
+# `_evidence_buffer_regions` / `_guess_buffer_region`, never by this promotion.
+_EVIDENCE_KIND_ROLE: dict[str, str] = {
+    "probable_local": "local",
+    "stack_argument": "argument",
+}
+
+
+def _evidence_typed_regions(
+    bp: int | None,
+    meta: dict,
+    function_info: dict | None,
+    existing_regions: list[dict],
+) -> list[dict]:
+    """Promote evidence-only local/argument slots that the static frame analysis
+    missed (e.g. compiler-spilled or ASM-only stack slots) into real regions.
+
+    A slot already covered by an existing region (static var/arg, buffer, or
+    control) is left alone -- this only fills gaps, it never overrides or
+    duplicates a region that's already there. Evidence classified as a buffer
+    is skipped entirely: this function must never create a buffer role.
+    """
+    if bp is None:
+        return []
+    covered = [(region["start"], region["end"]) for region in existing_regions]
+    added: list[dict] = []
+    for item in _evidence_slots_for_function(meta, function_info):
+        if str(item.get("classification") or "") == "buffer":
+            continue
+        role = _EVIDENCE_KIND_ROLE.get(str(item.get("kind") or ""))
+        if role is None:
+            continue
+        if str(item.get("base") or "rbp").lower() != "rbp":
+            continue
+        offset = _parse_int(item.get("offset"))
+        if offset is None:
+            continue
+        size = _parse_int(item.get("size"))
+        size_exact = size is not None and size > 0
+        if not size_exact:
+            size = _parse_int(item.get("estimated_bound"))
+        if size is None or size <= 0:
+            continue
+        start = bp + offset
+        end = start + size
+        if any(_overlaps(start, end, cstart, cend) for cstart, cend in covered):
+            continue
+        label = f"local_{abs(offset):x}h" if role == "local" else f"arg_{offset:x}"
+        added.append(
+            _region_entry(
+                start=start,
+                end=end,
+                role=role,
+                label=label,
+                source="evidence",
+                offset=offset,
+                size=size,
+                confidence=_evidence_confidence_value(item.get("confidence")),
+                size_exact=size_exact,
+            )
+        )
+        covered.append((start, end))
+    return added
+
+
+def _evidence_buffer_regions(bp: int | None, meta: dict, function_info: dict | None) -> list[dict]:
+    if bp is None:
+        return []
+    regions = []
+    for item in _evidence_buffers_for_function(meta, function_info):
+        if str(item.get("base") or "rbp").lower() != "rbp":
+            continue
+        offset = _parse_int(item.get("offset"))
+        if offset is None:
+            continue
+        size = _parse_int(item.get("size"))
+        size_exact = True
+        confidence = 0.9
+        if size is None or size <= 0:
+            # Buffer proven (call-argument sink / payload write), but no
+            # exact size (source/DWARF) pins its length. estimated_bound is
+            # an UPPER bound (distance to the next slot / saved rbp) -- the
+            # real object may be much smaller -- so it is used only to give
+            # the region *some* drawable extent, never presented as a size.
+            size = _parse_int(item.get("estimated_bound"))
+            if size is None or size <= 0:
+                continue
+            size_exact = False
+            confidence = 0.5
+        start = bp + offset
+        label = f"local_buf_{size:x}h" if size_exact else "local_buf_unknown"
+        regions.append(
+            _region_entry(
+                start=start,
+                end=start + size,
+                role="buffer",
+                label=label,
+                source="evidence",
+                offset=offset,
+                size=size,
+                confidence=confidence,
+                size_exact=size_exact,
+            )
+        )
+    return regions
+
+
 def _static_regions(
     frame: dict,
     bp: int | None,
     word_size: int,
     meta: dict,
+    function_info: dict | None = None,
     frame_allocated: bool = True,
 ) -> list[dict]:
     if bp is None:
@@ -775,9 +954,15 @@ def _static_regions(
     )
 
     if frame_allocated:
-        buffer_region = _guess_buffer_region(frame, bp, meta)
-        if buffer_region is not None:
-            regions.append(buffer_region)
+        evidence_regions = _evidence_buffer_regions(bp, meta, function_info)
+        if evidence_regions:
+            regions.extend(evidence_regions)
+        elif _stack_evidence_summary(meta) is None:
+            buffer_region = _guess_buffer_region(frame, bp, meta)
+            if buffer_region is not None:
+                regions.append(buffer_region)
+
+        regions.extend(_evidence_typed_regions(bp, meta, function_info, regions))
     return regions
 
 
@@ -1081,7 +1266,7 @@ def _build_slots(
     func_addr = _parse_int(function_info.get("addr")) if function_info else None
     frame = resolver.frame_for_function(func_addr)
     convention = resolver.convention_for_function(func_addr) or {}
-    regions = _static_regions(frame, bp, word_size, meta, frame_allocated=frame_allocated)
+    regions = _static_regions(frame, bp, word_size, meta, function_info=function_info, frame_allocated=frame_allocated)
 
     # Validate heuristic buffer: only keep "buffer" role when there is real evidence.
     # Without evidence, reclassify as local to avoid misleading the user.

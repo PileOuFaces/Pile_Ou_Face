@@ -272,6 +272,142 @@ class TestDynamicStackModel(unittest.TestCase):
         )
         self.assertTrue(buffer_slot["size_exact"])
 
+    def test_evidence_buffer_region_detects_short_copy_destination_as_buffer(self):
+        """A stack slot passed as the destination of a copy/read function
+        (strcpy/memcpy/read/...) must be classified as a buffer even when
+        the observed write is short (e.g. a 4-byte "aaa\\0" write into an
+        84-byte declared buffer) and no exact size is known -- the Evidence
+        buffer region draws from `estimated_bound` instead, marked
+        size_exact=False so a short observation is never mistaken for the
+        real object size. Same 3-step frame-allocation gating as
+        test_frame_allocation_gating_buffer84_example applies: no buffer
+        before the frame is actually allocated."""
+        word = 8
+        rbp_new = 0x1000
+        rbp_caller = 0x1100
+        window_start = 0x0F00
+        window = bytearray(b"\x00" * 0x400)
+
+        def _snap(step, text, mnemonic, operands, rsp_before, rbp_before, rsp_after, rbp_after):
+            return {
+                "step": step,
+                "func": "main",
+                "instr": text,
+                "instruction": {
+                    "address": hex(0x401000 + step),
+                    "size": 1,
+                    "bytes": "00",
+                    "mnemonic": mnemonic,
+                    "operands": operands,
+                    "text": text,
+                },
+                "cpu": {
+                    "arch": "x86_64",
+                    "word_size": word,
+                    "endian": "little",
+                    "aliases": {"sp": "rsp", "bp": "rbp", "fp": "rbp", "ip": "rip", "lr": None},
+                    "before": {
+                        "registers": {
+                            "rsp": hex(rsp_before),
+                            "rbp": hex(rbp_before),
+                            "rip": hex(0x401000 + step),
+                        }
+                    },
+                    "after": {
+                        "registers": {
+                            "rsp": hex(rsp_after),
+                            "rbp": hex(rbp_after),
+                            "rip": hex(0x401001 + step),
+                        }
+                    },
+                },
+                "memory": {
+                    "window_start": hex(window_start),
+                    "window_bytes": _hex_bytes(window),
+                    "writes": [],
+                    "reads": [],
+                },
+                "effects": {"kind": "write"},
+                "registers": [],
+                "stack": [],
+            }
+
+        snap_push = _snap(
+            1, "push rbp", "push", "rbp",
+            rsp_before=rbp_new + word, rbp_before=rbp_caller,
+            rsp_after=rbp_new, rbp_after=rbp_caller,
+        )
+        snap_mov = _snap(
+            2, "mov rbp, rsp", "mov", "rbp, rsp",
+            rsp_before=rbp_new, rbp_before=rbp_caller,
+            rsp_after=rbp_new, rbp_after=rbp_new,
+        )
+        snap_sub = _snap(
+            3, "sub rsp, 0x70", "sub", "rsp, 0x70",
+            rsp_before=rbp_new, rbp_before=rbp_new,
+            rsp_after=rbp_new - 0x70, rbp_after=rbp_new,
+        )
+
+        meta = {
+            "arch_bits": 64,
+            "word_size": word,
+            "stack_base": hex(0x0F00),
+            "stack_size": 0x400,
+            "binary": str(__file__),
+            # No buffer_offset/buffer_size (config-declared) and no source/
+            # DWARF frame vars here -- only Evidence knows about this slot,
+            # exactly like a real trace with no source enrichment.
+            "_stack_evidence": {
+                "available": True,
+                "buffer_count": 1,
+                "buffer_offsets": ["rbp-0x60"],
+                "buffers": [
+                    {
+                        "function": "main",
+                        "function_addr": None,
+                        "base": "rbp",
+                        "offset": -0x60,
+                        "size": None,
+                        "size_source": "unknown",
+                        "observed_write_size": 4,
+                        "estimated_bound": 0x60,
+                        "confidence": "high",
+                        "evidence_sources": ["libc_call"],
+                        "reason": "slot address is passed as destination to strcpy",
+                    }
+                ],
+                "slots": [],
+            },
+        }
+        disasm = [{"addr": "0x401000", "text": "nop"}]
+
+        analysis = build_dynamic_analysis([snap_push, snap_mov, snap_sub], meta, str(__file__), disasm)
+
+        # Test 2: before frame allocation (push rbp), no buffer evidence at all.
+        step1 = analysis["1"]
+        self.assertIsNone(step1["buffer"])
+        self.assertNotIn("buffer", {slot["role"] for slot in step1["frame"]["slots"]})
+
+        # mov rbp, rsp: frame pointer established, still not allocated.
+        step2 = analysis["2"]
+        self.assertIsNone(step2["buffer"])
+        self.assertNotIn("buffer", {slot["role"] for slot in step2["frame"]["slots"]})
+
+        # Test 3 + Test 1: sub rsp, 0x70 -- the frame is allocated, and the
+        # Evidence buffer (short 4-byte observed write, no exact size) now
+        # surfaces as role="buffer", drawn from estimated_bound, never
+        # presented as an exact size.
+        step3 = analysis["3"]
+        self.assertIsNotNone(step3["buffer"])
+        self.assertEqual(step3["buffer"]["start"], hex(rbp_new - 0x60))
+        self.assertEqual(step3["buffer"]["size"], 0x60)
+        self.assertFalse(step3["buffer"]["size_exact"])
+        self.assertEqual(step3["buffer"]["name"], "local_buf_unknown")
+        buffer_slot = next(
+            slot for slot in step3["frame"]["slots"] if slot["role"] == "buffer"
+        )
+        self.assertFalse(buffer_slot["size_exact"])
+
     def test_leave_keeps_frame_control_addresses_on_last_valid_bp(self):
         word = 4
         ebp = 0x1000
