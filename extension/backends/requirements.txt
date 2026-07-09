@@ -1,4 +1,4 @@
-unicorn
+unicorn==2.1.4
 capstone
 flare-capa
 lief

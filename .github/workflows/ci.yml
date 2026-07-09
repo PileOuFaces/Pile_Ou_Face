@@ -143,6 +143,44 @@ jobs:
         run: npm run test:coverage
 
   # ══════════════════════════════════════════════════════════════
+  # 🦄 Régressions Unicorn x86_64 — PRs uniquement, Linux
+  # Le requirements-ci générique exclut Unicorn car son binding natif est
+  # fragile sur macOS. Ce job dédié garde néanmoins les flux dynamiques
+  # getpid/getuid/PLT protégés dans un environnement supporté et reproductible.
+  # ══════════════════════════════════════════════════════════════
+  dynamic-unicorn:
+    name: Dynamic Unicorn Regression
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install x86_64 test toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential binutils
+
+      - name: Install test dependencies
+        run: |
+          pip install -r extension/backends/requirements-ci.txt
+          pip install unicorn==2.1.4
+
+      - name: Run libc/syscall bridge regressions
+        working-directory: ./extension
+        run: |
+          PYTHONPATH=. python3 -m pytest \
+            backends/dynamic/tests/test_libc_syscall_simulation.py \
+            -q
+
+  # ══════════════════════════════════════════════════════════════
   # 🧬 Corpus réel ARM64 — PRs uniquement, ubuntu seulement
   # ══════════════════════════════════════════════════════════════
   real-corpus-arm64:
@@ -239,7 +277,7 @@ jobs:
   ci-success:
     name: CI Success
     if: always()
-    needs: [lint, quick-test, full-test, real-corpus-arm64, security-scan]
+    needs: [lint, quick-test, full-test, dynamic-unicorn, real-corpus-arm64, security-scan]
     runs-on: ubuntu-latest
     steps:
       - name: Check results
@@ -248,6 +286,7 @@ jobs:
           LINT="${{ needs.lint.result }}"
           QUICK="${{ needs.quick-test.result }}"
           FULL="${{ needs.full-test.result }}"
+          DYNAMIC_UNICORN="${{ needs.dynamic-unicorn.result }}"
           REAL_CORPUS="${{ needs.real-corpus-arm64.result }}"
           SECURITY="${{ needs.security-scan.result }}"
 
@@ -255,6 +294,7 @@ jobs:
           echo "Lint       : $LINT"
           echo "Quick test : $QUICK"
           echo "Full test  : $FULL"
+          echo "Unicorn    : $DYNAMIC_UNICORN"
           echo "Corpus ARM : $REAL_CORPUS"
           echo "Security   : $SECURITY"
 
@@ -274,6 +314,7 @@ jobs:
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             fail_if_bad "$LINT" "Lint"
             fail_if_bad "$FULL" "Full test"
+            fail_if_bad "$DYNAMIC_UNICORN" "Dynamic Unicorn Regression"
             fail_if_bad "$REAL_CORPUS" "Real Corpus ARM64"
             # security-scan est informatif uniquement (continue-on-error sur tous ses steps)
             if [[ "$LINT" == "skipped" ]]; then
@@ -284,11 +325,15 @@ jobs:
               echo "❌ Full test was skipped on a PR — check workflow conditions"
               exit 1
             fi
+            if [[ "$DYNAMIC_UNICORN" == "skipped" ]]; then
+              echo "❌ Dynamic Unicorn Regression was skipped on a PR — check workflow conditions"
+              exit 1
+            fi
             if [[ "$REAL_CORPUS" == "skipped" ]]; then
               echo "❌ Real Corpus ARM64 was skipped on a PR — check workflow conditions"
               exit 1
             fi
-            echo "✅ PR checks passed (lint=$LINT, full=$FULL, real-corpus-arm64=$REAL_CORPUS, security=$SECURITY)"
+            echo "✅ PR checks passed (lint=$LINT, full=$FULL, unicorn=$DYNAMIC_UNICORN, real-corpus-arm64=$REAL_CORPUS, security=$SECURITY)"
             exit 0
           fi
 
