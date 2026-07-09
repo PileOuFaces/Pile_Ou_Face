@@ -378,7 +378,11 @@ export function seedFromObservation(observation, bpAddress, { synthetic, kindOve
     nameSource: synthetic ? 'fallback' : normalizeSource(observation?.modelSource || observation?.source),
     typeName: firstNonEmpty(observation?.modelType, observation?.typeName),
     confidence: readConfidence(observation?.modelConfidence) ?? readConfidence(observation?.confidence),
-    isSynthetic: Boolean(synthetic)
+    isSynthetic: Boolean(synthetic),
+    // Passthrough only, never derived/defaulted here -- so a reliable
+    // backend size verdict already on the observation survives onto the
+    // seed for normalizeSeed / applyRecoveredExtentToSeed to see.
+    size_exact: observation?.size_exact
   };
 }
 
@@ -474,6 +478,12 @@ export function normalizeSeed(seed) {
     typeName: clean(seed?.typeName),
     confidence: readConfidence(seed?.confidence),
     isSynthetic: Boolean(seed?.isSynthetic),
+    // Passthrough only -- never derived or defaulted here -- so that a
+    // reliable backend role/size verdict already on this seed survives to
+    // reach the code (e.g. stackWorkspaceAnchoring.js) deciding whether a
+    // heuristic is still allowed to touch it.
+    role: seed?.role,
+    size_exact: seed?.size_exact,
     seedContributors: normalizeSeedContributors(seed?.seedContributors, {
       offset,
       size,

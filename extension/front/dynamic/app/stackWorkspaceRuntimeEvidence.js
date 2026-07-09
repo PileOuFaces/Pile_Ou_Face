@@ -106,7 +106,12 @@ export function buildRuntimeObservations(slots, bpAddress) {
         ascii: clean(slot?.ascii),
         pointerKind: clean(slot?.pointerKind),
         payloadRelated: Boolean(slot?.payloadRelated),
-        activePointers: Array.isArray(slot?.activePointers) ? slot.activePointers.map((value) => clean(value)).filter(Boolean) : []
+        activePointers: Array.isArray(slot?.activePointers) ? slot.activePointers.map((value) => clean(value)).filter(Boolean) : [],
+        // Passthrough only, never derived/defaulted here -- lets
+        // resolveReliableBackendRole (stackWorkspaceClassification.js) and
+        // the backend-size checks (stackWorkspaceAnchoring.js) see the
+        // same Evidence verdict that was on the original backend slot.
+        size_exact: slot?.size_exact
       };
     })
     .filter((item) => item.offset !== null || item.start !== null);
