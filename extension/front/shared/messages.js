@@ -1254,22 +1254,64 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubCfg') {
-    tabDataCache.cfg = { binaryPath: getStaticBinaryPath() };
     const container = document.getElementById('cfgContent');
     if (!container) return;
+    const normalizeCfgBinaryPath = (value) => String(value || '').trim().replace(/\\/g, '/');
     const currentBinaryPath = getStaticBinaryPath() || '';
+    const responseBinaryPath = String(msg.binaryPath || '').trim();
+    if (
+      responseBinaryPath
+      && currentBinaryPath
+      && normalizeCfgBinaryPath(responseBinaryPath) !== normalizeCfgBinaryPath(currentBinaryPath)
+    ) {
+      vscode.postMessage({
+        type: 'hubDebugLog',
+        scope: 'static-cfg',
+        event: 'ignored-stale-response',
+        details: { currentBinaryPath, responseBinaryPath },
+      });
+      return;
+    }
+    tabDataCache.cfg = { binaryPath: responseBinaryPath || currentBinaryPath };
     const cfgState = getGraphUiState('cfg', currentBinaryPath);
-    // Sync funcAddr and populate function selector
-    if (typeof cfgUiState !== 'undefined') cfgUiState.funcAddr = msg.funcAddr || '';
+    const functions = Array.isArray(msg.functions) ? msg.functions : [];
+    const requestedFuncAddr = String(msg.funcAddr || '').trim();
+    vscode.postMessage({
+      type: 'hubDebugLog',
+      scope: 'static-cfg',
+      event: 'received',
+      details: {
+        currentBinaryPath,
+        responseBinaryPath,
+        requestedFuncAddr,
+        functions: functions.length,
+        blocks: Array.isArray(msg.cfg?.blocks) ? msg.cfg.blocks.length : 0,
+        edges: Array.isArray(msg.cfg?.edges) ? msg.cfg.edges.length : 0,
+      },
+    });
+    const activeFuncAddr = requestedFuncAddr && functions.some((fn) => String(fn.addr || '') === requestedFuncAddr)
+      ? requestedFuncAddr
+      : '';
+    if (requestedFuncAddr && !activeFuncAddr && functions.length > 0 && currentBinaryPath) {
+      if (typeof cfgUiState !== 'undefined') cfgUiState.funcAddr = '';
+      tabDataCache.cfg = null;
+      setStaticLoading('cfgContent', 'Chargement CFG…');
+      postBinaryAwareMessage('hubLoadCfg', {
+        binaryPath: currentBinaryPath,
+        useCache: document.getElementById('useCache')?.checked !== false,
+      });
+      return;
+    }
+    // Sync funcAddr and populate function selector.
+    if (typeof cfgUiState !== 'undefined') cfgUiState.funcAddr = activeFuncAddr;
     const funcSel = document.getElementById('cfgFuncSelect');
-    if (funcSel && Array.isArray(msg.functions) && msg.functions.length > 0) {
-      const activeFuncAddr = msg.funcAddr || '';
+    if (funcSel && functions.length > 0) {
       while (funcSel.firstChild) funcSel.removeChild(funcSel.firstChild);
       const allOpt = document.createElement('option');
       allOpt.value = '';
       allOpt.textContent = '\u2014 D\u00e9sassemblage complet \u2014';
       funcSel.appendChild(allOpt);
-      msg.functions.forEach(fn => {
+      functions.forEach(fn => {
         const opt = document.createElement('option');
         opt.value = String(fn.addr);
         const instrInfo = fn.instrCount > 0 ? `  (${fn.instrCount} instr.)` : '';
@@ -1287,20 +1329,13 @@ window.addEventListener('message', (event) => {
     const visibleAddrs = isolateFocus ? collectGraphNeighborhood(isolateFocus, edges, isolateRadius) : null;
     if (blocks.length === 0) {
       const bp = getStaticBinaryPath();
-      const hint = bp ? 'Aucun bloc détecté. Ouvrez le désassemblage puis rechargez.' : 'Ouvrez d\'abord le désassemblage.';
+      const hint = bp ? 'Aucun bloc CFG détecté pour cette fonction.' : 'Sélectionnez d\'abord un binaire.';
       while (container.firstChild) container.removeChild(container.firstChild);
       const hintEl = document.createElement('p');
       hintEl.className = 'hint';
       hintEl.textContent = hint;
       container.appendChild(hintEl);
-      if (bp) {
-        const btnOpen = document.createElement('button');
-        btnOpen.type = 'button';
-        btnOpen.className = 'btn btn-primary';
-        btnOpen.textContent = 'Ouvrir le désassemblage';
-        btnOpen.addEventListener('click', () => vscode.postMessage({ type: 'hubOpenDisasm', binaryPath: bp, useCache: true }));
-        container.appendChild(btnOpen);
-      } else {
+      if (!bp) {
         const btnSel = document.createElement('button');
         btnSel.type = 'button';
         btnSel.className = 'btn btn-primary';
@@ -1390,7 +1425,12 @@ window.addEventListener('message', (event) => {
     const rerenderCfgGraph = () => {
       if (getStaticBinaryPath() === currentBinaryPath) {
         const fa = (typeof cfgUiState !== 'undefined' ? cfgUiState.funcAddr : '') || undefined;
-        vscode.postMessage({ type: 'hubLoadCfg', binaryPath: currentBinaryPath, funcAddr: fa });
+        vscode.postMessage({
+          type: 'hubLoadCfg',
+          binaryPath: currentBinaryPath,
+          funcAddr: fa,
+          useCache: document.getElementById('useCache')?.checked !== false,
+        });
       }
     };
     const svgEl = renderGraphSvg(svgNodes, graphEdges, {
@@ -1605,14 +1645,40 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubCallGraph') {
-    tabDataCache.callgraph = { binaryPath: getStaticBinaryPath() };
     const container = document.getElementById('callgraphContent');
     if (!container) return;
+    const normalizeGraphBinaryPath = (value) => String(value || '').trim().replace(/\\/g, '/');
     const currentBinaryPath = getStaticBinaryPath() || '';
+    const responseBinaryPath = String(msg.binaryPath || '').trim();
+    if (
+      responseBinaryPath
+      && currentBinaryPath
+      && normalizeGraphBinaryPath(responseBinaryPath) !== normalizeGraphBinaryPath(currentBinaryPath)
+    ) {
+      vscode.postMessage({
+        type: 'hubDebugLog',
+        scope: 'static-callgraph',
+        event: 'ignored-stale-response',
+        details: { currentBinaryPath, responseBinaryPath },
+      });
+      return;
+    }
+    tabDataCache.callgraph = { binaryPath: responseBinaryPath || currentBinaryPath };
     const cgState = getGraphUiState('callgraph', currentBinaryPath);
     const cg = msg.callGraph || { nodes: [], edges: [] };
     const cgEdges = cg.edges || [];
     const cgNodes = cg.nodes || [];
+    vscode.postMessage({
+      type: 'hubDebugLog',
+      scope: 'static-callgraph',
+      event: 'received',
+      details: {
+        currentBinaryPath,
+        responseBinaryPath,
+        nodes: cgNodes.length,
+        edges: cgEdges.length,
+      },
+    });
     if (cgEdges.length === 0 && cgNodes.length === 0) {
       const bp = getStaticBinaryPath();
       const hint = bp ? 'Aucun appel détecté. Ouvrez le désassemblage puis rechargez.' : 'Ouvrez d\'abord le désassemblage.';

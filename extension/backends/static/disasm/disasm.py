@@ -39,6 +39,11 @@ from backends.static.binary.symbols import extract_symbols
 logger = get_logger(__name__)
 
 PROGRESS_PREFIX = "POF_PROGRESS "
+_MACHO_HEADER_SYMBOLS = {
+    "__mh_execute_header",
+    "__mh_dylib_header",
+    "__mh_bundle_header",
+}
 
 
 def _emit_progress(
@@ -64,6 +69,10 @@ def _emit_progress(
         payload["percent"] = max(0, min(100, int(percent)))
     with contextlib.suppress(Exception):
         progress_callback(payload)
+
+
+def _is_generic_macho_header_symbol(name: str | None) -> bool:
+    return str(name or "").strip() in _MACHO_HEADER_SYMBOLS
 
 
 try:
@@ -767,12 +776,18 @@ def _load_disasm_context(
                 cached_functions = cache.get_functions(binary_path) or []
                 cached_symbols = cache.get_symbols(binary_path) or []
                 cached_annotations = cache.get_annotations(binary_path) or []
-                functions = cached_functions
+                functions = [
+                    fn
+                    for fn in cached_functions
+                    if not _is_generic_macho_header_symbol(fn.get("name"))
+                ]
                 for symbol in cached_symbols:
                     if symbol.get("type") not in {"T", "t"}:
                         continue
                     addr = _addr_to_int(symbol.get("addr"))
                     name = str(symbol.get("name") or "").strip()
+                    if _is_generic_macho_header_symbol(name):
+                        continue
                     if addr is None or not name:
                         continue
                     label_map.setdefault(addr, name)
@@ -805,6 +820,8 @@ def _load_disasm_context(
                 continue
             addr = _addr_to_int(symbol.get("addr"))
             name = str(symbol.get("name") or "").strip()
+            if _is_generic_macho_header_symbol(name):
+                continue
             if addr is None or not name:
                 continue
             label_map.setdefault(addr, name)
@@ -825,6 +842,49 @@ def _load_disasm_context(
         "stack_frames": stack_frames,
         "typed_struct_index": typed_struct_index,
     }
+
+
+def _augment_context_with_discovered_functions(
+    context: dict,
+    lines: list[dict],
+    binary_path: str,
+    *,
+    raw_mode: bool = False,
+) -> dict:
+    if raw_mode or context.get("function_ranges") or not lines:
+        return context
+    try:
+        from backends.static.disasm.discover_functions import discover_functions
+
+        known_addrs: set[str] = set()
+        for symbol in extract_symbols(binary_path):
+            if symbol.get("type") not in {"T", "t"}:
+                continue
+            name = str(symbol.get("name") or "").strip()
+            if _is_generic_macho_header_symbol(name):
+                continue
+            addr = str(symbol.get("addr") or "").strip()
+            if addr:
+                known_addrs.add(addr if addr.startswith("0x") else f"0x{addr}")
+        discovered = discover_functions(
+            lines,
+            known_addrs,
+            binary_path=binary_path,
+        )
+    except Exception:
+        return context
+    if not discovered:
+        return context
+    context = dict(context)
+    label_map = dict(context.get("label_map") or {})
+    for fn in discovered:
+        addr = _addr_to_int(fn.get("addr"))
+        name = str(fn.get("name") or "").strip()
+        if addr is not None and name and not _is_generic_macho_header_symbol(name):
+            label_map.setdefault(addr, name)
+    context["label_map"] = label_map
+    context["function_ranges"] = _build_function_ranges(discovered)
+    return context
 
 
 _X86_BRANCH_MNEMONICS = {
@@ -1217,6 +1277,12 @@ def disassemble(
         cache_db_path=cache_db_path,
         raw_mode=bool(raw_arch),
     )
+    context = _augment_context_with_discovered_functions(
+        context,
+        lines,
+        binary_path,
+        raw_mode=bool(raw_arch),
+    )
     raw_info = get_raw_arch_info(raw_arch, raw_endian) if raw_arch else None
     return _write_disasm_outputs(
         lines,
@@ -1288,6 +1354,11 @@ def main() -> int:
         "--no-cache", action="store_true", help="Disable cache (always recompute)"
     )
     parser.add_argument(
+        "--cache-write-only",
+        action="store_true",
+        help="Recompute even when cache exists, then save the fresh result to cache.",
+    )
+    parser.add_argument(
         "--progress",
         action="store_true",
         help="Emit machine-readable progress events on stderr.",
@@ -1329,7 +1400,11 @@ def main() -> int:
         if cache_db == "auto":
             cache_db = default_cache_path(args.binary)
         with DisasmCache(cache_db) as cache:
-            hit = cache.get_disasm(args.binary)
+            hit = (
+                None
+                if getattr(args, "cache_write_only", False)
+                else cache.get_disasm(args.binary)
+            )
             if hit is not None:
                 _, cached_lines = hit
                 logger.debug("Cache hit — skipping disassembly")

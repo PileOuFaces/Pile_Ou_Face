@@ -488,6 +488,18 @@
         const prevMetaKey = JSON.stringify(getCurrentBinaryMeta() || null);
         const nextMetaKey = JSON.stringify(nextMeta || null);
         const sameSelection = prevBp === bp && prevMetaKey === nextMetaKey;
+        safePostMessage({
+          type: 'hubDebugLog',
+          scope: 'static-binary',
+          event: 'set',
+          details: {
+            previous: prevBp || '',
+            next: bp,
+            sameSelection,
+            skipAutoLoad,
+            activeTab: typeof getActiveStaticTab === 'function' ? getActiveStaticTab() : '',
+          },
+        });
         if (!sameSelection && typeof resetStaticBinaryDerivedState === 'function') {
           resetStaticBinaryDerivedState();
         }

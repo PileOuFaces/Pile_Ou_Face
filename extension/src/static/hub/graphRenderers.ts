@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // @ts-nocheck
 
-const { logWarning } = require('../../shared/utils');
+const { logDebug, logWarning } = require('../../shared/utils');
 
 function createGraphRenderers({
   panel,
@@ -45,7 +45,7 @@ function createGraphRenderers({
   };
 
   // Shared: load function list from mapping, with discover-functions fallback.
-  const loadFunctionsForCfg = async ({ mappingPath, discoveredPath, absPath, effectiveAbsPath }) => {
+  const loadFunctionsForCfg = async ({ mappingPath, discoveredPath, absPath, effectiveAbsPath, allowCache = true }) => {
     let functions = [];
     if (!fs.existsSync(mappingPath)) return functions;
     try {
@@ -61,10 +61,11 @@ function createGraphRenderers({
     } catch (err) {
       logWarning(`[loadFunctionsForCfg] parsing de ${mappingPath} échoué: ${err.message || err}`);
     }
-    if (functions.length === 0) {
+    const hasOnlyGenericMachHeader = functions.length === 1 && String(functions[0]?.name || '') === '__mh_execute_header';
+    if (functions.length === 0 || hasOnlyGenericMachHeader) {
       try {
         let discPath = discoveredPath;
-        if (!discPath || !fs.existsSync(discPath)) {
+        if (!allowCache || !discPath || !fs.existsSync(discPath)) {
           const binForDisc = (effectiveAbsPath && fs.existsSync(effectiveAbsPath) && !fs.statSync(effectiveAbsPath).isDirectory())
             ? effectiveAbsPath
             : (absPath && fs.existsSync(absPath) && !fs.statSync(absPath).isDirectory() ? absPath : null);
@@ -72,15 +73,17 @@ function createGraphRenderers({
           const discArgs = ['--mapping', mappingPath];
           if (binForDisc) discArgs.push('--binary', binForDisc);
           const discovered = await runPythonJson(discScript, discArgs);
-          if (discPath) fs.writeFileSync(discPath, JSON.stringify(discovered, null, 2), 'utf8');
-          functions = (Array.isArray(discovered) ? discovered : [])
+          if (allowCache && discPath) fs.writeFileSync(discPath, JSON.stringify(discovered, null, 2), 'utf8');
+          const discoveredFunctions = (Array.isArray(discovered) ? discovered : [])
             .map((fn: any) => ({ ...fn, instrCount: 0 }))
             .sort((a: any, b: any) => (b.confidence_score || 0) - (a.confidence_score || 0));
+          if (discoveredFunctions.length > functions.length || hasOnlyGenericMachHeader) functions = discoveredFunctions;
         } else {
           const discovered = JSON.parse(fs.readFileSync(discPath, 'utf8'));
-          functions = (Array.isArray(discovered) ? discovered : [])
+          const discoveredFunctions = (Array.isArray(discovered) ? discovered : [])
             .map((fn: any) => ({ ...fn, instrCount: 0 }))
             .sort((a: any, b: any) => (b.confidence_score || 0) - (a.confidence_score || 0));
+          if (discoveredFunctions.length > functions.length || hasOnlyGenericMachHeader) functions = discoveredFunctions;
         }
       } catch (err) {
         logWarning(`[loadFunctionsForCfg] fallback discover-functions échoué: ${err.message || err}`);
@@ -93,8 +96,11 @@ function createGraphRenderers({
     hubLoadCfg: async (message) => {
       const binaryPath = (message.binaryPath || '').trim();
       const funcAddr = String(message.funcAddr || '').trim();
+      const postCfg = (payload) => hubPost('hubCfg', { binaryPath, ...payload });
+      logDebug(`[CFG] request binary=${binaryPath} func=${funcAddr || '<full>'}`);
       const {
         absPath,
+        artifacts,
         mappingPath,
         discoveredPath,
         effectiveAbsPath,
@@ -105,11 +111,15 @@ function createGraphRenderers({
         binaryMeta: message.binaryMeta || null,
         logPrefix: 'CFG',
         ensureMapping: true,
+        useCache: message.useCache !== false,
       });
-      const functions = await loadFunctionsForCfg({ mappingPath, discoveredPath, absPath, effectiveAbsPath });
+      logDebug(`[CFG] artifacts binary=${binaryPath} effective=${effectiveAbsPath || ''} mapping=${mappingPath} allowCache=${allowCache}`);
+      const writeAnalysisCache = !(artifacts?.binaryMeta?.kind === 'raw');
+      const functions = await loadFunctionsForCfg({ mappingPath, discoveredPath, absPath, effectiveAbsPath, allowCache });
+      logDebug(`[CFG] functions binary=${binaryPath} count=${functions.length}`);
       if (!fs.existsSync(mappingPath)) {
         if (!hasAnalyzableBinary) {
-          hubPost('hubCfg', { cfg: { blocks: [], edges: [] }, functions, funcAddr });
+          postCfg({ cfg: { blocks: [], edges: [] }, functions, funcAddr });
           return;
         }
       }
@@ -117,27 +127,31 @@ function createGraphRenderers({
         if (fs.existsSync(mappingPath)) {
           const mappingSig = getFileSignature(mappingPath);
           const cacheKey = funcAddr ? `cfg_${funcAddr}` : 'cfg';
-          const cachedCfg = readAnalysisCacheEntry(effectiveAbsPath, allowCache, cacheKey);
+          const cachedCfg = allowCache ? readAnalysisCacheEntry(effectiveAbsPath, allowCache, cacheKey) : null;
           if (cachedCfg && cachedCfg._cache_meta?.mapping_sig === mappingSig) {
             logChannel.appendLine(`[cache] CFG depuis cache (${funcAddr || 'full'})`);
-            hubPost('hubCfg', { cfg: stripCacheMeta(cachedCfg), functions, funcAddr });
+            logDebug(`[CFG] response cache binary=${binaryPath} func=${funcAddr || '<full>'} blocks=${(cachedCfg.blocks || []).length} edges=${(cachedCfg.edges || []).length}`);
+            postCfg({ cfg: stripCacheMeta(cachedCfg), functions, funcAddr });
             return;
           }
           const scriptArgs = ['--mapping', mappingPath];
           if (funcAddr) scriptArgs.push('--function', funcAddr);
           const cfg = await runPythonJson(getCfgScript(root), scriptArgs);
-          writeAnalysisCacheEntry(effectiveAbsPath, allowCache, cacheKey, {
-            ...cfg,
-            _cache_meta: { mapping_sig: mappingSig },
-          });
-          hubPost('hubCfg', { cfg: stripCacheMeta(cfg), functions, funcAddr });
+          if (writeAnalysisCache) {
+            writeAnalysisCacheEntry(effectiveAbsPath, writeAnalysisCache, cacheKey, {
+              ...cfg,
+              _cache_meta: { mapping_sig: mappingSig },
+            });
+          }
+          logDebug(`[CFG] response computed binary=${binaryPath} func=${funcAddr || '<full>'} blocks=${(cfg.blocks || []).length} edges=${(cfg.edges || []).length}`);
+          postCfg({ cfg: stripCacheMeta(cfg), functions, funcAddr });
         } else {
           logChannel.appendLine(`[CFG] Mapping introuvable: ${mappingPath}`);
-          hubPost('hubCfg', { cfg: { blocks: [], edges: [] }, functions, funcAddr });
+          postCfg({ cfg: { blocks: [], edges: [] }, functions, funcAddr });
         }
       } catch (err) {
         logChannel.appendLine(`[CFG] Erreur: ${err.message}`);
-        hubPost('hubCfg', { cfg: { blocks: [], edges: [] }, functions, funcAddr });
+        postCfg({ cfg: { blocks: [], edges: [] }, functions, funcAddr });
       }
     },
 
@@ -145,6 +159,8 @@ function createGraphRenderers({
       const binaryPath = (message.binaryPath || '').trim();
       const addr = (message.addr || '').trim();
       if (!addr) return;
+      const postCfg = (payload) => hubPost('hubCfg', { binaryPath, ...payload });
+      logDebug(`[CFG/addr] request binary=${binaryPath} addr=${addr}`);
       const {
         absPath,
         mappingPath,
@@ -157,11 +173,14 @@ function createGraphRenderers({
         binaryMeta: message.binaryMeta || null,
         logPrefix: 'CFG/addr',
         ensureMapping: true,
+        useCache: message.useCache !== false,
       });
-      const functions = await loadFunctionsForCfg({ mappingPath, discoveredPath, absPath, effectiveAbsPath });
+      logDebug(`[CFG/addr] artifacts binary=${binaryPath} effective=${effectiveAbsPath || ''} mapping=${mappingPath} allowCache=${allowCache}`);
+      const functions = await loadFunctionsForCfg({ mappingPath, discoveredPath, absPath, effectiveAbsPath, allowCache });
+      logDebug(`[CFG/addr] functions binary=${binaryPath} count=${functions.length}`);
       if (!fs.existsSync(mappingPath)) {
         if (!hasAnalyzableBinary) {
-          hubPost('hubCfg', { cfg: { blocks: [], edges: [] }, functions, funcAddr: '' });
+          postCfg({ cfg: { blocks: [], edges: [] }, functions, funcAddr: '' });
           return;
         }
       }
@@ -170,18 +189,21 @@ function createGraphRenderers({
           const scriptArgs = ['--mapping', mappingPath, '--addr', addr];
           const cfg = await runPythonJson(getCfgScript(root), scriptArgs);
           const funcAddr = (cfg as any).func_addr || '';
-          hubPost('hubCfg', { cfg: stripCacheMeta(cfg), functions, funcAddr });
+          logDebug(`[CFG/addr] response computed binary=${binaryPath} addr=${addr} func=${funcAddr || ''} blocks=${(cfg.blocks || []).length} edges=${(cfg.edges || []).length}`);
+          postCfg({ cfg: stripCacheMeta(cfg), functions, funcAddr });
         } else {
-          hubPost('hubCfg', { cfg: { blocks: [], edges: [] }, functions, funcAddr: '' });
+          postCfg({ cfg: { blocks: [], edges: [] }, functions, funcAddr: '' });
         }
       } catch (err) {
         logChannel.appendLine(`[CFG/addr] Erreur: ${err.message}`);
-        hubPost('hubCfg', { cfg: { blocks: [], edges: [] }, functions, funcAddr: '' });
+        postCfg({ cfg: { blocks: [], edges: [] }, functions, funcAddr: '' });
       }
     },
 
     hubLoadCallGraph: async (message) => {
       const binaryPath = (message.binaryPath || '').trim();
+      const postCallGraph = (payload) => hubPost('hubCallGraph', { binaryPath, ...payload });
+      logDebug(`[CallGraph] request binary=${binaryPath}`);
       const {
         absPath,
         artifacts,
@@ -198,12 +220,15 @@ function createGraphRenderers({
         logPrefix: 'CallGraph',
         exampleLimit: 2,
         ensureMapping: true,
+        useCache: message.useCache !== false,
       });
+      logDebug(`[CallGraph] artifacts binary=${binaryPath} effective=${effectiveAbsPath || ''} mapping=${mappingPath} symbols=${symbolsPath} allowCache=${allowCache}`);
+      const writeCallGraphCache = !(artifacts?.binaryMeta?.kind === 'raw');
       const resolvedSymbolsPath = symbolsPath;
       let resolvedDiscoveredPath = discoveredPath;
       if (!fs.existsSync(mappingPath)) {
         if (!hasAnalyzableBinary) {
-          hubPost('hubCallGraph', { callGraph: { nodes: [], edges: [] } });
+          postCallGraph({ callGraph: { nodes: [], edges: [] } });
           return;
         }
       }
@@ -228,29 +253,33 @@ function createGraphRenderers({
         if (fs.existsSync(mappingPath) && fs.existsSync(resolvedSymbolsPath)) {
           const mappingSig = getFileSignature(mappingPath);
           const symbolsSig = getFileSignature(resolvedSymbolsPath);
-          const cachedCallGraph = readAnalysisCacheEntry(effectiveAbsPath, allowCache, 'callgraph');
+          const cachedCallGraph = allowCache ? readAnalysisCacheEntry(effectiveAbsPath, allowCache, 'callgraph') : null;
           if (
             cachedCallGraph
             && cachedCallGraph._cache_meta?.mapping_sig === mappingSig
             && cachedCallGraph._cache_meta?.symbols_sig === symbolsSig
           ) {
             logChannel.appendLine('[cache] Call graph depuis cache');
-            hubPost('hubCallGraph', { callGraph: stripCacheMeta(cachedCallGraph) });
+            logDebug(`[CallGraph] response cache binary=${binaryPath} nodes=${(cachedCallGraph.nodes || []).length} edges=${(cachedCallGraph.edges || []).length}`);
+            postCallGraph({ callGraph: stripCacheMeta(cachedCallGraph) });
             return;
           }
           const callGraph = await runPythonJson(getCallGraphScript(root), ['--mapping', mappingPath, '--symbols', resolvedSymbolsPath]);
-          writeAnalysisCacheEntry(effectiveAbsPath, allowCache, 'callgraph', {
-            ...callGraph,
-            _cache_meta: { mapping_sig: mappingSig, symbols_sig: symbolsSig },
-          });
-          hubPost('hubCallGraph', { callGraph: stripCacheMeta(callGraph) });
+          if (writeCallGraphCache) {
+            writeAnalysisCacheEntry(effectiveAbsPath, writeCallGraphCache, 'callgraph', {
+              ...callGraph,
+              _cache_meta: { mapping_sig: mappingSig, symbols_sig: symbolsSig },
+            });
+          }
+          logDebug(`[CallGraph] response computed binary=${binaryPath} nodes=${(callGraph.nodes || []).length} edges=${(callGraph.edges || []).length}`);
+          postCallGraph({ callGraph: stripCacheMeta(callGraph) });
         } else {
           logChannel.appendLine(`[CallGraph] Fichiers manquants: mapping=${fs.existsSync(mappingPath)}, symbols=${fs.existsSync(resolvedSymbolsPath)}`);
-          hubPost('hubCallGraph', { callGraph: { nodes: [], edges: [] } });
+          postCallGraph({ callGraph: { nodes: [], edges: [] } });
         }
       } catch (err) {
         logChannel.appendLine(`[CallGraph] Erreur: ${err.message}`);
-        hubPost('hubCallGraph', { callGraph: { nodes: [], edges: [] } });
+        postCallGraph({ callGraph: { nodes: [], edges: [] } });
       }
     },
 

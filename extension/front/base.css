@@ -823,6 +823,26 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
   border-radius: 50%;
   animation: task-progress-spin 0.8s linear infinite;
 }
+.static-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  color: var(--text-muted);
+  font: 600 12px/1.35 var(--font-mono);
+}
+.static-loading-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255,255,255,0.18);
+  border-top-color: var(--accent-blue);
+  border-radius: 999px;
+  animation: task-progress-spin 0.8s linear infinite;
+  flex: 0 0 auto;
+}
+.static-loading-text {
+  min-width: 0;
+}
 .task-progress-copy {
   display: flex;
   min-width: 0;

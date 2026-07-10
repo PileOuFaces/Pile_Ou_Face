@@ -180,6 +180,7 @@ function createAnalysisContext({
     annotationsJson = null,
     dwarfLines = false,
     useCacheDb = false,
+    cacheWriteOnly = false,
     emitProgress = false,
   }) => {
     const args = [
@@ -200,6 +201,7 @@ function createAnalysisContext({
     if (rawEndian) args.push('--raw-endian', rawEndian);
     if (dwarfLines) args.push('--dwarf-lines');
     if (useCacheDb) args.push('--cache-db', typeof useCacheDb === 'string' ? useCacheDb : getDisasmCacheDbPath(binaryPath));
+    if (cacheWriteOnly) args.push('--cache-write-only');
     if (emitProgress) args.push('--progress');
     return args;
   };
@@ -282,6 +284,7 @@ function createAnalysisContext({
     emitProgress = false,
     progressTitle = '',
     useCacheDb = null,
+    cacheWriteOnly = false,
     forceRebuild = false,
   }) => {
     const absPath = resolvePathFromWorkspace(binaryPath);
@@ -318,6 +321,7 @@ function createAnalysisContext({
             annotationsJson,
             dwarfLines,
             useCacheDb: shouldUseCacheDb,
+            cacheWriteOnly: cacheWriteOnly && !!shouldUseCacheDb,
             emitProgress,
           });
           if (emitProgress) {
@@ -362,7 +366,31 @@ function createAnalysisContext({
     if (!fs.existsSync(tempDir)) return current;
     const mappingFiles = fs.readdirSync(tempDir).filter((n) => n.endsWith('.disasm.mapping.json'));
     if (mappingFiles.length === 0) return current;
-    const fallbackName = mappingFiles[0];
+
+    const expectedBinaryPath = current.effectiveAbsPath
+      ? path.resolve(resolvePathFromWorkspace(current.effectiveAbsPath))
+      : '';
+    const normalizeComparablePath = (value) => {
+      const text = String(value || '').trim();
+      if (!text) return '';
+      return path.resolve(resolvePathFromWorkspace(text));
+    };
+    const fallbackName = mappingFiles.find((candidateName) => {
+      if (!expectedBinaryPath) return true;
+      const candidatePath = path.join(tempDir, candidateName);
+      try {
+        const mapping = JSON.parse(fs.readFileSync(candidatePath, 'utf8'));
+        const mappedBinary = normalizeComparablePath(mapping?.binary);
+        return !!mappedBinary && mappedBinary === expectedBinaryPath;
+      } catch (_) {
+        return false;
+      }
+    });
+    if (!fallbackName) {
+      logChannel.appendLine(`[${logPrefix}] Mapping fallback ignoré: aucun mapping ne correspond au binaire courant`);
+      return current;
+    }
+
     const fallbackBase = fallbackName.replace('.disasm.mapping.json', '');
     current.mappingPath = path.join(tempDir, fallbackName);
     if (current.disasmPath !== null) {
@@ -454,6 +482,7 @@ function createAnalysisContext({
     symbolsPath = undefined,
     discoveredPath = undefined,
     useCacheDb = false,
+    cacheWriteOnly = false,
   }) => {
     if (fs.existsSync(mappingPath)) {
       return { mappingPath, symbolsPath, discoveredPath };
@@ -462,6 +491,7 @@ function createAnalysisContext({
       binaryPath,
       binaryMeta: artifacts?.binaryMeta || null,
       useCacheDb,
+      cacheWriteOnly,
     });
     return {
       mappingPath: ensured.artifacts.mappingPath,
@@ -590,6 +620,7 @@ function createAnalysisContext({
     logPrefix = 'Artifacts',
     exampleLimit = null,
     ensureMapping = false,
+    useCache = true,
   }) => {
     const context = buildAnalysisArtifactContext(binaryPath, binaryMeta);
     const { absPath, tempDir, artifacts } = context;
@@ -616,7 +647,8 @@ function createAnalysisContext({
     const hasAnalyzableBinary = !!binaryPath
       && fs.existsSync(absPath)
       && !fs.statSync(absPath).isDirectory();
-    const allowCache = !(artifacts?.binaryMeta?.kind === 'raw');
+    const cacheDbEligible = !(artifacts?.binaryMeta?.kind === 'raw');
+    const allowCache = useCache !== false && cacheDbEligible;
     if (ensureMapping && !fs.existsSync(mappingPath) && hasAnalyzableBinary) {
       ({
         mappingPath,
@@ -628,7 +660,8 @@ function createAnalysisContext({
         mappingPath,
         symbolsPath,
         discoveredPath,
-        useCacheDb: allowCache,
+        useCacheDb: cacheDbEligible,
+        cacheWriteOnly: useCache === false,
       }));
     }
     return {
