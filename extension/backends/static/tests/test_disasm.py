@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(ROOT) not in sys.path:
@@ -15,6 +16,7 @@ if str(ROOT) not in sys.path:
 
 from backends.shared.exceptions import BinaryNotFoundError
 from backends.static.disasm.disasm import (
+    _augment_context_with_discovered_functions,
     _write_disasm_outputs,
     disassemble,
     disassemble_with_capstone,
@@ -395,6 +397,59 @@ class TestDisasmEnrichmentFormatting(unittest.TestCase):
             self.assertIn("arg arg_rdi @ rdi", asm)
             self.assertEqual(saved["lines"][0]["stack_hints"][0]["name"], "arg_rdi")
             self.assertEqual(saved["lines"][0]["stack_hints"][0]["kind"], "arg")
+
+    def test_generic_macho_header_symbol_falls_back_to_discovered_functions(self):
+        lines = [
+            {
+                "addr": "0x100000978",
+                "text": "55                   push     rbp",
+                "bytes": "55",
+                "mnemonic": "push",
+                "operands": "rbp",
+            },
+            {
+                "addr": "0x100000979",
+                "text": "48 89 e5             mov      rbp, rsp",
+                "bytes": "48 89 e5",
+                "mnemonic": "mov",
+                "operands": "rbp, rsp",
+            },
+            {
+                "addr": "0x10000097c",
+                "text": "c3                   ret",
+                "bytes": "c3",
+                "mnemonic": "ret",
+                "operands": "",
+            },
+        ]
+        context = {
+            "label_map": {},
+            "comment_map": {},
+            "function_ranges": [],
+            "stack_frames": {},
+            "typed_struct_index": {},
+        }
+        with mock.patch(
+            "backends.static.disasm.disasm.extract_symbols",
+            return_value=[
+                {
+                    "name": "__mh_execute_header",
+                    "addr": "0x100000000",
+                    "type": "T",
+                    "size": None,
+                }
+            ],
+        ):
+            enriched = _augment_context_with_discovered_functions(
+                context,
+                lines,
+                "/tmp/ls",
+            )
+
+        ranges = enriched["function_ranges"]
+        self.assertEqual(len(ranges), 1)
+        self.assertEqual(ranges[0][2]["addr"], "0x100000978")
+        self.assertNotEqual(ranges[0][2]["name"], "__mh_execute_header")
 
     def test_write_outputs_include_typed_struct_hints(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -637,7 +637,8 @@ function createActions({
             dwarfLines: artifacts.binaryMeta.kind !== 'raw',
             emitProgress: true,
             progressTitle: `Désassemblage de ${path.basename(absPath)}`,
-            useCacheDb: useCache && cacheEligible,
+            useCacheDb: cacheEligible,
+            cacheWriteOnly: !useCache,
             forceRebuild: !useCache,
           });
         } else {

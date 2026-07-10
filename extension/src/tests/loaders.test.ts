@@ -129,6 +129,41 @@ describe('loaders — resolveCachedBinaryView', () => {
     expect(posted[0]).to.deep.equal({ type: 'hubSymbols', symbols: freshSymbols });
   });
 
+  it('bypasses cache reads but still writes fresh values when useCache is false', async () => {
+    const { panel, posted } = makePanel();
+    const { logChannel } = makeLogChannel();
+    const readCache = sinon.stub().returns({ cached: true });
+    const writeCache = sinon.stub();
+    const freshSymbols = [{ name: 'fresh', addr: '0x401000' }];
+    const analysisCtx = makeAnalysisCtx({
+      loadBinarySymbols: sinon.stub().resolves(freshSymbols),
+    });
+
+    const loaders = createLoaders({
+      panel,
+      analysisCtx,
+      root: '/root',
+      storageDir: '/storage',
+      runPythonJson: sinon.stub(),
+      runPythonJsonViaFile: sinon.stub(),
+      logChannel,
+      fs: {},
+      path: require('path'),
+      readCache,
+      writeCache,
+      getStringsScript: () => '/scripts/strings.py',
+      getSectionsScript: () => '/scripts/sections.py',
+      getXrefsScript: () => '/scripts/xrefs.py',
+    });
+
+    await loaders.hubLoadSymbols({ binaryPath: '/repo/demo.bin', binaryMeta: null, useCache: false });
+
+    expect(readCache.called).to.equal(false);
+    expect(writeCache.calledOnce).to.equal(true);
+    expect(analysisCtx.loadBinarySymbols.calledOnce).to.equal(true);
+    expect(posted[0]).to.deep.equal({ type: 'hubSymbols', symbols: freshSymbols });
+  });
+
   it('calls compute when isCacheUsable rejects the cached value', async () => {
     const { panel, posted } = makePanel();
     const { logChannel } = makeLogChannel();

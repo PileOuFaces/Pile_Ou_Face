@@ -754,7 +754,6 @@ function renderDecompilePayload(container, payload) {
   const metaSummary = document.createElement('div');
   metaSummary.className = 'decompile-frame-summary';
   [
-    _formatDecompileQualityLabel(decompileUiState.renderedQuality),
     qualityDetails?.selected_score != null ? `Score ${qualityDetails.selected_score}` : null,
     Array.isArray(qualityDetails?.backends) && qualityDetails.backends.length > 1 ? `Comparé ${qualityDetails.backends.length} backends` : null,
     annotationTargets.length ? `Annotations ${annotationTargets.length}` : null,

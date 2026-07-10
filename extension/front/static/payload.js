@@ -308,23 +308,65 @@ function _getActiveDecompilerSource() {
   return String(select?.value || _loadStorage().decompileSource || 'auto').trim() || 'auto';
 }
 
-function _formatDecompileQualityLabel(quality) {
-  const normalized = _normalizeDecompileQuality(quality);
-  if (normalized === 'precision') return 'Précision';
-  return 'Rapide';
-}
-
 function _getRequestedDecompilerForQuality(_quality) {
   return decompileUiState.forcedDecompiler || '';
+}
+
+function formatDecompilerPillLabel(name) {
+  const normalized = String(name || '').trim();
+  const known = {
+    angr: 'Angr',
+    ghidra: 'Ghidra',
+    retdec: 'RetDec',
+  };
+  return known[normalized.toLowerCase()] || (normalized.charAt(0).toUpperCase() + normalized.slice(1));
+}
+
+function appendDecompilerPillStatus(pill, info) {
+  if (!pill || !info) return;
+  if (info.status === 'running') {
+    const spinner = document.createElement('span');
+    spinner.className = 'decompile-pill-spinner';
+    spinner.setAttribute('aria-hidden', 'true');
+    pill.appendChild(spinner);
+    const status = document.createElement('span');
+    status.className = 'decompile-pill-status';
+    status.textContent = 'En cours';
+    pill.appendChild(status);
+    return;
+  }
+  if (info.status === 'error') {
+    const status = document.createElement('span');
+    status.className = 'decompile-pill-status decompile-pill-status--error';
+    status.textContent = 'Erreur';
+    pill.appendChild(status);
+    return;
+  }
+  if (info.status === 'done' && info.score != null) {
+    const score = document.createElement('span');
+    score.className = 'decompile-pill-score';
+    score.textContent = String(info.score);
+    pill.appendChild(score);
+  }
 }
 
 function renderDecompilePills(container, pillStatuses, bestDecompiler, forcedDecompiler) {
   while (container.firstChild) container.removeChild(container.firstChild);
   const autoSelected = forcedDecompiler === '';
   // Auto pill
-  const autoPill = document.createElement('span');
+  const autoPill = document.createElement('button');
+  autoPill.type = 'button';
   autoPill.className = 'decompile-pill' + (autoSelected ? ' decompile-pill--selected' : '');
-  autoPill.textContent = 'Auto';
+  const autoLabel = document.createElement('span');
+  autoLabel.className = 'decompile-pill-label';
+  autoLabel.textContent = 'Auto';
+  autoPill.appendChild(autoLabel);
+  if (bestDecompiler && autoSelected) {
+    const best = document.createElement('span');
+    best.className = 'decompile-pill-status';
+    best.textContent = formatDecompilerPillLabel(bestDecompiler);
+    autoPill.appendChild(best);
+  }
   autoPill.title = autoSelected
     ? 'Mode auto actif'
     : 'Revenir au mode auto (meilleur résultat)';
@@ -340,7 +382,8 @@ function renderDecompilePills(container, pillStatuses, bestDecompiler, forcedDec
   container.appendChild(autoPill);
   // Per-decompiler pills
   for (const [name, info] of Object.entries(pillStatuses)) {
-    const pill = document.createElement('span');
+    const pill = document.createElement('button');
+    pill.type = 'button';
     const isBest = name === bestDecompiler && autoSelected;
     const isForced = name === forcedDecompiler;
     let cls = 'decompile-pill';
@@ -349,8 +392,11 @@ function renderDecompilePills(container, pillStatuses, bestDecompiler, forcedDec
     else if (isForced) cls += ' decompile-pill--selected';
     else if (isBest) cls += ' decompile-pill--best';
     pill.className = cls;
-    const scoreStr = (info.status === 'done' && info.score != null) ? ' ' + info.score : '';
-    pill.textContent = name.charAt(0).toUpperCase() + name.slice(1) + scoreStr;
+    const label = document.createElement('span');
+    label.className = 'decompile-pill-label';
+    label.textContent = formatDecompilerPillLabel(name);
+    pill.appendChild(label);
+    appendDecompilerPillStatus(pill, info);
     pill.title = info.status === 'error'
       ? (info.errorReason || name + ' a échoué')
       : isForced
@@ -367,6 +413,9 @@ function renderDecompilePills(container, pillStatuses, bestDecompiler, forcedDec
         }
         _refreshDecompilePills();
       });
+    } else {
+      pill.setAttribute('aria-disabled', 'true');
+      pill.tabIndex = -1;
     }
     container.appendChild(pill);
   }
@@ -929,43 +978,61 @@ dynamicSourcePathInput?.addEventListener('blur', () => {
 
 
 // Auto-load tab content when navigating (uses cache to avoid re-fetching)
+function getStaticUseCachePreference() {
+  return document.getElementById('useCache')?.checked !== false;
+}
+
 function _autoLoadTab(t) {
   const bp = getStaticBinaryPath();
   if (!bp) return;
+  const useCache = getStaticUseCachePreference();
+  const postStaticDebug = (event, details = {}) => {
+    vscode.postMessage({ type: 'hubDebugLog', scope: 'static-autoload', event, details });
+  };
   if (isRawBinarySelected() && markRawTabUnavailable(t)) {
     tabDataCache[t] = { binaryPath: bp };
+    postStaticDebug('raw-unavailable', { tab: t, binaryPath: bp });
     return;
   }
   const allTabIds = Object.values(GROUPS).flat();
-  const cacheHit = allTabIds.includes(t) && tabDataCache[t]?.binaryPath === bp;
+  const cacheHit = useCache && allTabIds.includes(t) && tabDataCache[t]?.binaryPath === bp;
+  postStaticDebug('check', {
+    tab: t,
+    binaryPath: bp,
+    cachedBinaryPath: tabDataCache[t]?.binaryPath || '',
+    cacheHit,
+    useCache,
+  });
   if (cacheHit) return;
 
   if (t === 'disasm') {
-    postBinaryAwareMessage('hubOpenDisasm', { binaryPath: bp, useCache: true, openInEditor: false });
+    postBinaryAwareMessage('hubOpenDisasm', { binaryPath: bp, useCache, openInEditor: false });
   } else if (t === 'sections') {
     setStaticLoading('sectionsContent', 'Chargement sections…');
-    postBinaryAwareMessage('hubLoadSections', { binaryPath: bp });
+    postBinaryAwareMessage('hubLoadSections', { binaryPath: bp, useCache });
   } else if (t === 'info') {
     setStaticLoading('infoContent', 'Chargement infos…');
-    postBinaryAwareMessage('hubLoadInfo', { binaryPath: bp });
+    postBinaryAwareMessage('hubLoadInfo', { binaryPath: bp, useCache });
   } else if (t === 'symbols') {
     setStaticLoading('symbolsContent', 'Chargement symboles…');
-    postBinaryAwareMessage('hubLoadSymbols', { binaryPath: bp });
+    postBinaryAwareMessage('hubLoadSymbols', { binaryPath: bp, useCache });
   } else if (t === 'strings') {
     const enc = document.getElementById('stringsEncoding')?.value || 'auto';
     const sec = document.getElementById('stringsSection')?.value || '';
     setStaticLoading('stringsContent', 'Chargement strings…');
     const minLen = parseInt(document.getElementById('stringsMinLen')?.value || '4', 10);
-    postBinaryAwareMessage('hubLoadStrings', { binaryPath: bp, minLen, encoding: enc, section: sec || undefined });
+    postBinaryAwareMessage('hubLoadStrings', { binaryPath: bp, minLen, encoding: enc, section: sec || undefined, useCache });
   } else if (t === 'cfg') {
     setStaticLoading('cfgContent', 'Chargement CFG…');
     const cfgFuncAddr = (typeof cfgUiState !== 'undefined' ? cfgUiState.funcAddr : '')
       || (typeof decompileUiState !== 'undefined' ? decompileUiState.selectedAddr : '')
       || '';
-    postBinaryAwareMessage('hubLoadCfg', { binaryPath: bp, funcAddr: cfgFuncAddr || undefined });
+    postStaticDebug('request-cfg', { binaryPath: bp, funcAddr: cfgFuncAddr || '', useCache });
+    postBinaryAwareMessage('hubLoadCfg', { binaryPath: bp, funcAddr: cfgFuncAddr || undefined, useCache });
   } else if (t === 'callgraph') {
     setStaticLoading('callgraphContent', 'Chargement call graph…');
-    postBinaryAwareMessage('hubLoadCallGraph', { binaryPath: bp });
+    postStaticDebug('request-callgraph', { binaryPath: bp, useCache });
+    postBinaryAwareMessage('hubLoadCallGraph', { binaryPath: bp, useCache });
   } else if (t === 'discovered') {
     setStaticLoading('functionsContent', 'Chargement fonctions…');
     postBinaryAwareMessage(isRawBinarySelected() ? 'hubLoadDiscoveredFunctions' : 'hubLoadFunctions', { binaryPath: bp });
@@ -1006,5 +1073,5 @@ document.getElementById('cfgFuncSelect')?.addEventListener('change', function ()
   if (typeof cfgUiState !== 'undefined') cfgUiState.funcAddr = this.value;
   tabDataCache.cfg = null;
   const bp = getStaticBinaryPath();
-  if (bp) postBinaryAwareMessage('hubLoadCfg', { binaryPath: bp, funcAddr: this.value || undefined });
+  if (bp) postBinaryAwareMessage('hubLoadCfg', { binaryPath: bp, funcAddr: this.value || undefined, useCache: getStaticUseCachePreference() });
 });

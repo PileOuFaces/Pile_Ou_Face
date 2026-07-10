@@ -34,12 +34,15 @@ function createLoaders({
     logLabel = null,
     isCacheUsable = () => true,
     compute,
+    useCache = true,
   }) => {
     const cacheRoot = storageDir;
-    const cached = readCache(cacheRoot, absPath, cacheKey, cacheOptions);
-    if (cached && isCacheUsable(cached)) {
-      if (logLabel) logChannel.appendLine(`[cache] ${logLabel} depuis cache`);
-      return cached;
+    if (useCache) {
+      const cached = readCache(cacheRoot, absPath, cacheKey, cacheOptions);
+      if (cached && isCacheUsable(cached)) {
+        if (logLabel) logChannel.appendLine(`[cache] ${logLabel} depuis cache`);
+        return cached;
+      }
     }
     const value = await compute();
     writeCache(cacheRoot, absPath, cacheKey, value, cacheOptions);
@@ -60,6 +63,7 @@ function createLoaders({
           absPath,
           cacheKey: 'symbols',
           logLabel: 'Symboles',
+          useCache: message.useCache !== false,
           compute: () => loadBinarySymbols(absPath),
         });
         hubPost('hubSymbols', { symbols });
@@ -91,6 +95,7 @@ function createLoaders({
           cacheKey: 'strings',
           cacheOptions: opts,
           logLabel: 'Strings',
+          useCache: message.useCache !== false,
           isCacheUsable: (cached) => Array.isArray(cached) && cached.length > 0,
           compute: async () => {
             const scriptPath = getStringsScript(root);
@@ -135,6 +140,7 @@ function createLoaders({
           absPath,
           cacheKey: 'info',
           logLabel: 'Infos binaire',
+          useCache: message.useCache !== false,
           isCacheUsable: (cached) => !!(
             cached
             && cached.stripped
@@ -186,6 +192,7 @@ function createLoaders({
           absPath,
           cacheKey: 'sections',
           logLabel: 'Sections',
+          useCache: message.useCache !== false,
           compute: async () => {
             const rawSections = await runPythonJson(getSectionsScript(root), ['--binary', absPath]);
             return Array.isArray(rawSections) ? rawSections : (rawSections.sections || []);

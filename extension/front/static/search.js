@@ -1444,7 +1444,15 @@ function updateTypedDataActiveSelection(addr = window._lastDisasmAddr, spanLengt
 
 function setStaticLoading(containerId, msg) {
   const el = document.getElementById(containerId);
-  if (el) el.innerHTML = msg ? `<p class="loading">${escapeHtml(msg)}</p>` : ''; // eslint-disable-line -- msg is escaped
+  if (!el) return;
+  if (!msg) {
+    el.innerHTML = '';
+    return;
+  }
+  el.innerHTML = '<div class="static-loading loading" role="status" aria-live="polite">'
+    + '<span class="static-loading-spinner" aria-hidden="true"></span>'
+    + `<span class="static-loading-text">${escapeHtml(msg)}</span>`
+    + '</div>'; // eslint-disable-line -- msg is escaped
 }
 
 function applyHexLayoutMode() {
