@@ -2080,6 +2080,21 @@ window.addEventListener('message', (event) => {
     if (msg.isBetter) {
       decompileUiState.bestDecompiler = payload.decompiler;
     }
+    // Stale-response guard: the user may have navigated to a different binary
+    // or function while this (possibly slow, Docker-backed) decompile was in
+    // flight. Bookkeeping above still applies (so the result is cached for
+    // later), but the DOM must never be overwritten with a result for a
+    // selection the user isn't looking at anymore — that's what produced the
+    // intermittent "wrong pseudo-C / stuck loader" behavior.
+    const currentSelection = getDecompileSelectionContext();
+    const currentFull = !currentSelection.addr;
+    const isStaleForCurrentSelection = payload.binaryPath !== (getStaticBinaryPath() || '')
+      || payload.full !== currentFull
+      || (!currentFull && payload.addr !== currentSelection.addr);
+    if (isStaleForCurrentSelection) {
+      _refreshDecompilePills();
+      return;
+    }
     // Decide whether to render: auto mode renders first result + better results; forced mode renders matching decompiler only
     const shouldRender = (forced === '' && (msg.isBetter || !msg.isSilentUpdate))
       || (forced !== '' && forced === payload.decompiler);
