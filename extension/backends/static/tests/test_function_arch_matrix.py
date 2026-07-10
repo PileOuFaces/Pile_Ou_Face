@@ -57,10 +57,60 @@ RAW_FUNCTION_FIXTURES: tuple[tuple[str, RawFixtureWriter], ...] = (
 
 FUNCTION_FEATURES = ("discover_functions", "cfg", "call_graph")
 SEMANTIC_LEVELS = {"partial", "full"}
+CFG_CALLGRAPH_COVERAGE_DEBT_ISSUE = 82
+
+# These adapters expose semantic CFG/Call Graph support in the public matrix, but
+# do not yet have a raw fixture proving "function discovery + CFG + call graph".
+# Keep this list explicit so #82 can burn it down adapter by adapter.
+CFG_CALLGRAPH_UNFIXTURED_ADAPTERS = {
+    "bpf",
+    "m68k",
+    "riscv",
+    "sh",
+    "sparc",
+    "tricore",
+    "wasm",
+}
 
 
 @unittest.skipUnless(_CAPSTONE_AVAILABLE, "capstone not installed")
 class TestFunctionArchSupportMatrix(unittest.TestCase):
+    def _fixture_adapter_keys(self) -> set[str]:
+        adapter_keys: set[str] = set()
+        for _label, writer in RAW_FUNCTION_FIXTURES:
+            with tempfile.TemporaryDirectory() as tmp:
+                sample = writer(tmp)
+                raw_profile = sample["raw"]
+                info = get_raw_arch_info(
+                    str(raw_profile["arch"]),
+                    str(raw_profile.get("endian") or ""),
+                )
+                self.assertIsNotNone(info)
+                assert info is not None
+                adapter_keys.add(info.adapter.key)
+        return adapter_keys
+
+    def test_cfg_call_graph_semantic_claims_have_fixture_or_issue_debt(self):
+        matrix = get_feature_support_matrix()
+        fixture_adapter_keys = self._fixture_adapter_keys()
+        semantic_adapter_keys = {
+            adapter_key
+            for adapter_key, support in matrix.items()
+            if support["cfg"]["level"] in SEMANTIC_LEVELS
+            or support["call_graph"]["level"] in SEMANTIC_LEVELS
+        }
+
+        missing_fixture_keys = semantic_adapter_keys - fixture_adapter_keys
+        self.assertEqual(
+            missing_fixture_keys,
+            CFG_CALLGRAPH_UNFIXTURED_ADAPTERS,
+            (
+                "Every adapter that claims semantic CFG/Call Graph support must "
+                "either have a raw fixture or be explicitly tracked by "
+                f"issue #{CFG_CALLGRAPH_COVERAGE_DEBT_ISSUE}."
+            ),
+        )
+
     def test_raw_function_fixtures_are_backed_by_matrix_entries(self):
         matrix = get_feature_support_matrix()
 
