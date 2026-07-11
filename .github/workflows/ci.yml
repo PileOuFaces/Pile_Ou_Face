@@ -85,12 +85,35 @@ jobs:
       - name: Python tests
         working-directory: ./extension
         run: |
+          python3 -m coverage erase
           python3 -m coverage run -m pytest
           python3 -m coverage report
+          python3 -m coverage xml
+          python3 -m coverage json -o coverage-python.json
 
       - name: JavaScript tests
         working-directory: ./extension
         run: npm run test:coverage
+
+      - name: Summarize coverage
+        if: always()
+        working-directory: ./extension
+        run: |
+          mkdir -p .pile-ou-face/test-artifacts
+          npm run coverage:summary > .pile-ou-face/test-artifacts/coverage-summary.log
+          cat .pile-ou-face/test-artifacts/coverage-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-quick-${{ github.sha }}
+          path: |
+            extension/coverage-python.json
+            extension/coverage.xml
+            extension/coverage/
+            extension/.pile-ou-face/test-artifacts/coverage-summary.md
+          if-no-files-found: warn
 
   # ══════════════════════════════════════════════════════════════
   # 🧪 Tests Complets Multi-OS — PRs uniquement
@@ -134,9 +157,11 @@ jobs:
       - name: Python tests with coverage
         working-directory: ./extension
         run: |
+          python3 -m coverage erase
           python3 -m coverage run -m pytest
           python3 -m coverage report
           python3 -m coverage xml
+          python3 -m coverage json -o coverage-python.json
 
       - name: Bundle activation smoke test
         working-directory: ./extension
@@ -145,6 +170,26 @@ jobs:
       - name: JavaScript tests with coverage
         working-directory: ./extension
         run: npm run test:coverage
+
+      - name: Summarize coverage
+        if: always()
+        working-directory: ./extension
+        run: |
+          mkdir -p .pile-ou-face/test-artifacts
+          npm run coverage:summary > .pile-ou-face/test-artifacts/coverage-summary.log
+          cat .pile-ou-face/test-artifacts/coverage-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-${{ matrix.os }}-node-${{ matrix.node }}
+          path: |
+            extension/coverage-python.json
+            extension/coverage.xml
+            extension/coverage/
+            extension/.pile-ou-face/test-artifacts/coverage-summary.md
+          if-no-files-found: warn
 
   # ══════════════════════════════════════════════════════════════
   # 🦄 Régressions Unicorn x86_64 — PRs uniquement, Linux

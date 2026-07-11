@@ -282,6 +282,7 @@
     "test": "tsx node_modules/.bin/_mocha '{front/tests,src/tests}/**/*.test.ts' --ignore 'front/tests/hubPayloadCore.test.ts' --require src/tests/setup.ts --exit",
     "test:watch": "tsx node_modules/.bin/_mocha '{front/tests,src/tests}/**/*.test.ts' --watch --ignore 'front/tests/hubPayloadCore.test.ts' --require src/tests/setup.ts",
     "test:coverage": "c8 tsx node_modules/.bin/_mocha '{front/tests,src/tests}/**/*.test.ts' --ignore 'front/tests/hubPayloadCore.test.ts' --require src/tests/setup.ts --exit",
+    "coverage:summary": "node scripts/coverage-summary.mjs --python coverage-python.json --javascript coverage/coverage-summary.json --output .pile-ou-face/test-artifacts/coverage-summary.md",
     "nexus:analyze": "npx gitnexus analyze ..",
     "nexus:status": "npx gitnexus status",
     "nexus:wiki": "npx gitnexus wiki .."
