@@ -57,6 +57,7 @@ FROZEN_REGISTRY: list[tuple[str, str, list[tuple[str, str, list[str]]]]] = [
             ("malware.capa.delete_rules", "capa_rules_delete", []),
             ("malware.capa.check_rules", "capa_rules_check", []),
             ("malware.capa.download_rules", "capa_rules_download", []),
+            ("malware.ioc_export.run", "ioc_export", []),
         ],
     ),
     (
