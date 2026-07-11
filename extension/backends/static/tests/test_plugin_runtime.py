@@ -350,6 +350,78 @@ class TestPluginRuntime(unittest.TestCase):
             )
             self.assertEqual(attached[0].state, "active")
 
+    def test_invoke_plugin_command_applies_matching_analysis_enricher(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            plugin_dir = base / "pof.demo"
+            python_dir = plugin_dir / "python"
+            python_dir.mkdir(parents=True)
+            (plugin_dir / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "id": "pof.demo-plugin",
+                        "name": "Demo",
+                        "version": "0.1.0",
+                        "kind": "analysis-pack",
+                        "host": {
+                            "api_version": 1,
+                            "min_version": "0.1.0",
+                            "max_version": "0.1.x",
+                        },
+                        "entrypoints": {
+                            "python": {
+                                "module": "plugin_main",
+                                "register": "register_plugin",
+                            }
+                        },
+                        "commands": [
+                            {
+                                "id": "demo.scan.run",
+                                "feature": "scan",
+                                "aliases": ["demo_signal"],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (python_dir / "plugin_main.py").write_text(
+                "\n".join(
+                    [
+                        "def register_plugin(context):",
+                        "    def run(payload):",
+                        "        return {'items': [1, 2], 'ok': True}",
+                        "    def enrich(payload):",
+                        "        out = dict(payload)",
+                        "        out['plugin_enrichments'] = [{'plugin': 'demo', 'target': 'demo_signal', 'summary': {'items': len(payload.get('items', []))}}]",
+                        "        return out",
+                        "    context.register_command('demo.scan.run', run)",
+                        "    context.register_analysis_enricher('demo_signal', enrich)",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            records = build_plugin_registry([base], host_version="0.1.0")
+            response, _context, _attached = invoke_plugin_command(
+                records,
+                "demo.scan.run",
+                {},
+                host_version="0.1.0",
+            )
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(response["result"]["items"], [1, 2])
+            self.assertEqual(
+                response["result"]["plugin_enrichments"],
+                [
+                    {
+                        "plugin": "demo",
+                        "target": "demo_signal",
+                        "summary": {"items": 2},
+                    }
+                ],
+            )
+
     def test_invoke_plugin_feature_resolves_manifest_command(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -403,6 +475,127 @@ class TestPluginRuntime(unittest.TestCase):
             self.assertEqual(response["result"]["binaryPath"], "/tmp/demo.bin")
             self.assertIn("demo.feature.run", context.snapshot()["commands"])
             self.assertEqual(attached[0].state, "active")
+
+    def test_invoke_plugin_feature_applies_feature_enricher(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            plugin_dir = base / "pof.demo"
+            python_dir = plugin_dir / "python"
+            python_dir.mkdir(parents=True)
+            (plugin_dir / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "id": "pof.demo-plugin",
+                        "name": "Demo",
+                        "version": "0.1.0",
+                        "kind": "analysis-pack",
+                        "host": {
+                            "api_version": 1,
+                            "min_version": "0.1.0",
+                            "max_version": "0.1.x",
+                        },
+                        "entrypoints": {
+                            "python": {
+                                "module": "plugin_main",
+                                "register": "register_plugin",
+                            }
+                        },
+                        "commands": [
+                            {"id": "demo.feature.run", "feature": "demo_feature"}
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (python_dir / "plugin_main.py").write_text(
+                "\n".join(
+                    [
+                        "def register_plugin(context):",
+                        "    context.register_command('demo.feature.run', lambda payload: {'ok': True})",
+                        "    context.register_analysis_enricher('demo_feature', lambda payload: {**payload, 'plugin_enrichments': [{'plugin': 'demo', 'target': 'demo_feature', 'summary': {'ok': payload.get('ok')}}]})",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            records = build_plugin_registry([base], host_version="0.1.0")
+            response, _context, _attached = invoke_plugin_feature(
+                records,
+                "demo_feature",
+                {},
+                host_version="0.1.0",
+            )
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(
+                response["result"]["plugin_enrichments"][0]["target"], "demo_feature"
+            )
+            self.assertEqual(
+                response["result"]["plugin_enrichments"][0]["summary"], {"ok": True}
+            )
+
+    def test_nested_plugin_invocation_applies_child_enricher(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            plugin_dir = base / "pof.demo"
+            python_dir = plugin_dir / "python"
+            python_dir.mkdir(parents=True)
+            (plugin_dir / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "id": "pof.demo-plugin",
+                        "name": "Demo",
+                        "version": "0.1.0",
+                        "kind": "analysis-pack",
+                        "host": {
+                            "api_version": 1,
+                            "min_version": "0.1.0",
+                            "max_version": "0.1.x",
+                        },
+                        "entrypoints": {
+                            "python": {
+                                "module": "plugin_main",
+                                "register": "register_plugin",
+                            }
+                        },
+                        "commands": [
+                            {"id": "demo.parent.run", "feature": "parent"},
+                            {"id": "demo.child.run", "feature": "child_signal"},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (python_dir / "plugin_main.py").write_text(
+                "\n".join(
+                    [
+                        "def register_plugin(context):",
+                        "    def parent(payload, invoke_fn):",
+                        "        return {'child': invoke_fn('demo.child.run', {})}",
+                        "    def child(payload):",
+                        "        return {'items': [1]}",
+                        "    def enrich(payload):",
+                        "        return {**payload, 'plugin_enrichments': [{'plugin': 'demo', 'target': 'child_signal', 'summary': {'items': len(payload.get('items', []))}}]}",
+                        "    context.register_command('demo.parent.run', parent)",
+                        "    context.register_command('demo.child.run', child)",
+                        "    context.register_analysis_enricher('child_signal', enrich)",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            records = build_plugin_registry([base], host_version="0.1.0")
+            response, _context, _attached = invoke_plugin_command(
+                records,
+                "demo.parent.run",
+                {},
+                host_version="0.1.0",
+            )
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(response["result"]["child"]["items"], [1])
+            self.assertEqual(
+                response["result"]["child"]["plugin_enrichments"][0]["summary"],
+                {"items": 1},
+            )
 
     def test_invoke_plugin_command_reports_missing_command(self):
         with tempfile.TemporaryDirectory() as tmp:
