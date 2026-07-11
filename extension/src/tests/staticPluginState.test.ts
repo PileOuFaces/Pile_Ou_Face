@@ -1,10 +1,11 @@
 const { expect } = require("chai");
+const { EventEmitter } = require("events");
 const proxyquire = require("proxyquire").noCallThru();
 const sinon = require("sinon");
 
-function loadStaticHandlers(execFile) {
+function loadStaticHandlers(execFile, spawn) {
   return proxyquire("../static/staticHandlers", {
-    child_process: { execFile },
+    child_process: { execFile, spawn },
     "../shared/utils": {
       detectPythonExecutable: () => "/usr/bin/python3",
       buildRuntimeEnv: () => ({}),
@@ -109,12 +110,84 @@ describe("staticHandlers plugin bridge", () => {
       "demo_feature",
     ]);
     expect(postMessage.firstCall.args[0]).to.deep.equal({
+      type: "hubPluginProgress",
+      requestId: "req-1",
+      feature: "demo_feature",
+      percent: null,
+      message: "Démarrage…",
+    });
+    const resultMessage = postMessage.getCalls().map((call) => call.args[0]).find((msg) => msg.type === "hubPluginResult");
+    expect(resultMessage).to.deep.equal({
       type: "hubPluginResult",
       requestId: "req-1",
       feature: "demo_feature",
       plugin_id: "",
       result: { ok: true, value: 42 },
     });
+  });
+
+  it("streams plugin progress lines to VS Code and the webview", async () => {
+    const execFile = sinon.stub();
+    const spawn = sinon.stub().callsFake(() => {
+      const proc = new EventEmitter();
+      proc.stdout = new EventEmitter();
+      proc.stderr = new EventEmitter();
+      proc.kill = sinon.spy();
+      process.nextTick(() => {
+        proc.stderr.emit("data", 'POF_PROGRESS {"percent":25,"message":"Inspection packer"}\n');
+        proc.stdout.emit("data", 'POF_PROGRESS {"percent":80,"message":"Signatures"}\n');
+        proc.stdout.emit("data", JSON.stringify({
+          ok: true,
+          plugin_id: "pof.demo-plugin",
+          command: "demo.scan.run",
+          result: { ok: true, value: 99 },
+        }));
+        proc.emit("close", 0);
+      });
+      return proc;
+    });
+    const postMessage = sinon.spy();
+    const handlers = createHandlers(loadStaticHandlers(execFile, spawn), postMessage);
+
+    await handlers.hubPluginInvoke({
+      requestId: "req-progress",
+      feature: "demo_feature",
+      payload: {},
+    });
+
+    const messages = postMessage.getCalls().map((call) => call.args[0]);
+    expect(messages.filter((msg) => msg.type === "hubPluginProgress")).to.deep.equal([
+      {
+        type: "hubPluginProgress",
+        requestId: "req-progress",
+        feature: "demo_feature",
+        percent: null,
+        message: "Démarrage…",
+      },
+      {
+        type: "hubPluginProgress",
+        requestId: "req-progress",
+        feature: "demo_feature",
+        percent: 25,
+        message: "Inspection packer",
+      },
+      {
+        type: "hubPluginProgress",
+        requestId: "req-progress",
+        feature: "demo_feature",
+        percent: 80,
+        message: "Signatures",
+      },
+    ]);
+    expect(messages.find((msg) => msg.type === "hubPluginResult")).to.deep.equal({
+      type: "hubPluginResult",
+      requestId: "req-progress",
+      feature: "demo_feature",
+      plugin_id: "pof.demo-plugin",
+      result: { ok: true, value: 99 },
+    });
+    expect(execFile.called).to.equal(false);
+    expect(spawn.calledOnce).to.equal(true);
   });
 
   it("grants plugin consent then re-fetches the plugin state", async () => {

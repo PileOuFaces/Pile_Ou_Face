@@ -7,6 +7,9 @@ window.addEventListener('message', (event) => {
   if (msg.type === 'hubPluginResult' && window.PluginIframeRouter) {
     window.PluginIframeRouter.dispatch(msg.plugin_id, msg);
   }
+  if (msg.type === 'hubPluginProgress' && window.PluginIframeRouter) {
+    window.PluginIframeRouter.broadcast(msg);
+  }
   // Generic host replies (e.g. file picker, rules manager) that plugin iframes may also be waiting on
   const BROADCAST_TO_PLUGINS = new Set([
     'hubPickedFile', 'hubRulesList', 'hubRulesPath', 'hubRuleContent',
