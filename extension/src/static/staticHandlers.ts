@@ -565,6 +565,135 @@ function staticHandlers(config) {
     };
   };
 
+  const createPluginProgressFilter = (onProgress) => {
+    let buffer = '';
+    return {
+      push(chunk) {
+        buffer += String(chunk || '');
+        const lines = buffer.split(/\r?\n/);
+        buffer = lines.pop() || '';
+        const passthrough = [];
+        for (const line of lines) {
+          if (line.startsWith('POF_PROGRESS ')) {
+            try {
+              const payload = JSON.parse(line.slice('POF_PROGRESS '.length));
+              onProgress?.({
+                percent: Number.isFinite(Number(payload.percent)) ? Number(payload.percent) : null,
+                message: String(payload.message || 'Analyse plugin…'),
+                raw: payload,
+              });
+              continue;
+            } catch (_) {
+              // Invalid progress lines are kept in the subprocess output.
+            }
+          }
+          passthrough.push(line);
+        }
+        return passthrough.length ? `${passthrough.join('\n')}\n` : '';
+      },
+      flush() {
+        const tail = buffer;
+        buffer = '';
+        if (!tail) return '';
+        if (tail.startsWith('POF_PROGRESS ')) {
+          try {
+            const payload = JSON.parse(tail.slice('POF_PROGRESS '.length));
+            onProgress?.({
+              percent: Number.isFinite(Number(payload.percent)) ? Number(payload.percent) : null,
+              message: String(payload.message || 'Analyse plugin…'),
+              raw: payload,
+            });
+            return '';
+          } catch (_) {
+            // Invalid progress lines are kept in the subprocess output.
+          }
+        }
+        return tail;
+      },
+    };
+  };
+
+  const runPluginRuntimeStreaming = async (runtimeArgs, options = {}) => {
+    if (typeof cp.spawn !== 'function') return runPluginRuntime(runtimeArgs, options);
+    const pluginEnv = await buildPluginRuntimeEnv();
+    const {
+      timeout = 60000,
+      maxBuffer = 4 * 1024 * 1024,
+      onProgress,
+    } = options;
+    const scriptPath = path.join(extensionPath, 'backends/plugins/runtime.py');
+    const args = [
+      scriptPath,
+      '--host-version',
+      '0.1.0',
+      '--api-version',
+      '1',
+      ...runtimeArgs,
+    ];
+    const stdoutFilter = createPluginProgressFilter(onProgress);
+    const stderrFilter = createPluginProgressFilter(onProgress);
+    const stdoutChunks = [];
+    const stderrChunks = [];
+    let stdoutSize = 0;
+    let stderrSize = 0;
+
+    const append = (chunks, text, sizeKey) => {
+      if (!text) return sizeKey;
+      const nextSize = sizeKey + Buffer.byteLength(text, 'utf8');
+      if (nextSize <= maxBuffer) chunks.push(text);
+      return nextSize;
+    };
+
+    const stdout = await new Promise((resolve, reject) => {
+      let settled = false;
+      const proc = cp.spawn(getPythonExecutable(), args, {
+        cwd: root,
+        env: pluginEnv,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      const finish = (fn, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        fn(value);
+      };
+      const timer = setTimeout(() => {
+        try {
+          proc.kill('SIGTERM');
+        } catch (error) {
+          logDebug(`[plugin-progress] kill après timeout ignoré: ${error?.message || error}`);
+        }
+        const error = new Error(`Timeout plugin runtime après ${timeout} ms`);
+        error.stderr = stderrChunks.join('');
+        finish(reject, error);
+      }, timeout);
+
+      proc.stdout?.on('data', (chunk) => {
+        stdoutSize = append(stdoutChunks, stdoutFilter.push(chunk), stdoutSize);
+      });
+      proc.stderr?.on('data', (chunk) => {
+        stderrSize = append(stderrChunks, stderrFilter.push(chunk), stderrSize);
+      });
+      proc.on('error', (error) => {
+        error.stderr = stderrChunks.join('');
+        finish(reject, error);
+      });
+      proc.on('close', (code) => {
+        stdoutSize = append(stdoutChunks, stdoutFilter.flush(), stdoutSize);
+        stderrSize = append(stderrChunks, stderrFilter.flush(), stderrSize);
+        const stderr = stderrChunks.join('');
+        if (code) {
+          const error = new Error(stderr || `Plugin runtime exited with code ${code}`);
+          error.stderr = stderr;
+          finish(reject, error);
+          return;
+        }
+        finish(resolve, stdoutChunks.join(''));
+      });
+    });
+    return JSON.parse(String(stdout || '{}'));
+  };
+
   const runPluginRuntime = async (runtimeArgs, options = {}) => {
     const pluginEnv = await buildPluginRuntimeEnv();
     const { timeout = 60000, maxBuffer = 4 * 1024 * 1024 } = options;
@@ -595,14 +724,15 @@ function staticHandlers(config) {
 
   const invokePluginFeature = async (featureId, payload, {
     timeout = 120000,
+    onProgress = null,
   } = {}) => {
     try {
-      const response = await runPluginRuntime([
+      const response = await runPluginRuntimeStreaming([
         'invoke-feature',
         featureId,
         '--payload-json',
         JSON.stringify(payload || {}),
-      ], { timeout });
+      ], { timeout, onProgress });
       if (response?.ok === true) {
         return { pluginId: String(response.plugin_id || ''), result: response.result ?? {} };
       }
@@ -730,6 +860,16 @@ function staticHandlers(config) {
     hubPluginInvoke: async (message = {}) => {
       const feature = String(message.feature || message.featureId || '').trim();
       const requestId = String(message.requestId || message.id || '');
+      if (!feature) {
+        panel.webview.postMessage({
+          type: 'hubPluginResult',
+          requestId,
+          feature: '',
+          plugin_id: '',
+          result: { ok: false, error: 'feature manquante', plugin_required: '', feature: '' },
+        });
+        return;
+      }
       const payload = message.payload && typeof message.payload === 'object'
         ? { ...message.payload }
         : {};
@@ -743,11 +883,47 @@ function staticHandlers(config) {
         if (gcDir) payload.globalConfigPath = path.join(gcDir, 'rules-config.json');
       }
       const featureLabel = feature.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-      const { pluginId, result } = await vscode.window.withProgress(
-        { location: vscode.ProgressLocation.Notification, title: `Plugin : ${featureLabel}…`, cancellable: false },
-        () => feature
-          ? invokePluginFeature(feature, payload, { timeout: Number(message.timeout || 120000) })
-          : Promise.resolve({ pluginId: '', result: { ok: false, error: 'feature manquante', plugin_required: '', feature } }),
+      let lastPercent = 0;
+      const reportPluginProgress = (progress, update = {}) => {
+        const rawPercent = update.percent;
+        const hasPercent = rawPercent !== null
+          && rawPercent !== undefined
+          && rawPercent !== ''
+          && Number.isFinite(Number(rawPercent));
+        const nextPercent = hasPercent
+          ? Math.max(lastPercent, Math.min(100, Number(rawPercent)))
+          : null;
+        const messageText = String(update.message || 'Analyse plugin…');
+        if (nextPercent !== null) {
+          progress.report({ increment: nextPercent - lastPercent, message: messageText });
+          lastPercent = nextPercent;
+        } else {
+          progress.report({ increment: 0, message: messageText });
+        }
+        panel.webview.postMessage({
+          type: 'hubPluginProgress',
+          requestId,
+          feature,
+          percent: nextPercent,
+          message: messageText,
+        });
+      };
+      const withProgress = typeof vscode.window?.withProgress === 'function'
+        ? vscode.window.withProgress.bind(vscode.window)
+        : async (_options, task) => task({ report: () => {} });
+      const { pluginId, result } = await withProgress(
+        {
+          location: vscode.ProgressLocation?.Notification,
+          title: `Plugin : ${featureLabel}…`,
+          cancellable: false,
+        },
+        (progress) => {
+          reportPluginProgress(progress, { percent: null, message: 'Démarrage…' });
+          return invokePluginFeature(feature, payload, {
+              timeout: Number(message.timeout || 120000),
+              onProgress: (update) => reportPluginProgress(progress, update),
+            });
+        },
       );
       panel.webview.postMessage({
         type: 'hubPluginResult',

@@ -5,7 +5,7 @@
 (function initTaskProgressController(global) {
   const TASK_TIMEOUT_MS = 120000;
   const HIDE_DELAY_MS = 700;
-  const PROGRESS_MESSAGES = new Set(['hubDecompilerPullProgress']);
+  const PROGRESS_MESSAGES = new Set(['hubDecompilerPullProgress', 'hubPluginProgress']);
   const FINISH_MESSAGES = new Set([
     'accountState',
     'compileResult',
@@ -264,6 +264,16 @@
     if (!PROGRESS_MESSAGES.has(messageType)) return false;
     let updated = false;
     state.tasks.forEach((entry) => {
+      if (messageType === 'hubPluginProgress') {
+        if (entry.messageType !== 'hubPluginInvoke') return;
+        const requestId = String(message?.requestId || '');
+        if (requestId && entry.requestId && entry.requestId !== requestId) return;
+        const percent = Number(message.percent);
+        entry.percent = Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : null;
+        entry.detail = String(message.message || entry.detail || entry.label);
+        updated = true;
+        return;
+      }
       if (!entry.doneTypes.has('hubDecompilerPullDone')) return;
       if (message.decompiler && entry.id.indexOf(`:${message.decompiler}`) === -1) return;
       const percent = Number(message.percent);

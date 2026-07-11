@@ -414,5 +414,38 @@ describe('PLUGIN_BRIDGE_PREAMBLE', () => {
       expect(container.textContent).to.equal('Scan en cours…');
       expect(container.querySelector('.loading-state')).to.exist;
     });
+
+    it('renders a host-managed indeterminate plugin progress banner', () => {
+      const { win } = makeBridgeWindow('<main id="pluginRoot"></main>');
+      deliverHostMessage(win, {
+        type: 'hubPluginProgress',
+        feature: 'packer',
+        percent: null,
+        message: 'Démarrage…',
+      });
+      const banner = win.document.getElementById('__pof_plugin_progress');
+      expect(banner).to.exist;
+      expect(banner.hidden).to.equal(false);
+      expect(banner.classList.contains('is-indeterminate')).to.equal(true);
+      expect(banner.textContent).to.include('Démarrage…');
+      expect(banner.querySelector('.pof-plugin-progress-percent').textContent).to.equal('');
+    });
+
+    it('renders plugin progress percent when the host provides one', () => {
+      const { win } = makeBridgeWindow('<main id="pluginRoot"></main>');
+      deliverHostMessage(win, {
+        type: 'hubPluginProgress',
+        feature: 'packer',
+        percent: 42,
+        message: 'Signatures packer…',
+      });
+      const banner = win.document.getElementById('__pof_plugin_progress');
+      expect(banner).to.exist;
+      expect(banner.hidden).to.equal(false);
+      expect(banner.classList.contains('is-indeterminate')).to.equal(false);
+      expect(banner.textContent).to.include('Signatures packer…');
+      expect(banner.querySelector('.pof-plugin-progress-percent').textContent).to.equal('42%');
+      expect(banner.querySelector('.pof-plugin-progress-bar').style.width).to.equal('42%');
+    });
   });
 });

@@ -92,6 +92,58 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
     var panel = document.getElementById(panelId);
     if (panel) panel.classList.add('active');
   }
+  function _ensurePluginProgressBanner() {
+    var existing = document.getElementById('__pof_plugin_progress');
+    if (existing) return existing;
+    var styleEl = document.getElementById('__pof_plugin_progress_style');
+    if (!styleEl) {
+      styleEl = document.createElement('style');
+      styleEl.id = '__pof_plugin_progress_style';
+      styleEl.textContent = [
+        '#__pof_plugin_progress{position:sticky;top:0;z-index:2147483647;margin:0 0 12px;padding:10px 12px;border:1px solid var(--vscode-progressBar-background,#2f81f7);border-radius:10px;background:var(--vscode-editor-background,#0d1117);box-shadow:0 8px 24px rgba(0,0,0,.22);color:var(--vscode-foreground,#d4d4d4);font:12px/1.4 var(--vscode-font-family,system-ui,sans-serif)}',
+        '#__pof_plugin_progress[hidden]{display:none!important}',
+        '#__pof_plugin_progress .pof-plugin-progress-row{display:flex;align-items:center;gap:8px;justify-content:space-between}',
+        '#__pof_plugin_progress .pof-plugin-progress-title{font-weight:650}',
+        '#__pof_plugin_progress .pof-plugin-progress-percent{font-variant-numeric:tabular-nums;opacity:.78}',
+        '#__pof_plugin_progress .pof-plugin-progress-track{height:4px;margin-top:8px;border-radius:999px;background:var(--vscode-progressBar-background,rgba(47,129,247,.22));overflow:hidden}',
+        '#__pof_plugin_progress .pof-plugin-progress-bar{height:100%;width:100%;border-radius:inherit;background:var(--vscode-button-background,#2f81f7);transform-origin:left center}',
+        '#__pof_plugin_progress.is-indeterminate .pof-plugin-progress-bar{width:38%;animation:pof-plugin-progress-slide 1.1s ease-in-out infinite}',
+        '@keyframes pof-plugin-progress-slide{0%{transform:translateX(-120%)}100%{transform:translateX(280%)}}',
+      ].join('');
+      document.head.appendChild(styleEl);
+    }
+    var banner = document.createElement('div');
+    banner.id = '__pof_plugin_progress';
+    banner.hidden = true;
+    banner.setAttribute('role', 'status');
+    banner.setAttribute('aria-live', 'polite');
+    banner.innerHTML = '<div class="pof-plugin-progress-row"><span class="pof-plugin-progress-title">Plugin en cours…</span><span class="pof-plugin-progress-percent"></span></div><div class="pof-plugin-progress-track" aria-hidden="true"><div class="pof-plugin-progress-bar"></div></div>';
+    document.body.insertBefore(banner, document.body.firstChild);
+    return banner;
+  }
+  function _showPluginProgress(msg) {
+    var banner = _ensurePluginProgressBanner();
+    var title = banner.querySelector('.pof-plugin-progress-title');
+    var percentEl = banner.querySelector('.pof-plugin-progress-percent');
+    var bar = banner.querySelector('.pof-plugin-progress-bar');
+    var rawPercent = msg && msg.percent;
+    var percent = Number(rawPercent);
+    var hasPercent = rawPercent !== null && rawPercent !== undefined && rawPercent !== '' && Number.isFinite(percent);
+    banner.hidden = false;
+    banner.classList.toggle('is-indeterminate', !hasPercent);
+    if (title) title.textContent = String((msg && msg.message) || 'Analyse plugin…');
+    if (percentEl) percentEl.textContent = hasPercent ? Math.round(Math.max(0, Math.min(100, percent))) + '%' : '';
+    if (bar && hasPercent) bar.style.width = Math.max(0, Math.min(100, percent)) + '%';
+    else if (bar) bar.style.width = '';
+  }
+  function _hidePluginProgressSoon() {
+    var banner = document.getElementById('__pof_plugin_progress');
+    if (!banner) return;
+    setTimeout(function () {
+      banner.hidden = true;
+      banner.classList.remove('is-indeterminate');
+    }, 650);
+  }
   window.addEventListener('message', function (e) {
     if (!e.data || !e.data.__pof_host) return;
     var msg = e.data.payload;
@@ -101,6 +153,12 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
     }
     if (msg && msg.type === 'showTab') {
       _activatePanel(msg.tabId);
+    }
+    if (msg && msg.type === 'hubPluginProgress') {
+      _showPluginProgress(msg);
+    }
+    if (msg && msg.type === 'hubPluginResult') {
+      _hidePluginProgressSoon();
     }
     if (msg && msg.type === '__binaryPath' && typeof msg.binaryPath === 'string') {
       window._pofCurrentBinaryPath = msg.binaryPath;
