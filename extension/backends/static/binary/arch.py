@@ -679,7 +679,7 @@ BPF_ADAPTER = ArchAdapter(
         }
     ),
     return_mnemonics=frozenset({"exit"}),
-    prologue_patterns=(),
+    prologue_patterns=((r"\bmov64\s+r1\s*,\s*r10\b", "bpf entry"),),
     data_ref_mnemonics=GENERIC_DATA_REF_MNEMONICS,
 )
 

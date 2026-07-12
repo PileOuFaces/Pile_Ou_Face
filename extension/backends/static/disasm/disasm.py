@@ -170,31 +170,49 @@ _RISCV_PC_RELATIVE_MNEMONICS = {
 }
 
 
+def _parse_capstone_immediate(value: str) -> int | None:
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    try:
+        return int(text, 16) if text.startswith("0x") else int(text)
+    except ValueError:
+        return None
+
+
 def _normalize_capstone_operands(cs_arch: int, instr) -> str:
     """Normalise certains opérandes Capstone vers les adresses attendues.
 
     Capstone RISC-V expose les cibles PC-relatives comme offsets (`jal 0x1c`)
     alors que CFG/Call Graph attendent des adresses virtuelles (`jal 0xc020`).
+    Capstone BPF expose `call imm` avec l'immédiat eBPF relatif en instructions
+    de 8 octets ; le CFG attend aussi une adresse virtuelle.
     """
     op_str = str(getattr(instr, "op_str", "") or "")
-    if not capstone or cs_arch != getattr(capstone, "CS_ARCH_RISCV", None):
+    if not capstone:
         return op_str
     mnemonic = str(getattr(instr, "mnemonic", "") or "").lower()
-    if mnemonic not in _RISCV_PC_RELATIVE_MNEMONICS:
-        return op_str
     operands = [part.strip() for part in op_str.split(",") if part.strip()]
     if not operands:
         return op_str
-    try:
-        offset = (
-            int(operands[-1], 16)
-            if operands[-1].startswith("0x")
-            else int(operands[-1])
-        )
-    except ValueError:
-        return op_str
-    operands[-1] = f"0x{int(instr.address) + offset:x}"
-    return ", ".join(operands)
+
+    if cs_arch == getattr(capstone, "CS_ARCH_RISCV", None):
+        if mnemonic not in _RISCV_PC_RELATIVE_MNEMONICS:
+            return op_str
+        offset = _parse_capstone_immediate(operands[-1])
+        if offset is None:
+            return op_str
+        operands[-1] = f"0x{int(instr.address) + offset:x}"
+        return ", ".join(operands)
+
+    if cs_arch == getattr(capstone, "CS_ARCH_BPF", None) and mnemonic == "call":
+        offset = _parse_capstone_immediate(operands[-1])
+        if offset is None:
+            return op_str
+        operands[-1] = f"0x{int(instr.address) + (offset + 1) * 8:x}"
+        return ", ".join(operands)
+
+    return op_str
 
 
 def _parse_base_addr(value: str | int | None) -> int:

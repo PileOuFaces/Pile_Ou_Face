@@ -122,6 +122,31 @@ RAW_M68K_CALL_BLOB = bytes.fromhex(
     "4E75"  # target: rts
 )
 
+# BPF little-endian: mov64 r1,r10 / call +1 instruction / exit / target exit
+RAW_BPF_CALL_BLOB = bytes.fromhex(
+    "BFA1000000000000"  # mov64 r1, r10
+    "8500000001000000"  # call 0xa018 after eBPF relative normalization
+    "9500000000000000"  # exit
+    "9500000000000000"  # target: exit
+)
+
+# SystemZ big-endian: stmg / brasl target / br r14 / padding / target br r14
+RAW_SYSZ_CALL_BLOB = bytes.fromhex(
+    "EBEFF0700024"  # stmg %r14, %r15, 0x70(%r15)
+    "C0E50000000D"  # brasl %r14, 0xf020
+    "07FE"  # br %r14
+    "0700"  # bcr 0, %r0
+    "0700"  # bcr 0, %r0
+    "0700"  # bcr 0, %r0
+    "0700"  # bcr 0, %r0
+    "0700"  # bcr 0, %r0
+    "0700"  # bcr 0, %r0
+    "0700"  # bcr 0, %r0
+    "0700"  # bcr 0, %r0
+    "0700"  # bcr 0, %r0
+    "07FE"  # target: br %r14
+)
+
 RAW_X64_PROFILE = {
     "arch": "i386:x86-64",
     "base_addr": "0x500000",
@@ -191,6 +216,18 @@ RAW_SPARC_PROFILE = {
 RAW_M68K_PROFILE = {
     "arch": "m68k",
     "base_addr": "0xb000",
+    "endian": "big",
+}
+
+RAW_BPF_PROFILE = {
+    "arch": "bpf",
+    "base_addr": "0xa000",
+    "endian": "little",
+}
+
+RAW_SYSZ_PROFILE = {
+    "arch": "sysz",
+    "base_addr": "0xf000",
     "endian": "big",
 }
 
@@ -382,4 +419,28 @@ def write_raw_m68k_call_fixture(tmpdir: str | Path) -> dict[str, Any]:
         raw_profile=RAW_M68K_PROFILE,
         call_site_addr="0xb004",
         target_addr="0xb020",
+    )
+
+
+def write_raw_bpf_call_fixture(tmpdir: str | Path) -> dict[str, Any]:
+    """Écrit un petit shellcode BPF brut avec un appel interne."""
+    return _write_raw_fixture(
+        tmpdir,
+        stem="raw_bpf_call",
+        blob=RAW_BPF_CALL_BLOB,
+        raw_profile=RAW_BPF_PROFILE,
+        call_site_addr="0xa008",
+        target_addr="0xa018",
+    )
+
+
+def write_raw_sysz_call_fixture(tmpdir: str | Path) -> dict[str, Any]:
+    """Écrit un petit shellcode SystemZ brut avec un appel interne."""
+    return _write_raw_fixture(
+        tmpdir,
+        stem="raw_sysz_call",
+        blob=RAW_SYSZ_CALL_BLOB,
+        raw_profile=RAW_SYSZ_PROFILE,
+        call_site_addr="0xf006",
+        target_addr="0xf020",
     )
