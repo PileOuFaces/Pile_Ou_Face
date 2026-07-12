@@ -153,7 +153,7 @@ function _attachStaticSubtabDnD(btn, groupId) {
 }
 
 // Group + sub-tab navigation
-function showGroup(groupId, tabId) {
+function showGroup(groupId, tabId, skipAutoLoad = false) {
   if (!GROUPS[groupId]) groupId = 'code';
   const renderedTabs = _getOrderedGroupTabs(groupId);
   if (renderedTabs.length === 0) groupId = getFirstAvailableStaticGroup();
@@ -246,7 +246,7 @@ function showGroup(groupId, tabId) {
     if (currentArchSupport) _refreshArchSupportBadges();
     return;
   }
-  showSubTab(groupId, targetTab);
+  showSubTab(groupId, targetTab, skipAutoLoad);
   _saveStorage({ group: groupId });
   if (currentArchSupport) _refreshArchSupportBadges();
 }
@@ -255,12 +255,12 @@ function _refreshArchSupportBadges() {
   archBadgeController?.refreshBadges();
 }
 
-function showSubTab(groupId, tabId) {
+function showSubTab(groupId, tabId, skipAutoLoad = false) {
   if (!isStaticTabAvailable(tabId)) {
     const fallbackGroup = getFirstAvailableStaticGroup();
     const fallbackTab = getAvailableGroupTabs(fallbackGroup)[0];
     if (fallbackTab && fallbackTab !== tabId) {
-      showGroup(fallbackGroup, fallbackTab);
+      showGroup(fallbackGroup, fallbackTab, skipAutoLoad);
     }
     return;
   }
@@ -286,7 +286,7 @@ function showSubTab(groupId, tabId) {
       }
     }
   }
-  _autoLoadTab(tabId);
+  if (!skipAutoLoad) _autoLoadTab(tabId);
   requestAnimationFrame(() => requestGraphFit(panel || document));
   if (tabId === 'cfg' && window._lastDisasmAddr) {
     requestAnimationFrame(() => {
