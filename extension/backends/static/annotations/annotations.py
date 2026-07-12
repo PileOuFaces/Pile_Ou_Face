@@ -241,6 +241,32 @@ class AnnotationStore:
         self.close()
 
 
+def _grouped_export(store: AnnotationStore) -> dict:
+    """Construit le dict groupé par adresse attendu côté extension VS Code."""
+    out: dict = {}
+    for row in store.list():
+        entry = out.setdefault(row["addr"], {})
+        if row["kind"] == KIND_COMMENT:
+            entry["comment"] = row["value"]
+            entry["updated"] = row["updated_at"]
+        elif row["kind"] == KIND_RENAME:
+            entry["name"] = row["value"]
+            entry["updated"] = row["updated_at"]
+        elif row["kind"] == KIND_REVIEW_STATUS:
+            entry["reviewStatus"] = row["value"]
+            entry["reviewUpdated"] = row["updated_at"]
+        elif row["kind"] == KIND_REVIEW_NOTES:
+            entry["reviewNotes"] = row["value"]
+            entry["reviewUpdated"] = row["updated_at"]
+        elif row["kind"] == KIND_BOOKMARK:
+            entry["bookmark"] = True
+            entry["bookmarkLabel"] = row["value"]
+            entry["bookmarkUpdated"] = row["updated_at"]
+        elif row["kind"] == KIND_BOOKMARK_COLOR:
+            entry["bookmarkColor"] = row["value"]
+    return out
+
+
 def main() -> int:
     """Point d'entrée CLI : gérer les annotations d'un binaire."""
     import argparse
@@ -257,6 +283,11 @@ def main() -> int:
     p_list = sub.add_parser("list", help="List all annotations")
     p_list.add_argument("--addr", help="Filter by address")
     p_list.add_argument("--output", help="Output JSON path (default: stdout)")
+    p_list.add_argument(
+        "--grouped",
+        action="store_true",
+        help="Group output by address in the webview-facing shape",
+    )
 
     # comment
     p_comment = sub.add_parser("comment", help="Add a comment")
@@ -277,6 +308,41 @@ def main() -> int:
         help="Specific kind to delete (default: all)",
     )
 
+    # annotate (comment + rename in one call, used by the VS Code extension bridge)
+    p_annotate = sub.add_parser(
+        "annotate", help="Set comment and/or rename in one call"
+    )
+    p_annotate.add_argument("--addr", required=True)
+    p_annotate.add_argument("--comment")
+    p_annotate.add_argument("--name")
+
+    # review
+    p_review = sub.add_parser("review", help="Set review status/notes")
+    p_review.add_argument("--addr", required=True)
+    p_review.add_argument("--status", default="")
+    p_review.add_argument("--notes", default="")
+
+    # bookmark
+    p_bookmark = sub.add_parser("bookmark", help="Set a bookmark")
+    p_bookmark.add_argument("--addr", required=True)
+    p_bookmark.add_argument("--label", default="")
+    p_bookmark.add_argument("--color", default="#4ec9b0")
+
+    # delete-bookmark
+    p_del_bookmark = sub.add_parser("delete-bookmark", help="Delete a bookmark")
+    p_del_bookmark.add_argument("--addr", required=True)
+
+    # clear-bookmarks
+    sub.add_parser("clear-bookmarks", help="Clear all bookmarks")
+
+    # migrate-legacy
+    p_migrate = sub.add_parser(
+        "migrate-legacy", help="Migrate a legacy JSON blob into this store"
+    )
+    p_migrate.add_argument(
+        "--json", required=True, help="JSON-encoded legacy annotations dict"
+    )
+
     args = parser.parse_args()
     configure_logging()
 
@@ -284,7 +350,10 @@ def main() -> int:
         args.binary, cache_path=getattr(args, "cache_db", None)
     ) as store:
         if args.cmd == "list":
-            annotations = store.list(addr=getattr(args, "addr", None))
+            if getattr(args, "grouped", False):
+                annotations = _grouped_export(store)
+            else:
+                annotations = store.list(addr=getattr(args, "addr", None))
             out = json.dumps(annotations, indent=2, ensure_ascii=False)
             if getattr(args, "output", None):
                 with open(args.output, "w", encoding="utf-8") as f:
@@ -306,6 +375,33 @@ def main() -> int:
         elif args.cmd == "delete":
             n = store.delete(args.addr, kind=getattr(args, "kind", None))
             print(f"Deleted {n} annotation(s) at {args.addr}")
+
+        elif args.cmd == "annotate":
+            if args.comment is not None:
+                store.comment(args.addr, args.comment)
+            if args.name is not None:
+                store.rename(args.addr, args.name)
+            print(json.dumps(_grouped_export(store), indent=2, ensure_ascii=False))
+
+        elif args.cmd == "review":
+            store.set_review(args.addr, status=args.status, notes=args.notes)
+            print(json.dumps(_grouped_export(store), indent=2, ensure_ascii=False))
+
+        elif args.cmd == "bookmark":
+            store.set_bookmark(args.addr, label=args.label, color=args.color)
+            print(json.dumps(_grouped_export(store), indent=2, ensure_ascii=False))
+
+        elif args.cmd == "delete-bookmark":
+            store.delete_bookmark(args.addr)
+            print(json.dumps(_grouped_export(store), indent=2, ensure_ascii=False))
+
+        elif args.cmd == "clear-bookmarks":
+            store.clear_bookmarks()
+            print(json.dumps(_grouped_export(store), indent=2, ensure_ascii=False))
+
+        elif args.cmd == "migrate-legacy":
+            store.migrate_legacy_json(json.loads(args.json))
+            print(json.dumps(_grouped_export(store), indent=2, ensure_ascii=False))
 
     return 0
 
