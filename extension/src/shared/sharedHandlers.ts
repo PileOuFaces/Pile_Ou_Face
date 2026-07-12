@@ -214,7 +214,9 @@ function getAnnotationsPath(root, binaryPath, storageDir?) {
   const hash = crypto.createHash('sha256').update(absPath).update(fs.existsSync(absPath) ? String(fs.statSync(absPath).mtimeMs) : '').digest('hex').slice(0, 16);
   const annotationsBase = storageDir;
   const dir = path.join(annotationsBase, 'annotations');
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  if (!fs.existsSync(dir)) {
+    try { fs.mkdirSync(dir, { recursive: true }); } catch (_) { /* best-effort: read-only checks must not throw */ }
+  }
   return path.join(dir, `${hash}.json`);
 }
 
@@ -228,22 +230,6 @@ function readAnnotationsFile(filePath) {
     return {};
   }
   return {};
-}
-
-function writeAnnotationsAndNotify(panel, filePath, binaryPath, annotations) {
-  fs.writeFileSync(filePath, JSON.stringify(annotations, null, 2), 'utf8');
-  panel.webview.postMessage({ type: 'hubAnnotations', annotations });
-  panel.webview.postMessage({ type: 'hubAnnotationSaved', binaryPath });
-}
-
-function isEmptyAnnotationEntry(entry) {
-  return !entry || (
-    !entry.comment
-    && !entry.name
-    && !entry.bookmark
-    && !entry.reviewStatus
-    && !entry.reviewNotes
-  );
 }
 
 /**
@@ -262,7 +248,7 @@ function sharedHandlers(ctx) {
     setRawProfile,
     clearRawProfile,
   } = ctx;
-  const getAnnPath = (binaryPath) => getAnnotationsPath(root, binaryPath, storageDir);
+  const getAnnPath = (binaryPath) => getAnnotationsPath(root, binaryPath, storageDir || root);
 
   const annotationsBridge = ctx.annotationsBridge || makeAnnotationsBridge({
     root,
@@ -596,6 +582,14 @@ function sharedHandlers(ctx) {
         return;
       }
       try {
+        const legacyPath = getAnnPath(binaryPath);
+        if (fs.existsSync(legacyPath)) {
+          const legacy = readAnnotationsFile(legacyPath);
+          if (Object.keys(legacy).length) {
+            await annotationsBridge.migrateLegacyJson(binaryPath, legacy);
+          }
+          fs.renameSync(legacyPath, `${legacyPath}.migrated`);
+        }
         const annotations = await annotationsBridge.loadAnnotations(binaryPath);
         panel.webview.postMessage({ type: 'hubAnnotations', annotations });
       } catch (err) {

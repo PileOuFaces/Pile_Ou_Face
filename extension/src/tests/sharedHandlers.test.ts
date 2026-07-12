@@ -2,8 +2,20 @@ const { expect } = require("chai");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const crypto = require("crypto");
 const proxyquire = require("proxyquire");
 const sinon = require("sinon");
+
+function computeLegacyAnnotationsPath(root, binaryPath, storageDir) {
+  const absPath = path.isAbsolute(binaryPath) ? binaryPath : path.join(root, binaryPath);
+  const hash = crypto
+    .createHash("sha256")
+    .update(absPath)
+    .update(fs.existsSync(absPath) ? String(fs.statSync(absPath).mtimeMs) : "")
+    .digest("hex")
+    .slice(0, 16);
+  return path.join(storageDir, "annotations", `${hash}.json`);
+}
 
 function makePanelSink() {
   const messages = [];
@@ -229,5 +241,83 @@ describe("sharedHandlers", () => {
     );
     expect(fs.readFileSync(outputPath, "utf8")).to.equal("# Analyse\n\nContenu\n");
     expect(vscodeStub.window.showInformationMessage.calledOnce).to.equal(true);
+  });
+
+  it("migrates a legacy JSON annotations file on first load and renames it", async () => {
+    const sharedHandlers = proxyquire("../shared/sharedHandlers", {
+      vscode: vscodeStub,
+      "./fileManager": fileManagerStub,
+    });
+    const storageDir = path.join(tempRoot, "storage");
+    const binaryPath = path.join(tempRoot, "sample.bin");
+    fs.writeFileSync(binaryPath, Buffer.from("binary-content"));
+
+    const legacyPath = computeLegacyAnnotationsPath(tempRoot, binaryPath, storageDir);
+    fs.mkdirSync(path.dirname(legacyPath), { recursive: true });
+    const legacyAnnotations = {
+      "0x1000": { comment: "legacy comment", name: "legacy_fn" },
+    };
+    fs.writeFileSync(legacyPath, JSON.stringify(legacyAnnotations, null, 2), "utf8");
+
+    const migratedAnnotations = {
+      "0x1000": { comment: "legacy comment", name: "legacy_fn" },
+    };
+    const annotationsBridgeStub = {
+      migrateLegacyJson: sinon.stub().resolves(migratedAnnotations),
+      loadAnnotations: sinon.stub().resolves(migratedAnnotations),
+    };
+
+    const handlers = sharedHandlers({
+      root: tempRoot,
+      storageDir,
+      panel: sink.panel,
+      annotationsBridge: annotationsBridgeStub,
+    });
+
+    await handlers.hubLoadAnnotations({ binaryPath });
+
+    expect(annotationsBridgeStub.migrateLegacyJson.calledOnce).to.equal(true);
+    expect(annotationsBridgeStub.migrateLegacyJson.firstCall.args[0]).to.equal(binaryPath);
+    expect(annotationsBridgeStub.migrateLegacyJson.firstCall.args[1]).to.deep.equal(legacyAnnotations);
+
+    expect(fs.existsSync(legacyPath)).to.equal(false);
+    expect(fs.existsSync(`${legacyPath}.migrated`)).to.equal(true);
+    expect(JSON.parse(fs.readFileSync(`${legacyPath}.migrated`, "utf8"))).to.deep.equal(legacyAnnotations);
+
+    const annotationsMessage = sink.messages.find((message) => message.type === "hubAnnotations");
+    expect(annotationsMessage).to.exist;
+    expect(annotationsMessage.annotations).to.deep.equal(migratedAnnotations);
+  });
+
+  it("skips migration and loads directly when no legacy JSON file exists", async () => {
+    const sharedHandlers = proxyquire("../shared/sharedHandlers", {
+      vscode: vscodeStub,
+      "./fileManager": fileManagerStub,
+    });
+    const storageDir = path.join(tempRoot, "storage");
+    const binaryPath = path.join(tempRoot, "no-legacy.bin");
+    fs.writeFileSync(binaryPath, Buffer.from("binary-content"));
+
+    const currentAnnotations = { "0x2000": { comment: "already in sqlite" } };
+    const annotationsBridgeStub = {
+      migrateLegacyJson: sinon.stub().resolves({}),
+      loadAnnotations: sinon.stub().resolves(currentAnnotations),
+    };
+
+    const handlers = sharedHandlers({
+      root: tempRoot,
+      storageDir,
+      panel: sink.panel,
+      annotationsBridge: annotationsBridgeStub,
+    });
+
+    await handlers.hubLoadAnnotations({ binaryPath });
+
+    expect(annotationsBridgeStub.migrateLegacyJson.called).to.equal(false);
+    expect(annotationsBridgeStub.loadAnnotations.calledOnceWithExactly(binaryPath)).to.equal(true);
+
+    const annotationsMessage = sink.messages.find((message) => message.type === "hubAnnotations");
+    expect(annotationsMessage).to.exist;
+    expect(annotationsMessage.annotations).to.deep.equal(currentAnnotations);
   });
 });
