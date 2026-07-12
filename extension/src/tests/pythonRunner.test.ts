@@ -35,4 +35,66 @@ describe("pythonRunner", () => {
       expect(err.stderr).to.equal("traceback here");
     }
   });
+
+  it("uses the default python executable and process.env when not provided", async () => {
+    const execFileStub = sinon.stub().callsFake((cmd, args, opts, cb) => {
+      cb(null, "ok", "");
+    });
+    const pythonRunner = proxyquire("../shared/pythonRunner", {
+      child_process: { execFile: execFileStub },
+    });
+    const runPython = pythonRunner.makeRunPython({ root: "/tmp/root", extensionPath: "/tmp/ext" });
+    await runPython(["backends/foo.py"]);
+    const [calledExe, , calledOpts] = execFileStub.firstCall.args;
+    expect(calledExe).to.equal("python3");
+    expect(calledOpts.env).to.equal(process.env);
+  });
+
+  it("uses getPythonExecutable and buildPythonEnv when provided", async () => {
+    const execFileStub = sinon.stub().callsFake((cmd, args, opts, cb) => {
+      cb(null, "ok", "");
+    });
+    const pythonRunner = proxyquire("../shared/pythonRunner", {
+      child_process: { execFile: execFileStub },
+    });
+    const fakeEnv = { FOO: "bar" };
+    const runPython = pythonRunner.makeRunPython({
+      root: "/tmp/root",
+      extensionPath: "/tmp/ext",
+      getPythonExecutable: () => "/usr/bin/python3.11",
+      buildPythonEnv: () => fakeEnv,
+    });
+    await runPython(["backends/foo.py"]);
+    const [calledExe, , calledOpts] = execFileStub.firstCall.args;
+    expect(calledExe).to.equal("/usr/bin/python3.11");
+    expect(calledOpts.env).to.equal(fakeEnv);
+  });
+
+  it("respects custom timeout and maxBuffer options", async () => {
+    const execFileStub = sinon.stub().callsFake((cmd, args, opts, cb) => {
+      cb(null, "ok", "");
+    });
+    const pythonRunner = proxyquire("../shared/pythonRunner", {
+      child_process: { execFile: execFileStub },
+    });
+    const runPython = pythonRunner.makeRunPython({ root: "/tmp/root", extensionPath: "/tmp/ext" });
+    await runPython(["backends/foo.py"], { timeout: 5000, maxBuffer: 1024 });
+    const [, , calledOpts] = execFileStub.firstCall.args;
+    expect(calledOpts.timeout).to.equal(5000);
+    expect(calledOpts.maxBuffer).to.equal(1024);
+  });
+
+  it("falls back to root when extensionPath is not provided", async () => {
+    const path = require("path");
+    const execFileStub = sinon.stub().callsFake((cmd, args, opts, cb) => {
+      cb(null, "ok", "");
+    });
+    const pythonRunner = proxyquire("../shared/pythonRunner", {
+      child_process: { execFile: execFileStub },
+    });
+    const runPython = pythonRunner.makeRunPython({ root: "/tmp/root" });
+    await runPython(["backends/foo.py"]);
+    const [, calledArgs] = execFileStub.firstCall.args;
+    expect(calledArgs[0]).to.equal(path.join("/tmp/root", "backends/foo.py"));
+  });
 });

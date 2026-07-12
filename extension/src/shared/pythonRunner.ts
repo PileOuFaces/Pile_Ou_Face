@@ -2,6 +2,16 @@
 const cp = require('child_process');
 const path = require('path');
 
+/**
+ * Crée une fonction runPython(argsWithScript, opts) qui exécute un script Python en subprocess.
+ * @param {string} root - cwd du subprocess.
+ * @param {string} [extensionPath] - base de résolution des chemins de script ; retombe sur `root` si omis.
+ * @param {function} [getPythonExecutable] - résout l'exécutable python à utiliser (défaut: 'python3').
+ * @param {function} [buildPythonEnv] - résout les variables d'env passées au subprocess (défaut: process.env).
+ *
+ * argsWithScript : [scriptRelPath, ...cliArgs] — scriptRelPath est relatif à extensionPath/root,
+ * le reste est passé tel quel comme arguments CLI au script.
+ */
 function makeRunPython({ root, extensionPath, getPythonExecutable, buildPythonEnv }) {
   const resolveExe = getPythonExecutable || (() => 'python3');
   const resolveEnv = buildPythonEnv || (() => process.env);
