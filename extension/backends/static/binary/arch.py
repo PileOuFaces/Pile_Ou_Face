@@ -734,7 +734,7 @@ SH_ADAPTER = ArchAdapter(
     unconditional_jump_mnemonics=frozenset({"bra", "braf", "jmp"}),
     conditional_branch_mnemonics=frozenset({"bt", "bf", "bt/s", "bf/s"}),
     return_mnemonics=frozenset({"rts"}),
-    prologue_patterns=(),
+    prologue_patterns=((r"\bmov\.l\s+r14\s*,\s*@-r15\b", "sh entry"),),
     data_ref_mnemonics=GENERIC_DATA_REF_MNEMONICS,
     sp_registers=("r15", "sp"),
     lr_registers=("pr",),
@@ -750,7 +750,7 @@ TRICORE_ADAPTER = ArchAdapter(
         {"jeq", "jne", "jge", "jlt", "jgt", "jle", "jnz", "jz"}
     ),
     return_mnemonics=frozenset({"ret", "rfe", "fret"}),
-    prologue_patterns=(),
+    prologue_patterns=((r"\bsub\.a\s+sp\s*,\s*#(?:0x[0-9a-fA-F]+|\d+)\b", "sub.a sp"),),
     data_ref_mnemonics=GENERIC_DATA_REF_MNEMONICS,
     sp_registers=("a10", "sp"),
     lr_registers=("a11",),
