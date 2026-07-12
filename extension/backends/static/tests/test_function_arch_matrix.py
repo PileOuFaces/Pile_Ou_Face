@@ -24,10 +24,13 @@ from backends.static.disasm.discover_functions import discover_functions
 from backends.static.tests.fixtures.raw_fixture import (
     write_raw_arm32_call_fixture,
     write_raw_arm64_call_fixture,
+    write_raw_m68k_call_fixture,
     write_raw_mips32_be_call_fixture,
     write_raw_mips32_le_call_fixture,
     write_raw_ppc32_be_call_fixture,
     write_raw_ppc32_be_partial_call_fixture,
+    write_raw_riscv64_call_fixture,
+    write_raw_sparc_call_fixture,
     write_raw_thumb_call_fixture,
     write_raw_thumb_partial_call_fixture,
     write_raw_x64_call_fixture,
@@ -54,6 +57,9 @@ RAW_FUNCTION_FIXTURES: tuple[tuple[str, RawFixtureWriter], ...] = (
     ("mips32_le", write_raw_mips32_le_call_fixture),
     ("ppc32_be", write_raw_ppc32_be_call_fixture),
     ("ppc32_be_partial", write_raw_ppc32_be_partial_call_fixture),
+    ("riscv64", write_raw_riscv64_call_fixture),
+    ("sparc", write_raw_sparc_call_fixture),
+    ("m68k", write_raw_m68k_call_fixture),
 )
 
 FUNCTION_FEATURES = ("discover_functions", "cfg", "call_graph")
@@ -65,10 +71,7 @@ CFG_CALLGRAPH_COVERAGE_DEBT_ISSUE = 82
 # Keep this list explicit so #82 can burn it down adapter by adapter.
 CFG_CALLGRAPH_UNFIXTURED_ADAPTERS = {
     "bpf",
-    "m68k",
-    "riscv",
     "sh",
-    "sparc",
     "sysz",
     "tricore",
     "wasm",
@@ -92,36 +95,6 @@ SEMANTIC_LINE_FIXTURES: tuple[tuple[str, SemanticFixture], ...] = (
         },
     ),
     (
-        "m68k",
-        {
-            "adapter_key": "m68k",
-            "arch_hint": "m68k",
-            "entry_addr": "0xb000",
-            "target_addr": "0xb020",
-            "lines": [
-                {"addr": "0xb000", "text": "link a6, #-0x10", "line": 1},
-                {"addr": "0xb004", "text": "jsr 0xb020", "line": 2},
-                {"addr": "0xb008", "text": "rts", "line": 3},
-                {"addr": "0xb020", "text": "rts", "line": 4},
-            ],
-        },
-    ),
-    (
-        "riscv",
-        {
-            "adapter_key": "riscv",
-            "arch_hint": "riscv64",
-            "entry_addr": "0xc000",
-            "target_addr": "0xc020",
-            "lines": [
-                {"addr": "0xc000", "text": "addi sp, sp, -0x10", "line": 1},
-                {"addr": "0xc004", "text": "jal 0xc020", "line": 2},
-                {"addr": "0xc008", "text": "ret", "line": 3},
-                {"addr": "0xc020", "text": "ret", "line": 4},
-            ],
-        },
-    ),
-    (
         "sh",
         {
             "adapter_key": "sh",
@@ -134,22 +107,6 @@ SEMANTIC_LINE_FIXTURES: tuple[tuple[str, SemanticFixture], ...] = (
                 {"addr": "0xd002", "text": "bsr 0xd020", "line": 2},
                 {"addr": "0xd004", "text": "rts", "line": 3},
                 {"addr": "0xd020", "text": "rts", "line": 4},
-            ],
-        },
-    ),
-    (
-        "sparc",
-        {
-            "adapter_key": "sparc",
-            "arch_hint": "sparc",
-            "entry_addr": "0xe000",
-            "target_addr": "0xe020",
-            "lines": [
-                {"addr": "0xe000", "text": "save %sp, -0x60, %sp", "line": 1},
-                {"addr": "0xe004", "text": "call 0xe020", "line": 2},
-                {"addr": "0xe008", "text": "nop", "line": 3},
-                {"addr": "0xe00c", "text": "retl", "line": 4},
-                {"addr": "0xe020", "text": "retl", "line": 5},
             ],
         },
     ),

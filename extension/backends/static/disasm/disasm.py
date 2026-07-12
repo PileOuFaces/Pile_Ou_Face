@@ -146,6 +146,57 @@ def _apply_capstone_syntax(md, cs_arch: int, syntax: str) -> None:
         md.syntax = capstone.CS_OPT_SYNTAX_ATT
 
 
+_RISCV_PC_RELATIVE_MNEMONICS = {
+    "b",
+    "beq",
+    "beqz",
+    "bge",
+    "bgez",
+    "bgeu",
+    "bgt",
+    "bgtu",
+    "bgtz",
+    "ble",
+    "bleu",
+    "blez",
+    "blt",
+    "bltu",
+    "bltz",
+    "bne",
+    "bnez",
+    "j",
+    "jal",
+    "tail",
+}
+
+
+def _normalize_capstone_operands(cs_arch: int, instr) -> str:
+    """Normalise certains opérandes Capstone vers les adresses attendues.
+
+    Capstone RISC-V expose les cibles PC-relatives comme offsets (`jal 0x1c`)
+    alors que CFG/Call Graph attendent des adresses virtuelles (`jal 0xc020`).
+    """
+    op_str = str(getattr(instr, "op_str", "") or "")
+    if not capstone or cs_arch != getattr(capstone, "CS_ARCH_RISCV", None):
+        return op_str
+    mnemonic = str(getattr(instr, "mnemonic", "") or "").lower()
+    if mnemonic not in _RISCV_PC_RELATIVE_MNEMONICS:
+        return op_str
+    operands = [part.strip() for part in op_str.split(",") if part.strip()]
+    if not operands:
+        return op_str
+    try:
+        offset = (
+            int(operands[-1], 16)
+            if operands[-1].startswith("0x")
+            else int(operands[-1])
+        )
+    except ValueError:
+        return op_str
+    operands[-1] = f"0x{int(instr.address) + offset:x}"
+    return ", ".join(operands)
+
+
 def _parse_base_addr(value: str | int | None) -> int:
     """Parse une adresse de base hexadécimale ou décimale."""
     if value is None or value == "":
@@ -311,15 +362,16 @@ def disassemble_with_capstone(
             # Format similaire à objdump : "mnemonic\toperands"
             # Ajouter les bytes hex au début (comme objdump -d)
             bytes_hex = " ".join(f"{b:02x}" for b in instr.bytes)
+            op_str = _normalize_capstone_operands(cs_arch, instr)
             # Format : "bytes_hex  mnemonic  op_str"
-            text = f"{bytes_hex:<20} {instr.mnemonic:<8} {instr.op_str}"
+            text = f"{bytes_hex:<20} {instr.mnemonic:<8} {op_str}"
             lines.append(
                 {
                     "addr": addr,
                     "text": text.strip(),
                     "bytes": bytes_hex,
                     "mnemonic": instr.mnemonic,
-                    "operands": instr.op_str,
+                    "operands": op_str,
                 }
             )
             processed = min(
@@ -407,14 +459,15 @@ def disassemble_raw_blob(
         for instr in md.disasm(code_bytes, base_addr):
             addr = f"0x{instr.address:x}"
             bytes_hex = " ".join(f"{b:02x}" for b in instr.bytes)
-            text = f"{bytes_hex:<20} {instr.mnemonic:<8} {instr.op_str}"
+            op_str = _normalize_capstone_operands(cs_arch, instr)
+            text = f"{bytes_hex:<20} {instr.mnemonic:<8} {op_str}"
             lines.append(
                 {
                     "addr": addr,
                     "text": text.strip(),
                     "bytes": bytes_hex,
                     "mnemonic": instr.mnemonic,
-                    "operands": instr.op_str,
+                    "operands": op_str,
                 }
             )
             processed = min(

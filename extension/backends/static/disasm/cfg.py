@@ -95,6 +95,10 @@ def _extract_jump_target(text: str) -> str | None:
     match = re.search(r"0x([0-9a-fA-F]+)", search_area)
     if match:
         return _normalize_addr("0x" + match.group(1).lower())
+    # Motorola syntax (M68K): jsr $b020.l / bra $b020
+    match = re.search(r"\$([0-9a-fA-F]+)(?:\.[a-z]+)?", search_area)
+    if match:
+        return _normalize_addr("0x" + match.group(1).lower())
     # Sans 0x: 401240 ou 1000004be (objdump macOS)
     match = re.search(r"\b([0-9a-fA-F]{6,})\b", search_area)
     if match:

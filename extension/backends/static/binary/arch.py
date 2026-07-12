@@ -720,7 +720,7 @@ M68K_ADAPTER = ArchAdapter(
         }
     ),
     return_mnemonics=frozenset({"rts", "rte", "rtr"}),
-    prologue_patterns=((r"\blink\s+a[56]\s*,", "link"),),
+    prologue_patterns=((r"\blink(?:\.[wl])?\s+a[56]\s*,", "link"),),
     data_ref_mnemonics=GENERIC_DATA_REF_MNEMONICS,
     sp_registers=("sp", "a7"),
     fp_registers=("a6", "a5"),
