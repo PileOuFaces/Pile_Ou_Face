@@ -693,6 +693,33 @@ WASM_ADAPTER = ArchAdapter(
     return_mnemonics=frozenset({"return", "end"}),
     prologue_patterns=(),
     data_ref_mnemonics=GENERIC_DATA_REF_MNEMONICS,
+    support={
+        "disasm": FeatureSupport("full", "Capstone WebAssembly bytecode"),
+        "discover_functions": FeatureSupport(
+            "unsupported",
+            "WASM calls use function indexes; no module-level function map yet",
+        ),
+        "cfg": FeatureSupport(
+            "unsupported",
+            "Requires WASM function-index/block-structure mapping, not raw addresses",
+        ),
+        "xrefs": FeatureSupport(
+            "unsupported",
+            "WASM references are index-based and need module metadata",
+        ),
+        "call_graph": FeatureSupport(
+            "unsupported",
+            "WASM call targets are function indexes, not virtual addresses",
+        ),
+        "stack_frame": FeatureSupport(
+            "unsupported",
+            "WASM stack semantics are not modeled by the native stack-frame backend",
+        ),
+        "calling_convention": FeatureSupport(
+            "unsupported",
+            "WASM function signatures are not extracted by the arch adapter",
+        ),
+    },
 )
 
 M68K_ADAPTER = ArchAdapter(
@@ -790,7 +817,6 @@ _PARTIAL_SEMANTIC_ADAPTERS = {
     "riscv32": RISCV_ADAPTER,
     "riscv64": RISCV_ADAPTER,
     "bpf": BPF_ADAPTER,
-    "wasm": WASM_ADAPTER,
     "m68k": M68K_ADAPTER,
     "sh": SH_ADAPTER,
     "sh4": SH_ADAPTER,

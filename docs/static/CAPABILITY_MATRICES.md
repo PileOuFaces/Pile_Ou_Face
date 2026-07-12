@@ -25,10 +25,14 @@ avec semantique CFG/Call Graph sont actuellement :
 - `riscv` : RISC-V 32 / 64 ;
 - `sysz` : SystemZ / s390x ;
 - `bpf` : BPF ;
-- `wasm` : WebAssembly ;
 - `m68k` : M68K ;
 - `sh` : SuperH ;
 - `tricore` : TriCore.
+
+`wasm` / WebAssembly reste supporte en desassemblage Capstone, mais n'est pas
+annonce comme semantique CFG/Call Graph : les instructions `call` ciblent des
+index de fonctions WASM, pas des adresses virtuelles stables. Il faudra un
+modele module-level index -> fonction avant de promouvoir ces features.
 
 Les autres profils Capstone raw peuvent rester `disasm-only` ou `unsupported`
 pour les features semantiques tant qu'aucun adaptateur ISA n'existe. Cela
