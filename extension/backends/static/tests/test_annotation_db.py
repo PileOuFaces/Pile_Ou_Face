@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from backends.shared.exceptions import BinaryNotFoundError
 from backends.static.annotations.annotation_db import (
     AnnotationDb,
     default_db_path,
@@ -126,6 +127,34 @@ class TestAnnotationDb(unittest.TestCase):
         with AnnotationDb(self._db_path) as db:
             result = db.get_annotations(self._binary_path)
         self.assertEqual(result[0]["value"], "persisted")
+
+    def test_wal_mode_enabled(self):
+        with AnnotationDb(self._db_path) as db:
+            mode = db._conn.execute("PRAGMA journal_mode").fetchone()[0]
+        self.assertEqual(mode.lower(), "wal")
+
+    def test_deleting_binary_cascades_to_annotations(self):
+        with AnnotationDb(self._db_path) as db:
+            db.save_annotation(self._binary_path, "0x401000", "comment", "c")
+            sha256 = hash_binary_content(self._binary_path)
+            # Directly delete the parent row to exercise ON DELETE CASCADE.
+            db._conn.execute("DELETE FROM binaries WHERE sha256 = ?", (sha256,))
+            db._conn.commit()
+            remaining = db._conn.execute(
+                "SELECT * FROM annotations WHERE binary_sha256 = ?", (sha256,)
+            ).fetchall()
+        self.assertEqual(remaining, [])
+
+    def test_hash_binary_content_raises_for_missing_file(self):
+        missing_path = str(Path(self._binary_path).with_suffix(".missing"))
+        with self.assertRaises(BinaryNotFoundError):
+            hash_binary_content(missing_path)
+
+    def test_get_annotations_raises_for_missing_binary(self):
+        missing_path = str(Path(self._binary_path).with_suffix(".missing"))
+        with AnnotationDb(self._db_path) as db:
+            with self.assertRaises(BinaryNotFoundError):
+                db.get_annotations(missing_path)
 
 
 if __name__ == "__main__":

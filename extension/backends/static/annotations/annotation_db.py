@@ -12,6 +12,8 @@ import hashlib
 import sqlite3
 from pathlib import Path
 
+from backends.shared.exceptions import BinaryNotFoundError
+
 
 def default_db_path() -> Path:
     """Return the default location of the annotations database."""
@@ -25,9 +27,12 @@ def hash_binary_content(binary_path: str) -> str:
     memory.
     """
     sha256 = hashlib.sha256()
-    with open(binary_path, "rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            sha256.update(chunk)
+    try:
+        with open(binary_path, "rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                sha256.update(chunk)
+    except OSError as exc:
+        raise BinaryNotFoundError(f"Binary not found: {binary_path}") from exc
     return sha256.hexdigest()
 
 
@@ -39,6 +44,8 @@ class AnnotationDb:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(self.db_path))
         self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA foreign_keys=ON")
         self._init_schema()
 
     def _init_schema(self) -> None:
