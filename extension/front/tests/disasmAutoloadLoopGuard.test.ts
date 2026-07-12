@@ -50,13 +50,11 @@ describe("disasm autoload loop guard (skipAutoLoad threaded through nav chain)",
     const fnEnd = nextFnStart > -1 ? nextFnStart : source.indexOf("document.querySelectorAll('.group-tab')", fnStart);
     const fn = source.slice(fnStart, fnEnd);
 
-    const guardIndex = fn.indexOf("if (!skipAutoLoad)");
-    const autoLoadCallIndex = fn.indexOf("_autoLoadTab(tabId)");
-    expect(guardIndex, "showSubTab must guard the _autoLoadTab call with skipAutoLoad").to.be.greaterThan(-1);
-    expect(autoLoadCallIndex, "_autoLoadTab(tabId) call not found").to.be.greaterThan(-1);
-    expect(guardIndex).to.be.lessThan(
-      autoLoadCallIndex,
-      "the skipAutoLoad guard must precede the _autoLoadTab call it protects",
-    );
+    // Assert the guard and the call form a single compound statement, not just
+    // that the guard text appears somewhere before the call — otherwise a
+    // refactor could split them apart (e.g. an unrelated `if (!skipAutoLoad)`
+    // followed later by an unconditional `_autoLoadTab(tabId)`) and this test
+    // would keep passing while silently reintroducing the infinite loop.
+    expect(fn).to.include("if (!skipAutoLoad) _autoLoadTab(tabId)");
   });
 });
