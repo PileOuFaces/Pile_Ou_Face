@@ -320,4 +320,50 @@ describe("sharedHandlers", () => {
     expect(annotationsMessage).to.exist;
     expect(annotationsMessage.annotations).to.deep.equal(currentAnnotations);
   });
+
+  it("falls through gracefully when a concurrent call already migrated and renamed the legacy file", async () => {
+    const sharedHandlers = proxyquire("../shared/sharedHandlers", {
+      vscode: vscodeStub,
+      "./fileManager": fileManagerStub,
+    });
+    const storageDir = path.join(tempRoot, "storage");
+    const binaryPath = path.join(tempRoot, "sample-race.bin");
+    fs.writeFileSync(binaryPath, Buffer.from("binary-content"));
+
+    const legacyPath = computeLegacyAnnotationsPath(tempRoot, binaryPath, storageDir);
+    fs.mkdirSync(path.dirname(legacyPath), { recursive: true });
+    const legacyAnnotations = {
+      "0x1000": { comment: "legacy comment", name: "legacy_fn" },
+    };
+    fs.writeFileSync(legacyPath, JSON.stringify(legacyAnnotations, null, 2), "utf8");
+
+    const migratedAnnotations = {
+      "0x1000": { comment: "legacy comment", name: "legacy_fn" },
+    };
+    const annotationsBridgeStub = {
+      // Simulate a "winning" concurrent call that already migrated and renamed
+      // the legacy file during this call's await on migrateLegacyJson.
+      migrateLegacyJson: sinon.stub().callsFake(async () => {
+        fs.renameSync(legacyPath, `${legacyPath}.migrated`);
+        return migratedAnnotations;
+      }),
+      loadAnnotations: sinon.stub().resolves(migratedAnnotations),
+    };
+
+    const handlers = sharedHandlers({
+      root: tempRoot,
+      storageDir,
+      panel: sink.panel,
+      annotationsBridge: annotationsBridgeStub,
+    });
+
+    await handlers.hubLoadAnnotations({ binaryPath });
+
+    expect(vscodeStub.window.showErrorMessage.called).to.equal(false);
+    expect(annotationsBridgeStub.loadAnnotations.calledOnceWithExactly(binaryPath)).to.equal(true);
+
+    const annotationsMessage = sink.messages.find((message) => message.type === "hubAnnotations");
+    expect(annotationsMessage).to.exist;
+    expect(annotationsMessage.annotations).to.deep.equal(migratedAnnotations);
+  });
 });

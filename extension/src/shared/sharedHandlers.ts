@@ -588,7 +588,9 @@ function sharedHandlers(ctx) {
           if (Object.keys(legacy).length) {
             await annotationsBridge.migrateLegacyJson(binaryPath, legacy);
           }
-          fs.renameSync(legacyPath, `${legacyPath}.migrated`);
+          if (fs.existsSync(legacyPath)) {
+            fs.renameSync(legacyPath, `${legacyPath}.migrated`);
+          }
         }
         const annotations = await annotationsBridge.loadAnnotations(binaryPath);
         panel.webview.postMessage({ type: 'hubAnnotations', annotations });
