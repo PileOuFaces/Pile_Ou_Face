@@ -85,9 +85,9 @@ function ensureTempDir(root) {
   return dir;
 }
 
-// Returns '' when context.storageUri is unavailable — check before use.
+// Returns '' when both workspace and global storage are unavailable — check before use.
 function getStorageDir(context) {
-  return String(context?.storageUri?.fsPath || '');
+  return String(context?.storageUri?.fsPath || context?.globalStorageUri?.fsPath || '');
 }
 
 // Returns '' when context.globalStorageUri is unavailable — check before use.
@@ -97,7 +97,7 @@ function getGlobalStorageDir(context) {
 
 function ensureStorageDir(context) {
   const dir = getStorageDir(context);
-  if (!dir) throw new Error('[storage] context.storageUri non disponible');
+  if (!dir) throw new Error('[storage] context.storageUri/globalStorageUri non disponible');
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
     logChannel.appendLine(`[storage] Dossier créé: ${dir}`);
