@@ -12,7 +12,8 @@ const cp = require('child_process');
 const crypto = require('crypto');
 const readline = require('readline');
 const fileManager = require('./fileManager');
-const { detectPythonExecutable, getExtensionPath } = require('./utils');
+const { detectPythonExecutable, getExtensionPath, buildRuntimeEnv } = require('./utils');
+const { makeAnnotationsBridge } = require('./annotationsBridge');
 const {
   cancelAiProcess,
   clearAiProcess,
@@ -262,6 +263,18 @@ function sharedHandlers(ctx) {
     clearRawProfile,
   } = ctx;
   const getAnnPath = (binaryPath) => getAnnotationsPath(root, binaryPath, storageDir);
+
+  const annotationsBridge = ctx.annotationsBridge || makeAnnotationsBridge({
+    root,
+    extensionPath: context?.extensionPath || getExtensionPath() || root,
+    getPythonExecutable: () => detectPythonExecutable(root),
+    buildPythonEnv: () => buildRuntimeEnv(root, storageDir),
+  });
+
+  const notifyAnnotations = (binaryPath, annotations) => {
+    panel.webview.postMessage({ type: 'hubAnnotations', annotations });
+    panel.webview.postMessage({ type: 'hubAnnotationSaved', binaryPath });
+  };
 
   const forgetRecentBinary = (binaryPath) => {
     panel.webview.postMessage({ type: 'hubForgetRecentBinary', binaryPath });
@@ -576,118 +589,59 @@ function sharedHandlers(ctx) {
     hubError: (message) => {
       vscode.window.showErrorMessage(message.message || 'Erreur');
     },
-    hubLoadAnnotations: (message) => {
+    hubLoadAnnotations: async (message) => {
       const { binaryPath } = message;
       if (!binaryPath) {
         panel.webview.postMessage({ type: 'hubAnnotations', annotations: {} });
         return;
       }
-      const p = getAnnPath(binaryPath);
-      const annotations = readAnnotationsFile(p);
+      const annotations = await annotationsBridge.loadAnnotations(binaryPath);
       panel.webview.postMessage({ type: 'hubAnnotations', annotations });
     },
-    hubSaveAnnotation: (message) => {
+    hubSaveAnnotation: async (message) => {
       const { binaryPath, addr, comment, name } = message;
       if (!binaryPath || !addr) return;
       const normAddr = addr.startsWith('0x') ? addr : '0x' + addr;
-      const p = getAnnPath(binaryPath);
-      const annotations = readAnnotationsFile(p);
-      const existing = annotations[normAddr] || {};
-      annotations[normAddr] = {
-        ...existing,
-        comment: comment !== undefined ? (comment || '') : (existing.comment || ''),
-        name: name !== undefined ? (name || '') : (existing.name || ''),
-        updated: new Date().toISOString(),
-      };
-      writeAnnotationsAndNotify(panel, p, binaryPath, annotations);
+      const annotations = await annotationsBridge.saveAnnotation(binaryPath, normAddr, { comment, name });
+      notifyAnnotations(binaryPath, annotations);
       vscode.window.showInformationMessage(`Annotation enregistrée pour ${normAddr}`);
     },
-    hubSaveFunctionReview: (message) => {
+    hubSaveFunctionReview: async (message) => {
       const { binaryPath, addr, reviewStatus, reviewNotes } = message;
       if (!binaryPath || !addr) return;
       const normAddr = addr.startsWith('0x') ? addr : '0x' + addr;
-      const p = getAnnPath(binaryPath);
-      const annotations = readAnnotationsFile(p);
-      const existing = annotations[normAddr] || {};
-      const nextStatus = String(reviewStatus || '').trim();
-      const nextNotes = String(reviewNotes || '').trim();
-      const nextEntry = {
-        ...existing,
-        reviewStatus: nextStatus,
-        reviewNotes: nextNotes,
-        reviewUpdated: new Date().toISOString(),
-      };
-      if (!nextStatus) delete nextEntry.reviewStatus;
-      if (!nextNotes) delete nextEntry.reviewNotes;
-      if (!nextStatus && !nextNotes) delete nextEntry.reviewUpdated;
-      if (isEmptyAnnotationEntry(nextEntry)) delete annotations[normAddr];
-      else annotations[normAddr] = nextEntry;
-      writeAnnotationsAndNotify(panel, p, binaryPath, annotations);
+      const annotations = await annotationsBridge.saveFunctionReview(binaryPath, normAddr, { reviewStatus, reviewNotes });
+      notifyAnnotations(binaryPath, annotations);
     },
-    hubSaveBookmark: (message) => {
+    hubSaveBookmark: async (message) => {
       const { binaryPath, addr, label, color } = message;
       if (!binaryPath || !addr) return;
       const normAddr = addr.startsWith('0x') ? addr : '0x' + addr;
-      const p = getAnnPath(binaryPath);
-      const annotations = readAnnotationsFile(p);
-      const existing = annotations[normAddr] || {};
-      annotations[normAddr] = {
-        ...existing,
-        bookmark: true,
-        bookmarkLabel: label || existing.bookmarkLabel || existing.name || normAddr,
-        bookmarkColor: color || existing.bookmarkColor || '#4ec9b0',
-        bookmarkUpdated: new Date().toISOString(),
-      };
-      writeAnnotationsAndNotify(panel, p, binaryPath, annotations);
+      const existing = (await annotationsBridge.loadAnnotations(binaryPath))[normAddr] || {};
+      const resolvedLabel = label || existing.bookmarkLabel || existing.name || normAddr;
+      const resolvedColor = color || existing.bookmarkColor || '#4ec9b0';
+      const annotations = await annotationsBridge.saveBookmark(binaryPath, normAddr, { label: resolvedLabel, color: resolvedColor });
+      notifyAnnotations(binaryPath, annotations);
     },
-    hubDeleteBookmark: (message) => {
+    hubDeleteBookmark: async (message) => {
       const { binaryPath, addr } = message;
       if (!binaryPath || !addr) return;
       const normAddr = addr.startsWith('0x') ? addr : '0x' + addr;
-      const p = getAnnPath(binaryPath);
-      const annotations = readAnnotationsFile(p);
-      const existing = annotations[normAddr];
-      if (!existing) return;
-      delete existing.bookmark;
-      delete existing.bookmarkLabel;
-      delete existing.bookmarkColor;
-      delete existing.bookmarkUpdated;
-      if (isEmptyAnnotationEntry(existing)) delete annotations[normAddr];
-      else annotations[normAddr] = existing;
-      writeAnnotationsAndNotify(panel, p, binaryPath, annotations);
+      const annotations = await annotationsBridge.deleteBookmark(binaryPath, normAddr);
+      notifyAnnotations(binaryPath, annotations);
     },
-    hubClearBookmarks: (message) => {
+    hubClearBookmarks: async (message) => {
       const { binaryPath } = message;
       if (!binaryPath) return;
-      const p = getAnnPath(binaryPath);
-      const annotations = readAnnotationsFile(p);
-      Object.keys(annotations).forEach((addr) => {
-        const entry = annotations[addr];
-        if (!entry || !entry.bookmark) return;
-        delete entry.bookmark;
-        delete entry.bookmarkLabel;
-        delete entry.bookmarkColor;
-        delete entry.bookmarkUpdated;
-        if (isEmptyAnnotationEntry(entry)) delete annotations[addr];
-        else annotations[addr] = entry;
-      });
-      writeAnnotationsAndNotify(panel, p, binaryPath, annotations);
+      const annotations = await annotationsBridge.clearBookmarks(binaryPath);
+      notifyAnnotations(binaryPath, annotations);
     },
-    hubDeleteAnnotation: (message) => {
+    hubDeleteAnnotation: async (message) => {
       const { binaryPath, addr } = message;
       if (!binaryPath || !addr) return;
-      const p = getAnnPath(binaryPath);
-      const annotations = readAnnotationsFile(p);
       const normAddr = addr.startsWith('0x') ? addr : '0x' + addr;
-      const existing = annotations[normAddr];
-      if (existing) {
-        delete existing.comment;
-        delete existing.name;
-        delete existing.updated;
-        if (isEmptyAnnotationEntry(existing)) delete annotations[normAddr];
-        else annotations[normAddr] = existing;
-      }
-      writeAnnotationsAndNotify(panel, p, binaryPath, annotations);
+      const annotations = await annotationsBridge.deleteAnnotation(binaryPath, normAddr);
+      notifyAnnotations(binaryPath, annotations);
     },
     hubAiProvidersGet: () => {
       const getSavedSettings = () => {
