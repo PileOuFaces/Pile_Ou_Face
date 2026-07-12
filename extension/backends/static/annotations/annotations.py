@@ -207,6 +207,26 @@ class AnnotationStore:
             if "label" in v
         ]
 
+    def migrate_legacy_json(self, legacy_annotations: dict) -> None:
+        """Insère les entrées d'un ancien fichier JSON par binaire (système A)."""
+        for addr, entry in legacy_annotations.items():
+            if entry.get("comment"):
+                self.comment(addr, entry["comment"])
+            if entry.get("name"):
+                self.rename(addr, entry["name"])
+            if entry.get("reviewStatus") or entry.get("reviewNotes"):
+                self.set_review(
+                    addr,
+                    status=entry.get("reviewStatus", ""),
+                    notes=entry.get("reviewNotes", ""),
+                )
+            if entry.get("bookmark"):
+                self.set_bookmark(
+                    addr,
+                    label=entry.get("bookmarkLabel", addr),
+                    color=entry.get("bookmarkColor", "#4ec9b0"),
+                )
+
     def export_json(self) -> builtins.list[dict]:
         """Retourne toutes les annotations au format JSON-serializable."""
         return self._cache.get_annotations(self._binary_path)
