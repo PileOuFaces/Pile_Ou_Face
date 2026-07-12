@@ -21,15 +21,15 @@ function makeAnnotationsBridge(ctx) {
 
   return {
     loadAnnotations: (binaryPath) => invoke(binaryPath, ['list', '--grouped']),
-    saveAnnotation: (binaryPath, addr, { comment, name } = {}) => {
+    saveAnnotation: (binaryPath, addr, { comment, name }: { comment?: string; name?: string } = {}) => {
       const args = ['annotate', '--addr', addr];
       if (comment !== undefined) args.push('--comment', comment);
       if (name !== undefined) args.push('--name', name);
       return invoke(binaryPath, args);
     },
-    saveFunctionReview: (binaryPath, addr, { reviewStatus, reviewNotes } = {}) =>
+    saveFunctionReview: (binaryPath, addr, { reviewStatus, reviewNotes }: { reviewStatus?: string; reviewNotes?: string } = {}) =>
       invoke(binaryPath, ['review', '--addr', addr, '--status', reviewStatus || '', '--notes', reviewNotes || '']),
-    saveBookmark: (binaryPath, addr, { label, color } = {}) =>
+    saveBookmark: (binaryPath, addr, { label, color }: { label?: string; color?: string } = {}) =>
       invoke(binaryPath, ['bookmark', '--addr', addr, '--label', label || '', '--color', color || '#4ec9b0']),
     deleteBookmark: (binaryPath, addr) => invoke(binaryPath, ['delete-bookmark', '--addr', addr]),
     clearBookmarks: (binaryPath) => invoke(binaryPath, ['clear-bookmarks']),
