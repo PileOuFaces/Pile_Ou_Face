@@ -8,6 +8,7 @@
 const vscode = require('vscode');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const cp = require('child_process');
 const crypto = require('crypto');
 const readline = require('readline');
@@ -217,6 +218,21 @@ function getAnnotationsPath(root, binaryPath, storageDir?) {
   return path.join(dir, `${hash}.json`);
 }
 
+function sanitizeArtifactToken(value, fallback = 'item') {
+  const text = String(value || '').trim();
+  const safe = text.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/_+/g, '_');
+  return safe || fallback;
+}
+
+function getAnnotationsCacheDbPath(binaryPath, storageDir) {
+  const absPath = path.resolve(binaryPath);
+  const cacheDir = path.join(storageDir, 'pfdb');
+  if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
+  const cacheName = sanitizeArtifactToken(path.basename(absPath), 'binary');
+  const cacheKey = crypto.createHash('sha256').update(String(absPath)).digest('hex').slice(0, 16);
+  return path.join(cacheDir, `${cacheName}.${cacheKey}.pfdb`);
+}
+
 function readAnnotationsFile(filePath) {
   try {
     if (fs.existsSync(filePath)) {
@@ -229,9 +245,68 @@ function readAnnotationsFile(filePath) {
   return {};
 }
 
-function writeAnnotationsAndNotify(panel, filePath, binaryPath, annotations) {
-  fs.writeFileSync(filePath, JSON.stringify(annotations, null, 2), 'utf8');
-  panel.webview.postMessage({ type: 'hubAnnotations', annotations });
+function runHubAnnotationsBridge(root, storageDir, binaryPath, command, annotations = null) {
+  if (!storageDir || !binaryPath) return null;
+  const script = path.join(getExtensionPath() || root, 'backends', 'static', 'annotations', 'hub_annotations.py');
+  if (!fs.existsSync(script)) return null;
+
+  const cacheDb = getAnnotationsCacheDbPath(binaryPath, storageDir);
+  const pythonExe = detectPythonExecutable(root);
+  const args = [script, command, '--binary', binaryPath, '--cache-db', cacheDb];
+  let tempDir = '';
+  try {
+    if (command === 'replace') {
+      tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pof-hub-annotations-'));
+      const inputPath = path.join(tempDir, 'annotations.json');
+      fs.writeFileSync(inputPath, JSON.stringify(annotations || {}, null, 2), 'utf8');
+      args.push('--input-json', inputPath);
+    }
+    const stdout = cp.execFileSync(pythonExe, args, {
+      cwd: getExtensionPath() || root,
+      env: {
+        ...process.env,
+        PYTHONPATH: [getExtensionPath() || root, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
+      },
+      encoding: 'utf8',
+      timeout: 10000,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    const parsed = JSON.parse(stdout || '{}');
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (_) {
+    return null;
+  } finally {
+    if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+function readAnnotations(root, storageDir, binaryPath, filePath) {
+  const sqliteAnnotations = runHubAnnotationsBridge(root, storageDir, binaryPath, 'export');
+  if (sqliteAnnotations && Object.keys(sqliteAnnotations).length > 0) {
+    fs.writeFileSync(filePath, JSON.stringify(sqliteAnnotations, null, 2), 'utf8');
+    return sqliteAnnotations;
+  }
+
+  const legacyAnnotations = readAnnotationsFile(filePath);
+  if (Object.keys(legacyAnnotations).length > 0) {
+    const migrated = runHubAnnotationsBridge(root, storageDir, binaryPath, 'replace', legacyAnnotations);
+    if (migrated) {
+      fs.writeFileSync(filePath, JSON.stringify(migrated, null, 2), 'utf8');
+      return migrated;
+    }
+  }
+  return legacyAnnotations;
+}
+
+function writeAnnotations(root, storageDir, filePath, binaryPath, annotations) {
+  const persisted = runHubAnnotationsBridge(root, storageDir, binaryPath, 'replace', annotations) || annotations;
+  fs.writeFileSync(filePath, JSON.stringify(persisted, null, 2), 'utf8');
+  return persisted;
+}
+
+function writeAnnotationsAndNotify(root, storageDir, panel, filePath, binaryPath, annotations) {
+  const persisted = writeAnnotations(root, storageDir, filePath, binaryPath, annotations);
+  panel.webview.postMessage({ type: 'hubAnnotations', annotations: persisted });
   panel.webview.postMessage({ type: 'hubAnnotationSaved', binaryPath });
 }
 
@@ -583,7 +658,7 @@ function sharedHandlers(ctx) {
         return;
       }
       const p = getAnnPath(binaryPath);
-      const annotations = readAnnotationsFile(p);
+      const annotations = readAnnotations(root, storageDir, binaryPath, p);
       panel.webview.postMessage({ type: 'hubAnnotations', annotations });
     },
     hubSaveAnnotation: (message) => {
@@ -591,7 +666,7 @@ function sharedHandlers(ctx) {
       if (!binaryPath || !addr) return;
       const normAddr = addr.startsWith('0x') ? addr : '0x' + addr;
       const p = getAnnPath(binaryPath);
-      const annotations = readAnnotationsFile(p);
+      const annotations = readAnnotations(root, storageDir, binaryPath, p);
       const existing = annotations[normAddr] || {};
       annotations[normAddr] = {
         ...existing,
@@ -599,7 +674,7 @@ function sharedHandlers(ctx) {
         name: name !== undefined ? (name || '') : (existing.name || ''),
         updated: new Date().toISOString(),
       };
-      writeAnnotationsAndNotify(panel, p, binaryPath, annotations);
+      writeAnnotationsAndNotify(root, storageDir, panel, p, binaryPath, annotations);
       vscode.window.showInformationMessage(`Annotation enregistrée pour ${normAddr}`);
     },
     hubSaveFunctionReview: (message) => {
@@ -607,7 +682,7 @@ function sharedHandlers(ctx) {
       if (!binaryPath || !addr) return;
       const normAddr = addr.startsWith('0x') ? addr : '0x' + addr;
       const p = getAnnPath(binaryPath);
-      const annotations = readAnnotationsFile(p);
+      const annotations = readAnnotations(root, storageDir, binaryPath, p);
       const existing = annotations[normAddr] || {};
       const nextStatus = String(reviewStatus || '').trim();
       const nextNotes = String(reviewNotes || '').trim();
@@ -622,14 +697,14 @@ function sharedHandlers(ctx) {
       if (!nextStatus && !nextNotes) delete nextEntry.reviewUpdated;
       if (isEmptyAnnotationEntry(nextEntry)) delete annotations[normAddr];
       else annotations[normAddr] = nextEntry;
-      writeAnnotationsAndNotify(panel, p, binaryPath, annotations);
+      writeAnnotationsAndNotify(root, storageDir, panel, p, binaryPath, annotations);
     },
     hubSaveBookmark: (message) => {
       const { binaryPath, addr, label, color } = message;
       if (!binaryPath || !addr) return;
       const normAddr = addr.startsWith('0x') ? addr : '0x' + addr;
       const p = getAnnPath(binaryPath);
-      const annotations = readAnnotationsFile(p);
+      const annotations = readAnnotations(root, storageDir, binaryPath, p);
       const existing = annotations[normAddr] || {};
       annotations[normAddr] = {
         ...existing,
@@ -638,14 +713,14 @@ function sharedHandlers(ctx) {
         bookmarkColor: color || existing.bookmarkColor || '#4ec9b0',
         bookmarkUpdated: new Date().toISOString(),
       };
-      writeAnnotationsAndNotify(panel, p, binaryPath, annotations);
+      writeAnnotationsAndNotify(root, storageDir, panel, p, binaryPath, annotations);
     },
     hubDeleteBookmark: (message) => {
       const { binaryPath, addr } = message;
       if (!binaryPath || !addr) return;
       const normAddr = addr.startsWith('0x') ? addr : '0x' + addr;
       const p = getAnnPath(binaryPath);
-      const annotations = readAnnotationsFile(p);
+      const annotations = readAnnotations(root, storageDir, binaryPath, p);
       const existing = annotations[normAddr];
       if (!existing) return;
       delete existing.bookmark;
@@ -654,13 +729,13 @@ function sharedHandlers(ctx) {
       delete existing.bookmarkUpdated;
       if (isEmptyAnnotationEntry(existing)) delete annotations[normAddr];
       else annotations[normAddr] = existing;
-      writeAnnotationsAndNotify(panel, p, binaryPath, annotations);
+      writeAnnotationsAndNotify(root, storageDir, panel, p, binaryPath, annotations);
     },
     hubClearBookmarks: (message) => {
       const { binaryPath } = message;
       if (!binaryPath) return;
       const p = getAnnPath(binaryPath);
-      const annotations = readAnnotationsFile(p);
+      const annotations = readAnnotations(root, storageDir, binaryPath, p);
       Object.keys(annotations).forEach((addr) => {
         const entry = annotations[addr];
         if (!entry || !entry.bookmark) return;
@@ -671,13 +746,13 @@ function sharedHandlers(ctx) {
         if (isEmptyAnnotationEntry(entry)) delete annotations[addr];
         else annotations[addr] = entry;
       });
-      writeAnnotationsAndNotify(panel, p, binaryPath, annotations);
+      writeAnnotationsAndNotify(root, storageDir, panel, p, binaryPath, annotations);
     },
     hubDeleteAnnotation: (message) => {
       const { binaryPath, addr } = message;
       if (!binaryPath || !addr) return;
       const p = getAnnPath(binaryPath);
-      const annotations = readAnnotationsFile(p);
+      const annotations = readAnnotations(root, storageDir, binaryPath, p);
       const normAddr = addr.startsWith('0x') ? addr : '0x' + addr;
       const existing = annotations[normAddr];
       if (existing) {
@@ -687,7 +762,7 @@ function sharedHandlers(ctx) {
         if (isEmptyAnnotationEntry(existing)) delete annotations[normAddr];
         else annotations[normAddr] = existing;
       }
-      writeAnnotationsAndNotify(panel, p, binaryPath, annotations);
+      writeAnnotationsAndNotify(root, storageDir, panel, p, binaryPath, annotations);
     },
     hubAiProvidersGet: () => {
       const getSavedSettings = () => {
