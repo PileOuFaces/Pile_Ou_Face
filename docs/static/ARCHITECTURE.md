@@ -179,13 +179,19 @@ stockage principal de l'extension.
 Elements persistants :
 
 - `static_cache/` : caches par binaire;
-- `annotations/` : labels, commentaires, bookmarks;
 - `decompile_cache/` : pseudo-C mis en cache;
-- `pfdb/` : base d'analyse SQLite selon les modules;
+- `pfdb/` : base d'analyse SQLite selon les modules (desassemblage, CFG, symboles...);
 - `patches/` : patchs persistants;
 - `plugins/` : plugins installes par l'extension;
 - `licenses/` : licences importees dans le workspace;
 - `decompilers.json` : configuration des decompilateurs.
+
+**Annotations (labels, commentaires, renommages, bookmarks, revue)** : cas particulier,
+stockees a part dans `~/.pile-ou-face/annotations.db` (base SQLite dediee, dans le home
+de l'utilisateur — pas sous `storageUri`, pas dans le projet). Ce chemin fixe est
+resolu de la meme facon par l'extension VS Code (via subprocess CLI) et par le serveur
+MCP (process independant, sans acces aux API VS Code), qui partagent donc desormais
+les memes annotations. Voir `annotations.py` / `annotation_db.py` plus bas.
 
 ## Formats supportes
 
