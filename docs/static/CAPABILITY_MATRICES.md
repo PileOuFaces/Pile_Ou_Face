@@ -13,7 +13,28 @@ Source de verite :
 - `FeatureSupport`
 - `get_feature_support_matrix()`
 
-Cette matrice decrit le support par adaptateur d'architecture :
+Cette matrice decrit le support par adaptateur d'architecture. Les adaptateurs
+avec semantique CFG/Call Graph sont actuellement :
+
+- `x86` : x86 / x86-64 ;
+- `arm32` : ARM / Thumb ;
+- `arm64` : AArch64 ;
+- `mips` : MIPS32 / MIPS64 ;
+- `ppc` : PowerPC 32 / 64 ;
+- `sparc` : SPARC / SPARCV9 ;
+- `riscv` : RISC-V 32 / 64 ;
+- `sysz` : SystemZ / s390x ;
+- `bpf` : BPF ;
+- `wasm` : WebAssembly ;
+- `m68k` : M68K ;
+- `sh` : SuperH ;
+- `tricore` : TriCore.
+
+Les autres profils Capstone raw peuvent rester `disasm-only` ou `unsupported`
+pour les features semantiques tant qu'aucun adaptateur ISA n'existe. Cela
+evite de presenter un CFG/Call Graph vide comme un resultat valide.
+
+La matrice expose les features suivantes :
 
 - `disasm`
 - `discover_functions`

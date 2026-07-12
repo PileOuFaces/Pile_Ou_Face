@@ -120,6 +120,30 @@ class TestBuildCallGraphFallback(unittest.TestCase):
         self.assertEqual(edge["from_name"], "main")
         self.assertEqual(edge["to_name"], "callee")
 
+    def test_lines_fallback_handles_systemz_direct_call(self):
+        lines = [
+            {"addr": "0x1000", "text": "stmg %r14, %r15, 112(%r15)"},
+            {"addr": "0x1006", "text": "brasl %r14, 0x1020 <callee>"},
+            {"addr": "0x100c", "text": "br %r14"},
+        ]
+
+        result = build_call_graph(
+            _make_cfg([]),
+            symbols=[
+                {"addr": "0x1000", "name": "main"},
+                {"addr": "0x1020", "name": "callee"},
+            ],
+            lines=lines,
+            binary_path=None,
+        )
+
+        self.assertEqual(len(result["edges"]), 1)
+        edge = result["edges"][0]
+        self.assertEqual(edge["from"], "0x1006")
+        self.assertEqual(edge["to"], "0x1020")
+        self.assertEqual(edge["from_name"], "main")
+        self.assertEqual(edge["to_name"], "callee")
+
 
 class TestResolveMachOStubs(unittest.TestCase):
     def test_macho_stub_resolution_uses_reserved2_entry_size(self):

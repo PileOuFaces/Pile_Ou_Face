@@ -313,6 +313,8 @@ class ArchAdapter:
             return True
         if self.family == "arm" and mnem in {"ldm", "ldmia", "ldmfd"} and "pc" in ops:
             return True
+        if self.family == "sysz" and mnem == "br" and ops in {"r14", "%r14", "14"}:
+            return True
         return bool(self.family == "mips" and mnem == "jr" and ops in {"ra", "$ra"})
 
     def is_unconditional_jump_mnemonic(self, mnemonic: str) -> bool:
@@ -617,6 +619,44 @@ RISCV_ADAPTER = ArchAdapter(
     lr_registers=("ra",),
 )
 
+SYSZ_ADAPTER = ArchAdapter(
+    key="sysz",
+    family="sysz",
+    display_name="SystemZ",
+    call_mnemonics=frozenset({"bas", "basr", "bras", "brasl", "brasl.g"}),
+    unconditional_jump_mnemonics=frozenset({"b", "br", "j"}),
+    conditional_branch_mnemonics=frozenset(
+        {
+            "je",
+            "jne",
+            "jnz",
+            "jz",
+            "jg",
+            "jge",
+            "jl",
+            "jle",
+            "jh",
+            "jhe",
+            "jlh",
+            "jo",
+            "jno",
+            "brc",
+            "bc",
+        }
+    ),
+    return_mnemonics=frozenset(),
+    prologue_patterns=(
+        (r"\bstmg\s+%?r?14\s*,\s*%?r?15\s*,", "stmg r14"),
+        (r"\bstm\s+%?r?14\s*,\s*%?r?15\s*,", "stm r14"),
+        (r"\baghi\s+%?r?15\s*,\s*-\d+\b", "aghi r15"),
+    ),
+    data_ref_mnemonics=GENERIC_DATA_REF_MNEMONICS,
+    pc_registers=("psw",),
+    sp_registers=("r15", "%r15", "15"),
+    fp_registers=("r11", "%r11", "11"),
+    lr_registers=("r14", "%r14", "14"),
+)
+
 BPF_ADAPTER = ArchAdapter(
     key="bpf",
     family="bpf",
@@ -744,6 +784,8 @@ _PARTIAL_SEMANTIC_ADAPTERS = {
     "ppc64": PPC_ADAPTER,
     "sparc": SPARC_ADAPTER,
     "sparcv9": SPARC_ADAPTER,
+    "sysz": SYSZ_ADAPTER,
+    "s390x": SYSZ_ADAPTER,
     "riscv": RISCV_ADAPTER,
     "riscv32": RISCV_ADAPTER,
     "riscv64": RISCV_ADAPTER,
@@ -790,6 +832,7 @@ SUPPORTED_ADAPTERS: tuple[ArchAdapter, ...] = (
     PPC_ADAPTER,
     SPARC_ADAPTER,
     RISCV_ADAPTER,
+    SYSZ_ADAPTER,
     BPF_ADAPTER,
     WASM_ADAPTER,
     M68K_ADAPTER,
@@ -812,6 +855,11 @@ def get_feature_support(
         else _adapter_for_key(adapter_or_key)
     )
     return adapter.support_for(feature)
+
+
+def get_adapter_for_arch_key(key: str, display_name: str | None = None) -> ArchAdapter:
+    """Retourne l'adaptateur ISA pour une clé d'architecture ou un profil raw."""
+    return _adapter_for_key(key, display_name)
 
 
 def get_feature_support_matrix() -> dict[str, dict[str, dict[str, str]]]:
@@ -885,6 +933,18 @@ def _generic_adapter(key: str, display_name: str) -> ArchAdapter:
         return_mnemonics=frozenset(),
         prologue_patterns=(),
         data_ref_mnemonics=frozenset(),
+        support={
+            "disasm": FeatureSupport(
+                "disasm-only", "Capstone decoder available; no ISA semantics table"
+            ),
+            **{
+                feature: FeatureSupport(
+                    "unsupported", "No CFG/Call Graph semantics for this ISA yet"
+                )
+                for feature in FEATURES
+                if feature != "disasm"
+            },
+        },
     )
 
 

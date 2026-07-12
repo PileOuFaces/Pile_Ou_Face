@@ -214,6 +214,32 @@ class TestBuildCfg(unittest.TestCase):
         self.assertFalse(any(edge["to"] == "0x03e00008" for edge in cfg["edges"]))
         self.assertIn(cfg["support_level"], {"full", "partial"})
 
+    def test_systemz_call_branch_and_return_mnemonics(self):
+        lines = [
+            {"addr": "0x1000", "text": "stmg %r14, %r15, 112(%r15)", "line": 1},
+            {"addr": "0x1006", "text": "brasl %r14, 0x1020", "line": 2},
+            {"addr": "0x100c", "text": "jne 0x1018", "line": 3},
+            {"addr": "0x1012", "text": "j 0x1020", "line": 4},
+            {"addr": "0x1018", "text": "br %r14", "line": 5},
+            {"addr": "0x1020", "text": "br %r14", "line": 6},
+        ]
+
+        cfg = build_cfg(lines, arch_hint="sysz")
+
+        self.assertTrue(
+            any(
+                edge["type"] == "call" and edge["to"] == "0x1020"
+                for edge in cfg["edges"]
+            )
+        )
+        self.assertTrue(
+            any(
+                edge["type"] == "jmp" and edge["to"] == "0x1018"
+                for edge in cfg["edges"]
+            )
+        )
+        self.assertEqual(cfg["support_level"], "partial")
+
     def test_arm_pop_pc_terminates_block_without_fallthrough(self):
         lines = [
             {"addr": "0x1000", "text": "push {r4, lr}", "line": 1},
