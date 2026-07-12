@@ -122,6 +122,44 @@ class TestAnnotationStore(unittest.TestCase):
             result = store.get_comment("0x401000")
         self.assertEqual(result, "persistent comment")
 
+    def test_set_and_get_review(self):
+        with self._store() as store:
+            store.set_review("0x401000", status="reviewed", notes="looks clean")
+            result = store.get_review("0x401000")
+        self.assertEqual(result, {"status": "reviewed", "notes": "looks clean"})
+
+    def test_get_review_defaults_when_absent(self):
+        with self._store() as store:
+            result = store.get_review("0xdeadbeef")
+        self.assertEqual(result, {"status": "", "notes": ""})
+
+    def test_set_bookmark_and_list(self):
+        with self._store() as store:
+            store.set_bookmark("0x401000", label="entry", color="#ff0000")
+            bookmarks = store.list_bookmarks()
+        self.assertEqual(len(bookmarks), 1)
+        self.assertEqual(
+            bookmarks[0], {"addr": "0x401000", "label": "entry", "color": "#ff0000"}
+        )
+
+    def test_delete_bookmark(self):
+        with self._store() as store:
+            store.set_bookmark("0x401000", label="entry", color="#ff0000")
+            store.delete_bookmark("0x401000")
+            bookmarks = store.list_bookmarks()
+        self.assertEqual(bookmarks, [])
+
+    def test_clear_bookmarks_keeps_other_kinds(self):
+        with self._store() as store:
+            store.comment("0x401000", "kept")
+            store.set_bookmark("0x401000", label="entry", color="#ff0000")
+            store.set_bookmark("0x402000", label="two", color="#00ff00")
+            store.clear_bookmarks()
+            bookmarks = store.list_bookmarks()
+            comment = store.get_comment("0x401000")
+        self.assertEqual(bookmarks, [])
+        self.assertEqual(comment, "kept")
+
 
 if __name__ == "__main__":
     unittest.main()

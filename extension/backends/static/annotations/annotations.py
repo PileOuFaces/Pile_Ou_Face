@@ -31,6 +31,10 @@ logger = get_logger(__name__)
 # Kinds standardisés
 KIND_COMMENT = "comment"
 KIND_RENAME = "rename"
+KIND_REVIEW_STATUS = "review_status"
+KIND_REVIEW_NOTES = "review_notes"
+KIND_BOOKMARK = "bookmark"  # value = label
+KIND_BOOKMARK_COLOR = "bookmark_color"
 
 
 class AnnotationStore:
@@ -115,6 +119,93 @@ class AnnotationStore:
         n = self._cache.delete_annotation(self._binary_path, addr, kind=kind)
         logger.debug("Deleted %d annotation(s) at %s (kind=%s)", n, addr, kind)
         return n
+
+    def set_review(self, addr: str, status: str = "", notes: str = "") -> None:
+        """Définit le statut de revue et/ou les notes sur une adresse.
+
+        Args:
+            addr: Adresse cible
+            status: Statut de revue (ex: "reviewed"), vide pour supprimer
+            notes: Notes de revue, vide pour supprimer
+        """
+        if status:
+            self._cache.save_annotation(
+                self._binary_path, addr, KIND_REVIEW_STATUS, status
+            )
+        else:
+            self._cache.delete_annotation(
+                self._binary_path, addr, kind=KIND_REVIEW_STATUS
+            )
+        if notes:
+            self._cache.save_annotation(
+                self._binary_path, addr, KIND_REVIEW_NOTES, notes
+            )
+        else:
+            self._cache.delete_annotation(
+                self._binary_path, addr, kind=KIND_REVIEW_NOTES
+            )
+
+    def get_review(self, addr: str) -> dict:
+        """Retourne le statut et les notes de revue d'une adresse.
+
+        Returns:
+            {"status": str, "notes": str} (chaînes vides si absents)
+        """
+        rows = self._cache.get_annotations(self._binary_path, addr=addr)
+        by_kind = {r["kind"]: r["value"] for r in rows}
+        return {
+            "status": by_kind.get(KIND_REVIEW_STATUS, ""),
+            "notes": by_kind.get(KIND_REVIEW_NOTES, ""),
+        }
+
+    def set_bookmark(self, addr: str, label: str = "", color: str = "#4ec9b0") -> None:
+        """Ajoute ou remplace un bookmark sur une adresse.
+
+        Args:
+            addr: Adresse cible
+            label: Libellé du bookmark (défaut: l'adresse elle-même)
+            color: Couleur du bookmark (hex)
+        """
+        self._cache.save_annotation(
+            self._binary_path, addr, KIND_BOOKMARK, label or addr
+        )
+        self._cache.save_annotation(self._binary_path, addr, KIND_BOOKMARK_COLOR, color)
+
+    def delete_bookmark(self, addr: str) -> None:
+        """Supprime le bookmark d'une adresse."""
+        self._cache.delete_annotation(self._binary_path, addr, kind=KIND_BOOKMARK)
+        self._cache.delete_annotation(self._binary_path, addr, kind=KIND_BOOKMARK_COLOR)
+
+    def clear_bookmarks(self) -> None:
+        """Supprime tous les bookmarks du binaire (sans toucher aux autres kinds)."""
+        for row in self.list():
+            if row["kind"] in (KIND_BOOKMARK, KIND_BOOKMARK_COLOR):
+                self._cache.delete_annotation(
+                    self._binary_path, row["addr"], kind=row["kind"]
+                )
+
+    def list_bookmarks(self) -> builtins.list[dict]:
+        """Liste tous les bookmarks du binaire.
+
+        Returns:
+            [{addr, label, color}, ...]
+        """
+        rows = self.list()
+        by_addr: dict[str, dict] = {}
+        for r in rows:
+            if r["kind"] == KIND_BOOKMARK:
+                by_addr.setdefault(r["addr"], {})["label"] = r["value"]
+            elif r["kind"] == KIND_BOOKMARK_COLOR:
+                by_addr.setdefault(r["addr"], {})["color"] = r["value"]
+        return [
+            {
+                "addr": addr,
+                "label": v.get("label", addr),
+                "color": v.get("color", "#4ec9b0"),
+            }
+            for addr, v in by_addr.items()
+            if "label" in v
+        ]
 
     def export_json(self) -> builtins.list[dict]:
         """Retourne toutes les annotations au format JSON-serializable."""
