@@ -147,6 +147,22 @@ RAW_SYSZ_CALL_BLOB = bytes.fromhex(
     "07FE"  # target: br %r14
 )
 
+# SH4 little-endian: mov.l r14,@-r15 / bsr target / rts / target rts
+RAW_SH4_CALL_BLOB = bytes.fromhex(
+    "E62F"  # mov.l r14, @-r15
+    "00B0"  # bsr 0xd006
+    "0B00"  # rts
+    "0B00"  # target: rts
+)
+
+# TriCore little-endian: sub.a sp,#0x10 / call target / ret / target ret
+RAW_TRICORE_CALL_BLOB = bytes.fromhex(
+    "2010"  # sub.a sp, #0x10
+    "6D000300"  # call #0x11008
+    "0090"  # ret
+    "0090"  # target: ret
+)
+
 RAW_X64_PROFILE = {
     "arch": "i386:x86-64",
     "base_addr": "0x500000",
@@ -229,6 +245,18 @@ RAW_SYSZ_PROFILE = {
     "arch": "sysz",
     "base_addr": "0xf000",
     "endian": "big",
+}
+
+RAW_SH4_PROFILE = {
+    "arch": "sh4",
+    "base_addr": "0xd000",
+    "endian": "little",
+}
+
+RAW_TRICORE_PROFILE = {
+    "arch": "tricore",
+    "base_addr": "0x11000",
+    "endian": "little",
 }
 
 
@@ -443,4 +471,28 @@ def write_raw_sysz_call_fixture(tmpdir: str | Path) -> dict[str, Any]:
         raw_profile=RAW_SYSZ_PROFILE,
         call_site_addr="0xf006",
         target_addr="0xf020",
+    )
+
+
+def write_raw_sh4_call_fixture(tmpdir: str | Path) -> dict[str, Any]:
+    """Écrit un petit shellcode SH4 brut avec un appel interne."""
+    return _write_raw_fixture(
+        tmpdir,
+        stem="raw_sh4_call",
+        blob=RAW_SH4_CALL_BLOB,
+        raw_profile=RAW_SH4_PROFILE,
+        call_site_addr="0xd002",
+        target_addr="0xd006",
+    )
+
+
+def write_raw_tricore_call_fixture(tmpdir: str | Path) -> dict[str, Any]:
+    """Écrit un petit shellcode TriCore brut avec un appel interne."""
+    return _write_raw_fixture(
+        tmpdir,
+        stem="raw_tricore_call",
+        blob=RAW_TRICORE_CALL_BLOB,
+        raw_profile=RAW_TRICORE_PROFILE,
+        call_site_addr="0x11002",
+        target_addr="0x11008",
     )

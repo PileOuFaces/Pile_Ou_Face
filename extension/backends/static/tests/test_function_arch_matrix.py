@@ -31,10 +31,12 @@ from backends.static.tests.fixtures.raw_fixture import (
     write_raw_ppc32_be_call_fixture,
     write_raw_ppc32_be_partial_call_fixture,
     write_raw_riscv64_call_fixture,
+    write_raw_sh4_call_fixture,
     write_raw_sparc_call_fixture,
     write_raw_sysz_call_fixture,
     write_raw_thumb_call_fixture,
     write_raw_thumb_partial_call_fixture,
+    write_raw_tricore_call_fixture,
     write_raw_x64_call_fixture,
 )
 
@@ -64,6 +66,8 @@ RAW_FUNCTION_FIXTURES: tuple[tuple[str, RawFixtureWriter], ...] = (
     ("m68k", write_raw_m68k_call_fixture),
     ("bpf", write_raw_bpf_call_fixture),
     ("sysz", write_raw_sysz_call_fixture),
+    ("sh4", write_raw_sh4_call_fixture),
+    ("tricore", write_raw_tricore_call_fixture),
 )
 
 FUNCTION_FEATURES = ("discover_functions", "cfg", "call_graph")
@@ -74,44 +78,10 @@ CFG_CALLGRAPH_COVERAGE_DEBT_ISSUE = 82
 # do not yet have a raw fixture proving "function discovery + CFG + call graph".
 # Keep this list explicit so #82 can burn it down adapter by adapter.
 CFG_CALLGRAPH_UNFIXTURED_ADAPTERS = {
-    "sh",
-    "tricore",
     "wasm",
 }
 
 SEMANTIC_LINE_FIXTURES: tuple[tuple[str, SemanticFixture], ...] = (
-    (
-        "sh",
-        {
-            "adapter_key": "sh",
-            "arch_hint": "sh4",
-            "entry_addr": "0xd000",
-            "target_addr": "0xd020",
-            "custom_preludes": [(r"\bmov\.l\s+r14\s*,\s*@-r15\b", "sh entry")],
-            "lines": [
-                {"addr": "0xd000", "text": "mov.l r14,@-r15", "line": 1},
-                {"addr": "0xd002", "text": "bsr 0xd020", "line": 2},
-                {"addr": "0xd004", "text": "rts", "line": 3},
-                {"addr": "0xd020", "text": "rts", "line": 4},
-            ],
-        },
-    ),
-    (
-        "tricore",
-        {
-            "adapter_key": "tricore",
-            "arch_hint": "tricore",
-            "entry_addr": "0x11000",
-            "target_addr": "0x11020",
-            "custom_preludes": [(r"\bmov\.aa\s+a10\s*,\s*sp\b", "tricore entry")],
-            "lines": [
-                {"addr": "0x11000", "text": "mov.aa a10, sp", "line": 1},
-                {"addr": "0x11004", "text": "call 0x11020", "line": 2},
-                {"addr": "0x11008", "text": "ret", "line": 3},
-                {"addr": "0x11020", "text": "ret", "line": 4},
-            ],
-        },
-    ),
     (
         "wasm",
         {
