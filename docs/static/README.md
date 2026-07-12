@@ -1150,33 +1150,61 @@ En cas d'erreur :
 
 ### `annotations.py`
 
-**Rôle** : Stocke des annotations persistantes (commentaires, renommages) sur les adresses d'un binaire.
+**Rôle** : Stocke des annotations persistantes (commentaires, renommages, bookmarks,
+statut/notes de revue) sur les adresses d'un binaire.
 
 **Ce qu'il fait** :
-- Stocke les annotations dans le cache SQLite `pfdb/`. Dans l'extension VS Code,
-  ce dossier est sous `context.storageUri`; en CLI direct, `default_cache_path()`
-  peut utiliser un fallback `.pile-ou-face/pfdb/`.
-- 2 types d'annotation : `comment` (texte libre) et `rename` (alias de fonction)
-- Les annotations persistent entre sessions et sont liées au binaire par son chemin
-- Façade haut niveau sur `DisasmCache`
+- Stocke les annotations dans une base SQLite **dédiée**, `~/.pile-ou-face/annotations.db`
+  (dossier home de l'utilisateur — jamais dans le projet, jamais dans `context.storageUri`
+  de VS Code). Ce chemin fixe est délibéré : il doit être résolu de façon identique par
+  l'extension VS Code (via `annotationsBridge.ts`/`pythonRunner.ts`, en subprocess) et par
+  le serveur MCP (process indépendant, sans accès aux API internes de VS Code) —
+  contrairement à `DisasmCache`, cette base n'est **jamais** purgée par les commandes
+  `cache_admin.py purge`/`clear` (données utilisateur irremplaçables, pas un cache
+  régénérable).
+- Schéma générique `kind`/`value` par `(binaire, adresse)` : `comment`, `rename`,
+  `review_status`, `review_notes`, `bookmark`, `bookmark_color`.
+- Binaire identifié par le **hash sha256 de son contenu** (pas chemin+mtime) — stable
+  entre machines/recompilations, prépare le terrain pour la synchro multi-utilisateur.
+- Migration automatique et paresseuse des anciens fichiers JSON par binaire de l'UI Hub
+  (`{storageDir}/annotations/*.json`, système historique de l'extension) au premier
+  chargement — l'ancien fichier est renommé en `.migrated`, jamais supprimé.
+- `AnnotationStore` reste la façade haut niveau, maintenant construite sur
+  `annotation_db.AnnotationDb` (et non plus `DisasmCache`).
 
 **Interface Python** :
 ```python
-from backends.static.annotations import AnnotationStore
+from backends.static.annotations.annotations import AnnotationStore
 
 with AnnotationStore("/path/to/binary.elf") as store:
     store.comment("0x401000", "entry point — initialise le stack frame")
     store.rename("0x401050", "decrypt_payload")
+    store.set_bookmark("0x401050", label="payload decrypt", color="#ff0000")
+    store.set_review("0x401050", status="reviewed", notes="clean")
 
     for ann in store.list():
-        print(f"{ann['addr']}: [{ann['kind']}] {ann['text']}")
+        print(f"{ann['addr']}: [{ann['kind']}] {ann['value']}")
 ```
+
+CLI unifié (utilisé en subprocess par l'extension, sortie JSON groupée par adresse) :
+`annotate` / `review` / `bookmark` / `delete-bookmark` / `clear-bookmarks` /
+`delete-annotation` / `migrate-legacy` / `list --grouped`.
 
 **Interface Hub** :
 - **Ctrl+Clic** sur une adresse dans le désassemblage → popup de saisie de note
+  (commentaire)
 - La note est sauvegardée et restaurée à chaque ouverture du hub
+- Les 7 handlers webview (`hubLoadAnnotations`, `hubSaveAnnotation`,
+  `hubSaveFunctionReview`, `hubSaveBookmark`, `hubDeleteBookmark`, `hubClearBookmarks`,
+  `hubDeleteAnnotation`, dans `extension/src/shared/sharedHandlers.ts`) parlent au CLI
+  Python via `annotationsBridge.ts` (subprocess), pas de dépendance SQLite côté Node
 
-**Dépendances** : `backends.static.cache` (SQLite)
+**Interface MCP** : `annotations_list` / `annotations_save` / `annotations_delete` — même
+`AnnotationStore`, données partagées avec l'UI Hub (avant cette migration, le MCP
+utilisait une table SQLite orpheline dans `DisasmCache`, jamais lue par l'UI Hub).
+
+**Dépendances** : `backends.static.annotations.annotation_db` (SQLite dédié, indépendant
+de `backends.static.cache`)
 
 ---
 
