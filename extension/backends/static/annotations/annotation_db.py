@@ -136,5 +136,5 @@ class AnnotationDb:
     def __enter__(self) -> "AnnotationDb":
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(self, *_: object) -> None:
         self.close()
