@@ -450,6 +450,7 @@ def invoke_plugin_command(
     command_id: str,
     payload: dict[str, Any] | None = None,
     *,
+    feature_name: str = "",
     host_version: str = DEFAULT_HOST_VERSION,
     api_version: int = HOST_API_VERSION,
     license_search_paths: list[Path] | None = None,
@@ -514,8 +515,15 @@ def invoke_plugin_command(
         try:
             sub_sig = inspect.signature(sub_cb)
             if len(sub_sig.parameters) >= 2:
-                return sub_cb(dict(sub_payload or {}), _invoke_fn)
-            return sub_cb(dict(sub_payload or {}))
+                sub_result = sub_cb(dict(sub_payload or {}), _invoke_fn)
+            else:
+                sub_result = sub_cb(dict(sub_payload or {}))
+            return _apply_analysis_enrichers(
+                context,
+                attached_records,
+                sub_result,
+                str(cmd or "").strip(),
+            )
         except Exception as sub_exc:
             return {"error": str(sub_exc)}
 
@@ -525,6 +533,13 @@ def invoke_plugin_command(
             result = callback(dict(payload or {}), _invoke_fn)
         else:
             result = callback(dict(payload or {}))
+        result = _apply_analysis_enrichers(
+            context,
+            attached_records,
+            result,
+            command_name,
+            feature_name=feature_name,
+        )
         return (
             {
                 "ok": True,
@@ -555,6 +570,113 @@ def _as_list(value: Any) -> list[Any]:
     if isinstance(value, list):
         return value
     return [value]
+
+
+def _add_unique_text(items: list[str], seen: set[str], value: Any) -> None:
+    text = str(value or "").strip()
+    if text and text not in seen:
+        seen.add(text)
+        items.append(text)
+
+
+def _candidate_enricher_targets(
+    context: PluginContext,
+    records: list[PluginRecord],
+    command_name: str,
+    feature_name: str = "",
+) -> list[str]:
+    available = set(context.analysis_enrichers.keys())
+    if not available:
+        return []
+
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def add(value: Any) -> None:
+        text = str(value or "").strip()
+        if text in available:
+            _add_unique_text(candidates, seen, text)
+
+    add(feature_name)
+    add(command_name)
+
+    for record in records:
+        if record.state != "active" or record.manifest is None:
+            continue
+        for spec in _iter_declared_command_specs(record.manifest):
+            command = str(
+                spec.get("id") or spec.get("command") or spec.get("command_id") or ""
+            ).strip()
+            if command != command_name:
+                continue
+            for key in ("feature", "feature_id", "tabId", "label"):
+                add(spec.get(key))
+            for alias in _as_list(spec.get("aliases")):
+                add(alias)
+
+    for target in sorted(available):
+        feature_matches_target = bool(
+            feature_name and (_feature_tokens(feature_name) & _feature_tokens(target))
+        )
+        if (
+            _fallback_command_matches_feature(command_name, target)
+            or feature_matches_target
+        ):
+            add(target)
+
+    return candidates
+
+
+def _apply_analysis_enrichers(
+    context: PluginContext,
+    records: list[PluginRecord],
+    result: Any,
+    command_name: str,
+    *,
+    feature_name: str = "",
+) -> Any:
+    if not isinstance(result, dict):
+        return result
+
+    targets = _candidate_enricher_targets(context, records, command_name, feature_name)
+    if not targets:
+        return result
+
+    enriched: dict[str, Any] = result
+    errors: list[dict[str, str]] = []
+    for target in targets:
+        for callback in context.analysis_enrichers.get(target, []):
+            try:
+                next_payload = callback(dict(enriched))
+            except Exception as exc:  # pragma: no cover - defensive plugin boundary
+                _log.warning(
+                    "plugin enricher failed for %s/%s: %s",
+                    command_name,
+                    target,
+                    exc,
+                )
+                errors.append({"target": target, "error": str(exc)})
+                continue
+            if isinstance(next_payload, dict):
+                enriched = next_payload
+            else:
+                errors.append(
+                    {
+                        "target": target,
+                        "error": (
+                            f"enricher returned {type(next_payload).__name__}, "
+                            "expected dict"
+                        ),
+                    }
+                )
+
+    if errors:
+        enriched = dict(enriched)
+        enriched["plugin_enrichment_errors"] = [
+            *list(enriched.get("plugin_enrichment_errors") or []),
+            *errors,
+        ]
+    return enriched
 
 
 def _normalize_feature_name(value: Any) -> str:
@@ -722,6 +844,7 @@ def invoke_plugin_feature(
         attached_records,
         command_name,
         payload,
+        feature_name=feature_name,
         host_version=host_version,
         api_version=api_version,
         license_search_paths=license_search_paths,
