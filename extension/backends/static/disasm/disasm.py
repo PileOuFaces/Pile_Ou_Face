@@ -29,6 +29,7 @@ from backends.static.annotations.typed_struct_refs import (
     collect_typed_struct_hints,
 )
 from backends.static.binary.arch import (
+    FEATURES,
     detect_binary_arch,
     get_feature_support_matrix,
     get_raw_arch_info,
@@ -118,6 +119,11 @@ def _resolve_arch_payload(
     if info is None:
         return None
     support_matrix = get_feature_support_matrix()
+    support = support_matrix.get(info.adapter.key)
+    if support is None:
+        support = {
+            feature: info.adapter.support_for(feature).as_dict() for feature in FEATURES
+        }
     return {
         "key": info.key,
         "family": info.family,
@@ -126,7 +132,7 @@ def _resolve_arch_payload(
         "ptr_size": info.ptr_size,
         "abi": info.abi,
         "endian": info.endian,
-        "support": support_matrix.get(info.adapter.key, {}),
+        "support": support,
     }
 
 

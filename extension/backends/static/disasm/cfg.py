@@ -54,11 +54,15 @@ def _candidate_adapters(
     binary_path: str | None = None, arch_hint: str | None = None
 ) -> tuple[ArchAdapter, ...]:
     if arch_hint:
-        from backends.static.binary.arch import get_raw_arch_info
+        from backends.static.binary.arch import (
+            get_adapter_for_arch_key,
+            get_raw_arch_info,
+        )
 
         hint_info = get_raw_arch_info(arch_hint)
         if hint_info is not None:
             return (hint_info.adapter,)
+        return (get_adapter_for_arch_key(arch_hint),)
     info = detect_binary_arch_from_path(binary_path) if binary_path else None
     if info is not None:
         return (info.adapter,)
@@ -1006,7 +1010,10 @@ def build_cfg(
     # Adresses qui sont cibles de sauts (début de bloc)
     adapters = _candidate_adapters(binary_path, arch_hint=arch_hint)
     if arch_hint:
-        from backends.static.binary.arch import get_raw_arch_info
+        from backends.static.binary.arch import (
+            get_adapter_for_arch_key,
+            get_raw_arch_info,
+        )
 
         detected_arch_info = get_raw_arch_info(arch_hint)
     else:
@@ -1014,7 +1021,9 @@ def build_cfg(
             detect_binary_arch_from_path(binary_path) if binary_path else None
         )
     support_adapter = (
-        detected_arch_info.adapter if detected_arch_info is not None else adapters[0]
+        detected_arch_info.adapter
+        if detected_arch_info is not None
+        else (get_adapter_for_arch_key(arch_hint) if arch_hint else adapters[0])
     )
     support = get_feature_support(support_adapter, "cfg")
     branch_targets = set()

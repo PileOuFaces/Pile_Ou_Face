@@ -205,13 +205,19 @@ Architectures prises en charge selon les modules :
 - PowerPC;
 - SPARC;
 - RISC-V;
+- SystemZ / s390x;
 - BPF;
 - WebAssembly;
 - M68K;
 - SH;
 - TriCore.
 
-Toutes les features n'ont pas le meme niveau de support sur chaque architecture. Le module `backends/static/arch.py` centralise la matrice de support et les conventions propres aux ISA.
+Toutes les features n'ont pas le meme niveau de support sur chaque architecture. Le module `extension/backends/static/binary/arch.py` centralise la matrice de support et les conventions propres aux ISA.
+
+Certaines architectures Capstone sont exposees en `disasm-only` : les octets
+peuvent etre decodes, mais le host ne pretend pas construire un CFG ou un Call
+Graph fiable sans table semantique ISA. Dans ce cas l'UI doit afficher un
+support limite au lieu d'un graphe vide ambigu.
 
 ## Tests
 

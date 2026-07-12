@@ -42,6 +42,7 @@ except ImportError:
 
 
 RawFixtureWriter = Callable[[str | Path], dict[str, object]]
+SemanticFixture = dict[str, object]
 
 RAW_FUNCTION_FIXTURES: tuple[tuple[str, RawFixtureWriter], ...] = (
     ("x64", write_raw_x64_call_fixture),
@@ -68,9 +69,138 @@ CFG_CALLGRAPH_UNFIXTURED_ADAPTERS = {
     "riscv",
     "sh",
     "sparc",
+    "sysz",
     "tricore",
     "wasm",
 }
+
+SEMANTIC_LINE_FIXTURES: tuple[tuple[str, SemanticFixture], ...] = (
+    (
+        "bpf",
+        {
+            "adapter_key": "bpf",
+            "arch_hint": "bpf",
+            "entry_addr": "0xa000",
+            "target_addr": "0xa020",
+            "custom_preludes": [(r"\bmov\s+r1\s*,\s*r10\b", "bpf entry")],
+            "lines": [
+                {"addr": "0xa000", "text": "mov r1, r10", "line": 1},
+                {"addr": "0xa008", "text": "call 0xa020", "line": 2},
+                {"addr": "0xa010", "text": "exit", "line": 3},
+                {"addr": "0xa020", "text": "exit", "line": 4},
+            ],
+        },
+    ),
+    (
+        "m68k",
+        {
+            "adapter_key": "m68k",
+            "arch_hint": "m68k",
+            "entry_addr": "0xb000",
+            "target_addr": "0xb020",
+            "lines": [
+                {"addr": "0xb000", "text": "link a6, #-0x10", "line": 1},
+                {"addr": "0xb004", "text": "jsr 0xb020", "line": 2},
+                {"addr": "0xb008", "text": "rts", "line": 3},
+                {"addr": "0xb020", "text": "rts", "line": 4},
+            ],
+        },
+    ),
+    (
+        "riscv",
+        {
+            "adapter_key": "riscv",
+            "arch_hint": "riscv64",
+            "entry_addr": "0xc000",
+            "target_addr": "0xc020",
+            "lines": [
+                {"addr": "0xc000", "text": "addi sp, sp, -0x10", "line": 1},
+                {"addr": "0xc004", "text": "jal 0xc020", "line": 2},
+                {"addr": "0xc008", "text": "ret", "line": 3},
+                {"addr": "0xc020", "text": "ret", "line": 4},
+            ],
+        },
+    ),
+    (
+        "sh",
+        {
+            "adapter_key": "sh",
+            "arch_hint": "sh4",
+            "entry_addr": "0xd000",
+            "target_addr": "0xd020",
+            "custom_preludes": [(r"\bmov\.l\s+r14\s*,\s*@-r15\b", "sh entry")],
+            "lines": [
+                {"addr": "0xd000", "text": "mov.l r14,@-r15", "line": 1},
+                {"addr": "0xd002", "text": "bsr 0xd020", "line": 2},
+                {"addr": "0xd004", "text": "rts", "line": 3},
+                {"addr": "0xd020", "text": "rts", "line": 4},
+            ],
+        },
+    ),
+    (
+        "sparc",
+        {
+            "adapter_key": "sparc",
+            "arch_hint": "sparc",
+            "entry_addr": "0xe000",
+            "target_addr": "0xe020",
+            "lines": [
+                {"addr": "0xe000", "text": "save %sp, -0x60, %sp", "line": 1},
+                {"addr": "0xe004", "text": "call 0xe020", "line": 2},
+                {"addr": "0xe008", "text": "nop", "line": 3},
+                {"addr": "0xe00c", "text": "retl", "line": 4},
+                {"addr": "0xe020", "text": "retl", "line": 5},
+            ],
+        },
+    ),
+    (
+        "sysz",
+        {
+            "adapter_key": "sysz",
+            "arch_hint": "sysz",
+            "entry_addr": "0xf000",
+            "target_addr": "0xf020",
+            "lines": [
+                {"addr": "0xf000", "text": "stmg %r14, %r15, 112(%r15)", "line": 1},
+                {"addr": "0xf006", "text": "brasl %r14, 0xf020", "line": 2},
+                {"addr": "0xf00c", "text": "br %r14", "line": 3},
+                {"addr": "0xf020", "text": "br %r14", "line": 4},
+            ],
+        },
+    ),
+    (
+        "tricore",
+        {
+            "adapter_key": "tricore",
+            "arch_hint": "tricore",
+            "entry_addr": "0x11000",
+            "target_addr": "0x11020",
+            "custom_preludes": [(r"\bmov\.aa\s+a10\s*,\s*sp\b", "tricore entry")],
+            "lines": [
+                {"addr": "0x11000", "text": "mov.aa a10, sp", "line": 1},
+                {"addr": "0x11004", "text": "call 0x11020", "line": 2},
+                {"addr": "0x11008", "text": "ret", "line": 3},
+                {"addr": "0x11020", "text": "ret", "line": 4},
+            ],
+        },
+    ),
+    (
+        "wasm",
+        {
+            "adapter_key": "wasm",
+            "arch_hint": "wasm",
+            "entry_addr": "0x12000",
+            "target_addr": "0x12020",
+            "custom_preludes": [(r"\blocal\.get\s+0\b", "wasm entry")],
+            "lines": [
+                {"addr": "0x12000", "text": "local.get 0", "line": 1},
+                {"addr": "0x12004", "text": "call 0x12020", "line": 2},
+                {"addr": "0x12008", "text": "return", "line": 3},
+                {"addr": "0x12020", "text": "return", "line": 4},
+            ],
+        },
+    ),
+)
 
 
 @unittest.skipUnless(_CAPSTONE_AVAILABLE, "capstone not installed")
@@ -108,6 +238,20 @@ class TestFunctionArchSupportMatrix(unittest.TestCase):
                 "Every adapter that claims semantic CFG/Call Graph support must "
                 "either have a raw fixture or be explicitly tracked by "
                 f"issue #{CFG_CALLGRAPH_COVERAGE_DEBT_ISSUE}."
+            ),
+        )
+
+    def test_unfixtured_raw_adapters_have_semantic_line_fixtures(self):
+        semantic_fixture_keys = {
+            str(sample["adapter_key"]) for _label, sample in SEMANTIC_LINE_FIXTURES
+        }
+        self.assertEqual(
+            semantic_fixture_keys,
+            CFG_CALLGRAPH_UNFIXTURED_ADAPTERS,
+            (
+                "Every adapter without a raw Capstone fixture must still have "
+                "a semantic end-to-end fixture covering function discovery, CFG "
+                "and Call Graph direct-call behavior."
             ),
         )
 
@@ -181,6 +325,48 @@ class TestFunctionArchSupportMatrix(unittest.TestCase):
                         call_graph["edges"][0]["to_name"],
                         f"sub_{str(sample['target_addr'])[2:]}",
                     )
+
+    def test_semantic_line_fixtures_exercise_cfg_and_call_graph_pipeline(self):
+        matrix = get_feature_support_matrix()
+
+        for label, sample in SEMANTIC_LINE_FIXTURES:
+            with self.subTest(arch=label):
+                adapter_key = str(sample["adapter_key"])
+                support = matrix[adapter_key]
+                for feature in FUNCTION_FEATURES:
+                    self.assertIn(support[feature]["level"], SEMANTIC_LEVELS)
+
+                lines = list(sample["lines"])
+                custom_preludes = sample.get("custom_preludes")
+                discovered = discover_functions(
+                    lines,
+                    set(),
+                    custom_preludes=custom_preludes,  # type: ignore[arg-type]
+                )
+                discovered_addrs = {fn["addr"] for fn in discovered}
+                self.assertIn(sample["entry_addr"], discovered_addrs)
+                self.assertIn(sample["target_addr"], discovered_addrs)
+
+                cfg = build_cfg(lines, arch_hint=str(sample["arch_hint"]))
+                self.assertTrue(
+                    any(
+                        edge.get("type") == "call"
+                        and edge.get("from") == sample["entry_addr"]
+                        and edge.get("to") == sample["target_addr"]
+                        for edge in cfg.get("edges", [])
+                    )
+                )
+
+                call_graph = build_call_graph(cfg, discovered, lines=lines)
+                self.assertEqual(len(call_graph["edges"]), 1)
+                self.assertEqual(
+                    call_graph["edges"][0]["from_name"],
+                    f"sub_{str(sample['entry_addr'])[2:]}",
+                )
+                self.assertEqual(
+                    call_graph["edges"][0]["to_name"],
+                    f"sub_{str(sample['target_addr'])[2:]}",
+                )
 
 
 if __name__ == "__main__":
