@@ -69,12 +69,12 @@ describe("annotationsBridge", () => {
     expect(args).to.include("clear-bookmarks");
   });
 
-  it("deleteAnnotation calls delete with addr", async () => {
+  it("deleteAnnotation calls delete-annotation with addr", async () => {
     const runPythonStub = sinon.stub().resolves({ stdout: "{}" });
     const bridge = makeBridge(runPythonStub).makeAnnotationsBridge({ root: "/r", extensionPath: "/e" });
     await bridge.deleteAnnotation("/bin/target", "0x1");
     const args = runPythonStub.firstCall.args[0];
-    expect(args).to.include.members(["delete", "--addr", "0x1"]);
+    expect(args).to.include.members(["delete-annotation", "--addr", "0x1"]);
   });
 
   it("migrateLegacyJson calls migrate-legacy with JSON-encoded payload", async () => {
@@ -84,5 +84,51 @@ describe("annotationsBridge", () => {
     await bridge.migrateLegacyJson("/bin/target", legacy);
     const args = runPythonStub.firstCall.args[0];
     expect(args).to.include.members(["migrate-legacy", "--json", JSON.stringify(legacy)]);
+  });
+
+  it("deleteAnnotation against the real CLI preserves bookmark/review (integration)", async function () {
+    this.timeout(10000);
+    const os = require("os");
+    const path = require("path");
+    const fs = require("fs");
+    // No proxyquire here: this test exercises the real annotations.py CLI
+    // through the real pythonRunner, to catch bridge/CLI format mismatches
+    // that a fully-mocked runPython would hide (see: delete vs delete-annotation).
+    const { makeAnnotationsBridge } = require("../shared/annotationsBridge");
+
+    // extension/src/tests -> extension (same ROOT resolution as
+    // backends/static/tests/test_annotations_cli.py's Path(__file__).parent.parent.parent.parent)
+    const extensionRoot = path.resolve(__dirname, "..", "..");
+    const scriptPath = path.join(extensionRoot, "backends", "static", "annotations", "annotations.py");
+    if (!fs.existsSync(scriptPath)) {
+      this.skip();
+      return;
+    }
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "annotations-bridge-it-"));
+    const binaryPath = path.join(tmpDir, "target.elf");
+    fs.writeFileSync(binaryPath, Buffer.concat([Buffer.from([0x7f, 0x45, 0x4c, 0x46]), Buffer.alloc(60)]));
+    const dbPath = path.join(tmpDir, "annotations.db");
+
+    const bridge = makeAnnotationsBridge({
+      root: extensionRoot,
+      extensionPath: extensionRoot,
+      dbPathOverride: dbPath,
+      getPythonExecutable: () => process.env.PYTHON_EXECUTABLE || "python3",
+      buildPythonEnv: () => ({ ...process.env, PYTHONPATH: extensionRoot }),
+    });
+
+    try {
+      await bridge.saveAnnotation(binaryPath, "0x401000", { comment: "c", name: "n" });
+      await bridge.saveBookmark(binaryPath, "0x401000", { label: "L", color: "#123456" });
+      const result = await bridge.deleteAnnotation(binaryPath, "0x401000");
+
+      expect(result["0x401000"].comment).to.equal(undefined);
+      expect(result["0x401000"].name).to.equal(undefined);
+      expect(result["0x401000"].bookmark).to.equal(true);
+      expect(result["0x401000"].bookmarkLabel).to.equal("L");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });

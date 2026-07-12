@@ -78,6 +78,23 @@ class TestAnnotationsCli(unittest.TestCase):
         self.assertNotIn("bookmark", out.get("0x401000", {}))
         self.assertEqual(out["0x401000"]["comment"], "kept")
 
+    def test_delete_annotation_preserves_bookmark_and_review(self):
+        self._run("annotate", "--addr", "0x401000", "--comment", "c", "--name", "n")
+        self._run(
+            "bookmark", "--addr", "0x401000", "--label", "L", "--color", "#123456"
+        )
+        self._run(
+            "review", "--addr", "0x401000", "--status", "reviewed", "--notes", "notes"
+        )
+        out = self._run("delete-annotation", "--addr", "0x401000")
+        entry = out["0x401000"]
+        self.assertNotIn("comment", entry)
+        self.assertNotIn("name", entry)
+        self.assertTrue(entry["bookmark"])
+        self.assertEqual(entry["bookmarkLabel"], "L")
+        self.assertEqual(entry["reviewStatus"], "reviewed")
+        self.assertEqual(entry["reviewNotes"], "notes")
+
     def test_migrate_legacy(self):
         legacy = {"0x401000": {"comment": "old", "name": "old_name"}}
         out = self._run("migrate-legacy", "--json", json.dumps(legacy))

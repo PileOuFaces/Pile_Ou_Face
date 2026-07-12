@@ -33,7 +33,7 @@ function makeAnnotationsBridge(ctx) {
       invoke(binaryPath, ['bookmark', '--addr', addr, '--label', label || '', '--color', color || '#4ec9b0']),
     deleteBookmark: (binaryPath, addr) => invoke(binaryPath, ['delete-bookmark', '--addr', addr]),
     clearBookmarks: (binaryPath) => invoke(binaryPath, ['clear-bookmarks']),
-    deleteAnnotation: (binaryPath, addr) => invoke(binaryPath, ['delete', '--addr', addr]),
+    deleteAnnotation: (binaryPath, addr) => invoke(binaryPath, ['delete-annotation', '--addr', addr]),
     migrateLegacyJson: (binaryPath, legacyAnnotations) =>
       invoke(binaryPath, ['migrate-legacy', '--json', JSON.stringify(legacyAnnotations)]),
   };

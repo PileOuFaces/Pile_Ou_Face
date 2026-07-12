@@ -308,6 +308,15 @@ def main() -> int:
         help="Specific kind to delete (default: all)",
     )
 
+    # delete-annotation: clears only comment+rename (not bookmark/review),
+    # used by the VS Code extension bridge for the webview's "delete
+    # comment" action — narrower than `delete` (which wipes every kind).
+    p_del_annotation = sub.add_parser(
+        "delete-annotation",
+        help="Delete comment and rename only (preserves bookmark/review)",
+    )
+    p_del_annotation.add_argument("--addr", required=True)
+
     # annotate (comment + rename in one call, used by the VS Code extension bridge)
     p_annotate = sub.add_parser(
         "annotate", help="Set comment and/or rename in one call"
@@ -375,6 +384,11 @@ def main() -> int:
         elif args.cmd == "delete":
             n = store.delete(args.addr, kind=getattr(args, "kind", None))
             print(f"Deleted {n} annotation(s) at {args.addr}")
+
+        elif args.cmd == "delete-annotation":
+            store.delete(args.addr, kind=KIND_COMMENT)
+            store.delete(args.addr, kind=KIND_RENAME)
+            print(json.dumps(_grouped_export(store), indent=2, ensure_ascii=False))
 
         elif args.cmd == "annotate":
             if args.comment is not None:
