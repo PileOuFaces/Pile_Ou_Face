@@ -1,4 +1,6 @@
 const { expect } = require("chai");
+const proxyquire = require("proxyquire");
+const sinon = require("sinon");
 
 function makeInMemoryBridge() {
   const store = new Map(); // binaryPath -> { addr -> entry }
@@ -93,5 +95,60 @@ describe("bookmark persistence", () => {
     await handlers.hubSaveBookmark({ binaryPath: "/bin/a", addr: "0x1000", color: "#222222" });
     const ann = sink.messages[sink.messages.length - 2].annotations; // last hubAnnotations message
     expect(ann["0x1000"]).to.include({ bookmarkLabel: "my label", bookmarkColor: "#222222" });
+  });
+
+  describe("bridge failure handling", () => {
+    afterEach(() => {
+      sinon.restore();
+    });
+
+    it("surfaces an error toast when saveBookmark rejects instead of failing silently", async () => {
+      const showErrorMessage = sinon.stub();
+      const sharedHandlers = proxyquire("../shared/sharedHandlers", {
+        vscode: {
+          window: {
+            showErrorMessage,
+            showInformationMessage: sinon.stub(),
+            showWarningMessage: sinon.stub(),
+          },
+        },
+      });
+      const bridge = makeInMemoryBridge();
+      bridge.saveBookmark = async () => {
+        throw new Error("python CLI crashed");
+      };
+      const sink = makePanelSink();
+      const handlers = sharedHandlers({ root: "/r", panel: sink.panel, annotationsBridge: bridge });
+
+      await handlers.hubSaveBookmark({ binaryPath: "/bin/a", addr: "0x1000" });
+
+      expect(showErrorMessage.calledOnce).to.equal(true);
+      expect(String(showErrorMessage.firstCall.args[0])).to.include("bookmark");
+      expect(String(showErrorMessage.firstCall.args[0])).to.include("python CLI crashed");
+    });
+
+    it("does not post a hubAnnotations update when saveBookmark rejects, leaving the webview's last-known state untouched", async () => {
+      const showErrorMessage = sinon.stub();
+      const sharedHandlers = proxyquire("../shared/sharedHandlers", {
+        vscode: {
+          window: {
+            showErrorMessage,
+            showInformationMessage: sinon.stub(),
+            showWarningMessage: sinon.stub(),
+          },
+        },
+      });
+      const bridge = makeInMemoryBridge();
+      bridge.saveBookmark = async () => {
+        throw new Error("python CLI crashed");
+      };
+      const sink = makePanelSink();
+      const handlers = sharedHandlers({ root: "/r", panel: sink.panel, annotationsBridge: bridge });
+
+      await handlers.hubSaveBookmark({ binaryPath: "/bin/a", addr: "0x1000" });
+
+      const annotationsMessages = sink.messages.filter((m) => m.type === "hubAnnotations");
+      expect(annotationsMessages).to.have.length(0);
+    });
   });
 });

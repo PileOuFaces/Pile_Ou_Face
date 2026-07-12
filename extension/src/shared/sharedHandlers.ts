@@ -595,53 +595,81 @@ function sharedHandlers(ctx) {
         panel.webview.postMessage({ type: 'hubAnnotations', annotations: {} });
         return;
       }
-      const annotations = await annotationsBridge.loadAnnotations(binaryPath);
-      panel.webview.postMessage({ type: 'hubAnnotations', annotations });
+      try {
+        const annotations = await annotationsBridge.loadAnnotations(binaryPath);
+        panel.webview.postMessage({ type: 'hubAnnotations', annotations });
+      } catch (err) {
+        vscode.window.showErrorMessage(`Impossible de charger les annotations : ${err?.message || err}`);
+      }
     },
     hubSaveAnnotation: async (message) => {
       const { binaryPath, addr, comment, name } = message;
       if (!binaryPath || !addr) return;
       const normAddr = addr.startsWith('0x') ? addr : '0x' + addr;
-      const annotations = await annotationsBridge.saveAnnotation(binaryPath, normAddr, { comment, name });
-      notifyAnnotations(binaryPath, annotations);
-      vscode.window.showInformationMessage(`Annotation enregistrée pour ${normAddr}`);
+      try {
+        const annotations = await annotationsBridge.saveAnnotation(binaryPath, normAddr, { comment, name });
+        notifyAnnotations(binaryPath, annotations);
+        vscode.window.showInformationMessage(`Annotation enregistrée pour ${normAddr}`);
+      } catch (err) {
+        vscode.window.showErrorMessage(`Impossible d'enregistrer l'annotation : ${err?.message || err}`);
+      }
     },
     hubSaveFunctionReview: async (message) => {
       const { binaryPath, addr, reviewStatus, reviewNotes } = message;
       if (!binaryPath || !addr) return;
       const normAddr = addr.startsWith('0x') ? addr : '0x' + addr;
-      const annotations = await annotationsBridge.saveFunctionReview(binaryPath, normAddr, { reviewStatus, reviewNotes });
-      notifyAnnotations(binaryPath, annotations);
+      try {
+        const annotations = await annotationsBridge.saveFunctionReview(binaryPath, normAddr, { reviewStatus, reviewNotes });
+        notifyAnnotations(binaryPath, annotations);
+      } catch (err) {
+        vscode.window.showErrorMessage(`Impossible d'enregistrer la revue : ${err?.message || err}`);
+      }
     },
     hubSaveBookmark: async (message) => {
       const { binaryPath, addr, label, color } = message;
       if (!binaryPath || !addr) return;
       const normAddr = addr.startsWith('0x') ? addr : '0x' + addr;
-      const existing = (await annotationsBridge.loadAnnotations(binaryPath))[normAddr] || {};
-      const resolvedLabel = label || existing.bookmarkLabel || existing.name || normAddr;
-      const resolvedColor = color || existing.bookmarkColor || '#4ec9b0';
-      const annotations = await annotationsBridge.saveBookmark(binaryPath, normAddr, { label: resolvedLabel, color: resolvedColor });
-      notifyAnnotations(binaryPath, annotations);
+      try {
+        const existing = (await annotationsBridge.loadAnnotations(binaryPath))[normAddr] || {};
+        const resolvedLabel = label || existing.bookmarkLabel || existing.name || normAddr;
+        const resolvedColor = color || existing.bookmarkColor || '#4ec9b0';
+        const annotations = await annotationsBridge.saveBookmark(binaryPath, normAddr, { label: resolvedLabel, color: resolvedColor });
+        notifyAnnotations(binaryPath, annotations);
+      } catch (err) {
+        vscode.window.showErrorMessage(`Impossible d'enregistrer le bookmark : ${err?.message || err}`);
+      }
     },
     hubDeleteBookmark: async (message) => {
       const { binaryPath, addr } = message;
       if (!binaryPath || !addr) return;
       const normAddr = addr.startsWith('0x') ? addr : '0x' + addr;
-      const annotations = await annotationsBridge.deleteBookmark(binaryPath, normAddr);
-      notifyAnnotations(binaryPath, annotations);
+      try {
+        const annotations = await annotationsBridge.deleteBookmark(binaryPath, normAddr);
+        notifyAnnotations(binaryPath, annotations);
+      } catch (err) {
+        vscode.window.showErrorMessage(`Impossible de supprimer le bookmark : ${err?.message || err}`);
+      }
     },
     hubClearBookmarks: async (message) => {
       const { binaryPath } = message;
       if (!binaryPath) return;
-      const annotations = await annotationsBridge.clearBookmarks(binaryPath);
-      notifyAnnotations(binaryPath, annotations);
+      try {
+        const annotations = await annotationsBridge.clearBookmarks(binaryPath);
+        notifyAnnotations(binaryPath, annotations);
+      } catch (err) {
+        vscode.window.showErrorMessage(`Impossible d'effacer les bookmarks : ${err?.message || err}`);
+      }
     },
     hubDeleteAnnotation: async (message) => {
       const { binaryPath, addr } = message;
       if (!binaryPath || !addr) return;
       const normAddr = addr.startsWith('0x') ? addr : '0x' + addr;
-      const annotations = await annotationsBridge.deleteAnnotation(binaryPath, normAddr);
-      notifyAnnotations(binaryPath, annotations);
+      try {
+        const annotations = await annotationsBridge.deleteAnnotation(binaryPath, normAddr);
+        notifyAnnotations(binaryPath, annotations);
+      } catch (err) {
+        vscode.window.showErrorMessage(`Impossible de supprimer l'annotation : ${err?.message || err}`);
+      }
     },
     hubAiProvidersGet: () => {
       const getSavedSettings = () => {
