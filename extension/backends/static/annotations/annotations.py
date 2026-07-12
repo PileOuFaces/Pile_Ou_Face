@@ -24,7 +24,7 @@ from __future__ import annotations
 import builtins
 
 from backends.shared.log import configure_logging, get_logger
-from backends.static.cache.cache import DisasmCache, default_cache_path
+from backends.static.annotations.annotation_db import AnnotationDb
 
 logger = get_logger(__name__)
 
@@ -47,8 +47,7 @@ class AnnotationStore:
             cache_path: Chemin vers le fichier cache SQLite (None = chemin auto).
         """
         self._binary_path = binary_path
-        db_path = cache_path or default_cache_path(binary_path)
-        self._cache = DisasmCache(db_path)
+        self._cache = AnnotationDb(cache_path)
 
     def comment(self, addr: str, text: str) -> None:
         """Ajoute ou remplace un commentaire sur une adresse.
