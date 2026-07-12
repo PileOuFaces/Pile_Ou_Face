@@ -133,6 +133,13 @@ class TestAnnotationStore(unittest.TestCase):
             result = store.get_review("0xdeadbeef")
         self.assertEqual(result, {"status": "", "notes": ""})
 
+    def test_set_review_with_falsy_values_clears_existing(self):
+        with self._store() as store:
+            store.set_review("0x401000", status="reviewed", notes="looks clean")
+            store.set_review("0x401000", status="", notes="")
+            result = store.get_review("0x401000")
+        self.assertEqual(result, {"status": "", "notes": ""})
+
     def test_set_bookmark_and_list(self):
         with self._store() as store:
             store.set_bookmark("0x401000", label="entry", color="#ff0000")
