@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from loadtest.report import Result, check_threshold, format_summary_table, to_json
+from loadtest.report import Result, all_ok, check_threshold, format_summary_table, to_json
 
 
 class TestCheckThreshold(unittest.TestCase):
@@ -32,6 +32,50 @@ class TestCheckThreshold(unittest.TestCase):
                          peak_rss_bytes=0, elapsed_s=120.0, returncode=None, timed_out=True)
         status = check_threshold(result, max_ratio=10.0)
         self.assertEqual(status, "timeout")
+
+    def test_ratio_exactly_at_threshold_is_ok(self):
+        result = Result(scenario="disasm", fixture="small", binary_size_bytes=1_000_000,
+                         peak_rss_bytes=10_000_000, elapsed_s=0.5, returncode=0, timed_out=False)
+        status = check_threshold(result, max_ratio=10.0)
+        self.assertEqual(status, "ok")
+
+
+class TestAllOk(unittest.TestCase):
+    def test_all_results_ok_returns_true(self):
+        results = [
+            Result(scenario="disasm", fixture="small", binary_size_bytes=1_000_000,
+                   peak_rss_bytes=5_000_000, elapsed_s=0.5, returncode=0, timed_out=False),
+            Result(scenario="strings", fixture="medium", binary_size_bytes=20_000_000,
+                   peak_rss_bytes=40_000_000, elapsed_s=1.2, returncode=0, timed_out=False),
+        ]
+        self.assertTrue(all_ok(results, max_ratio=10.0))
+
+    def test_one_exceeded_result_returns_false(self):
+        results = [
+            Result(scenario="disasm", fixture="small", binary_size_bytes=1_000_000,
+                   peak_rss_bytes=5_000_000, elapsed_s=0.5, returncode=0, timed_out=False),
+            Result(scenario="disasm", fixture="large", binary_size_bytes=1_000_000,
+                   peak_rss_bytes=50_000_000, elapsed_s=0.5, returncode=0, timed_out=False),
+        ]
+        self.assertFalse(all_ok(results, max_ratio=10.0))
+
+    def test_one_error_result_returns_false(self):
+        results = [
+            Result(scenario="disasm", fixture="small", binary_size_bytes=1_000_000,
+                   peak_rss_bytes=0, elapsed_s=0.1, returncode=1, timed_out=False),
+        ]
+        self.assertFalse(all_ok(results, max_ratio=10.0))
+
+    def test_one_timeout_result_returns_false(self):
+        results = [
+            Result(scenario="disasm", fixture="large", binary_size_bytes=1_000_000,
+                   peak_rss_bytes=0, elapsed_s=120.0, returncode=None, timed_out=True),
+        ]
+        self.assertFalse(all_ok(results, max_ratio=10.0))
+
+    def test_empty_list_returns_true(self):
+        # Vérité vacueuse : aucun résultat ne peut avoir échoué.
+        self.assertTrue(all_ok([], max_ratio=10.0))
 
 
 class TestFormatting(unittest.TestCase):

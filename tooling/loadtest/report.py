@@ -30,6 +30,14 @@ def check_threshold(result: Result, max_ratio: float) -> str:
     return "exceeded" if ratio > max_ratio else "ok"
 
 
+def all_ok(results: list[Result], max_ratio: float) -> bool:
+    """True si tous les résultats sont 'ok' (aucun error/exceeded/timeout).
+
+    Une liste vide retourne True (vérité vacueuse : rien n'a échoué).
+    """
+    return all(check_threshold(r, max_ratio) == "ok" for r in results)
+
+
 def to_json(results: list[Result]) -> str:
     return json.dumps([asdict(r) for r in results], indent=2)
 
