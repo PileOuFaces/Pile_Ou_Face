@@ -1,5 +1,5 @@
 {
-  "_comment": "Source de vérité des tags d'images décompilateur. Lue par decompile.py (pin du tag pull) ET par .github/workflows/docker-decompilers.yml (tag immuable poussé). Bumper la version d'un outil quand son Dockerfile OU son adaptateur change (mise à jour d'outil = MAJOR/MINOR, correctif d'adaptateur = PATCH). Une extension figée pull ainsi une image immuable, pas un tag mouvant.",
+  "_comment": "Catalogue des versions d'images décompilateur publiées. Lu par .github/workflows/docker-decompilers.yml (tag immuable poussé) et destiné au réglage « utiliser le nôtre » de l'extension. decompile.py ne pull AUCUNE image par défaut (Docker opt-in) : l'utilisateur configure son propre décompilateur ou choisit une de ces versions. Bumper la version d'un outil quand son Dockerfile OU son adaptateur change (mise à jour d'outil = MAJOR/MINOR, correctif d'adaptateur = PATCH).",
   "ghidra": "1.0.0",
   "retdec": "1.0.0",
   "angr": "1.0.0"
