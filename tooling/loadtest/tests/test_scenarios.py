@@ -36,6 +36,16 @@ class TestScenarioRegistry(unittest.TestCase):
                 args = scenario.build_args(binary_path, out_dir)
                 self.assertIn(str(binary_path), args, f"{scenario.name} doit référencer le binaire")
                 self.assertTrue(scenario.script, f"{scenario.name} doit avoir un script")
+                self.assertIn("--output", args, f"{scenario.name} doit passer --output")
+                output_index = args.index("--output") + 1
+                self.assertLess(
+                    output_index, len(args), f"{scenario.name} doit avoir une valeur après --output"
+                )
+                output_value = args[output_index]
+                self.assertTrue(
+                    output_value.startswith(str(out_dir)),
+                    f"{scenario.name} doit écrire dans out_dir ({out_dir}), a produit {output_value}",
+                )
 
 
 if __name__ == "__main__":
