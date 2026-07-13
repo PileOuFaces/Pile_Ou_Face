@@ -51,7 +51,7 @@ class TestDecompile(unittest.TestCase):
     def test_builtin_docker_image_defaults_to_per_backend_image(self):
         self.assertEqual(
             _get_decompiler_docker_image("retdec"),
-            "ghcr.io/pileoufaces/pile-ou-face/decompiler-retdec:latest",
+            "ghcr.io/pileoufaces/pile-ou-face/decompiler-retdec:1.0.0",
         )
 
     def test_missing_builtin_docker_image_error_suggests_make(self):
@@ -62,7 +62,7 @@ class TestDecompile(unittest.TestCase):
         self.assertIn("POF_DECOMPILER_IMAGE_RETDEC", error)
 
     def test_builtin_docker_run_reports_missing_image_helpfully(self):
-        image = "ghcr.io/pileoufaces/pile-ou-face/decompiler-retdec:latest"
+        image = "ghcr.io/pileoufaces/pile-ou-face/decompiler-retdec:1.0.0"
         missing_stderr = (
             f"Unable to find image '{image}' locally\n"
             "docker: Error response from daemon: pull access denied"
@@ -125,7 +125,7 @@ class TestDecompile(unittest.TestCase):
         self.assertEqual(result.get("provider"), "docker")
         self.assertEqual(
             result.get("docker_image"),
-            "ghcr.io/pileoufaces/pile-ou-face/decompiler-retdec:latest",
+            "ghcr.io/pileoufaces/pile-ou-face/decompiler-retdec:1.0.0",
         )
         self.assertIn("return 5", result.get("code", ""))
 

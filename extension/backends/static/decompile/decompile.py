@@ -436,6 +436,31 @@ def _docker_env_var_name_for_decompiler(decompiler: str) -> str:
     return f"POF_DECOMPILER_IMAGE_{suffix}"
 
 
+_IMAGE_VERSIONS_PATH = Path(__file__).resolve().parent / "image_versions.json"
+_IMAGE_VERSIONS_CACHE: dict[str, str] | None = None
+
+
+def _pinned_image_version(normalized: str) -> str:
+    """Tag d'image épinglé pour un décompilateur.
+
+    Source de vérité : image_versions.json (partagé avec docker-decompilers.yml).
+    Retombe sur "latest" si le fichier est absent ou l'entrée manquante — évite
+    de dépendre d'un tag mouvant : une extension figée pull une image immuable.
+    """
+    global _IMAGE_VERSIONS_CACHE
+    if _IMAGE_VERSIONS_CACHE is None:
+        try:
+            data = json.loads(_IMAGE_VERSIONS_PATH.read_text(encoding="utf-8"))
+            _IMAGE_VERSIONS_CACHE = (
+                {str(k): str(v) for k, v in data.items()}
+                if isinstance(data, dict)
+                else {}
+            )
+        except (OSError, json.JSONDecodeError):
+            _IMAGE_VERSIONS_CACHE = {}
+    return _IMAGE_VERSIONS_CACHE.get(normalized, "latest")
+
+
 def _get_decompiler_docker_image(decompiler: str) -> str:
     normalized = _normalize_decompiler_id(decompiler)
     # Variable d'env prioritaire (permet de surcharger l'image sans toucher au JSON)
@@ -449,10 +474,12 @@ def _get_decompiler_docker_image(decompiler: str) -> str:
         img = str(entry.get("docker_image") or "").strip()
         if img:
             return img
-    # Fallback OCI : ghcr.io/pileoufaces/pile-ou-face/decompiler-{name}:latest
-    # Permet d'utiliser un décompilateur builtin même sans entrée dans decompilers.json
+    # Fallback OCI : image épinglée à la version déclarée dans image_versions.json.
+    # Permet d'utiliser un décompilateur builtin même sans entrée dans decompilers.json,
+    # tout en pullant un tag immuable (pas `:latest`) → reproductible entre versions.
     if normalized:
-        return f"ghcr.io/pileoufaces/pile-ou-face/decompiler-{normalized}:latest"
+        tag = _pinned_image_version(normalized)
+        return f"ghcr.io/pileoufaces/pile-ou-face/decompiler-{normalized}:{tag}"
     return ""
 
 
