@@ -20,7 +20,7 @@ function registerSharedCommands(context, deps) {
   const { logChannel, openHub } = deps;
   const subs = [];
 
-  const openCmd = vscode.commands.registerCommand('pileOuFace.open', async () => {
+  const openHandler = async () => {
     logChannel.show(true);
     const recent = getRecentBinaries(context).filter((e) => e?.path && fs.existsSync(e.path));
     if (!recent.length) {
@@ -78,8 +78,14 @@ function registerSharedCommands(context, deps) {
       return;
     }
     openHub('dashboard');
-  });
+  };
+
+  const openCmd = vscode.commands.registerCommand('pileOuFace.open', openHandler);
   subs.push(openCmd);
+  // Compatibility with older marketplace builds or user keybindings that used
+  // a capitalized command id. VS Code command ids are case-sensitive.
+  const legacyOpenCmd = vscode.commands.registerCommand('PileOuFace.open', openHandler);
+  subs.push(legacyOpenCmd);
 
   const goToAddressCmd = vscode.commands.registerCommand('pileOuFace.goToAddress', () => {
     logChannel.show(true);
