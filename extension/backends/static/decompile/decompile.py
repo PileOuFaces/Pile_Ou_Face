@@ -449,10 +449,10 @@ def _get_decompiler_docker_image(decompiler: str) -> str:
         img = str(entry.get("docker_image") or "").strip()
         if img:
             return img
-    # Fallback OCI : ghcr.io/pileoufaces/pile-ou-face/decompiler-{name}:latest
-    # Permet d'utiliser un décompilateur builtin même sans entrée dans decompilers.json
-    if normalized:
-        return f"ghcr.io/pileoufaces/pile-ou-face/decompiler-{normalized}:latest"
+    # Pas de défaut : la décompilation Docker est opt-in. Sans override d'env
+    # (POF_DECOMPILER_IMAGE_<NAME>) ni `docker_image` configuré — via les réglages :
+    # décompilateur perso OU « utiliser le nôtre » (images ghcr versionnées) — aucune
+    # image n'est retournée et le chemin Docker n'est pas tenté pour cet outil.
     return ""
 
 

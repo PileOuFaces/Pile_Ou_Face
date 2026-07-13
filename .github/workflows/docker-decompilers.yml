@@ -1,9 +1,11 @@
 name: Docker — Build Decompilers
 
 # Build once, promote tags :
-#   - PR      : build amd64 uniquement, push (tag pr-N + sha-*)
-#   - develops: build multiarch complet, push (tag develops + sha-*)
-#   - main    : aucun build — les releases sont gérées par docker-release.yml
+#   - PR (→develops) : build amd64 uniquement, SANS push (validation du Dockerfile)
+#   - develops       : build multiarch, push (tags : version épinglée + develops + sha-*)
+#   - main           : aucun build (pas de trigger)
+#   - Tag de version immuable lu depuis extension/backends/static/decompile/image_versions.json
+#     (source de vérité partagée avec decompile.py, qui pull ce même tag)
 #   - Cache GHA scopé par décompilateur (évite les évictions croisées)
 #   - angr : couche pip séparée pour maximiser les hits de cache
 
@@ -15,7 +17,7 @@ on:
       - 'extension/backends/static/decompile/**'
       - '.github/workflows/docker-decompilers.yml'
   pull_request:
-    branches: [main, develops]
+    branches: [develops]
     paths:
       - 'docker/decompilers/**'
       - 'extension/backends/static/decompile/**'
@@ -153,12 +155,21 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Read pinned image version
+        id: imgver
+        env:
+          DECOMPILER: ${{ matrix.decompiler }}
+        run: |
+          V=$(jq -r --arg d "$DECOMPILER" '.[$d] // "latest"' extension/backends/static/decompile/image_versions.json)
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
       - name: Compute image metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/decompiler-${{ matrix.decompiler }}
           tags: |
+            type=raw,value=${{ steps.imgver.outputs.version }},enable=${{ github.event_name != 'pull_request' }}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/develops' }}
             type=ref,event=branch
             type=ref,event=pr
@@ -191,7 +202,7 @@ jobs:
           context: .
           file: docker/decompilers/${{ matrix.decompiler }}/Dockerfile
           platforms: ${{ steps.platforms.outputs.platforms }}
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.decompiler }}
