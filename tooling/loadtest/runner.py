@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+"""Exécute une commande enveloppée par /usr/bin/time pour mesurer le pic
+réel de RSS (résident set size) et le temps écoulé — une mesure noyau,
+pas une estimation applicative.
+"""
+
+from __future__ import annotations
+
+import re
+import subprocess
+import sys
+
+
+def parse_time_output_macos(output: str) -> dict:
+    elapsed_match = re.search(r"^\s*([\d.]+)\s+real", output, re.MULTILINE)
+    footprint_match = re.search(r"^\s*(\d+)\s+peak memory footprint", output, re.MULTILINE)
+    max_rss_match = re.search(r"^\s*(\d+)\s+maximum resident set size", output, re.MULTILINE)
+    peak_rss = int(footprint_match.group(1)) if footprint_match else (
+        int(max_rss_match.group(1)) if max_rss_match else 0
+    )
+    return {
+        "elapsed_s": float(elapsed_match.group(1)) if elapsed_match else 0.0,
+        "peak_rss_bytes": peak_rss,
+    }
+
+
+def parse_time_output_linux(output: str) -> dict:
+    elapsed_match = re.search(r"Elapsed \(wall clock\) time.*?:\s*([\d:.]+)", output)
+    rss_match = re.search(r"Maximum resident set size \(kbytes\):\s*(\d+)", output)
+    elapsed_s = 0.0
+    if elapsed_match:
+        parts = elapsed_match.group(1).split(":")
+        parts = [float(p) for p in parts]
+        while len(parts) < 3:
+            parts.insert(0, 0.0)
+        h, m, s = parts[-3:]
+        elapsed_s = h * 3600 + m * 60 + s
+    return {
+        "elapsed_s": elapsed_s,
+        "peak_rss_bytes": int(rss_match.group(1)) * 1024 if rss_match else 0,
+    }
+
+
+def run_measured(command: list[str], timeout_s: int) -> dict:
+    """Exécute `command` enveloppée par /usr/bin/time, retourne les mesures.
+
+    Décision : si /usr/bin/time (ou la commande enveloppée) est introuvable,
+    ce n'est pas un échec normal de la commande analysée mais un
+    environnement cassé (outil système absent) — on laisse `FileNotFoundError`
+    se propager plutôt que de la masquer dans le dict de retour. Un appelant
+    qui lance une campagne de mesures doit savoir immédiatement que
+    l'environnement est mal configuré, pas voir un `returncode` ambigu.
+
+    Returns:
+        dict avec: returncode, peak_rss_bytes, elapsed_s, timed_out, stderr_tail
+    """
+    if sys.platform == "darwin":
+        wrapped = ["/usr/bin/time", "-l"] + command
+        parser = parse_time_output_macos
+    else:
+        wrapped = ["/usr/bin/time", "-v"] + command
+        parser = parse_time_output_linux
+
+    try:
+        result = subprocess.run(
+            wrapped,
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+        )
+        measured = parser(result.stderr)
+        return {
+            "returncode": result.returncode,
+            "peak_rss_bytes": measured["peak_rss_bytes"],
+            "elapsed_s": measured["elapsed_s"],
+            "timed_out": False,
+            "stderr_tail": result.stderr[-2000:],
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "returncode": None,
+            "peak_rss_bytes": 0,
+            "elapsed_s": float(timeout_s),
+            "timed_out": True,
+            "stderr_tail": "",
+        }
