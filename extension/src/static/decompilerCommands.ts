@@ -52,6 +52,53 @@ function _ociImage(key) {
   return `ghcr.io/pileoufaces/pile-ou-face/decompiler-${key}:${_ociImageVersion(key)}`;
 }
 
+function _compareSemver(a, b) {
+  const pa = String(a).split('.').map((n) => parseInt(n, 10) || 0);
+  const pb = String(b).split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0);
+  }
+  return 0;
+}
+
+/** Ne garde que les tags de version X.Y.Z (exclut latest/develops/sha-*), triés décroissant. */
+function _filterOciVersionTags(tags) {
+  const semver = /^\d+\.\d+\.\d+$/;
+  return (Array.isArray(tags) ? tags : [])
+    .map((t) => String(t).trim())
+    .filter((t) => semver.test(t))
+    .sort((a, b) => _compareSemver(b, a));
+}
+
+/**
+ * Liste les versions disponibles sur ghcr pour une image OCI PileOuFaces publique
+ * (token anonyme du registre OCI → /tags/list). Retourne [] si hors-ligne / privé /
+ * échec — l'appelant retombe alors sur la version épinglée du catalogue.
+ */
+async function _fetchOciVersions(imageRepo) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 6000);
+  try {
+    const tokenUrl = `https://ghcr.io/token?service=ghcr.io&scope=repository:${imageRepo}:pull`;
+    const tokRes = await fetch(tokenUrl, { signal: controller.signal });
+    if (!tokRes.ok) return [];
+    const tok = await tokRes.json();
+    const token = tok.token || tok.access_token;
+    if (!token) return [];
+    const tagsRes = await fetch(`https://ghcr.io/v2/${imageRepo}/tags/list`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal,
+    });
+    if (!tagsRes.ok) return [];
+    const data = await tagsRes.json();
+    return _filterOciVersionTags(data && data.tags);
+  } catch (_) {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Images OCI officielles PileOuFaces (« utiliser le nôtre »). Le tag est épinglé
  * à la version du catalogue. Construit paresseusement + mémoïsé : getExtensionPath()
@@ -407,12 +454,46 @@ async function cmdDecompilerAdd(root, storageDir, editId = null) {
         if (overwrite !== 'Écraser') return;
       }
 
-      // Auto-configuration complète depuis OCI_DECOMPILERS
+      // ── Choix de la version (toutes les versions publiées sur ghcr) ──────
+      const imageRepo = `pileoufaces/pile-ou-face/decompiler-${ociKey}`;
+      const pinned = _ociImageVersion(ociKey);
+      const liveVersions = await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: `Recherche des versions de ${ociDef.label}…`,
+          cancellable: false,
+        },
+        () => _fetchOciVersions(imageRepo),
+      );
+      const versionSet = new Set(liveVersions);
+      if (pinned && pinned !== 'latest') versionSet.add(pinned);
+      const versions = Array.from(versionSet).sort((a, b) => _compareSemver(b, a));
+      let chosenVersion = pinned;
+      if (versions.length > 1) {
+        const versionPick = await vscode.window.showQuickPick(
+          versions.map((v) => ({
+            label: v === pinned ? `$(star-full) ${v}` : v,
+            description: v === pinned ? 'recommandée (testée avec cette extension)' : '',
+            value: v,
+          })),
+          {
+            title: `${ociDef.label} — Choisir la version`,
+            placeHolder: `${versions.length} versions disponibles sur ghcr`,
+          },
+        );
+        if (!versionPick) return;
+        chosenVersion = versionPick.value;
+      } else if (versions.length === 1) {
+        chosenVersion = versions[0];
+      }
+      const chosenImage = `ghcr.io/pileoufaces/pile-ou-face/decompiler-${ociKey}:${chosenVersion}`;
+
+      // Auto-configuration complète depuis le catalogue OCI
       id = ociKey;
       label = ociDef.label;
       const ociConfig: Record<string, unknown> = {
         label: ociDef.label,
-        docker_image: ociDef.image,
+        docker_image: chosenImage,
         docker_command: ociDef.docker_command,
         docker_full_command: ociDef.docker_full_command,
         supports_full: true,
@@ -1056,4 +1137,4 @@ function getKnownOciImagePlatform(image: string): string {
   return '';
 }
 
-module.exports = { registerDecompilerCommands, getKnownOciImagePlatform };
+module.exports = { registerDecompilerCommands, getKnownOciImagePlatform, _filterOciVersionTags };
