@@ -34,13 +34,11 @@ Vérifier le token Open VSX sans publier : Actions → **Publish** → *Run work
 - Ajouter l'entrée `CHANGELOG.md` de la version (Added / Changed / Fixed).
 - Si un **Dockerfile ou adaptateur de décompilateur a changé**, bumper l'entrée correspondante dans `extension/backends/static/decompile/image_versions.json`.
 
-### 2. Publier d'abord les images décompilateur (si concernées)
+### 2. Images décompilateur (opt-in — pas de dépendance de release)
 
-Quand une PR touchant `extension/backends/static/decompile/**` ou `docker/decompilers/**` est mergée sur `develops`, `docker-decompilers.yml` **build + pousse les tags `:<version>`** sur ghcr.
+La décompilation Docker est **opt-in** : l'extension ne pull **aucune image par défaut**. Quand une PR touchant `docker/decompilers/**` ou `extension/backends/static/decompile/**` est mergée sur `develops`, `docker-decompilers.yml` build + pousse les tags `:<version>` (catalogue `extension/backends/static/decompile/image_versions.json`) sur ghcr — pour l'option « utiliser le nôtre » des réglages.
 
-> ⚠️ **Ordre critique** : l'extension figée pull `decompiler-<outil>:<version>` (le tag épinglé). Ce tag doit exister sur ghcr **avant** que la version d'extension soit publiée, sinon les utilisateurs auront « image introuvable » lors d'une décompilation Docker.
-
-Vérifier que le run `docker-decompilers.yml` sur `develops` est **vert** avant de continuer.
+Ce n'est **pas un prérequis** de la release de l'extension : comme il n'y a pas de défaut, rien ne casse si un tag manque — la décompilation Docker est simplement indisponible tant que l'utilisateur n'a pas configuré de décompilateur.
 
 ### 3. Promouvoir `develops` → `main`
 
@@ -73,7 +71,7 @@ Tagger avec un suffixe `-pre`, `-beta` ou `-rc` (ex. `v0.3.0-rc1`) : les deux jo
 | `Tag is not on main — publish aborted` | Le commit taggé n'est pas sur `main`. Merger la promotion (étape 3) avant de tagger. |
 | `vsce` : version déjà publiée | La `version` de `package.json` existe déjà sur le Marketplace. Bumper + retagger. |
 | Job publish échoue sur le PAT | Secret `VSCE_PAT` / `OPEN_VSX_TOKEN` manquant ou expiré. Pas de dommage, juste pas de publication. |
-| Utilisateur : image décompilateur introuvable | Le tag `:<version>` n'a pas été poussé (étape 2 sautée, ou run docker rouge). |
+| Utilisateur : décompilation Docker indisponible | Normal si aucun décompilateur n'est configuré (Docker opt-in). Sinon l'image choisie (« utiliser le nôtre ») n'a pas encore été publiée sur ghcr — vérifier le run `docker-decompilers.yml`. |
 
 ## Autres composants (déploiement séparé)
 
