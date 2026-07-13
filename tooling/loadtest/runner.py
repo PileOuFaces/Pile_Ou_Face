@@ -6,7 +6,9 @@ pas une estimation applicative.
 
 from __future__ import annotations
 
+import os
 import re
+import signal
 import subprocess
 import sys
 
@@ -61,22 +63,29 @@ def run_measured(command: list[str], timeout_s: int) -> dict:
         wrapped = ["/usr/bin/time", "-v"] + command
         parser = parse_time_output_linux
 
+    # stdout discarded: not needed for measurement (only /usr/bin/time's
+    # stderr is parsed), and capturing it would undermine this tool's own
+    # memory-safety purpose for scenarios with large output (e.g. disasm.py
+    # on big binaries can emit megabytes of stdout).
+    proc = subprocess.Popen(
+        wrapped,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
     try:
-        result = subprocess.run(
-            wrapped,
-            capture_output=True,
-            text=True,
-            timeout=timeout_s,
-        )
-        measured = parser(result.stderr)
-        return {
-            "returncode": result.returncode,
-            "peak_rss_bytes": measured["peak_rss_bytes"],
-            "elapsed_s": measured["elapsed_s"],
-            "timed_out": False,
-            "stderr_tail": result.stderr[-2000:],
-        }
+        _, stderr = proc.communicate(timeout=timeout_s)
     except subprocess.TimeoutExpired:
+        # subprocess.run's default timeout handling only kills the direct
+        # child (/usr/bin/time), leaving the actual analyzed command (its
+        # grandchild) running in the background. Killing the whole process
+        # group ensures the wrapped command dies too.
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.communicate()
         return {
             "returncode": None,
             "peak_rss_bytes": 0,
@@ -84,3 +93,12 @@ def run_measured(command: list[str], timeout_s: int) -> dict:
             "timed_out": True,
             "stderr_tail": "",
         }
+
+    measured = parser(stderr)
+    return {
+        "returncode": proc.returncode,
+        "peak_rss_bytes": measured["peak_rss_bytes"],
+        "elapsed_s": measured["elapsed_s"],
+        "timed_out": False,
+        "stderr_tail": stderr[-2000:],
+    }
