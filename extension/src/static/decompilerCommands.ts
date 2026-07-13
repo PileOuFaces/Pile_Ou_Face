@@ -33,40 +33,68 @@ const OUTPUT_FORMATS = [
   { label: 'Texte brut', description: 'Sortie quelconque retournée telle quelle', value: 'text' },
 ];
 
-/** Images OCI officielles PileOuFaces — configuration complète embarquée */
-const OCI_DECOMPILERS = {
-  ghidra: {
-    label: 'Ghidra',
-    description: 'Décompilateur open-source de la NSA, très complet',
-    image: 'ghcr.io/pileoufaces/pile-ou-face/decompiler-ghidra:latest',
-    docker_command: ['/opt/pof-venv/bin/python3', '/opt/pof/decompile.py', '--binary', '{binary}', '--addr', '{addr}'],
-    docker_full_command: ['/opt/pof-venv/bin/python3', '/opt/pof/decompile.py', '--binary', '{binary}', '--full'],
-    output_format: 'json',
-    timeout: 180,
-    env: { GHIDRA_INSTALL_DIR: '/opt/ghidra' },
-  },
-  retdec: {
-    label: 'RetDec',
-    description: 'Décompilateur en C par Avast, léger et rapide',
-    image: 'ghcr.io/pileoufaces/pile-ou-face/decompiler-retdec:latest',
-    docker_command: ['retdec-decompiler', '--select-decode-only', '--select-functions', '{func_name}', '-o', '{out}', '{binary}'],
-    docker_full_command: ['retdec-decompiler', '-o', '{out}', '{binary}'],
-    output_format: 'c',
-    timeout: 120,
-    env: null,
-    platform: 'linux/amd64', // binaire pré-compilé amd64-only
-  },
-  angr: {
-    label: 'Angr',
-    description: 'Framework d\'analyse binaire Python, symbolique',
-    image: 'ghcr.io/pileoufaces/pile-ou-face/decompiler-angr:latest',
-    docker_command: ['/opt/pof-venv/bin/python3', '/opt/pof/decompile.py', '--binary', '{binary}', '--addr', '{addr}'],
-    docker_full_command: ['/opt/pof-venv/bin/python3', '/opt/pof/decompile.py', '--binary', '{binary}', '--full'],
-    output_format: 'json',
-    timeout: 180,
-    env: null,
-  },
-};
+/**
+ * Version d'image épinglée pour un décompilateur, lue depuis le catalogue partagé
+ * image_versions.json (même source que docker-decompilers.yml). Retombe sur "latest"
+ * si le fichier est absent — « utiliser le nôtre » pointe ainsi sur un tag immuable.
+ */
+function _ociImageVersion(key) {
+  try {
+    const p = path.join(getExtensionPath(), 'backends', 'static', 'decompile', 'image_versions.json');
+    const data = JSON.parse(fs.readFileSync(p, 'utf8'));
+    const v = data && typeof data === 'object' ? String(data[key] || '').trim() : '';
+    if (v) return v;
+  } catch (_) { /* absent ou illisible → fallback */ }
+  return 'latest';
+}
+
+function _ociImage(key) {
+  return `ghcr.io/pileoufaces/pile-ou-face/decompiler-${key}:${_ociImageVersion(key)}`;
+}
+
+/**
+ * Images OCI officielles PileOuFaces (« utiliser le nôtre »). Le tag est épinglé
+ * à la version du catalogue. Construit paresseusement + mémoïsé : getExtensionPath()
+ * n'est fiable qu'après activation.
+ */
+let _ociDecompilersCache = null;
+function ociDecompilers() {
+  if (_ociDecompilersCache) return _ociDecompilersCache;
+  _ociDecompilersCache = {
+    ghidra: {
+      label: 'Ghidra',
+      description: 'Décompilateur open-source de la NSA, très complet',
+      image: _ociImage('ghidra'),
+      docker_command: ['/opt/pof-venv/bin/python3', '/opt/pof/decompile.py', '--binary', '{binary}', '--addr', '{addr}'],
+      docker_full_command: ['/opt/pof-venv/bin/python3', '/opt/pof/decompile.py', '--binary', '{binary}', '--full'],
+      output_format: 'json',
+      timeout: 180,
+      env: { GHIDRA_INSTALL_DIR: '/opt/ghidra' },
+    },
+    retdec: {
+      label: 'RetDec',
+      description: 'Décompilateur en C par Avast, léger et rapide',
+      image: _ociImage('retdec'),
+      docker_command: ['retdec-decompiler', '--select-decode-only', '--select-functions', '{func_name}', '-o', '{out}', '{binary}'],
+      docker_full_command: ['retdec-decompiler', '-o', '{out}', '{binary}'],
+      output_format: 'c',
+      timeout: 120,
+      env: null,
+      platform: 'linux/amd64', // binaire pré-compilé amd64-only
+    },
+    angr: {
+      label: 'Angr',
+      description: 'Framework d\'analyse binaire Python, symbolique',
+      image: _ociImage('angr'),
+      docker_command: ['/opt/pof-venv/bin/python3', '/opt/pof/decompile.py', '--binary', '{binary}', '--addr', '{addr}'],
+      docker_full_command: ['/opt/pof-venv/bin/python3', '/opt/pof/decompile.py', '--binary', '{binary}', '--full'],
+      output_format: 'json',
+      timeout: 180,
+      env: null,
+    },
+  };
+  return _ociDecompilersCache;
+}
 
 // ─── Helpers config ───────────────────────────────────────────────────────────
 
@@ -345,7 +373,7 @@ async function cmdDecompilerAdd(root, storageDir, editId = null) {
 
     // ── ÉTAPE 3a : Image OCI PileOuFaces ─────────────────────────────────
     if (dockerSource === 'oci') {
-      const ociChoices = Object.entries(OCI_DECOMPILERS).map(([key, d]) => {
+      const ociChoices = Object.entries(ociDecompilers()).map(([key, d]) => {
         const alreadyHere = !!cfg.decompilers[key];
         const localAvail = _checkDockerImageSync(d.image);
         const statusIcon = localAvail ? '$(check)' : '$(cloud-download)';
@@ -367,7 +395,7 @@ async function cmdDecompilerAdd(root, storageDir, editId = null) {
       if (!ociPicked) return;
 
       const ociKey = ociPicked.value;
-      const ociDef = OCI_DECOMPILERS[ociKey];
+      const ociDef = ociDecompilers()[ociKey];
 
       // Confirmer si déjà présent
       if (cfg.decompilers[ociKey]) {
@@ -1018,8 +1046,10 @@ function registerDecompilerCommands(context, deps, root, storageDir) {
 /** Retourne la platform docker requise pour une image OCI connue (ex: 'linux/amd64'), ou '' si aucune contrainte. */
 function getKnownOciImagePlatform(image: string): string {
   const img = String(image || '').trim();
-  for (const def of Object.values(OCI_DECOMPILERS)) {
-    if (def.image === img && (def as { platform?: string }).platform) {
+  const repo = img.split(':')[0]; // tolérant au tag (:latest, :1.0.0, …)
+  for (const def of Object.values(ociDecompilers())) {
+    const defRepo = String((def as { image?: string }).image || '').split(':')[0];
+    if (defRepo && defRepo === repo && (def as { platform?: string }).platform) {
       return (def as { platform?: string }).platform!;
     }
   }
