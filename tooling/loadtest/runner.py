@@ -43,7 +43,7 @@ def parse_time_output_linux(output: str) -> dict:
     }
 
 
-def run_measured(command: list[str], timeout_s: int) -> dict:
+def run_measured(command: list[str], timeout_s: int, env: dict | None = None) -> dict:
     """Exécute `command` enveloppée par /usr/bin/time, retourne les mesures.
 
     Décision : si /usr/bin/time (ou la commande enveloppée) est introuvable,
@@ -52,6 +52,9 @@ def run_measured(command: list[str], timeout_s: int) -> dict:
     se propager plutôt que de la masquer dans le dict de retour. Un appelant
     qui lance une campagne de mesures doit savoir immédiatement que
     l'environnement est mal configuré, pas voir un `returncode` ambigu.
+
+    `env`: variables d'environnement pour le processus enfant. `None`
+    (défaut) hérite de `os.environ`, comme avant l'ajout de ce paramètre.
 
     Returns:
         dict avec: returncode, peak_rss_bytes, elapsed_s, timed_out, stderr_tail
@@ -73,6 +76,7 @@ def run_measured(command: list[str], timeout_s: int) -> dict:
         stderr=subprocess.PIPE,
         text=True,
         start_new_session=True,
+        env=env,
     )
     try:
         _, stderr = proc.communicate(timeout=timeout_s)
