@@ -33,25 +33,6 @@ const OUTPUT_FORMATS = [
   { label: 'Texte brut', description: 'Sortie quelconque retournée telle quelle', value: 'text' },
 ];
 
-/**
- * Version d'image épinglée pour un décompilateur, lue depuis le catalogue partagé
- * image_versions.json (même source que docker-decompilers.yml). Retombe sur "latest"
- * si le fichier est absent — « utiliser le nôtre » pointe ainsi sur un tag immuable.
- */
-function _ociImageVersion(key) {
-  try {
-    const p = path.join(getExtensionPath(), 'backends', 'static', 'decompile', 'image_versions.json');
-    const data = JSON.parse(fs.readFileSync(p, 'utf8'));
-    const v = data && typeof data === 'object' ? String(data[key] || '').trim() : '';
-    if (v) return v;
-  } catch (_) { /* absent ou illisible → fallback */ }
-  return 'latest';
-}
-
-function _ociImage(key) {
-  return `ghcr.io/pileoufaces/pile-ou-face/decompiler-${key}:${_ociImageVersion(key)}`;
-}
-
 function _compareSemver(a, b) {
   const pa = String(a).split('.').map((n) => parseInt(n, 10) || 0);
   const pb = String(b).split('.').map((n) => parseInt(n, 10) || 0);
@@ -100,9 +81,9 @@ async function _fetchOciVersions(imageRepo) {
 }
 
 /**
- * Images OCI officielles PileOuFaces (« utiliser le nôtre »). Le tag est épinglé
- * à la version du catalogue. Construit paresseusement + mémoïsé : getExtensionPath()
- * n'est fiable qu'après activation.
+ * Métadonnées des décompilateurs OCI officiels PileOuFaces (« utiliser le nôtre »).
+ * PAS de version ici : le tag est choisi au moment de l'ajout parmi les versions
+ * publiées sur ghcr (fetch dynamique). On ne stocke que label/commandes/plateforme.
  */
 let _ociDecompilersCache = null;
 function ociDecompilers() {
@@ -111,7 +92,6 @@ function ociDecompilers() {
     ghidra: {
       label: 'Ghidra',
       description: 'Décompilateur open-source de la NSA, très complet',
-      image: _ociImage('ghidra'),
       docker_command: ['/opt/pof-venv/bin/python3', '/opt/pof/decompile.py', '--binary', '{binary}', '--addr', '{addr}'],
       docker_full_command: ['/opt/pof-venv/bin/python3', '/opt/pof/decompile.py', '--binary', '{binary}', '--full'],
       output_format: 'json',
@@ -121,7 +101,6 @@ function ociDecompilers() {
     retdec: {
       label: 'RetDec',
       description: 'Décompilateur en C par Avast, léger et rapide',
-      image: _ociImage('retdec'),
       docker_command: ['retdec-decompiler', '--select-decode-only', '--select-functions', '{func_name}', '-o', '{out}', '{binary}'],
       docker_full_command: ['retdec-decompiler', '-o', '{out}', '{binary}'],
       output_format: 'c',
@@ -132,7 +111,6 @@ function ociDecompilers() {
     angr: {
       label: 'Angr',
       description: 'Framework d\'analyse binaire Python, symbolique',
-      image: _ociImage('angr'),
       docker_command: ['/opt/pof-venv/bin/python3', '/opt/pof/decompile.py', '--binary', '{binary}', '--addr', '{addr}'],
       docker_full_command: ['/opt/pof-venv/bin/python3', '/opt/pof/decompile.py', '--binary', '{binary}', '--full'],
       output_format: 'json',
@@ -422,7 +400,7 @@ async function cmdDecompilerAdd(root, storageDir, editId = null) {
     if (dockerSource === 'oci') {
       const ociChoices = Object.entries(ociDecompilers()).map(([key, d]) => {
         const alreadyHere = !!cfg.decompilers[key];
-        const localAvail = _checkDockerImageSync(d.image);
+        const localAvail = _checkDockerImageSync(`ghcr.io/pileoufaces/pile-ou-face/decompiler-${key}:latest`);
         const statusIcon = localAvail ? '$(check)' : '$(cloud-download)';
         const statusDetail = localAvail
           ? 'Image disponible localement'
@@ -456,35 +434,39 @@ async function cmdDecompilerAdd(root, storageDir, editId = null) {
 
       // ── Choix de la version (toutes les versions publiées sur ghcr) ──────
       const imageRepo = `pileoufaces/pile-ou-face/decompiler-${ociKey}`;
-      const pinned = _ociImageVersion(ociKey);
-      const liveVersions = await vscode.window.withProgress(
+      // Liste 100 % dynamique : uniquement les versions publiées sur ghcr, plus
+      // récente en tête (= recommandée ; les breaking changes vont au CHANGELOG).
+      const versions = await vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
-          title: `Recherche des versions de ${ociDef.label}…`,
+          title: `Recherche des versions de ${ociDef.label} sur ghcr…`,
           cancellable: false,
         },
         () => _fetchOciVersions(imageRepo),
       );
-      const versionSet = new Set(liveVersions);
-      if (pinned && pinned !== 'latest') versionSet.add(pinned);
-      const versions = Array.from(versionSet).sort((a, b) => _compareSemver(b, a));
-      let chosenVersion = pinned;
-      if (versions.length > 1) {
+      let chosenVersion;
+      if (versions.length >= 1) {
         const versionPick = await vscode.window.showQuickPick(
-          versions.map((v) => ({
-            label: v === pinned ? `$(star-full) ${v}` : v,
-            description: v === pinned ? 'recommandée (testée avec cette extension)' : '',
+          versions.map((v, i) => ({
+            label: i === 0 ? `$(star-full) ${v}` : v,
+            description: i === 0 ? 'la plus récente (recommandée)' : '',
             value: v,
           })),
           {
             title: `${ociDef.label} — Choisir la version`,
-            placeHolder: `${versions.length} versions disponibles sur ghcr`,
+            placeHolder: `${versions.length} version(s) publiée(s) sur ghcr`,
           },
         );
         if (!versionPick) return;
         chosenVersion = versionPick.value;
-      } else if (versions.length === 1) {
-        chosenVersion = versions[0];
+      } else {
+        const fallback = await vscode.window.showWarningMessage(
+          `Impossible de lister les versions de ${ociDef.label} sur ghcr (hors-ligne, ou aucune version publiée). Utiliser le tag « latest » ?`,
+          { modal: true },
+          'Utiliser latest',
+        );
+        if (fallback !== 'Utiliser latest') return;
+        chosenVersion = 'latest';
       }
       const chosenImage = `ghcr.io/pileoufaces/pile-ou-face/decompiler-${ociKey}:${chosenVersion}`;
 
@@ -1128,11 +1110,10 @@ function registerDecompilerCommands(context, deps, root, storageDir) {
 function getKnownOciImagePlatform(image: string): string {
   const img = String(image || '').trim();
   const repo = img.split(':')[0]; // tolérant au tag (:latest, :1.0.0, …)
-  for (const def of Object.values(ociDecompilers())) {
-    const defRepo = String((def as { image?: string }).image || '').split(':')[0];
-    if (defRepo && defRepo === repo && (def as { platform?: string }).platform) {
-      return (def as { platform?: string }).platform!;
-    }
+  for (const key of Object.keys(ociDecompilers())) {
+    const defRepo = `ghcr.io/pileoufaces/pile-ou-face/decompiler-${key}`;
+    const platform = (ociDecompilers()[key] as { platform?: string }).platform;
+    if (defRepo === repo && platform) return platform;
   }
   return '';
 }
