@@ -776,7 +776,7 @@ describe('loaders — getSymbols', () => {
 
     await loaders.getSymbols({ binaryPath: '/repo/demo.bin', binaryMeta: null });
 
-    expect(posted[0]).to.deep.equal({ type: 'symbols', symbols: ['main'] });
+    expect(posted[0]).to.deep.equal({ type: 'symbols', binaryPath: '/repo/demo.bin', symbols: ['main'] });
   });
 
   it('returns empty symbols when binary does not exist', async () => {
@@ -796,7 +796,7 @@ describe('loaders — getSymbols', () => {
 
     await loaders.getSymbols({ binaryPath: '/nonexistent.bin', binaryMeta: null });
 
-    expect(posted[0]).to.deep.equal({ type: 'symbols', symbols: [] });
+    expect(posted[0]).to.deep.equal({ type: 'symbols', binaryPath: '/nonexistent.bin', symbols: [] });
   });
 
   it('returns empty symbols when loadBinarySymbols throws', async () => {
@@ -816,6 +816,6 @@ describe('loaders — getSymbols', () => {
 
     await loaders.getSymbols({ binaryPath: '/repo/demo.bin', binaryMeta: null });
 
-    expect(posted[0]).to.deep.equal({ type: 'symbols', symbols: [] });
+    expect(posted[0]).to.deep.equal({ type: 'symbols', binaryPath: '/repo/demo.bin', symbols: [] });
   });
 });

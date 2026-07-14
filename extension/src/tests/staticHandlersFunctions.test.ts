@@ -122,3 +122,91 @@ describe("staticHandlers functions radar", () => {
     expect(radarDiagnostic.stderrTail).to.include("Cannot open cache database");
   });
 });
+
+describe("staticHandlers typed struct preview stale guards", () => {
+  function loadHandlers(execFile, posted) {
+    const staticHandlers = proxyquire("../static/staticHandlers", {
+      vscode: {},
+      child_process: { execFile },
+      "../shared/utils": {
+        detectPythonExecutable: () => "/usr/bin/python3",
+        buildRuntimeEnv: () => ({ PATH: process.env.PATH || "" }),
+      },
+      "../shared/sharedHandlers": {
+        normalizeRawArchName: (value) => value,
+      },
+      "./pluginState": {
+        emptyPluginUiState: () => ({}),
+        summarizePluginRuntimeState: (value) => value,
+      },
+    });
+
+    return staticHandlers({
+      root: "/repo",
+      panel: { webview: { postMessage: (msg) => posted.push(msg) } },
+      context: { globalState: { get: () => ({}) } },
+    });
+  }
+
+  it("posts binaryPath on typed struct preview success", async () => {
+    const posted = [];
+    const execFile = (_pythonExe, args, _opts, cb) => {
+      const script = args[0];
+      if (script.endsWith("backends/static/annotations/typed_data.py")) {
+        cb(null, JSON.stringify({ entries: [{ name: "field_0" }], sections: [".data"] }), "");
+        return;
+      }
+      cb(new Error(`unexpected script: ${script}`));
+    };
+    const handlers = loadHandlers(execFile, posted);
+
+    await handlers.hubPreviewTypedStruct({
+      binaryPath: "/tmp/current.bin",
+      structName: "Elf64_Ehdr",
+      structAddr: "0x400000",
+    });
+
+    expect(posted).to.have.length(1);
+    expect(posted[0]).to.deep.equal({
+      type: "hubTypedStructPreviewDone",
+      binaryPath: "/tmp/current.bin",
+      data: { entries: [{ name: "field_0" }], sections: [".data"] },
+      request: {
+        structName: "Elf64_Ehdr",
+        structAddr: "0x400000",
+        binaryPath: "/tmp/current.bin",
+      },
+    });
+  });
+
+  it("posts binaryPath on typed struct preview failure", async () => {
+    const posted = [];
+    const execFile = (_pythonExe, args, _opts, cb) => {
+      const script = args[0];
+      if (script.endsWith("backends/static/annotations/typed_data.py")) {
+        cb(new Error("typed data crashed"), "", "boom");
+        return;
+      }
+      cb(new Error(`unexpected script: ${script}`));
+    };
+    const handlers = loadHandlers(execFile, posted);
+
+    await handlers.hubPreviewTypedStruct({
+      binaryPath: "/tmp/current.bin",
+      structName: "Elf64_Ehdr",
+      structAddr: "0x400000",
+    });
+
+    expect(posted).to.have.length(1);
+    expect(posted[0].type).to.equal("hubTypedStructPreviewDone");
+    expect(posted[0].binaryPath).to.equal("/tmp/current.bin");
+    expect(posted[0].request).to.deep.equal({
+      structName: "Elf64_Ehdr",
+      structAddr: "0x400000",
+      binaryPath: "/tmp/current.bin",
+    });
+    expect(posted[0].data.entries).to.deep.equal([]);
+    expect(posted[0].data.sections).to.deep.equal([]);
+    expect(posted[0].data.error).to.include("typed data crashed");
+  });
+});

@@ -2,6 +2,76 @@
 const { expect } = require("chai");
 const fs = require("fs");
 const path = require("path");
+const vm = require("vm");
+
+function loadBinarySourceControllerSandbox() {
+  const elements = new Map();
+  const listeners = [];
+  const document = {
+    createElement(tag) {
+      return {
+        tagName: String(tag).toUpperCase(),
+        children: [],
+        classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
+        style: {},
+        setAttribute() {},
+        addEventListener() {},
+        append(...children) { this.children.push(...children); },
+        appendChild(child) { this.children.push(child); return child; },
+        replaceChildren(...children) { this.children = children; },
+      };
+    },
+    addEventListener(type, listener) {
+      listeners.push({ type, listener });
+    },
+    getElementById(id) {
+      if (!elements.has(id)) {
+        elements.set(id, {
+          id,
+          value: "",
+          hidden: true,
+          readOnly: false,
+          title: "",
+          placeholder: "",
+          textContent: "",
+          children: [],
+          style: {},
+          classList: { add() {}, remove() {}, toggle() {}, contains() { return id === "panel-static"; } },
+          addEventListener() {},
+          setAttribute() {},
+          append(...children) { this.children.push(...children); },
+          appendChild(child) { this.children.push(child); return child; },
+          replaceChildren(...children) { this.children = children; },
+          contains() { return false; },
+        });
+      }
+      return elements.get(id);
+    },
+  };
+  const sandbox = {
+    window: null,
+    document,
+    POFHub: {},
+    Date,
+    JSON,
+  };
+  sandbox.window = sandbox;
+  const filename = path.resolve(__dirname, "../shared/binarySourceController.js");
+  vm.runInNewContext(fs.readFileSync(filename, "utf8"), sandbox, { filename });
+  return { sandbox, elements, listeners };
+}
+
+function input(value = "") {
+  return { value };
+}
+
+function formWithUseExistingBinary(checked = true) {
+  return {
+    querySelector(selector) {
+      return selector === '[name="useExistingBinary"]' ? { checked } : null;
+    },
+  };
+}
 
 describe("disasm autoload loop guard (skipAutoLoad threaded through nav chain)", () => {
   const binarySourceControllerSource = () => fs.readFileSync(
@@ -45,6 +115,112 @@ describe("disasm autoload loop guard (skipAutoLoad threaded through nav chain)",
     const staleGuardBlock = handler.slice(staleGuardIndex, applyIndex);
     expect(staleGuardBlock).to.include("event: 'ignored-stale-response'");
     expect(staleGuardBlock).to.include("return true;");
+  });
+
+  it("keeps the active binary unchanged when a stale auto hubSetBinaryPath arrives", () => {
+    const { sandbox } = loadBinarySourceControllerSandbox();
+    const messages = [];
+    const calls = [];
+    const broadcasts = [];
+    const staticBinaryInput = input("/tmp/current.bin");
+    const binaryPathInput = input("/tmp/current.bin");
+
+    sandbox.window.PluginIframeRouter = {
+      broadcast: (message) => broadcasts.push(message),
+    };
+
+    const controller = sandbox.POFHubBinarySourceController.initBinarySourceController({
+      postMessage: (message) => messages.push(message),
+      staticBinaryInput,
+      binaryPathInput,
+      form: formWithUseExistingBinary(true),
+      _loadStorage: () => ({ staticBinaryPath: "/tmp/current.bin", binaryMeta: null, group: "code", tab: "disasm" }),
+      _saveStorage: (payload) => calls.push(["save", payload]),
+      _basenameFromPath: (value) => String(value).split("/").pop(),
+      resetStaticBinaryDerivedState: () => calls.push(["reset"]),
+      showGroup: (...args) => calls.push(["showGroup", ...args]),
+      getActiveStaticTab: () => "disasm",
+      requestSymbols: () => calls.push(["requestSymbols"]),
+      requestRunTraceInit: (...args) => calls.push(["requestRunTraceInit", ...args]),
+      setDynamicTraceStatus: (status) => calls.push(["setDynamicTraceStatus", status]),
+      _autoLoadTab: (tab) => calls.push(["autoLoad", tab]),
+    });
+
+    const handled = controller.handleBinarySourceMessage({
+      type: "hubSetBinaryPath",
+      binaryPath: "/tmp/old.bin",
+      skipAutoLoad: true,
+    });
+
+    expect(handled).to.equal(true);
+    expect(staticBinaryInput.value).to.equal("/tmp/current.bin");
+    expect(binaryPathInput.value).to.equal("/tmp/current.bin");
+    expect(calls).to.deep.equal([]);
+    expect(broadcasts).to.deep.equal([]);
+    expect(messages).to.deep.equal([{
+      type: "hubDebugLog",
+      scope: "static-binary",
+      event: "ignored-stale-response",
+      details: {
+        currentBinaryPath: "/tmp/current.bin",
+        responseBinaryPath: "/tmp/old.bin",
+        messageType: "hubSetBinaryPath",
+      },
+    }]);
+  });
+
+  it("still applies a matching auto hubSetBinaryPath without re-triggering autoload", () => {
+    const { sandbox } = loadBinarySourceControllerSandbox();
+    const messages = [];
+    const calls = [];
+    const broadcasts = [];
+    const staticBinaryInput = input("/tmp/current.bin");
+    const binaryPathInput = input("/tmp/current.bin");
+
+    sandbox.window.PluginIframeRouter = {
+      broadcast: (message) => broadcasts.push(message),
+    };
+
+    const controller = sandbox.POFHubBinarySourceController.initBinarySourceController({
+      postMessage: (message) => messages.push(message),
+      staticBinaryInput,
+      binaryPathInput,
+      form: formWithUseExistingBinary(true),
+      _loadStorage: () => ({ staticBinaryPath: "/tmp/current.bin", binaryMeta: null, group: "code", tab: "disasm" }),
+      _saveStorage: (payload) => calls.push(["save", payload]),
+      _basenameFromPath: (value) => String(value).split("/").pop(),
+      resetStaticBinaryDerivedState: () => calls.push(["reset"]),
+      showGroup: (...args) => calls.push(["showGroup", ...args]),
+      getActiveStaticTab: () => "disasm",
+      requestSymbols: () => calls.push(["requestSymbols"]),
+      requestRunTraceInit: (...args) => calls.push(["requestRunTraceInit", ...args]),
+      setDynamicTraceStatus: (status) => calls.push(["setDynamicTraceStatus", status]),
+      updateArgvPayloadHint: () => calls.push(["updateArgvPayloadHint"]),
+      _autoLoadTab: (tab) => calls.push(["autoLoad", tab]),
+    });
+
+    const handled = controller.handleBinarySourceMessage({
+      type: "hubSetBinaryPath",
+      binaryPath: "/tmp/current.bin",
+      skipAutoLoad: true,
+    });
+
+    expect(handled).to.equal(true);
+    expect(staticBinaryInput.value).to.equal("/tmp/current.bin");
+    expect(binaryPathInput.value).to.equal("/tmp/current.bin");
+    expect(calls.map((call) => call[0])).to.include.members([
+      "save",
+      "showGroup",
+      "requestSymbols",
+      "requestRunTraceInit",
+      "setDynamicTraceStatus",
+      "updateArgvPayloadHint",
+    ]);
+    expect(calls.map((call) => call[0])).to.not.include("reset");
+    expect(calls.map((call) => call[0])).to.not.include("autoLoad");
+    expect(calls.find((call) => call[0] === "showGroup")).to.deep.equal(["showGroup", "code", "disasm", true]);
+    expect(broadcasts).to.deep.equal([{ type: "__binaryPath", binaryPath: "/tmp/current.bin" }]);
+    expect(messages.some((message) => message.event === "ignored-stale-response")).to.equal(false);
   });
 
   it("showGroup forwards skipAutoLoad to showSubTab", () => {
