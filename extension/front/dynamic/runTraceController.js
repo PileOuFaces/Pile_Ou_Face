@@ -112,6 +112,29 @@
       if (typeof postMessage === 'function') postMessage(message);
     }
 
+    function normalizeBinaryPathForCompare(value) {
+      return String(value || '').trim().replace(/\\/g, '/');
+    }
+
+    function isStaleDynamicBinaryResponse(msg, scope) {
+      const responseBinaryPath = String(msg?.binaryPath || '').trim();
+      const currentBinaryPath = getBinaryPath();
+      if (
+        !responseBinaryPath
+        || !currentBinaryPath
+        || normalizeBinaryPathForCompare(responseBinaryPath) === normalizeBinaryPathForCompare(currentBinaryPath)
+      ) {
+        return false;
+      }
+      safePostMessage({
+        type: 'hubDebugLog',
+        scope,
+        event: 'ignored-stale-response',
+        details: { currentBinaryPath, responseBinaryPath },
+      });
+      return true;
+    }
+
     function requestRunTraceInit(preset = null, forcedBinaryPath = '') {
       safePostMessage({
         type: 'requestRunTraceInit',
@@ -123,6 +146,7 @@
     }
 
     function applyRunTraceInit(msg) {
+      if (isStaleDynamicBinaryResponse(msg, 'dynamic-init')) return;
       const previousArgvPayload = payloadBuilderInput?.value ?? '';
       const previousPayloadTargetMode = typeof getDynamicPayloadTargetMode === 'function'
         ? getDynamicPayloadTargetMode()
@@ -337,6 +361,9 @@
       }
       if (msg.type === 'runTraceDone') {
         if (runBtn) runBtn.disabled = false;
+        if (isStaleDynamicBinaryResponse(msg, 'dynamic-run-trace-done')) {
+          return true;
+        }
         if (typeof setDynamicTraceStatus === 'function') {
           setDynamicTraceStatus('Trace terminée.');
         }

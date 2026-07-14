@@ -400,6 +400,7 @@ runtimeSessionController = runtimeSessionControllerFactory?.initRuntimeSessionCo
   document,
   postMessage: (message) => vscode.postMessage(message),
   showPanel,
+  getBinaryPath: () => String(binaryPathInput?.value || '').trim(),
   fallbackRenderer: window.POFHub?.runtimeFallbackRenderer || window.POFHubRuntimeFallbackRenderer,
 });
 

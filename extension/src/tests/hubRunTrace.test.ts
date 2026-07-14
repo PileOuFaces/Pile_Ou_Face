@@ -579,7 +579,15 @@ describe('hub runTrace isolation', () => {
       .find((message) => message.type === 'dynamicTraceReady');
 
     expect(dynamicTraceReadyMessage).to.exist;
+    expect(dynamicTraceReadyMessage.binaryPath).to.equal('examples/rootme2.elf');
     expect(dynamicTraceReadyMessage.analysisByStep).to.deep.equal(analysisByStepFixture);
+    const runTraceDoneMessage = panel.webview.postMessage.getCalls()
+      .map((call) => call.args[0])
+      .find((message) => message.type === 'runTraceDone');
+    expect(runTraceDoneMessage).to.deep.equal({
+      type: 'runTraceDone',
+      binaryPath: 'examples/rootme2.elf',
+    });
   });
 
   it('passes generated payload bytes through stdin-hex and persists input meta', async () => {

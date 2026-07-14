@@ -1301,6 +1301,7 @@ function createHub(config) {
           writeTraceJson(canonicalJsonPath, trace);
           panel.webview.postMessage({
             type: 'dynamicTraceReady',
+            binaryPath,
             traceRunId: (trace.meta?.trace_run_id !== undefined && trace.meta?.trace_run_id !== null)
               ? String(trace.meta.trace_run_id) : null,
             snapshots: Array.isArray(trace.snapshots) ? trace.snapshots : [],
@@ -1321,7 +1322,7 @@ function createHub(config) {
         vscode.window.showErrorMessage(`Trace failed: ${err.message || err}`);
       } finally {
         if (traceRunId === latestTraceRunId) {
-          panel.webview.postMessage({ type: 'runTraceDone' });
+          panel.webview.postMessage({ type: 'runTraceDone', binaryPath });
         }
       }
     });
