@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-import os
+import io
+import json
 from types import SimpleNamespace
-from unittest.mock import patch
 
+from backends.plugins import license as license_module
 from backends.plugins.license import evaluate_plugin_license
 
 
@@ -19,14 +20,35 @@ def _build_manifest(required=True):
     )
 
 
-def test_env_content_key_takes_priority(tmp_path):
-    """POF_CONTENT_KEY_* env var overrides license file lookup."""
+def test_env_content_key_is_ignored_in_strict_mode(tmp_path):
+    """POF_CONTENT_KEY_* is no longer a supported online key transport."""
     manifest = _build_manifest()
-    env_var = "POF_CONTENT_KEY_POF_TEST_PLUGIN"
-    fake_key = "dGVzdGtleWFiY2RlZmc="
+    result = evaluate_plugin_license(
+        manifest,
+        env={
+            "BINHOST_DISABLE_LICENSE_FALLBACK": "1",
+            "POF_CONTENT_KEY_POF_TEST_PLUGIN": "dGVzdGtleWFiY2RlZmc=",
+        },
+        search_paths=[tmp_path],
+    )
 
-    with patch.dict(os.environ, {env_var: fake_key}):
-        result = evaluate_plugin_license(manifest, search_paths=[tmp_path])
+    assert result.content_key == ""
+    assert result.status == "locked"
+
+
+def test_stdin_content_key_takes_priority(tmp_path, monkeypatch):
+    """Online content keys can be passed over stdin instead of process env."""
+    manifest = _build_manifest()
+    fake_key = "c3RkaW4ta2V5"
+    payload = {"content_keys": {"pof.test-plugin": fake_key}}
+
+    monkeypatch.setattr(license_module, "_STDIN_CONTENT_KEYS_CACHE", None)
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
+    result = evaluate_plugin_license(
+        manifest,
+        env={"BINHOST_CONTENT_KEYS_STDIN": "1"},
+        search_paths=[tmp_path],
+    )
 
     assert result.content_key == fake_key
     assert result.status == "active"

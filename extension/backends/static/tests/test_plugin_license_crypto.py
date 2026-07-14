@@ -565,48 +565,22 @@ class _LicenseEvalBase(unittest.TestCase):
 class TestEvaluatePluginLicenseSecurityPaths(_LicenseEvalBase):
     """End-to-end security tests covering every short-circuit path in evaluate_plugin_license."""
 
-    def test_env_content_key_returns_active_bypassing_all_checks(self):
-        """POF_CONTENT_KEY_POF_TEST env var → status=active, no license file needed."""
-        from backends.plugins.license import evaluate_plugin_license
-
-        with tempfile.TemporaryDirectory() as tmp:
-            manifest = self._make_manifest(Path(tmp))
-            result = evaluate_plugin_license(
-                manifest,
-                env={"POF_CONTENT_KEY_POF_TEST": "mycontentkey"},
-                search_paths=[],
-            )
-        self.assertEqual(result.status, "active")
-        self.assertEqual(result.content_key, "mycontentkey")
-        self.assertTrue(result.verified)
-
-    def test_env_content_key_uses_plugin_id_format(self):
-        """pof.demo-plugin → POF_CONTENT_KEY_POF_DEMO_PLUGIN."""
-        from backends.plugins.license import evaluate_plugin_license
-
-        with tempfile.TemporaryDirectory() as tmp:
-            manifest = self._make_manifest(Path(tmp), plugin_id="pof.demo-plugin")
-            result = evaluate_plugin_license(
-                manifest,
-                env={"POF_CONTENT_KEY_POF_DEMO_PLUGIN": "secretkey"},
-                search_paths=[],
-            )
-        self.assertEqual(result.status, "active")
-        self.assertEqual(result.content_key, "secretkey")
-
-    def test_wrong_env_var_format_is_not_matched(self):
-        """Env var with wrong name (hyphen instead of underscore) is not matched."""
+    def test_env_content_key_is_not_supported(self):
+        """POF_CONTENT_KEY_* env vars no longer unlock plugins."""
         from backends.plugins.license import evaluate_plugin_license
 
         with tempfile.TemporaryDirectory() as tmp:
             manifest = self._make_manifest(Path(tmp), plugin_id="pof.test")
-            # Hyphen: POF_CONTENT_KEY_POF-TEST — wrong, correct is POF_CONTENT_KEY_POF_TEST
             result = evaluate_plugin_license(
                 manifest,
-                env={"POF_CONTENT_KEY_POF-TEST": "mykey"},
+                env={
+                    "BINHOST_DISABLE_LICENSE_FALLBACK": "1",
+                    "POF_CONTENT_KEY_POF_TEST": "mykey",
+                },
                 search_paths=[],
             )
-        self.assertNotEqual(result.status, "active")
+        self.assertEqual(result.status, "locked")
+        self.assertEqual(result.content_key, "")
 
     def test_disable_license_fallback_env_returns_locked_immediately(self):
         """BINHOST_DISABLE_LICENSE_FALLBACK=1 → locked without reading any license file."""

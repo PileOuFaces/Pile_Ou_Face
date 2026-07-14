@@ -26,9 +26,16 @@ const {
 const { getKnownOciImagePlatform } = require('./decompilerCommands');
 
 const AUTH_STRICT_LICENSE_ENV = 'BINHOST_DISABLE_LICENSE_FALLBACK';
+const AUTH_CONTENT_KEYS_STDIN_ENV = 'BINHOST_CONTENT_KEYS_STDIN';
 const DOCKER_IMAGE_UPDATE_CACHE_TTL_MS = 10 * 60 * 1000;
 const _dockerImageUpdateCache = new Map();
 let _dockerRuntimeStatusCache = null;
+
+function encodePluginRuntimeStdin(contentKeys) {
+  const entries = Object.entries(contentKeys || {}).filter(([, value]) => String(value || '').trim());
+  if (!entries.length) return '';
+  return `${JSON.stringify({ content_keys: Object.fromEntries(entries) })}\n`;
+}
 
 function _collectProcessOutput(command, args, options = {}) {
   return new Promise((resolve) => {
@@ -524,8 +531,9 @@ function staticHandlers(config) {
       });
     });
 
-  const buildPluginRuntimeEnv = async () => {
+  const buildPluginRuntimeContext = async () => {
     const base = buildPythonEnv();
+    const contentKeys = {};
     // Injecter le dossier plugins du workspace storage pour que Python le découvre.
     if (storageDir) {
       base['BINHOST_PLUGIN_PATH'] = path.join(storageDir, 'plugins');
@@ -545,8 +553,7 @@ function staticHandlers(config) {
       if (entries.length > 0) {
         hasOnlineKeys = true;
         for (const [pluginId, key] of entries) {
-          const varName = 'POF_CONTENT_KEY_' + String(pluginId).toUpperCase().replace(/-/g, '_').replace(/\./g, '_');
-          base[varName] = String(key);
+          contentKeys[String(pluginId)] = String(key);
         }
       }
     } catch (_e) {
@@ -556,6 +563,7 @@ function staticHandlers(config) {
     if (hasOnlineKeys) {
       // MODE 1 — en ligne : bloquer les fichiers licence offline.
       base[AUTH_STRICT_LICENSE_ENV] = '1';
+      base[AUTH_CONTENT_KEYS_STDIN_ENV] = '1';
     } else {
       // Pas de clés en ligne : vérifier la présence de fichiers licence offline signés.
       // On cherche dans storageDir/licenses ET dans ~/.pile-ou-face/licenses (même
@@ -586,7 +594,7 @@ function staticHandlers(config) {
       // le runtime Python lira les fichiers .license.json signés.
     }
 
-    return base;
+    return { env: base, stdin: encodePluginRuntimeStdin(contentKeys) };
   };
 
   const buildAccountStatePayload = async ({ email = '', fallbackError = '' } = {}) => {
@@ -656,7 +664,7 @@ function staticHandlers(config) {
 
   const runPluginRuntimeStreaming = async (runtimeArgs, options = {}) => {
     if (typeof cp.spawn !== 'function') return runPluginRuntime(runtimeArgs, options);
-    const pluginEnv = await buildPluginRuntimeEnv();
+    const pluginRuntime = await buildPluginRuntimeContext();
     const {
       timeout = 60000,
       maxBuffer = 4 * 1024 * 1024,
@@ -689,9 +697,13 @@ function staticHandlers(config) {
       let settled = false;
       const proc = cp.spawn(getPythonExecutable(), args, {
         cwd: root,
-        env: pluginEnv,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        env: pluginRuntime.env,
+        stdio: ['pipe', 'pipe', 'pipe'],
       });
+      if (pluginRuntime.stdin) {
+        proc.stdin?.write(pluginRuntime.stdin, 'utf8');
+      }
+      proc.stdin?.end();
       const finish = (fn, value) => {
         if (settled) return;
         settled = true;
@@ -736,7 +748,8 @@ function staticHandlers(config) {
   };
 
   const runPluginRuntime = async (runtimeArgs, options = {}) => {
-    const pluginEnv = await buildPluginRuntimeEnv();
+    if (typeof cp.spawn === 'function') return runPluginRuntimeStreaming(runtimeArgs, options);
+    const pluginRuntime = await buildPluginRuntimeContext();
     const { timeout = 60000, maxBuffer = 4 * 1024 * 1024 } = options;
     const scriptPath = path.join(extensionPath, 'backends/plugins/runtime.py');
     const { stdout } = await new Promise((resolve, reject) => {
@@ -746,7 +759,7 @@ function staticHandlers(config) {
         '--api-version', '1',
         ...runtimeArgs,
       ], {
-        encoding: 'utf8', cwd: root, maxBuffer, timeout, env: pluginEnv,
+        encoding: 'utf8', cwd: root, maxBuffer, timeout, env: pluginRuntime.env,
       }, (err, stdout, stderr) => {
         if (err) { err.stderr = stderr; reject(err); } else resolve({ stdout });
       });
