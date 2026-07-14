@@ -24,4 +24,32 @@ describe("Functions binary-change reset", () => {
     expect(source).to.include("functionsUiState.signalFilter = 'all';");
     expect(source).to.include("functionsUiState.selectedAddr = '';");
   });
+
+  it("clears persisted binary-scoped filters and selections on binary change", () => {
+    const source = outilsSource();
+    const resetStart = source.indexOf("function resetStaticBinaryDerivedState()");
+    expect(resetStart).to.be.greaterThan(-1);
+    const resetEnd = source.indexOf("function applyStaticBinarySelectionUi", resetStart);
+    const resetBody = source.slice(resetStart, resetEnd);
+
+    expect(resetBody).to.include("functionsSelectedAddr: ''");
+    expect(resetBody).to.include("decompileAddr: ''");
+    expect(resetBody).to.include("decompileSearch: ''");
+    expect(resetBody).to.include("cfgSearch: ''");
+    expect(resetBody).to.include("cgSearch: ''");
+  });
+
+  it("resets binary-scoped decompile and graph UI state on binary change", () => {
+    const source = outilsSource();
+    const resetStart = source.indexOf("function resetStaticBinaryDerivedState()");
+    expect(resetStart).to.be.greaterThan(-1);
+    const resetEnd = source.indexOf("function applyStaticBinarySelectionUi", resetStart);
+    const resetBody = source.slice(resetStart, resetEnd);
+
+    expect(resetBody).to.include("decompileUiState.selectedAddr = '';");
+    expect(resetBody).to.include("decompileUiState.searchQuery = '';");
+    expect(resetBody).to.include("decompileUiState.activeSearchHit = -1;");
+    expect(resetBody).to.include("cfgUiState.search = '';");
+    expect(resetBody).to.include("callGraphUiState.search = '';");
+  });
 });
