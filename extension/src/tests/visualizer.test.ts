@@ -200,6 +200,27 @@ describe('dynamic visualizer', () => {
     expect(initMessages[1].meta.argv1).to.equal('BBBB');
   });
 
+  it('reveals the current trace panel without reinitializing it', () => {
+    const openVisualizerWebview = createVisualizer({
+      context: { extensionUri: {}, subscriptions: [] },
+      logChannel: { appendLine: () => {} },
+      decorationTypes: new Map()
+    });
+    const trace = {
+      snapshots: [{ step: 1, func: 'main', registers: [] }],
+      risks: [],
+      meta: { view_mode: 'dynamic', trace_run_id: 1 },
+      analysisByStep: {}
+    };
+
+    openVisualizerWebview(trace);
+    panel.webview.postMessage.resetHistory();
+
+    expect(openVisualizerWebview.revealCurrentTrace()).to.equal(true);
+    expect(panel.reveal.calledOnceWithExactly(2)).to.equal(true);
+    expect(panel.webview.postMessage.notCalled).to.equal(true);
+  });
+
   it('infers argc argv buffer and modified even without explicit buffer meta', () => {
     const trace = {
       snapshots: [
