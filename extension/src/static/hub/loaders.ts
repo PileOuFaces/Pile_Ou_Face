@@ -264,13 +264,14 @@ function createLoaders({
 
     getSymbols: async (message) => {
       const { absPath, exists, isDirectory } = resolveBinaryInputContext(message.binaryPath, message.binaryMeta || null);
+      const responseBinaryPath = absPath || String(message.binaryPath || '');
       let symbols = [];
       if (exists && !isDirectory) {
         try {
           symbols = collectSymbolNames(await loadBinarySymbols(absPath));
         } catch (_) { /* symbol extraction failed */ }
       }
-      panel.webview.postMessage({ type: 'symbols', symbols });
+      panel.webview.postMessage({ type: 'symbols', binaryPath: responseBinaryPath, symbols });
     },
   };
 }

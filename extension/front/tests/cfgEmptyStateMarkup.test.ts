@@ -22,8 +22,16 @@ describe("CFG empty state markup", () => {
   });
 
   it("guards CFG responses by binary path to avoid stale cross-binary cache hits", () => {
+    const source = messagesSource();
+    const handlerStart = source.indexOf("msg.type === 'hubCfg'");
+    const handlerEnd = source.indexOf("msg.type === 'hubCallGraph'", handlerStart);
+    const handler = source.slice(handlerStart, handlerEnd);
+    const guardIndex = handler.indexOf("isStaleStaticBinaryResponse(msg, 'static-cfg')");
+    const cacheWriteIndex = handler.indexOf("tabDataCache.cfg = { binaryPath: responseBinaryPath || currentBinaryPath }");
+
     expect(graphRenderersSource()).to.include("hubPost('hubCfg', { binaryPath");
-    expect(messagesSource()).to.include("normalizeCfgBinaryPath(responseBinaryPath) !== normalizeCfgBinaryPath(currentBinaryPath)");
-    expect(messagesSource()).to.include("tabDataCache.cfg = { binaryPath: responseBinaryPath || currentBinaryPath }");
+    expect(guardIndex).to.be.greaterThan(-1);
+    expect(cacheWriteIndex).to.be.greaterThan(-1);
+    expect(guardIndex).to.be.lessThan(cacheWriteIndex);
   });
 });
