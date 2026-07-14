@@ -917,6 +917,7 @@ function staticHandlers(config) {
       if (message.binaryPath && payload.binaryPath == null && payload.binary_path == null) {
         payload.binaryPath = message.binaryPath;
       }
+      const responseBinaryPath = String(message.binaryPath || payload.binaryPath || payload.binary_path || '').trim();
       // Inject workspace context so plugins (yara_scan, capa_scan) can locate rules via RulesManager
       if (payload.workspaceRoot == null) payload.workspaceRoot = root;
       if (payload.globalConfigPath == null) {
@@ -945,6 +946,7 @@ function staticHandlers(config) {
           type: 'hubPluginProgress',
           requestId,
           feature,
+          binaryPath: responseBinaryPath,
           percent: nextPercent,
           message: messageText,
         });
@@ -970,6 +972,7 @@ function staticHandlers(config) {
         type: 'hubPluginResult',
         requestId,
         feature,
+        binaryPath: responseBinaryPath,
         plugin_id: pluginId,
         result,
       });

@@ -113,6 +113,7 @@ describe("staticHandlers plugin bridge", () => {
       type: "hubPluginProgress",
       requestId: "req-1",
       feature: "demo_feature",
+      binaryPath: "/tmp/demo.bin",
       percent: null,
       message: "Démarrage…",
     });
@@ -121,6 +122,7 @@ describe("staticHandlers plugin bridge", () => {
       type: "hubPluginResult",
       requestId: "req-1",
       feature: "demo_feature",
+      binaryPath: "/tmp/demo.bin",
       plugin_id: "",
       result: { ok: true, value: 42 },
     });
@@ -161,6 +163,7 @@ describe("staticHandlers plugin bridge", () => {
         type: "hubPluginProgress",
         requestId: "req-progress",
         feature: "demo_feature",
+        binaryPath: "",
         percent: null,
         message: "Démarrage…",
       },
@@ -168,6 +171,7 @@ describe("staticHandlers plugin bridge", () => {
         type: "hubPluginProgress",
         requestId: "req-progress",
         feature: "demo_feature",
+        binaryPath: "",
         percent: 25,
         message: "Inspection packer",
       },
@@ -175,6 +179,7 @@ describe("staticHandlers plugin bridge", () => {
         type: "hubPluginProgress",
         requestId: "req-progress",
         feature: "demo_feature",
+        binaryPath: "",
         percent: 80,
         message: "Signatures",
       },
@@ -183,6 +188,7 @@ describe("staticHandlers plugin bridge", () => {
       type: "hubPluginResult",
       requestId: "req-progress",
       feature: "demo_feature",
+      binaryPath: "",
       plugin_id: "pof.demo-plugin",
       result: { ok: true, value: 99 },
     });

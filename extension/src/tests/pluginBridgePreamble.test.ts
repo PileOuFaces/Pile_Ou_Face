@@ -150,6 +150,29 @@ describe('PLUGIN_BRIDGE_PREAMBLE', () => {
       expect(win._pofCurrentBinaryPath).to.equal('/tmp/x.bin');
     });
 
+    it('ignores stale __pof_tabload payloads for a previous binary', () => {
+      const { win } = makeBridgeWindow();
+      const fn = sinon.spy();
+      win.registerTabLoader('behavior', fn);
+      deliverHostMessage(win, { type: '__binaryPath', binaryPath: '/tmp/current.bin' });
+      deliverHostMessage(win, { __pof_tabload: true, tabId: 'behavior', binaryPath: '/tmp/old.bin' });
+
+      expect(fn.called).to.equal(false);
+      expect(win._pofCurrentBinaryPath).to.equal('/tmp/current.bin');
+      const debug = win.parent.postMessage.getCalls()
+        .map((call: any) => call.args[0].payload)
+        .find((payload: any) => payload && payload.type === 'hubDebugLog');
+      expect(debug).to.deep.include({
+        type: 'hubDebugLog',
+        scope: 'plugin-tabload',
+        event: 'ignored-stale-response',
+      });
+      expect(debug.details).to.deep.equal({
+        currentBinaryPath: '/tmp/current.bin',
+        responseBinaryPath: '/tmp/old.bin',
+      });
+    });
+
     it('ignores __pof_tabload for a different tabId', () => {
       const { win } = makeBridgeWindow();
       const fn = sinon.spy();
@@ -446,6 +469,62 @@ describe('PLUGIN_BRIDGE_PREAMBLE', () => {
       expect(banner.textContent).to.include('Signatures packer…');
       expect(banner.querySelector('.pof-plugin-progress-percent').textContent).to.equal('42%');
       expect(banner.querySelector('.pof-plugin-progress-bar').style.width).to.equal('42%');
+    });
+
+    it('ignores stale plugin progress and result messages for a previous binary', () => {
+      const { win } = makeBridgeWindow('<main id="pluginRoot"></main>');
+      const received: any[] = [];
+      win.addEventListener('message', (e: any) => {
+        if (e.data && e.data.type === 'hubPluginResult') received.push(e.data);
+      });
+      deliverHostMessage(win, { type: '__binaryPath', binaryPath: '/tmp/current.bin' });
+      deliverHostMessage(win, {
+        type: 'hubPluginProgress',
+        feature: 'packer',
+        binaryPath: '/tmp/old.bin',
+        percent: 50,
+        message: 'Old progress',
+      });
+      deliverHostMessage(win, {
+        type: 'hubPluginResult',
+        feature: 'packer',
+        binaryPath: '/tmp/old.bin',
+        result: { ok: true, stale: true },
+      });
+
+      expect(win.document.getElementById('__pof_plugin_progress')).to.equal(null);
+      expect(received).to.deep.equal([]);
+      const debugScopes = win.parent.postMessage.getCalls()
+        .map((call: any) => call.args[0].payload)
+        .filter((payload: any) => payload && payload.type === 'hubDebugLog')
+        .map((payload: any) => payload.scope);
+      expect(debugScopes).to.include.members(['plugin-progress', 'plugin-result']);
+    });
+
+    it('still accepts plugin messages without binaryPath for workspace-level plugins', () => {
+      const { win } = makeBridgeWindow('<main id="pluginRoot"></main>');
+      const received: any[] = [];
+      win.addEventListener('message', (e: any) => {
+        if (e.data && e.data.type === 'hubPluginResult') received.push(e.data);
+      });
+      deliverHostMessage(win, { type: '__binaryPath', binaryPath: '/tmp/current.bin' });
+      deliverHostMessage(win, {
+        type: 'hubPluginProgress',
+        feature: 'workspace',
+        percent: 10,
+        message: 'Workspace scan',
+      });
+      deliverHostMessage(win, {
+        type: 'hubPluginResult',
+        feature: 'workspace',
+        result: { ok: true },
+      });
+
+      const banner = win.document.getElementById('__pof_plugin_progress');
+      expect(banner).to.exist;
+      expect(banner.textContent).to.include('Workspace scan');
+      expect(received).to.have.length(1);
+      expect(received[0].result).to.deep.equal({ ok: true });
     });
   });
 });
