@@ -22,10 +22,12 @@ function createVisualizer(config) {
   let currentTraceRef = null;
   let functionModelCacheRef = new Map();
 
+  const getBesideColumn = () => vscode?.ViewColumn?.Beside ?? vscode?.ViewColumn?.Two ?? 2;
+
   function openVisualizerWebview(trace) {
     currentTraceRef = trace;
     functionModelCacheRef = new Map();
-    const besideColumn = vscode?.ViewColumn?.Beside ?? vscode?.ViewColumn?.Two ?? 2;
+    const besideColumn = getBesideColumn();
     const getActiveTrace = () => currentTraceRef || trace;
     const getTraceRunId = (traceData) => {
       const raw = traceData?.meta?.trace_run_id;
@@ -255,6 +257,14 @@ function createVisualizer(config) {
         ...message
       });
     }
+  };
+
+  openVisualizerWebview.revealCurrentTrace = function revealCurrentTrace() {
+    if (visualizerPanelRef && !visualizerPanelRef.disposed) {
+      visualizerPanelRef.reveal(getBesideColumn());
+      return true;
+    }
+    return false;
   };
 
   return openVisualizerWebview;
