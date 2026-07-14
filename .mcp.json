@@ -18,6 +18,17 @@
         "mcp"
       ],
       "env": {}
+    },
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "@playwright/mcp",
+        "--output-dir",
+        "../.playwright-mcp",
+        "--output-mode",
+        "file"
+      ],
+      "env": {}
     }
   }
 }
