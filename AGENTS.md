@@ -26,7 +26,9 @@ Do not assume every optional capability visible in the UI is implemented in this
 
 Before making non-trivial changes, read:
 
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- [../ARCHITECTURE.md](../ARCHITECTURE.md) — full system architecture (workspace root)
+- [../CONTRACTS_SHARED.md](../CONTRACTS_SHARED.md) — shared host ↔ plugin contracts
+- [OPEN_CORE_BOUNDARY.md](OPEN_CORE_BOUNDARY.md) — what may/may not depend on company infra
 
 ## Public Boundary Rule
 
@@ -175,7 +177,7 @@ Rules:
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **Pile_Ou_Face** (19649 symbols, 33073 relationships, 268 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **Pile_Ou_Face** (20377 symbols, 34566 relationships, 270 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
