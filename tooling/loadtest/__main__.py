@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import subprocess
 import sys
 import tempfile
 import time
@@ -17,7 +18,8 @@ from loadtest.report import Result, all_ok, format_summary_table, to_json
 from loadtest.runner import run_measured
 from loadtest.scenarios import FIXTURE_PROFILES, SCENARIOS
 
-EXTENSION_ROOT = Path(__file__).resolve().parent.parent.parent / "extension"
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+EXTENSION_ROOT = REPO_ROOT / "extension"
 DEFAULT_FIXTURE_CACHE = Path(__file__).resolve().parent / ".fixture_cache"
 DEFAULT_RESULTS_DIR = Path(__file__).resolve().parent / ".results"
 # Mesuré empiriquement : sur la fixture "small" (~1 Mo), le pic RSS d'un
@@ -29,6 +31,30 @@ DEFAULT_RESULTS_DIR = Path(__file__).resolve().parent / ".results"
 # de détecter une vraie dérive mémoire sur les fixtures medium/large où le
 # binaire lui-même pèse bien plus lourd que l'overhead de l'interpréteur.
 DEFAULT_MAX_RATIO = 500.0
+
+
+def _script_path(script: str) -> Path:
+    return REPO_ROOT / script if script.startswith("tooling/") else EXTENSION_ROOT / script
+
+
+def _run_prepare_commands(scenario, binary_path: Path, out_dir: Path, env: dict[str, str]) -> bool:
+    if scenario.prepare is None:
+        return True
+    for script, cmd_args in scenario.prepare(binary_path, out_dir):
+        result = subprocess.run(
+            [sys.executable, str(_script_path(script)), *cmd_args],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+        )
+        if result.returncode != 0:
+            print(
+                f"Préparation échouée pour {scenario.name}: {script}\n{result.stderr[-2000:]}",
+                file=sys.stderr,
+            )
+            return False
+    return True
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -60,9 +86,20 @@ def main(argv: list[str] | None = None) -> int:
         binary_path = build_fixture(profile.to_spec(), cache_dir=DEFAULT_FIXTURE_CACHE)
         binary_size = binary_path.stat().st_size
         for scenario in scenarios:
-            script_path = EXTENSION_ROOT / scenario.script
+            script_path = _script_path(scenario.script)
             with tempfile.TemporaryDirectory() as out_tmp:
                 out_dir = Path(out_tmp)
+                if not _run_prepare_commands(scenario, binary_path, out_dir, script_env):
+                    results.append(Result(
+                        scenario=scenario.name,
+                        fixture=profile.name,
+                        binary_size_bytes=binary_size,
+                        peak_rss_bytes=0,
+                        elapsed_s=0.0,
+                        returncode=1,
+                        timed_out=False,
+                    ))
+                    continue
                 cmd_args = scenario.build_args(binary_path, out_dir)
                 measured = run_measured(
                     [sys.executable, str(script_path), *cmd_args],

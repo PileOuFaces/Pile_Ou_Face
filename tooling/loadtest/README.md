@@ -1,11 +1,11 @@
 # loadtest
 
-Load-testing tool for the backend analysis scripts in `extension/backends/`
-(disasm, strings, symbols). It generates synthetic binaries at a few sizes,
-runs each backend script against them as a real subprocess, and measures
-peak RSS and wall-clock time via `/usr/bin/time`. Results are reported as a
-summary table and a JSON file, with a pass/fail threshold on the RAM ratio
-(peak RSS / binary size).
+Load-testing tool for the public backend analysis scripts in
+`extension/backends/`. It generates synthetic binaries at a few sizes, runs
+each backend script against them as a real subprocess, and measures peak RSS
+and wall-clock time via `/usr/bin/time`. Results are reported as a summary
+table and a JSON file, with a pass/fail threshold on the RAM ratio (peak RSS
+/ binary size).
 
 ## Why this exists
 
@@ -26,8 +26,8 @@ Run from the workspace root (`Pile_Ou_Face/`), as a module:
 python3 -m tooling.loadtest
 ```
 
-By default this runs every scenario against every fixture profile. Flags
-(all optional):
+By default this runs every registered public-host scenario against every
+fixture profile. Flags (all optional):
 
 ```bash
 python3 -m tooling.loadtest --scenario disasm --size small
@@ -37,9 +37,11 @@ python3 -m tooling.loadtest --results-dir /tmp/my-results
 python3 -m tooling.loadtest --max-ratio 50
 ```
 
-- `--scenario NAME` — run a single scenario (see `SCENARIOS` in
-  `scenarios.py` for the current names: `disasm`, `strings`, `symbols`).
-  Default: run all of them.
+- `--scenario NAME` — run a single scenario. Default: run all of them.
+  Current names: `disasm`, `strings`, `symbols`, `headers`, `sections`,
+  `imports`, `entropy`, `hex_view`, `pe_resources`,
+  `exception_handlers`, `analysis_index`, `function_radar`, `cfg`,
+  `call_graph`, `xrefs_map`.
 - `--size NAME` — run a single fixture profile (see `FIXTURE_PROFILES` in
   `scenarios.py` for the current names: `small`, `medium`, `large`).
   Default: run all of them.
@@ -55,6 +57,27 @@ ratio or crashed (`returncode != 0`) or timed out, `2` for a bad
 The JSON report (one file per run, under the results dir) and the printed
 summary table both retain each result's binary size, peak RSS, elapsed
 time, and status.
+
+## Coverage
+
+The current registry covers public host backends that can run locally from a
+synthetic binary:
+
+- Binary metadata: `headers`, `sections`, `symbols`, `imports`,
+  `pe_resources`, `exception_handlers`.
+- Search/byte views: `strings`, `entropy`, `hex_view`.
+- Disassembly graph paths: `disasm`, `cfg`, `call_graph`, `xrefs_map`.
+- Higher-level indexes: `analysis_index`, `function_radar`.
+
+The mapping-based scenarios (`cfg`, `call_graph`, `xrefs_map`) prepare a
+temporary disassembly mapping first, then measure only the target backend.
+That keeps the RSS number focused on the feature being audited instead of on
+the preparation step.
+
+Plugins are not included in this public-host loadtest. Plugin scenarios need
+explicit plugin entrypoints, installed plugin bundles, license/auth state if
+required, and their external tool dependencies. Add those as a separate
+plugin-aware registry rather than mixing them into this public host matrix.
 
 ## Known limitations
 
@@ -86,6 +109,14 @@ and deferred rather than fixed as part of the current scope.
    `exceeded`, `error`, `timeout` — so check the JSON report (or the
    printed table) if you need to react differently to a crash than to a
    ratio warning.
+
+3. **Some large-profile scenarios currently expose real performance
+   pressure.** On local validation, `strings` in its default auto-encoding
+   mode timed out on the `large` profile even with a 300s timeout, and
+   `function_radar` reached tens of GB of peak RSS. That is not hidden by
+   the tool: those results should be treated as audit findings unless the
+   backend behavior is intentionally changed or the scenario is deliberately
+   split into a faster bounded variant.
 
 ## Adding a new scenario
 
