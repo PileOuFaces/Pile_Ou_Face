@@ -41,6 +41,96 @@ describe('dynamic/workflows run trace submit dispatch', () => {
     expect(runTraceMessages).to.have.length(1);
   });
 
+  it('ignores stale initRunTrace responses for a previous binary', () => {
+    const controller = loadRunTraceController();
+    const posted: unknown[] = [];
+    const statuses: string[] = [];
+    const initStates: unknown[] = [];
+    const binaryPathInput = createMockElement({ value: '/tmp/current.bin' });
+    const dynamicArchBits = createMockElement({ textContent: '64-bit' });
+    const dynamicPie = createMockElement({ textContent: 'No' });
+
+    const instance = controller.initRunTraceController({
+      document: { getElementById: () => null },
+      form: createMockElement(),
+      postMessage: (message: unknown) => posted.push(message),
+      runBtn: createMockElement(),
+      binaryPathInput,
+      dynamicArchBits,
+      dynamicPie,
+      dynamicSourcePathInput: createMockElement(),
+      dynamicPayloadTargetMode: createMockElement(),
+      btnDynamicSelectBinary: createMockElement(),
+      btnDynamicSelectSource: createMockElement(),
+      payloadBuilderInput: createMockElement(),
+      setDynamicTraceInitState: (state: unknown) => initStates.push(state),
+      setDynamicTraceStatus: (status: string) => statuses.push(status),
+      setTraceField: (field: string, value: string) => initStates.push({ field, value }),
+    });
+
+    expect(instance.handleMessage({
+      type: 'initRunTrace',
+      binaryPath: '/tmp/old.bin',
+      archBits: 32,
+      pie: true,
+    })).to.equal(true);
+
+    expect(initStates).to.deep.equal([]);
+    expect(statuses).to.deep.equal([]);
+    expect(dynamicArchBits.textContent).to.equal('64-bit');
+    expect(dynamicPie.textContent).to.equal('No');
+    expect(posted).to.deep.equal([{
+      type: 'hubDebugLog',
+      scope: 'dynamic-init',
+      event: 'ignored-stale-response',
+      details: {
+        currentBinaryPath: '/tmp/current.bin',
+        responseBinaryPath: '/tmp/old.bin',
+      },
+    }]);
+  });
+
+  it('re-enables the run button but does not mark stale runTraceDone as completed', () => {
+    const controller = loadRunTraceController();
+    const posted: unknown[] = [];
+    const statuses: string[] = [];
+    const historyRefreshes: string[] = [];
+    const runBtn = createMockElement({ disabled: true });
+
+    const instance = controller.initRunTraceController({
+      document: { getElementById: () => null },
+      form: createMockElement(),
+      postMessage: (message: unknown) => posted.push(message),
+      runBtn,
+      binaryPathInput: createMockElement({ value: '/tmp/current.bin' }),
+      dynamicSourcePathInput: createMockElement(),
+      dynamicPayloadTargetMode: createMockElement(),
+      btnDynamicSelectBinary: createMockElement(),
+      btnDynamicSelectSource: createMockElement(),
+      payloadBuilderInput: createMockElement(),
+      setDynamicTraceStatus: (status: string) => statuses.push(status),
+      refreshDynamicTraceHistory: () => historyRefreshes.push('refresh'),
+    });
+
+    expect(instance.handleMessage({
+      type: 'runTraceDone',
+      binaryPath: '/tmp/old.bin',
+    })).to.equal(true);
+
+    expect(runBtn.disabled).to.equal(false);
+    expect(statuses).to.deep.equal([]);
+    expect(historyRefreshes).to.deep.equal([]);
+    expect(posted).to.deep.equal([{
+      type: 'hubDebugLog',
+      scope: 'dynamic-run-trace-done',
+      event: 'ignored-stale-response',
+      details: {
+        currentBinaryPath: '/tmp/current.bin',
+        responseBinaryPath: '/tmp/old.bin',
+      },
+    }]);
+  });
+
   function loadRunTraceController() {
     const source = fs.readFileSync(
       path.resolve(__dirname, '../../../dynamic/runTraceController.js'),
