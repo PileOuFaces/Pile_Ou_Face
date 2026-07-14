@@ -270,7 +270,7 @@ function createLoaders({
           symbols = collectSymbolNames(await loadBinarySymbols(absPath));
         } catch (_) { /* symbol extraction failed */ }
       }
-      panel.webview.postMessage({ type: 'symbols', symbols });
+      panel.webview.postMessage({ type: 'symbols', binaryPath: absPath, symbols });
     },
   };
 }

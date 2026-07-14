@@ -1885,6 +1885,7 @@ function staticHandlers(config) {
         const { stdout } = await runPython(args);
         panel.webview.postMessage({
           type: 'hubTypedStructPreviewDone',
+          binaryPath: message.binaryPath || '',
           data: JSON.parse(stdout),
           request: {
             structName: message.structName || '',
@@ -1895,6 +1896,7 @@ function staticHandlers(config) {
       } catch (e) {
         panel.webview.postMessage({
           type: 'hubTypedStructPreviewDone',
+          binaryPath: message.binaryPath || '',
           data: { error: String(e), entries: [], sections: [] },
           request: {
             structName: message.structName || '',

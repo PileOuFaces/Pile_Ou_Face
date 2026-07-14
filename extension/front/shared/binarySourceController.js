@@ -118,6 +118,10 @@
       }
     }
 
+    function normalizeBinaryPathForCompare(value) {
+      return String(value || '').trim().replace(/\\/g, '/');
+    }
+
     function getStaticBinaryPath() {
       syncStaticBinary();
       return staticBinaryInput?.value?.trim() || '';
@@ -485,6 +489,19 @@
         const skipAutoLoad = msg.skipAutoLoad === true;
         const nextMeta = _normalizeBinaryMeta(msg.binaryMeta || getCurrentBinaryMeta());
         const prevBp = staticBinaryInput?.value?.trim();
+        if (
+          skipAutoLoad
+          && prevBp
+          && normalizeBinaryPathForCompare(prevBp) !== normalizeBinaryPathForCompare(bp)
+        ) {
+          safePostMessage({
+            type: 'hubDebugLog',
+            scope: 'static-binary',
+            event: 'ignored-stale-response',
+            details: { currentBinaryPath: prevBp, responseBinaryPath: bp, messageType: 'hubSetBinaryPath' },
+          });
+          return true;
+        }
         const prevMetaKey = JSON.stringify(getCurrentBinaryMeta() || null);
         const nextMetaKey = JSON.stringify(nextMeta || null);
         const sameSelection = prevBp === bp && prevMetaKey === nextMetaKey;

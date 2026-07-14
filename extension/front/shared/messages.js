@@ -405,6 +405,7 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubDisasmReady' && msg.binaryPath) {
+    if (isStaleStaticBinaryResponse(msg, 'static-disasm-ready')) return;
     tabDataCache.disasm = { binaryPath: msg.binaryPath.trim() };
     tabDataCache.callgraph = null;
     tabDataCache.cfg = null;
@@ -491,6 +492,7 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'symbols') {
+    if (isStaleStaticBinaryResponse(msg, 'dynamic-symbols')) return;
     const sel = document.getElementById('startSymbol');
     if (!sel) return;
     const preferred = 'main';
@@ -1031,22 +1033,9 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubStrings') {
-    const normalizeBinaryPathForCompare = (value) => String(value || '').trim().replace(/\\/g, '/');
+    if (isStaleStaticBinaryResponse(msg, 'static-strings')) return;
     const currentBinaryPath = getStaticBinaryPath();
     const responseBinaryPath = String(msg.binaryPath || '').trim();
-    if (
-      responseBinaryPath
-      && currentBinaryPath
-      && normalizeBinaryPathForCompare(responseBinaryPath) !== normalizeBinaryPathForCompare(currentBinaryPath)
-    ) {
-      vscode.postMessage({
-        type: 'hubDebugLog',
-        scope: 'static-strings',
-        event: 'ignored-stale-response',
-        details: { currentBinaryPath, responseBinaryPath },
-      });
-      return;
-    }
     tabDataCache.strings = { binaryPath: currentBinaryPath };
     const container = document.getElementById('stringsContent');
     if (!container) return;
@@ -1362,25 +1351,12 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubCfg') {
+    if (isStaleStaticBinaryResponse(msg, 'static-cfg')) return;
     const renderStarted = performance.now();
     const container = document.getElementById('cfgContent');
     if (!container) return;
-    const normalizeCfgBinaryPath = (value) => String(value || '').trim().replace(/\\/g, '/');
     const currentBinaryPath = getStaticBinaryPath() || '';
     const responseBinaryPath = String(msg.binaryPath || '').trim();
-    if (
-      responseBinaryPath
-      && currentBinaryPath
-      && normalizeCfgBinaryPath(responseBinaryPath) !== normalizeCfgBinaryPath(currentBinaryPath)
-    ) {
-      vscode.postMessage({
-        type: 'hubDebugLog',
-        scope: 'static-cfg',
-        event: 'ignored-stale-response',
-        details: { currentBinaryPath, responseBinaryPath },
-      });
-      return;
-    }
     tabDataCache.cfg = { binaryPath: responseBinaryPath || currentBinaryPath };
     const cfgState = getGraphUiState('cfg', currentBinaryPath);
     const functions = Array.isArray(msg.functions) ? msg.functions : [];
@@ -1775,25 +1751,12 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubCallGraph') {
+    if (isStaleStaticBinaryResponse(msg, 'static-callgraph')) return;
     const renderStarted = performance.now();
     const container = document.getElementById('callgraphContent');
     if (!container) return;
-    const normalizeGraphBinaryPath = (value) => String(value || '').trim().replace(/\\/g, '/');
     const currentBinaryPath = getStaticBinaryPath() || '';
     const responseBinaryPath = String(msg.binaryPath || '').trim();
-    if (
-      responseBinaryPath
-      && currentBinaryPath
-      && normalizeGraphBinaryPath(responseBinaryPath) !== normalizeGraphBinaryPath(currentBinaryPath)
-    ) {
-      vscode.postMessage({
-        type: 'hubDebugLog',
-        scope: 'static-callgraph',
-        event: 'ignored-stale-response',
-        details: { currentBinaryPath, responseBinaryPath },
-      });
-      return;
-    }
     tabDataCache.callgraph = { binaryPath: responseBinaryPath || currentBinaryPath };
     const cgState = getGraphUiState('callgraph', currentBinaryPath);
     const cg = msg.callGraph || { nodes: [], edges: [] };
@@ -2744,6 +2707,7 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubScriptResult') {
+    if (isStaleStaticBinaryResponse(msg, 'static-script')) return;
     const r = msg.result || {};
     const output = document.getElementById('scriptOutput');
     const status = document.getElementById('scriptStatus');
@@ -2812,6 +2776,7 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubTypedStructPreviewDone') {
+    if (isStaleStaticBinaryResponse(msg, 'static-typed-struct-preview')) return;
     const data = msg.data || {};
     const request = msg.request || {};
     typedDataUiState.hexStructPreview = {

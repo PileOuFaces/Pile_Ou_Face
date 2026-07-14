@@ -29,6 +29,24 @@ describe("disasm autoload loop guard (skipAutoLoad threaded through nav chain)",
     expect(handler).to.include("applyStaticBinarySelectionUi(bp, nextMeta, skipAutoLoad)");
   });
 
+  it("drops stale automatic hubSetBinaryPath responses before mutating the selected binary", () => {
+    const source = binarySourceControllerSource();
+    const handlerStart = source.indexOf("msg.type === 'hubSetBinaryPath'");
+    expect(handlerStart, "hubSetBinaryPath handler not found").to.be.greaterThan(-1);
+    const handlerEnd = source.indexOf("msg.type === 'hubForgetRecentBinary'", handlerStart);
+    const handler = source.slice(handlerStart, handlerEnd);
+
+    const staleGuardIndex = handler.indexOf("normalizeBinaryPathForCompare(prevBp) !== normalizeBinaryPathForCompare(bp)");
+    const applyIndex = handler.indexOf("applyStaticBinarySelectionUi(bp, nextMeta, skipAutoLoad)");
+    expect(staleGuardIndex, "stale hubSetBinaryPath guard missing").to.be.greaterThan(-1);
+    expect(applyIndex, "selection mutation missing").to.be.greaterThan(-1);
+    expect(staleGuardIndex).to.be.lessThan(applyIndex);
+
+    const staleGuardBlock = handler.slice(staleGuardIndex, applyIndex);
+    expect(staleGuardBlock).to.include("event: 'ignored-stale-response'");
+    expect(staleGuardBlock).to.include("return true;");
+  });
+
   it("showGroup forwards skipAutoLoad to showSubTab", () => {
     const source = navSource();
     const fnStart = source.indexOf("function showGroup(");
