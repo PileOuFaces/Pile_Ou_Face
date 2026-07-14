@@ -53,6 +53,7 @@ graphify-out/
 .claude/
 .codex/
 
+AGENTS.md
 CLAUDE.md
 
 examples/
