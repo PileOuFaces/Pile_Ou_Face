@@ -13,7 +13,10 @@ ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backends.static.analysis.function_radar import build_function_radar
+from backends.static.analysis.function_radar import (
+    _load_or_compute_strings,
+    build_function_radar,
+)
 from backends.static.cache.cache import DisasmCache
 
 
@@ -236,6 +239,36 @@ class TestFunctionRadar(unittest.TestCase):
                     item["label"] == "Appels sensibles"
                     for item in beacon_fn["score_breakdown"]
                 )
+            )
+
+    def test_load_or_compute_strings_uses_full_auto_scan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            binary_path = tmp_path / "sample.bin"
+            cache_db = tmp_path / "sample.pfdb"
+            binary_path.write_bytes(b"hello world\x00")
+
+            expected = [
+                {
+                    "addr": "0x0",
+                    "value": "hello world",
+                    "length": 11,
+                    "encoding": "utf-8",
+                }
+            ]
+
+            with DisasmCache(str(cache_db)) as cache:
+                with patch(
+                    "backends.static.analysis.function_radar.extract_strings",
+                    return_value=expected,
+                ) as mocked_extract:
+                    result = _load_or_compute_strings(cache, str(binary_path))
+
+            self.assertEqual(result, expected)
+            mocked_extract.assert_called_once_with(
+                str(binary_path),
+                min_len=4,
+                encoding="auto",
             )
 
 
