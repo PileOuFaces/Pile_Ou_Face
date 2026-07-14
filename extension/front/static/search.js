@@ -88,7 +88,8 @@ function reloadStrings() {
   const enc = document.getElementById('stringsEncoding')?.value || 'auto';
   const sec = document.getElementById('stringsSection')?.value || '';
   const minLen = parseInt(document.getElementById('stringsMinLen')?.value || '4', 10);
-  vscode.postMessage({ type: 'hubLoadStrings', binaryPath: bp, minLen, encoding: enc, section: sec || undefined });
+  const useCache = document.getElementById('useCache')?.checked !== false;
+  vscode.postMessage({ type: 'hubLoadStrings', binaryPath: bp, minLen, encoding: enc, section: sec || undefined, useCache });
 }
 document.getElementById('stringsEncoding')?.addEventListener('change', reloadStrings);
 document.getElementById('stringsSection')?.addEventListener('change', reloadStrings);
@@ -2939,6 +2940,7 @@ function renderGraphSvg(nodes, edges, opts) {
 }
 
 function renderStringsTable(container, strings, filterText, useRegex) {
+  const renderStarted = performance.now();
   const encodingLabel = (encoding) => {
     if (encoding === 'utf-16-le') return 'UTF-16 LE';
     if (encoding === 'utf-16-be') return 'UTF-16 BE';
@@ -3049,6 +3051,19 @@ function renderStringsTable(container, strings, filterText, useRegex) {
   if (pendingStringsFocusAddr) {
     focusStringsAddress(pendingStringsFocusAddr, { reveal: true, consume: true });
   }
+  window.reportPofWebviewPerf?.('strings.table.render', {
+    elapsedMs: Math.round((performance.now() - renderStarted) * 10) / 10,
+    rowsTotal: Array.isArray(strings) ? strings.length : 0,
+    rowsAfterMinLen: afterMinLen.length,
+    rowsFiltered: filtered.length,
+    rowsRendered: toShow.length,
+    page: stringsPage,
+    totalPages,
+    pageSize,
+    filterTextLength: String(filterText || '').length,
+    regex: Boolean(useRegex),
+    regexError,
+  }, { afterPaint: true });
 }
 
 

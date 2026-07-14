@@ -302,14 +302,14 @@ function createGraphRenderers({
       const resolvedDiscoveredPath = discoveredPath;
       if (!fs.existsSync(mappingPath)) {
         if (!hasAnalyzableBinary) {
-          hubPost('hubDiscoveredFunctions', { functions: [] });
+          hubPost('hubDiscoveredFunctions', { binaryPath, functions: [] });
           return;
         }
       }
       try {
         if (!allowCache && fs.existsSync(resolvedDiscoveredPath)) {
           const rawCached = JSON.parse(fs.readFileSync(resolvedDiscoveredPath, 'utf8'));
-          hubPost('hubDiscoveredFunctions', { functions: rawCached, analyzed: true });
+          hubPost('hubDiscoveredFunctions', { binaryPath, functions: rawCached, analyzed: true });
           return;
         }
         if (fs.existsSync(mappingPath)) {
@@ -332,14 +332,14 @@ function createGraphRenderers({
               return discovered;
             },
           });
-          hubPost('hubDiscoveredFunctions', { functions, analyzed: true });
+          hubPost('hubDiscoveredFunctions', { binaryPath, functions, analyzed: true });
         } else {
           logChannel.appendLine(`[Discovered] Mapping introuvable: ${mappingPath}`);
-          hubPost('hubDiscoveredFunctions', { functions: [] });
+          hubPost('hubDiscoveredFunctions', { binaryPath, functions: [] });
         }
       } catch (err) {
         logChannel.appendLine(`[Discovered] Erreur: ${err.message}`);
-        hubPost('hubDiscoveredFunctions', { functions: [], analyzed: true, error: err.message });
+        hubPost('hubDiscoveredFunctions', { binaryPath, functions: [], analyzed: true, error: err.message });
       }
     },
 

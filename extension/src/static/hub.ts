@@ -151,6 +151,36 @@ function createHub(config) {
   let hubHandlersRef = null;
   let pendingAiPrompt = '';
   let latestTraceRunId = 0;
+  const perfDiagnosticsEnabled = () => {
+    try {
+      return Boolean(vscode.workspace.getConfiguration?.('pileOuFace')?.get?.('perfDiagnostics', false));
+    } catch (_) {
+      return false;
+    }
+  };
+
+  context.subscriptions.push(vscode.commands.registerCommand('pileOuFace.perfSnapshot', () => {
+    if (!perfDiagnosticsEnabled()) {
+      vscode.window.showInformationMessage('Diagnostics performance Pile ou Face désactivés. Activez pileOuFace.perfDiagnostics pour capturer un snapshot.');
+      return;
+    }
+    const mem = process.memoryUsage();
+    logChannel.appendLine(`[perf.host] manual.snapshot ${JSON.stringify({
+      ts: new Date().toISOString(),
+      extensionHostMemory: {
+        rss: mem.rss,
+        heapUsed: mem.heapUsed,
+        heapTotal: mem.heapTotal,
+        external: mem.external,
+        arrayBuffers: mem.arrayBuffers,
+      },
+      hubPanelOpen: Boolean(hubPanelRef && !hubPanelRef.disposed),
+    })}`);
+    if (hubPanelRef && !hubPanelRef.disposed) {
+      hubPanelRef.webview.postMessage({ type: 'hubPerfSnapshotRequest', source: 'command' });
+    }
+    logChannel.show(true);
+  }));
 
   return function openHub(initialPanel = 'dashboard', options = {}) {
     if (options.aiPrompt) pendingAiPrompt = String(options.aiPrompt);
@@ -238,6 +268,7 @@ function createHub(config) {
 
     if (hubPanelRef && !hubPanelRef.disposed) {
       hubPanelRef.reveal(vscode.ViewColumn.Beside);
+      hubPanelRef.webview.postMessage({ type: 'hubPerfDiagnosticsConfig', enabled: perfDiagnosticsEnabled() });
       hubPanelRef.webview.postMessage({ type: 'showPanel', panel: initialPanel, focusGoToAddr: options.focusGoToAddr });
       if (pendingAiPrompt) {
         hubPanelRef.webview.postMessage({ type: 'hubPrefillAiPrompt', prompt: pendingAiPrompt });
@@ -365,6 +396,7 @@ function createHub(config) {
     panel.onDidDispose(() => { globalThis.clearInterval(licenseRecheckTimer); });
 
     panel.webview.html = getHubContent(panel.webview, context.extensionUri, initialPanel, root, globalDir, storageDir);
+    panel.webview.postMessage({ type: 'hubPerfDiagnosticsConfig', enabled: perfDiagnosticsEnabled() });
     const handlerCtx = {
       root,
       storageDir,
@@ -737,6 +769,7 @@ function createHub(config) {
       deleteDynamicTraceHistory: traceHistoryHandlers.deleteDynamicTraceHistory,
       clearDynamicTraceHistory: traceHistoryHandlers.clearDynamicTraceHistory,
       hubReady: () => {
+        panel.webview.postMessage({ type: 'hubPerfDiagnosticsConfig', enabled: perfDiagnosticsEnabled() });
         if (!pendingAiPrompt) return;
         panel.webview.postMessage({ type: 'hubPrefillAiPrompt', prompt: pendingAiPrompt });
         pendingAiPrompt = '';

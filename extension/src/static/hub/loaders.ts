@@ -55,7 +55,7 @@ function createLoaders({
     hubLoadSymbols: async (message) => {
       const { absPath, exists, isDirectory } = resolveBinaryInputContext(message.binaryPath, message.binaryMeta || null);
       if (!exists || isDirectory) {
-        hubPost('hubSymbols', { symbols: [] });
+        hubPost('hubSymbols', { binaryPath: absPath, symbols: [] });
         return;
       }
       try {
@@ -66,9 +66,9 @@ function createLoaders({
           useCache: message.useCache !== false,
           compute: () => loadBinarySymbols(absPath),
         });
-        hubPost('hubSymbols', { symbols });
+        hubPost('hubSymbols', { binaryPath: absPath, symbols });
       } catch (_) {
-        hubPost('hubSymbols', { symbols: [] });
+        hubPost('hubSymbols', { binaryPath: absPath, symbols: [] });
       }
     },
 
@@ -78,7 +78,7 @@ function createLoaders({
       const encoding = message.encoding || 'utf-8';
       const section = (message.section || '').trim() || null;
       if (!exists || isDirectory) {
-        hubPost('hubStrings', { strings: [] });
+        hubPost('hubStrings', { binaryPath: absPath, strings: [] });
         return;
       }
       try {
@@ -109,9 +109,9 @@ function createLoaders({
         // minLen filtering is the frontend's responsibility (renderStringsTable).
         // The extension sends the full set for the requested (encoding, section) so that
         // switching minLen never requires a round-trip.
-        hubPost('hubStrings', { strings: Array.isArray(allStrings) ? allStrings : [] });
+        hubPost('hubStrings', { binaryPath: absPath, strings: Array.isArray(allStrings) ? allStrings : [] });
       } catch (_) {
-        hubPost('hubStrings', { strings: [] });
+        hubPost('hubStrings', { binaryPath: absPath, strings: [] });
       }
     },
 
@@ -124,16 +124,16 @@ function createLoaders({
         binaryMeta,
       } = resolveBinaryInputContext(message.binaryPath, message.binaryMeta || null);
       if (!binaryPath) {
-        hubPost('hubBinaryInfo', { info: { error: 'Indiquez un chemin binaire.' } });
+        hubPost('hubBinaryInfo', { binaryPath: absPath, info: { error: 'Indiquez un chemin binaire.' } });
         return;
       }
       if (!exists || isDirectory) {
-        hubPost('hubBinaryInfo', { info: { error: `Binaire introuvable: ${binaryPath}` } });
+        hubPost('hubBinaryInfo', { binaryPath: absPath, info: { error: `Binaire introuvable: ${binaryPath}` } });
         return;
       }
       try {
         if (binaryMeta.kind === 'raw') {
-          hubPost('hubBinaryInfo', { info: buildPseudoRawInfo(absPath, binaryMeta.rawConfig) });
+          hubPost('hubBinaryInfo', { binaryPath: absPath, info: buildPseudoRawInfo(absPath, binaryMeta.rawConfig) });
           return;
         }
         const info = await resolveCachedBinaryView({
@@ -150,10 +150,10 @@ function createLoaders({
           ),
           compute: () => loadBinaryHeaders(absPath),
         });
-        hubPost('hubBinaryInfo', { info });
+        hubPost('hubBinaryInfo', { binaryPath: absPath, info });
       } catch (err) {
         logChannel.appendLine(`[headers] ${err.message}`);
-        hubPost('hubBinaryInfo', { info: { error: err.message || 'Impossible de lire les infos' } });
+        hubPost('hubBinaryInfo', { binaryPath: absPath, info: { error: err.message || 'Impossible de lire les infos' } });
       }
     },
 
@@ -166,17 +166,18 @@ function createLoaders({
         binaryMeta,
       } = resolveBinaryInputContext(message.binaryPath, message.binaryMeta || null);
       if (!binaryPath) {
-        hubPost('hubSections', { sections: [], error: 'Indiquez un chemin binaire.' });
+        hubPost('hubSections', { binaryPath: absPath, sections: [], error: 'Indiquez un chemin binaire.' });
         return;
       }
       if (!exists || isDirectory) {
-        hubPost('hubSections', { sections: [], error: `Binaire introuvable: ${binaryPath}` });
+        hubPost('hubSections', { binaryPath: absPath, sections: [], error: `Binaire introuvable: ${binaryPath}` });
         return;
       }
       try {
         if (binaryMeta.kind === 'raw') {
           const stats = fs.statSync(absPath);
           hubPost('hubSections', {
+            binaryPath: absPath,
             sections: [{
               name: 'raw',
               offset: '0x0',
@@ -198,10 +199,10 @@ function createLoaders({
             return Array.isArray(rawSections) ? rawSections : (rawSections.sections || []);
           },
         });
-        hubPost('hubSections', { sections });
+        hubPost('hubSections', { binaryPath: absPath, sections });
       } catch (err) {
         logChannel.appendLine(`[sections] ${err.message}`);
-        hubPost('hubSections', { sections: [], error: err.message });
+        hubPost('hubSections', { binaryPath: absPath, sections: [], error: err.message });
       }
     },
 
@@ -228,7 +229,7 @@ function createLoaders({
       try {
         if (!fs.existsSync(mappingPath)) {
           if (!hasAnalyzableBinary) {
-            hubPost('hubXrefs', { addr, refs: [], targets: [], mode, requestKey, error: 'Mapping introuvable. Ouvrez d\'abord le désassemblage.' });
+            hubPost('hubXrefs', { binaryPath, addr, refs: [], targets: [], mode, requestKey, error: 'Mapping introuvable. Ouvrez d\'abord le désassemblage.' });
             return;
           }
         }
@@ -248,6 +249,7 @@ function createLoaders({
           '--mode', mode,
         ]);
         hubPost('hubXrefs', {
+          binaryPath,
           addr,
           refs: parsed.refs || [],
           targets: parsed.targets || [],
@@ -256,7 +258,7 @@ function createLoaders({
         });
       } catch (err) {
         logChannel.appendLine(`[Xrefs] ${err.message}`);
-        hubPost('hubXrefs', { addr, refs: [], targets: [], mode, requestKey });
+        hubPost('hubXrefs', { binaryPath, addr, refs: [], targets: [], mode, requestKey });
       }
     },
 
