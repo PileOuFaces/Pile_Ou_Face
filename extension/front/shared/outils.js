@@ -1497,6 +1497,10 @@ function resetStaticBinaryDerivedState() {
       functionsReviewFilter: 'all',
       functionsSignalFilter: 'all',
       functionsSelectedAddr: '',
+      decompileAddr: '',
+      decompileSearch: '',
+      cfgSearch: '',
+      cgSearch: '',
     });
   }
   currentArchSupport = null;
@@ -1515,6 +1519,9 @@ function resetStaticBinaryDerivedState() {
   stackUiState.renderedBinaryPath = '';
   stackUiState.activeEntryName = '';
   stackUiState.pendingEntryName = '';
+  decompileUiState.selectedAddr = '';
+  decompileUiState.searchQuery = '';
+  decompileUiState.activeSearchHit = -1;
   decompileUiState.activeStackEntryName = '';
   decompileUiState.pendingStackEntryName = '';
   typedDataUiState.appliedStructName = '';
@@ -1585,10 +1592,12 @@ function resetStaticBinaryDerivedState() {
   cfgUiState.funcAddr = '';
   cfgUiState.binaryPath = '';
   cfgUiState.activeAddr = '';
+  cfgUiState.search = '';
   cfgUiState.expandedAddrs = [];
   cfgUiState.graphView = null;
   callGraphUiState.binaryPath = '';
   callGraphUiState.activeAddr = '';
+  callGraphUiState.search = '';
   callGraphUiState.graphView = null;
   window._pendingCfgHighlightAddr = null;
   updateActiveContextBars('');
