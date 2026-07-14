@@ -1,6 +1,8 @@
 // ── Settings ─────────────────────────────────────────────────────────────────
 let _settingsCache = null;
 let _settingsDebounce = null;
+let _decompilerImageVersions = {};
+const DECOMPILER_IMAGE_IDS = ['ghidra', 'retdec', 'angr'];
 
 function renderStaticFeatureSettings(settings = _settingsCache || {}) {
   const checklist = document.getElementById('staticFeatureChecklist');
@@ -79,6 +81,7 @@ function _applySettings(settings) {
     applyGlobalAiPricingRules(settings.aiPricingRules);
   }
   renderAiPricingRules(settings.aiPricingRules);
+  renderDecompilerImageSettings(settings);
   document.querySelectorAll('#panel-options [data-key]').forEach((el) => {
     const key = el.dataset.key;
     if (!(key in settings)) return;
@@ -120,6 +123,7 @@ function _collectSettings() {
     settings.aiMaxTokens = generation.max_tokens;
   }
   settings.aiPricingRules = collectAiPricingRules();
+  settings.decompilerImages = collectDecompilerImageSettings();
   settings.decompilerLocalPaths = {};
   document.querySelectorAll('#panel-options [data-decompiler-local-path]').forEach((el) => {
     const id = String(el.dataset.decompilerLocalPath || '').trim();
@@ -223,6 +227,137 @@ function collectAiPricingRules() {
     outputPerMillion: row.querySelector('[data-pricing-output]')?.value,
     effectiveDate: row.querySelector('[data-pricing-date]')?.value,
   })));
+}
+
+function normalizeDecompilerImageChoice(choice = {}) {
+  const source = String(choice.source || 'local').trim();
+  if (source === 'ours') {
+    return { source, version: String(choice.version || '').trim() };
+  }
+  if (source === 'custom') {
+    return { source, custom: String(choice.custom || '').trim() };
+  }
+  return { source: 'local' };
+}
+
+function getDecompilerImageVersions(id) {
+  const raw = _decompilerImageVersions?.[id];
+  const list = Array.isArray(raw) ? raw : [raw];
+  return Array.from(new Set(list.map((value) => String(value || '').trim()).filter(Boolean)));
+}
+
+function renderDecompilerImageSettings(settings = _settingsCache || {}) {
+  const container = document.getElementById('decompilerImageSettings');
+  if (!container) return;
+  const selections = settings.decompilerImages && typeof settings.decompilerImages === 'object'
+    ? settings.decompilerImages
+    : {};
+  const ids = Array.from(new Set([
+    ...DECOMPILER_IMAGE_IDS,
+    ...Object.keys(_decompilerImageVersions || {}),
+    ...Object.keys(selections),
+  ])).filter(Boolean);
+  container.replaceChildren();
+  ids.forEach((id) => {
+    const versions = getDecompilerImageVersions(id);
+    const choice = normalizeDecompilerImageChoice(selections[id] || {});
+    const selectedVersion = choice.version || versions[0] || '';
+    const row = document.createElement('div');
+    row.className = 'decompiler-image-row';
+    row.dataset.decompilerImageRow = id;
+
+    const head = document.createElement('div');
+    head.className = 'decompiler-image-row-head';
+    const name = document.createElement('span');
+    name.className = 'decompiler-image-name';
+    name.textContent = id;
+    const defaultTag = document.createElement('span');
+    defaultTag.className = 'decompiler-image-default';
+    defaultTag.textContent = versions.length ? `${versions.length} version(s)` : 'aucune version publiée';
+    head.append(name, defaultTag);
+
+    const controls = document.createElement('div');
+    controls.className = 'decompiler-image-controls';
+    const source = document.createElement('select');
+    source.className = 'select-modern settings-select';
+    source.dataset.decompilerImageSource = id;
+    [
+      ['local', 'Local'],
+      ['ours', 'Notre image'],
+      ['custom', 'Image perso'],
+    ].forEach(([value, label]) => {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      source.appendChild(option);
+    });
+    source.value = choice.source;
+
+    const versionSelect = document.createElement('select');
+    versionSelect.className = 'select-modern settings-select decompiler-image-version';
+    versionSelect.dataset.decompilerImageVersion = id;
+    const selectableVersions = Array.from(new Set([
+      selectedVersion,
+      ...versions,
+    ].filter(Boolean)));
+    if (!selectableVersions.length) {
+      const option = document.createElement('option');
+      option.value = '';
+      option.textContent = 'aucune version';
+      versionSelect.appendChild(option);
+    } else {
+      selectableVersions.forEach((version) => {
+        const option = document.createElement('option');
+        option.value = version;
+        option.textContent = version;
+        versionSelect.appendChild(option);
+      });
+    }
+    versionSelect.value = selectedVersion;
+
+    const custom = document.createElement('input');
+    custom.type = 'text';
+    custom.className = 'input-inner settings-input settings-mono decompiler-image-custom';
+    custom.placeholder = 'registry/image:tag';
+    custom.value = choice.custom || '';
+    custom.dataset.decompilerImageCustom = id;
+
+    const syncVisibility = () => {
+      versionSelect.hidden = source.value !== 'ours';
+      custom.hidden = source.value !== 'custom';
+    };
+    source.addEventListener('change', () => {
+      syncVisibility();
+      _scheduleSave();
+    });
+    versionSelect.addEventListener('change', _scheduleSave);
+    custom.addEventListener('input', _scheduleSave);
+    custom.addEventListener('change', _scheduleSave);
+    syncVisibility();
+
+    controls.append(source, versionSelect, custom);
+    row.append(head, controls);
+    container.appendChild(row);
+  });
+}
+
+function collectDecompilerImageSettings() {
+  const result = {};
+  document.querySelectorAll('#decompilerImageSettings [data-decompiler-image-row]').forEach((row) => {
+    const id = String(row.dataset.decompilerImageRow || '').trim();
+    const source = String(row.querySelector('[data-decompiler-image-source]')?.value || 'local').trim();
+    if (!id || source === 'local') return;
+    if (source === 'ours') {
+      const version = String(row.querySelector('[data-decompiler-image-version]')?.value || getDecompilerImageVersions(id)[0] || '').trim();
+      if (version) result[id] = { source, version };
+      return;
+    }
+    if (source === 'custom') {
+      const custom = String(row.querySelector('[data-decompiler-image-custom]')?.value || '').trim();
+      if (custom) result[id] = { source, custom };
+    }
+  });
+  return result;
 }
 
 document.getElementById('btnAiPricingAdd')?.addEventListener('click', () => {

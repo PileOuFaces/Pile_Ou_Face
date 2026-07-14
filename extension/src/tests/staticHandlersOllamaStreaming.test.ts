@@ -21,6 +21,7 @@ describe('staticHandlers Ollama streaming', () => {
       '../shared/utils': {
         detectPythonExecutable: () => '/usr/bin/python3',
         buildRuntimeEnv: () => ({ PATH: process.env.PATH || '' }),
+        buildDecompilerImageEnv: () => ({}),
       },
       '../shared/sharedHandlers': { normalizeRawArchName: (value) => value },
       './pluginState': {
@@ -90,6 +91,7 @@ describe('staticHandlers Ollama streaming', () => {
       '../shared/utils': {
         detectPythonExecutable: () => '/usr/bin/python3',
         buildRuntimeEnv: () => ({ PATH: process.env.PATH || '' }),
+        buildDecompilerImageEnv: () => ({}),
       },
       '../shared/sharedHandlers': { normalizeRawArchName: (value) => value },
       './pluginState': {
@@ -133,6 +135,7 @@ describe('staticHandlers Ollama streaming', () => {
       '../shared/utils': {
         detectPythonExecutable: () => '/usr/bin/python3',
         buildRuntimeEnv: () => ({ PATH: process.env.PATH || '' }),
+        buildDecompilerImageEnv: () => ({}),
       },
       '../shared/sharedHandlers': { normalizeRawArchName: (value) => value },
       './pluginState': {

@@ -117,6 +117,7 @@ function createHub(config) {
     aiPricingRules: [],
     decompilerProvider: 'docker',
     decompilerLocalPaths: {},
+    decompilerImages: {},
     stringsEncoding: 'auto',
     stringsMinLen: 4,
     asmSyntax: 'intel',

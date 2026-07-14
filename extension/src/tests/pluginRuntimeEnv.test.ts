@@ -46,6 +46,7 @@ describe('buildPluginRuntimeEnv — MODE selection', () => {
       '../shared/utils': {
         detectPythonExecutable: () => '/usr/bin/python3',
         buildRuntimeEnv: () => ({}),
+        buildDecompilerImageEnv: () => ({}),
       },
       '../shared/sharedHandlers': { normalizeRawArchName: (v) => v },
       '../shared/authService': {

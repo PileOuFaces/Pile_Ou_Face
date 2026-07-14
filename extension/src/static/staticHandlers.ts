@@ -15,7 +15,14 @@ const path = require('path');
 const http = require('http');
 const https = require('https');
 const readline = require('readline');
-const { detectPythonExecutable, buildRuntimeEnv, resolveDockerExecutable, logDebug, logWarning } = require('../shared/utils');
+const {
+  detectPythonExecutable,
+  buildRuntimeEnv,
+  buildDecompilerImageEnv,
+  resolveDockerExecutable,
+  logDebug,
+  logWarning,
+} = require('../shared/utils');
 const { emptyPluginUiState, summarizePluginRuntimeState } = require('./pluginState');
 const { AuthService } = require('../shared/authService');
 const { resolveAuthServerUrl } = require('../shared/authConfig');
@@ -433,12 +440,23 @@ function staticHandlers(config) {
     }
     return base;
   };
+  const loadDecompilerImageVersions = () => {
+    try {
+      const versionsPath = path.join(extensionPath, 'backends', 'static', 'decompile', 'image_versions.json');
+      if (!fs.existsSync(versionsPath)) return {};
+      const parsed = JSON.parse(fs.readFileSync(versionsPath, 'utf8'));
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (_) {
+      return {};
+    }
+  };
   const buildPythonEnv = () => {
     const settings = getSavedSettings();
     const localPaths = settings.decompilerLocalPaths && typeof settings.decompilerLocalPaths === 'object'
       ? settings.decompilerLocalPaths
       : {};
     const env = buildRuntimeEnv(root, storageDir);
+    Object.assign(env, buildDecompilerImageEnv(settings, loadDecompilerImageVersions()));
     const ghidraPath = String(localPaths.ghidra || '').trim();
     if (ghidraPath) env.GHIDRA_INSTALL_DIR = ghidraPath;
     return env;

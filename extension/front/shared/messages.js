@@ -2700,6 +2700,9 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubSettings') {
+    if (msg.decompilerImageVersions && typeof msg.decompilerImageVersions === 'object') {
+      _decompilerImageVersions = msg.decompilerImageVersions;
+    }
     _applySettings(msg.settings);
     return;
   }

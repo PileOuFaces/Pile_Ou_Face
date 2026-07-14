@@ -8,11 +8,13 @@ describe('hubLoadDecompile parallel', () => {
 
   // Helper to build a stub staticHandlers
   function makeHandlers(execFile, posted = [], overrides = {}) {
+    const savedSettings = overrides.savedSettings || {};
     const proxyStubs = {
       child_process: { execFile, ...(overrides.child_process || {}) },
       '../shared/utils': {
         detectPythonExecutable: () => '/usr/bin/python3',
         buildRuntimeEnv: () => ({}),
+        buildDecompilerImageEnv: overrides.buildDecompilerImageEnv || (() => ({})),
         resolveDockerExecutable: () => '/usr/bin/docker',
       },
       '../shared/sharedHandlers': { normalizeRawArchName: (v) => v },
@@ -26,7 +28,7 @@ describe('hubLoadDecompile parallel', () => {
     return staticHandlers({
       root: '/workspace',
       panel: { webview: { postMessage: (m) => posted.push(m) } },
-      context: { globalState: { get: () => ({}), update: async () => {} } },
+      context: { globalState: { get: () => savedSettings, update: async () => {} } },
       logChannel: overrides.logChannel,
     });
   }
@@ -176,6 +178,30 @@ describe('hubLoadDecompile parallel', () => {
     expect(listMsg.result).to.have.property('ghidra', true);
     expect(listMsg.result).to.have.property('angr', false);
     expect(listMsg.result).to.have.property('retdec', true);
+  });
+
+  it('injects configured decompiler image env into decompile subprocesses', async () => {
+    const execFile = sinon.stub().callsFake((bin, args, opts, cb) => {
+      expect(opts.env).to.include({
+        POF_DECOMPILER_IMAGE_RETDEC: 'ghcr.io/pileoufaces/pile-ou-face/decompiler-retdec:1.0.0',
+      });
+      cb(null, JSON.stringify({ ok: true, code: 'int main() {}', score: 10 }), '');
+    });
+    const buildDecompilerImageEnv = sinon.stub().returns({
+      POF_DECOMPILER_IMAGE_RETDEC: 'ghcr.io/pileoufaces/pile-ou-face/decompiler-retdec:1.0.0',
+    });
+    const handlers = makeHandlers(execFile, [], {
+      savedSettings: {
+        decompilerImages: {
+          retdec: { source: 'ours', version: '1.0.0' },
+        },
+      },
+      buildDecompilerImageEnv,
+    });
+
+    await handlers.hubLoadDecompile({ binaryPath: '/bin/foo', addr: '0x1000', decompiler: 'retdec' });
+
+    expect(buildDecompilerImageEnv.called).to.equal(true);
   });
 
   it('posts update availability when a remote Docker digest differs', async () => {

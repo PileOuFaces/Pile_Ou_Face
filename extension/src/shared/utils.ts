@@ -214,6 +214,42 @@ function resolveDockerExecutable() {
   return 'docker';
 }
 
+function _decompilerImageEnvName(decompilerId) {
+  const suffix = String(decompilerId || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return suffix ? `POF_DECOMPILER_IMAGE_${suffix}` : '';
+}
+
+function buildDecompilerImageEnv(settings = {}, imageVersions = {}) {
+  const selections = settings?.decompilerImages && typeof settings.decompilerImages === 'object'
+    ? settings.decompilerImages
+    : {};
+  const versions = imageVersions && typeof imageVersions === 'object' ? imageVersions : {};
+  const env = {};
+  Object.entries(selections).forEach(([rawId, rawChoice]) => {
+    const id = String(rawId || '').trim().toLowerCase();
+    const choice = rawChoice && typeof rawChoice === 'object' ? rawChoice : {};
+    const source = String(choice.source || 'local').trim();
+    const varName = _decompilerImageEnvName(id);
+    if (!id || !varName || source === 'local') return;
+    if (source === 'ours') {
+      const availableVersions = Array.isArray(versions[id]) ? versions[id] : [versions[id]];
+      const fallbackVersion = availableVersions.map((item) => String(item || '').trim()).find(Boolean) || '';
+      const version = String(choice.version || fallbackVersion || '').trim();
+      if (version) env[varName] = `ghcr.io/pileoufaces/pile-ou-face/decompiler-${id}:${version}`;
+      return;
+    }
+    if (source === 'custom') {
+      const custom = String(choice.custom || '').trim();
+      if (custom) env[varName] = custom;
+    }
+  });
+  return env;
+}
+
 /**
  * Build the runtime env for Python/Docker processes.
  * Accepts two call patterns (backward-compatible):
@@ -381,6 +417,7 @@ module.exports = {
   detectPythonExecutable,
   resolveProjectRoot,
   resolveDockerExecutable,
+  buildDecompilerImageEnv,
   buildRuntimeEnv,
   check32BitToolchain,
   runCommand,

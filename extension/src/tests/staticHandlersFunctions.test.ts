@@ -27,6 +27,7 @@ describe("staticHandlers functions radar", () => {
       "../shared/utils": {
         detectPythonExecutable: () => "/usr/bin/python3",
         buildRuntimeEnv: () => ({ PATH: process.env.PATH || "" }),
+        buildDecompilerImageEnv: () => ({}),
       },
       "../shared/sharedHandlers": {
         normalizeRawArchName: (value) => value,
@@ -93,6 +94,7 @@ describe("staticHandlers functions radar", () => {
       "../shared/utils": {
         detectPythonExecutable: () => "/usr/bin/python3",
         buildRuntimeEnv: () => ({ PATH: process.env.PATH || "" }),
+        buildDecompilerImageEnv: () => ({}),
       },
       "../shared/sharedHandlers": {
         normalizeRawArchName: (value) => value,
@@ -131,6 +133,7 @@ describe("staticHandlers typed struct preview stale guards", () => {
       "../shared/utils": {
         detectPythonExecutable: () => "/usr/bin/python3",
         buildRuntimeEnv: () => ({ PATH: process.env.PATH || "" }),
+        buildDecompilerImageEnv: () => ({}),
       },
       "../shared/sharedHandlers": {
         normalizeRawArchName: (value) => value,

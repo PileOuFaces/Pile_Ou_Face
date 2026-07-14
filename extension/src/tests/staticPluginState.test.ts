@@ -9,6 +9,7 @@ function loadStaticHandlers(execFile, spawn) {
     "../shared/utils": {
       detectPythonExecutable: () => "/usr/bin/python3",
       buildRuntimeEnv: () => ({}),
+      buildDecompilerImageEnv: () => ({}),
     },
   });
 }

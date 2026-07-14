@@ -8,7 +8,11 @@
 
 const crypto = require('crypto');
 const cp = require('child_process');
+const https = require('https');
 const { readArchSupportFromMapping } = require('./archSupport');
+const { getExtensionPath } = require('../../shared/utils');
+
+const DECOMPILER_IMAGE_VERSIONS_URL = 'https://raw.githubusercontent.com/PileOuFaces/Pile_Ou_Face/develops/extension/backends/static/decompile/image_versions.json';
 
 function createActions({
   panel,
@@ -48,6 +52,68 @@ function createActions({
   // ── Internal helpers ────────────────────────────────────────────────────────
 
   const hubPost = (type, data) => panel.webview.postMessage(Object.assign({ type }, data || {}));
+  const normalizeDecompilerImageVersions = (payload = {}) => {
+    if (!payload || typeof payload !== 'object') return {};
+    const versions = {};
+    Object.entries(payload).forEach(([key, value]) => {
+      if (String(key || '').startsWith('_')) return;
+      const normalizedKey = String(key || '').trim();
+      if (!normalizedKey) return;
+      const list = Array.isArray(value)
+        ? value
+        : (value && typeof value === 'object' && Array.isArray(value.versions))
+          ? value.versions
+          : [value];
+      const normalizedVersions = list
+        .map((item) => String(item || '').trim())
+        .filter(Boolean);
+      if (normalizedVersions.length) versions[normalizedKey] = Array.from(new Set(normalizedVersions));
+    });
+    return versions;
+  };
+  const loadLocalDecompilerImageVersions = () => {
+    try {
+      const versionsPath = path.join(
+        getExtensionPath() || root,
+        'backends',
+        'static',
+        'decompile',
+        'image_versions.json',
+      );
+      const parsed = JSON.parse(fs.readFileSync(versionsPath, 'utf8'));
+      return normalizeDecompilerImageVersions(parsed);
+    } catch (_) {
+      return {};
+    }
+  };
+  const fetchDecompilerImageVersions = () => new Promise((resolve) => {
+    const req = https.get(DECOMPILER_IMAGE_VERSIONS_URL, { timeout: 3500 }, (res) => {
+      if (res.statusCode !== 200) {
+        res.resume();
+        resolve({});
+        return;
+      }
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => { body += chunk; });
+      res.on('end', () => {
+        try {
+          resolve(normalizeDecompilerImageVersions(JSON.parse(body)));
+        } catch (_) {
+          resolve({});
+        }
+      });
+    });
+    req.on('timeout', () => {
+      req.destroy();
+      resolve({});
+    });
+    req.on('error', () => resolve({}));
+  });
+  const loadDecompilerImageVersions = async () => {
+    const remote = await fetchDecompilerImageVersions();
+    return Object.keys(remote).length ? remote : loadLocalDecompilerImageVersions();
+  };
   const hostMemorySnapshot = () => {
     const mem = process.memoryUsage();
     return {
@@ -1057,7 +1123,11 @@ function createActions({
 
     hubGetSettings: async (_message) => {
       const settings = context.globalState.get('pof-settings', SETTINGS_DEFAULTS);
-      panel.webview.postMessage({ type: 'hubSettings', settings: { ...SETTINGS_DEFAULTS, ...settings } });
+      panel.webview.postMessage({
+        type: 'hubSettings',
+        settings: { ...SETTINGS_DEFAULTS, ...settings },
+        decompilerImageVersions: await loadDecompilerImageVersions(),
+      });
     },
 
     hubSaveSettings: async (message) => {
