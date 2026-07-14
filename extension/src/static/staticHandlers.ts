@@ -472,14 +472,55 @@ function staticHandlers(config) {
     return existing || defaultRoot || root;
   };
 
+  const buildPythonMeta = (scriptRelPath, stdout, stderr, elapsedMs, err = null) => {
+    const stdoutText = typeof stdout === 'string' ? stdout : '';
+    const stderrText = typeof stderr === 'string' ? stderr : '';
+    const message = err && err.message ? String(err.message) : '';
+    return {
+      script: scriptRelPath,
+      elapsedMs,
+      stdoutBytes: Buffer.byteLength(stdoutText, 'utf8'),
+      stderrBytes: Buffer.byteLength(stderrText, 'utf8'),
+      stderrTail: stderrText.slice(-4000),
+      code: err && Object.prototype.hasOwnProperty.call(err, 'code') ? err.code : null,
+      signal: err && Object.prototype.hasOwnProperty.call(err, 'signal') ? err.signal : null,
+      killed: !!(err && err.killed),
+      timedOut: !!(err && err.killed && /timed out|timeout/i.test(message)),
+    };
+  };
+
+  const formatPythonFailure = (stepName, err) => {
+    const meta = (err && err.pythonMeta) || {};
+    const lines = [`${stepName}: ${err && err.message ? String(err.message) : String(err)}`];
+    if (meta.elapsedMs != null) lines.push(`elapsed=${meta.elapsedMs}ms`);
+    if (meta.code != null) lines.push(`code=${meta.code}`);
+    if (meta.signal) lines.push(`signal=${meta.signal}`);
+    if (meta.killed) lines.push('killed=true');
+    if (meta.timedOut) lines.push('timeout=true');
+    if (meta.stdoutBytes != null) lines.push(`stdout=${meta.stdoutBytes}B`);
+    if (meta.stderrBytes != null) lines.push(`stderr=${meta.stderrBytes}B`);
+    if (meta.stderrTail) lines.push(`stderr tail:\n${meta.stderrTail}`);
+    return lines.join('\n');
+  };
+
   const runPython = (argsWithScript, { timeout = 60000, maxBuffer = 4 * 1024 * 1024 } = {}) =>
     new Promise((resolve, reject) => {
       const [scriptRelPath, ...rest] = argsWithScript;
       const scriptPath = path.join(extensionPath, scriptRelPath);
+      const startedAt = Date.now();
       cp.execFile(getPythonExecutable(), [scriptPath, ...rest], {
         encoding: 'utf8', cwd: root, maxBuffer, timeout, env: buildPythonEnv(),
       }, (err, stdout, stderr) => {
-        if (err) { err.stderr = stderr; reject(err); } else resolve({ stdout });
+        const elapsedMs = Date.now() - startedAt;
+        const meta = buildPythonMeta(scriptRelPath, stdout, stderr, elapsedMs, err);
+        if (err) {
+          err.stderr = stderr;
+          err.stdout = stdout;
+          err.pythonMeta = meta;
+          reject(err);
+        } else {
+          resolve({ stdout, meta });
+        }
       });
     });
 
@@ -1767,17 +1808,43 @@ function staticHandlers(config) {
     hubLoadFunctions: async (message) => {
       const { binaryPath } = message;
       try {
-        const [symRes, ccRes, radarRes] = await Promise.all([
-          runPython(['backends/static/binary/symbols.py', '--binary', binaryPath, '--all']),
-          runPython(['backends/static/disasm/calling_convention.py', '--binary', binaryPath]),
-          runPython(['backends/static/analysis/function_radar.py', '--binary', binaryPath]),
-        ]);
+        const functionSteps = [
+          { name: 'symbols', args: ['backends/static/binary/symbols.py', '--binary', binaryPath, '--all'] },
+          { name: 'calling_convention', args: ['backends/static/disasm/calling_convention.py', '--binary', binaryPath] },
+          { name: 'function_radar', args: ['backends/static/analysis/function_radar.py', '--binary', binaryPath] },
+        ];
+        const settled = await Promise.all(functionSteps.map((step) =>
+          runPython(step.args).then((res) => ({ ...step, ok: true, res })).catch((err) => ({ ...step, ok: false, err }))
+        ));
+        const diagnostics = settled.map((step) => ({
+          name: step.name,
+          ok: step.ok,
+          ...(step.ok ? step.res.meta : ((step.err && step.err.pythonMeta) || {})),
+        }));
+        const failed = settled.find((step) => !step.ok);
+        if (failed) {
+          panel.webview.postMessage({
+            type: 'hubFunctionsDone',
+            data: {
+              error: formatPythonFailure(failed.name, failed.err),
+              diagnostics,
+            },
+          });
+          return;
+        }
+        const [symRes, ccRes, radarRes] = settled.map((step) => step.res);
         const symbols = JSON.parse(symRes.stdout);
         const cc = JSON.parse(ccRes.stdout);
         const radar = JSON.parse(radarRes.stdout);
-        panel.webview.postMessage({ type: 'hubFunctionsDone', data: { symbols, cc, radar } });
+        panel.webview.postMessage({ type: 'hubFunctionsDone', data: { symbols, cc, radar, diagnostics } });
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubFunctionsDone', data: { error: String(e) } });
+        panel.webview.postMessage({
+          type: 'hubFunctionsDone',
+          data: {
+            error: e && e.message ? String(e.message) : String(e),
+            diagnostics: e && e.pythonMeta ? [e.pythonMeta] : [],
+          },
+        });
       }
     },
     hubLoadPeResources: async (message) => {
