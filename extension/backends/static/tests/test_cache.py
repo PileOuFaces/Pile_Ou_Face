@@ -295,6 +295,18 @@ class TestDisasmCacheStrings(unittest.TestCase):
         self.assertEqual(result[0]["value"], "hello")
         self.assertEqual(result[0]["length"], 5)
 
+    def test_get_strings_for_addresses_loads_only_requested_rows(self):
+        with DisasmCache(self._db_path) as cache:
+            cache.save_strings(self._binary_path, self.SAMPLE_STRINGS)
+            result = cache.get_strings_for_addresses(
+                self._binary_path, {"0x402010", "0x404000"}
+            )
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["addr"], "0x402010")
+        self.assertEqual(result[0]["value"], "world")
+
 
 class TestDisasmCacheAnnotations(unittest.TestCase):
     """Tests pour save_annotation / get_annotations / delete_annotation."""

@@ -177,10 +177,20 @@ def _load_or_compute_symbols(cache: DisasmCache, binary_path: str) -> list[dict]
     return symbols
 
 
-def _load_or_compute_strings(cache: DisasmCache, binary_path: str) -> list[dict]:
-    cached = cache.get_strings(binary_path)
+def _load_or_compute_strings(
+    cache: DisasmCache,
+    binary_path: str,
+    target_addrs: set[str] | None = None,
+) -> list[dict]:
+    cached = (
+        cache.get_strings_for_addresses(binary_path, target_addrs)
+        if target_addrs is not None
+        else cache.get_strings(binary_path)
+    )
     if cached:
         return cached
+    if cached == []:
+        return []
     strings = extract_strings(binary_path, min_len=4, encoding="auto")
     if strings:
         cache.save_strings(binary_path, strings)
@@ -620,7 +630,10 @@ def build_function_radar(
         cfg = _load_or_compute_cfg(cache, binary_path, lines)
         xref_map = _load_or_compute_xrefs(cache, binary_path, lines)
         imports = _load_or_compute_imports(cache, binary_path)
-        strings = _load_or_compute_strings(cache, binary_path)
+        string_target_addrs = {
+            normalize_addr(target_addr) for target_addr in xref_map or {}
+        }
+        strings = _load_or_compute_strings(cache, binary_path, string_target_addrs)
         annotations = cache.get_annotations(binary_path)
 
     catalog = _merge_function_catalog(symbols, discovered, annotations)
