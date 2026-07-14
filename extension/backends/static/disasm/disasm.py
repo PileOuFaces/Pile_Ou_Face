@@ -544,6 +544,52 @@ def _load_annotation_maps(
         return {}, {}
 
 
+def _merge_annotation_rows(
+    rows: list[dict],
+    label_map: dict[int, str],
+    comment_map: dict[int, str],
+    *,
+    override: bool = True,
+) -> None:
+    for entry in rows:
+        addr = _addr_to_int(entry.get("addr"))
+        if addr is None:
+            continue
+        value = str(entry.get("value") or "").strip()
+        if not value:
+            continue
+        if entry.get("kind") == "rename":
+            if override:
+                label_map[addr] = value
+            else:
+                label_map.setdefault(addr, value)
+        elif entry.get("kind") == "comment":
+            if override:
+                comment_map[addr] = value
+            else:
+                comment_map.setdefault(addr, value)
+
+
+def _load_sqlite_annotation_maps(
+    binary_path: str,
+    annotations_db_path: str | None = "auto",
+) -> tuple[dict[int, str], dict[int, str]]:
+    if annotations_db_path is None:
+        return {}, {}
+    try:
+        from backends.static.annotations.annotation_db import AnnotationDb
+
+        db_path = None if annotations_db_path in ("", "auto") else annotations_db_path
+        with AnnotationDb(db_path) as db:
+            rows = db.get_annotations(binary_path)
+        labels: dict[int, str] = {}
+        comments: dict[int, str] = {}
+        _merge_annotation_rows(rows, labels, comments, override=True)
+        return labels, comments
+    except Exception:
+        return {}, {}
+
+
 def _normalize_for_match(text: str) -> str:
     return re.sub(r"\s+", "", text.lower())
 
@@ -826,6 +872,7 @@ def _load_disasm_context(
     binary_path: str,
     annotations_json_path: str | None = None,
     cache_db_path: str | None = None,
+    annotations_db_path: str | None = "auto",
     *,
     raw_mode: bool = False,
 ) -> dict:
@@ -868,18 +915,12 @@ def _load_disasm_context(
                     if addr is None or not name:
                         continue
                     label_map.setdefault(addr, name)
-                for entry in cached_annotations:
-                    addr = _addr_to_int(entry.get("addr"))
-                    if addr is None:
-                        continue
-                    if entry.get("kind") == "rename":
-                        value = str(entry.get("value") or "").strip()
-                        if value:
-                            label_map[addr] = value
-                    elif entry.get("kind") == "comment":
-                        value = str(entry.get("value") or "").strip()
-                        if value:
-                            comment_map.setdefault(addr, value)
+                _merge_annotation_rows(
+                    cached_annotations,
+                    label_map,
+                    comment_map,
+                    override=False,
+                )
                 for fn in functions:
                     func_addr = str(fn.get("addr") or "")
                     if not func_addr:
@@ -890,6 +931,13 @@ def _load_disasm_context(
         except Exception:
             functions = []
             stack_frames = {}
+
+    sqlite_labels, sqlite_comments = _load_sqlite_annotation_maps(
+        binary_path,
+        annotations_db_path,
+    )
+    label_map.update(sqlite_labels)
+    comment_map.update(sqlite_comments)
 
     if not raw_mode and not functions:
         for symbol in extract_symbols(binary_path):
@@ -1050,8 +1098,18 @@ def _apply_labels(
             output.append("")
             output.append(f"; ===== Function {function_name} @ {line['addr']} =====")
 
-        # Insert label header before this address if it has a name
+        is_function_start = (
+            current_function is not None
+            and addr_int is not None
+            and _addr_to_int(current_function.get("addr")) == addr_int
+        )
+
+        # Insert label header before this address if it has a name.
+        # Function-start renames and instruction annotations are intentionally
+        # marked differently so the text disassembly stays easy to scan.
         if addr_int is not None and addr_int in label_map:
+            label_kind = "function rename" if is_function_start else "annotation label"
+            output.append(f"; -- {label_kind} @ {line['addr']} --")
             output.append(f"{label_map[addr_int]}:")
 
         text = line["text"]
@@ -1302,6 +1360,7 @@ def disassemble(
     raw_base_addr: str | None = None,
     raw_endian: str | None = None,
     annotations_json: str | None = None,
+    annotations_db: str | None = "auto",
     dwarf_lines: bool = False,
     cache_db_path: str | None = None,
     progress_callback: Callable[[dict], None] | None = None,
@@ -1352,6 +1411,7 @@ def disassemble(
         binary_path,
         annotations_json_path=annotations_json,
         cache_db_path=cache_db_path,
+        annotations_db_path=annotations_db,
         raw_mode=bool(raw_arch),
     )
     context = _augment_context_with_discovered_functions(
@@ -1418,6 +1478,11 @@ def main() -> int:
     parser.add_argument(
         "--annotations-json",
         help="Path to annotations JSON {addr: {name, comment}} for label injection",
+    )
+    parser.add_argument(
+        "--annotations-db",
+        default="auto",
+        help="SQLite annotations DB path. Use 'auto' for the default AnnotationStore DB.",
     )
     parser.add_argument(
         "--dwarf-lines",
@@ -1504,6 +1569,7 @@ def main() -> int:
                     args.binary,
                     annotations_json_path=ann_json,
                     cache_db_path=cache_db,
+                    annotations_db_path=getattr(args, "annotations_db", "auto"),
                 )
                 _write_disasm_outputs(
                     cached_lines,
@@ -1533,6 +1599,7 @@ def main() -> int:
                 raw_base_addr=getattr(args, "raw_base_addr", None),
                 raw_endian=getattr(args, "raw_endian", None),
                 annotations_json=getattr(args, "annotations_json", None),
+                annotations_db=getattr(args, "annotations_db", "auto"),
                 dwarf_lines=getattr(args, "dwarf_lines", False),
                 cache_db_path=cache_db,
                 progress_callback=progress_callback,
@@ -1563,6 +1630,7 @@ def main() -> int:
             raw_base_addr=getattr(args, "raw_base_addr", None),
             raw_endian=getattr(args, "raw_endian", None),
             annotations_json=getattr(args, "annotations_json", None),
+            annotations_db=getattr(args, "annotations_db", "auto"),
             dwarf_lines=getattr(args, "dwarf_lines", False),
             cache_db_path=cache_db,
             progress_callback=progress_callback,

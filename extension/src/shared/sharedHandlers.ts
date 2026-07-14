@@ -9,7 +9,6 @@ const vscode = require('vscode');
 const path = require('path');
 const fs = require('fs');
 const cp = require('child_process');
-const crypto = require('crypto');
 const readline = require('readline');
 const fileManager = require('./fileManager');
 const { detectPythonExecutable, getExtensionPath, buildRuntimeEnv } = require('./utils');
@@ -60,6 +59,54 @@ function inspectBinaryInput(filePath) {
  */
 function isSupportedBinary(filePath) {
   return inspectBinaryInput(filePath).supported;
+}
+
+function normalizeHexAddress(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const raw = text.startsWith('0x') || text.startsWith('0X') ? text.slice(2) : text;
+  if (!/^[0-9a-fA-F]+$/.test(raw)) return text.toLowerCase();
+  return `0x${raw.replace(/^0+/, '') || '0'}`.toLowerCase();
+}
+
+function resolveArtifactMappingPath(candidatePath) {
+  const absCandidate = path.resolve(String(candidatePath || ''));
+  const fileName = path.basename(absCandidate);
+  if (fileName.endsWith('.disasm.mapping.json')) return absCandidate;
+  if (fileName.endsWith('.disasm.asm')) return absCandidate.replace(/\.disasm\.asm$/i, '.disasm.mapping.json');
+  if (fileName.endsWith('.symbols.json')) return absCandidate.replace(/\.symbols\.json$/i, '.disasm.mapping.json');
+  if (fileName.endsWith('.discovered.json')) return absCandidate.replace(/\.discovered\.json$/i, '.disasm.mapping.json');
+  return '';
+}
+
+function getDisasmMappingPathForBinary(binaryPath, { root, storageDir, getTempDir }) {
+  const artifactMappingPath = resolveArtifactMappingPath(binaryPath);
+  if (artifactMappingPath) return artifactMappingPath;
+  const absPath = path.resolve(String(binaryPath || ''));
+  const tempDir = storageDir || (typeof getTempDir === 'function' ? getTempDir(root) : root);
+  const baseName = path.basename(absPath, path.extname(absPath)) || 'binary';
+  return path.join(tempDir, `${baseName}.disasm.mapping.json`);
+}
+
+function loadFunctionAddrsFromDisasmMapping(binaryPath, options) {
+  const mappingPath = getDisasmMappingPathForBinary(binaryPath, options);
+  if (!mappingPath || !fs.existsSync(mappingPath)) return [];
+  try {
+    const mapping = JSON.parse(fs.readFileSync(mappingPath, 'utf8'));
+    const addrs = new Set<string>();
+    for (const fn of Array.isArray(mapping?.functions) ? mapping.functions : []) {
+      const addr = normalizeHexAddress(fn?.addr);
+      if (addr) addrs.add(addr);
+    }
+    for (const line of Array.isArray(mapping?.lines) ? mapping.lines : []) {
+      const addr = normalizeHexAddress(line?.addr);
+      const functionAddr = normalizeHexAddress(line?.function_addr);
+      if (addr && functionAddr && addr === functionAddr) addrs.add(addr);
+    }
+    return Array.from(addrs).sort((a, b) => parseInt(a, 16) - parseInt(b, 16));
+  } catch (_) {
+    return [];
+  }
 }
 
 const RAW_ARCH_ITEMS = [
@@ -209,29 +256,6 @@ function normalizeRawProfile(profile) {
   };
 }
 
-function getAnnotationsPath(root, binaryPath, storageDir?) {
-  const absPath = path.isAbsolute(binaryPath) ? binaryPath : path.join(root, binaryPath);
-  const hash = crypto.createHash('sha256').update(absPath).update(fs.existsSync(absPath) ? String(fs.statSync(absPath).mtimeMs) : '').digest('hex').slice(0, 16);
-  const annotationsBase = storageDir;
-  const dir = path.join(annotationsBase, 'annotations');
-  if (!fs.existsSync(dir)) {
-    try { fs.mkdirSync(dir, { recursive: true }); } catch (_) { /* best-effort: read-only checks must not throw */ }
-  }
-  return path.join(dir, `${hash}.json`);
-}
-
-function readAnnotationsFile(filePath) {
-  try {
-    if (fs.existsSync(filePath)) {
-      const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-      return parsed && typeof parsed === 'object' ? parsed : {};
-    }
-  } catch (_) {
-    return {};
-  }
-  return {};
-}
-
 /**
  * @brief Handlers partagés (getPlatform, requestBinarySelection, listGeneratedFiles, etc.).
  * @param {object} ctx - { root, panel, getTempDir, ensureTempDir, refreshSidebar }
@@ -248,8 +272,6 @@ function sharedHandlers(ctx) {
     setRawProfile,
     clearRawProfile,
   } = ctx;
-  const getAnnPath = (binaryPath) => getAnnotationsPath(root, binaryPath, storageDir || root);
-
   const annotationsBridge = ctx.annotationsBridge || makeAnnotationsBridge({
     root,
     extensionPath: context?.extensionPath || getExtensionPath() || root,
@@ -257,8 +279,17 @@ function sharedHandlers(ctx) {
     buildPythonEnv: () => buildRuntimeEnv(root, storageDir),
   });
 
+  const buildAnnotationsMessage = (binaryPath, annotations) => ({
+    type: 'hubAnnotations',
+    binaryPath,
+    annotations,
+    functionAddrs: binaryPath
+      ? loadFunctionAddrsFromDisasmMapping(binaryPath, { root, storageDir, getTempDir })
+      : [],
+  });
+
   const notifyAnnotations = (binaryPath, annotations) => {
-    panel.webview.postMessage({ type: 'hubAnnotations', annotations });
+    panel.webview.postMessage(buildAnnotationsMessage(binaryPath, annotations));
     panel.webview.postMessage({ type: 'hubAnnotationSaved', binaryPath });
   };
 
@@ -578,22 +609,12 @@ function sharedHandlers(ctx) {
     hubLoadAnnotations: async (message) => {
       const { binaryPath } = message;
       if (!binaryPath) {
-        panel.webview.postMessage({ type: 'hubAnnotations', annotations: {} });
+        panel.webview.postMessage(buildAnnotationsMessage('', {}));
         return;
       }
       try {
-        const legacyPath = getAnnPath(binaryPath);
-        if (fs.existsSync(legacyPath)) {
-          const legacy = readAnnotationsFile(legacyPath);
-          if (Object.keys(legacy).length) {
-            await annotationsBridge.migrateLegacyJson(binaryPath, legacy);
-          }
-          if (fs.existsSync(legacyPath)) {
-            fs.renameSync(legacyPath, `${legacyPath}.migrated`);
-          }
-        }
         const annotations = await annotationsBridge.loadAnnotations(binaryPath);
-        panel.webview.postMessage({ type: 'hubAnnotations', annotations });
+        panel.webview.postMessage(buildAnnotationsMessage(binaryPath, annotations));
       } catch (err) {
         vscode.window.showErrorMessage(`Impossible de charger les annotations : ${err?.message || err}`);
       }

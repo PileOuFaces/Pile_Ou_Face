@@ -77,15 +77,6 @@ describe("annotationsBridge", () => {
     expect(args).to.include.members(["delete-annotation", "--addr", "0x1"]);
   });
 
-  it("migrateLegacyJson calls migrate-legacy with JSON-encoded payload", async () => {
-    const runPythonStub = sinon.stub().resolves({ stdout: "{}" });
-    const bridge = makeBridge(runPythonStub).makeAnnotationsBridge({ root: "/r", extensionPath: "/e" });
-    const legacy = { "0x1": { comment: "old" } };
-    await bridge.migrateLegacyJson("/bin/target", legacy);
-    const args = runPythonStub.firstCall.args[0];
-    expect(args).to.include.members(["migrate-legacy", "--json", JSON.stringify(legacy)]);
-  });
-
   it("deleteAnnotation against the real CLI preserves bookmark/review (integration)", async function () {
     this.timeout(10000);
     const os = require("os");

@@ -95,12 +95,6 @@ class TestAnnotationsCli(unittest.TestCase):
         self.assertEqual(entry["reviewStatus"], "reviewed")
         self.assertEqual(entry["reviewNotes"], "notes")
 
-    def test_migrate_legacy(self):
-        legacy = {"0x401000": {"comment": "old", "name": "old_name"}}
-        out = self._run("migrate-legacy", "--json", json.dumps(legacy))
-        self.assertEqual(out["0x401000"]["comment"], "old")
-        self.assertEqual(out["0x401000"]["name"], "old_name")
-
 
 if __name__ == "__main__":
     unittest.main()

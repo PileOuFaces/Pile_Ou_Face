@@ -34,8 +34,6 @@ function makeAnnotationsBridge(ctx) {
     deleteBookmark: (binaryPath, addr) => invoke(binaryPath, ['delete-bookmark', '--addr', addr]),
     clearBookmarks: (binaryPath) => invoke(binaryPath, ['clear-bookmarks']),
     deleteAnnotation: (binaryPath, addr) => invoke(binaryPath, ['delete-annotation', '--addr', addr]),
-    migrateLegacyJson: (binaryPath, legacyAnnotations) =>
-      invoke(binaryPath, ['migrate-legacy', '--json', JSON.stringify(legacyAnnotations)]),
   };
 }
 
