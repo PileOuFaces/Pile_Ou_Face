@@ -1910,6 +1910,7 @@ function buildFunctionsRowsFromDiscovered(discovered = []) {
 }
 
 function renderFunctionsWorkspace(rows = [], radar = null, opts = {}) {
+  const workspaceRenderStarted = performance.now();
   const container = document.getElementById('functionsContent');
   const countEl = document.getElementById('functionsCount');
   const searchEl = document.getElementById('functionsSearch');
@@ -1953,6 +1954,7 @@ function renderFunctionsWorkspace(rows = [], radar = null, opts = {}) {
   let lastFilterKey = '';
 
   function renderTable() {
+    const tableRenderStarted = performance.now();
     const rawFilter = String(searchEl?.value || '').trim().toLowerCase();
     const quickFilter = String(functionsUiState.quickFilter || 'all');
     const reviewFilter = String(functionsUiState.reviewFilter || 'all');
@@ -2137,12 +2139,27 @@ function renderFunctionsWorkspace(rows = [], radar = null, opts = {}) {
 
     updateActiveNavRows(window._lastDisasmAddr);
     renderFunctionDetails(getFunctionRowByAddr(selectedAddr, decoratedRows));
+    window.reportPofWebviewPerf?.('functions.table.render', {
+      elapsedMs: Math.round((performance.now() - tableRenderStarted) * 10) / 10,
+      rowsTotal: decoratedRows.length,
+      rowsFiltered: filtered.length,
+      rowsRendered: visibleRows.length,
+      page: currentPage,
+      totalPages,
+      selectedAddr: functionsUiState.selectedAddr || '',
+    }, { afterPaint: true });
   }
 
   renderTable();
+  window.reportPofWebviewPerf?.('functions.workspace.render', {
+    elapsedMs: Math.round((performance.now() - workspaceRenderStarted) * 10) / 10,
+    rowsTotal: decoratedRows.length,
+    sourceMode: opts?.sourceMode || '',
+  }, { afterPaint: true });
 }
 
 function renderFunctionsRadar(radar = {}) {
+  const renderStarted = performance.now();
   const container = document.getElementById('functionsRadar');
   if (!container) return;
   if (radar?.error) {
@@ -2258,6 +2275,13 @@ function renderFunctionsRadar(radar = {}) {
       }
     });
   });
+  window.reportPofWebviewPerf?.('functions.radar.render', {
+    elapsedMs: Math.round((performance.now() - renderStarted) * 10) / 10,
+    hotspots: hotspots.length,
+    quickWins: quickWins.length,
+    entryCandidates: entryCandidates.length,
+    clusters: clusters.length,
+  }, { afterPaint: true });
 }
 
 function normalizeSpanLength(value) {

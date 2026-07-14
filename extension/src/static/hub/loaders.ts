@@ -78,7 +78,7 @@ function createLoaders({
       const encoding = message.encoding || 'utf-8';
       const section = (message.section || '').trim() || null;
       if (!exists || isDirectory) {
-        hubPost('hubStrings', { strings: [] });
+        hubPost('hubStrings', { binaryPath: absPath, strings: [] });
         return;
       }
       try {
@@ -109,9 +109,9 @@ function createLoaders({
         // minLen filtering is the frontend's responsibility (renderStringsTable).
         // The extension sends the full set for the requested (encoding, section) so that
         // switching minLen never requires a round-trip.
-        hubPost('hubStrings', { strings: Array.isArray(allStrings) ? allStrings : [] });
+        hubPost('hubStrings', { binaryPath: absPath, strings: Array.isArray(allStrings) ? allStrings : [] });
       } catch (_) {
-        hubPost('hubStrings', { strings: [] });
+        hubPost('hubStrings', { binaryPath: absPath, strings: [] });
       }
     },
 

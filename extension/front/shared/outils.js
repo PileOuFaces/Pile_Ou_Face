@@ -1481,6 +1481,8 @@ function initDisasmUxState() {
 
 function resetStaticBinaryDerivedState() {
   tabDataCache = {};
+  stringsCache = [];
+  stringsPage = 1;
   currentArchSupport = null;
   stackFrameCache = {};
   window.sectionsCache = [];
@@ -1512,6 +1514,8 @@ function resetStaticBinaryDerivedState() {
   decompileUiState.renderedQuality = _normalizeDecompileQuality(decompileUiState.quality || 'normal');
   const cfgContent = document.getElementById('cfgContent');
   if (cfgContent) cfgContent.innerHTML = '';
+  const stringsContent = document.getElementById('stringsContent');
+  if (stringsContent) stringsContent.innerHTML = '';
   const cfgFuncSelect = document.getElementById('cfgFuncSelect');
   if (cfgFuncSelect) {
     cfgFuncSelect.replaceChildren();

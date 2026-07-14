@@ -48,6 +48,23 @@ function createActions({
   // ── Internal helpers ────────────────────────────────────────────────────────
 
   const hubPost = (type, data) => panel.webview.postMessage(Object.assign({ type }, data || {}));
+  const hostMemorySnapshot = () => {
+    const mem = process.memoryUsage();
+    return {
+      rss: mem.rss,
+      heapUsed: mem.heapUsed,
+      heapTotal: mem.heapTotal,
+      external: mem.external,
+      arrayBuffers: mem.arrayBuffers,
+    };
+  };
+  const perfDiagnosticsEnabled = () => {
+    try {
+      return Boolean(vscode.workspace.getConfiguration?.('pileOuFace')?.get?.('perfDiagnostics', false));
+    } catch (_) {
+      return false;
+    }
+  };
 
   const finalizeDisasmOpen = async ({
     disasmPath,
@@ -434,10 +451,15 @@ function createActions({
     },
 
     hubDebugLog: async (message) => {
-      const scope = String(message.scope || 'webview').replace(/[^a-z0-9_-]/gi, '_');
+      const rawScope = String(message.scope || 'webview');
+      const scope = rawScope.replace(/[^a-z0-9_.:-]/gi, '_');
       const event = String(message.event || 'event').replace(/[^a-z0-9_.:-]/gi, '_');
       const details = message.details && typeof message.details === 'object' ? message.details : {};
-      logChannel.appendLine(`[${scope}] ${event} ${JSON.stringify(details)}`);
+      if (rawScope === 'perf.webview' && !perfDiagnosticsEnabled()) return;
+      const enriched = rawScope === 'perf.webview'
+        ? { ...details, extensionHostMemory: hostMemorySnapshot() }
+        : details;
+      logChannel.appendLine(`[${scope}] ${event} ${JSON.stringify(enriched)}`);
     },
 
     hubInstallDecompiler: async (message) => {

@@ -193,6 +193,7 @@ describe('loaders — resolveCachedBinaryView', () => {
 
     expect(runPythonJsonViaFile.calledOnce).to.equal(true);
     expect(writeCache.calledOnce).to.equal(true);
+    expect(posted[0].binaryPath).to.equal('/repo/demo.bin');
     expect(posted[0].strings).to.deep.equal(freshStrings);
   });
 });
@@ -261,7 +262,7 @@ describe('loaders — hubLoadStrings', () => {
 
     await loaders.hubLoadStrings({ binaryPath: '', minLen: '4', encoding: 'utf-8' });
 
-    expect(posted).to.deep.equal([{ type: 'hubStrings', strings: [] }]);
+    expect(posted).to.deep.equal([{ type: 'hubStrings', binaryPath: '', strings: [] }]);
   });
 
   it('returns cache hit when cached array is non-empty', async () => {
@@ -280,6 +281,7 @@ describe('loaders — hubLoadStrings', () => {
 
     await loaders.hubLoadStrings({ binaryPath: '/repo/demo.bin', minLen: '4', encoding: 'utf-8' });
 
+    expect(posted[0].binaryPath).to.equal('/repo/demo.bin');
     expect(posted[0].strings).to.deep.equal(cachedStrings);
   });
 
@@ -367,6 +369,7 @@ describe('loaders — hubLoadStrings', () => {
     // Python must NOT be called — served from cache
     expect(runPythonJsonViaFile.called).to.equal(false);
     // Extension sends the full base set — minLen filtering is the frontend's responsibility
+    expect(posted[0].binaryPath).to.equal('/repo/demo.bin');
     expect(posted[0].strings).to.deep.equal(cachedStrings);
   });
 
@@ -405,7 +408,7 @@ describe('loaders — hubLoadStrings', () => {
 
     await loaders.hubLoadStrings({ binaryPath: '/repo/demo.bin', minLen: '4', encoding: 'utf-8' });
 
-    expect(posted).to.deep.equal([{ type: 'hubStrings', strings: [] }]);
+    expect(posted).to.deep.equal([{ type: 'hubStrings', binaryPath: '/repo/demo.bin', strings: [] }]);
   });
 });
 
