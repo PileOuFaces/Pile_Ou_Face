@@ -7,6 +7,22 @@ function reportStaticWebviewPerf(event, startedAt, details = {}) {
   }, { afterPaint: true });
 }
 
+function isStaleStaticBinaryResponse(msg, scope) {
+  const normalize = (value) => String(value || '').trim().replace(/\\/g, '/');
+  const currentBinaryPath = typeof getStaticBinaryPath === 'function' ? getStaticBinaryPath() : '';
+  const responseBinaryPath = String(msg?.binaryPath || '').trim();
+  if (!responseBinaryPath || !currentBinaryPath || normalize(responseBinaryPath) === normalize(currentBinaryPath)) {
+    return false;
+  }
+  vscode.postMessage({
+    type: 'hubDebugLog',
+    scope,
+    event: 'ignored-stale-response',
+    details: { currentBinaryPath, responseBinaryPath },
+  });
+  return true;
+}
+
 window.addEventListener('message', (event) => {
   const msg = event.data;
   if (!msg?.type) return;
@@ -746,6 +762,7 @@ window.addEventListener('message', (event) => {
   }
 
   if (msg.type === 'hubImportsDone') {
+    if (isStaleStaticBinaryResponse(msg, 'static-imports')) return;
     const renderStarted = performance.now();
     tabDataCache.imports = { binaryPath: getStaticBinaryPath() };
     const container = document.getElementById('importsContent');
@@ -885,6 +902,7 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubExportsDone') {
+    if (isStaleStaticBinaryResponse(msg, 'static-exports')) return;
     const renderStarted = performance.now();
     const container = document.getElementById('exportsContent');
     if (!container) return;
@@ -963,11 +981,13 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubImportXrefsDone') {
+    if (isStaleStaticBinaryResponse(msg, 'static-import-xrefs')) return;
     const data = msg.data || {};
     _showImportXrefsPanel(data.function, data.callsites || [], data.error);
     return;
   }
   if (msg.type === 'hubSymbols') {
+    if (isStaleStaticBinaryResponse(msg, 'static-symbols')) return;
     const renderStarted = performance.now();
     tabDataCache.symbols = { binaryPath: getStaticBinaryPath() };
     const syms = msg.symbols || [];
@@ -1104,6 +1124,7 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubXrefs') {
+    if (isStaleStaticBinaryResponse(msg, 'static-xrefs')) return;
     const renderStarted = performance.now();
     if (msg.requestKey && typeof _pendingXrefRequests !== 'undefined' && _pendingXrefRequests.has(msg.requestKey)) {
       const pending = _pendingXrefRequests.get(msg.requestKey);
@@ -1260,6 +1281,7 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubBinaryInfo') {
+    if (isStaleStaticBinaryResponse(msg, 'static-info')) return;
     const renderStarted = performance.now();
     tabDataCache.info = { binaryPath: getStaticBinaryPath() };
     const container = document.getElementById('infoContent');
@@ -1296,6 +1318,7 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubSections') {
+    if (isStaleStaticBinaryResponse(msg, 'static-sections')) return;
     const renderStarted = performance.now();
     tabDataCache.sections = { binaryPath: getStaticBinaryPath() };
     const container = document.getElementById('sectionsContent');
@@ -2048,6 +2071,7 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubDiscoveredFunctions') {
+    if (isStaleStaticBinaryResponse(msg, 'static-functions-discovered')) return;
     tabDataCache.discovered = { binaryPath: getStaticBinaryPath() };
     const container = document.getElementById('functionsContent');
     const countEl = document.getElementById('functionsCount');
@@ -2075,6 +2099,7 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubFunctionsDone') {
+    if (isStaleStaticBinaryResponse(msg, 'static-functions')) return;
     tabDataCache.discovered = { binaryPath: getStaticBinaryPath() };
     const container = document.getElementById('functionsContent');
     const countEl = document.getElementById('functionsCount');
@@ -2266,6 +2291,7 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubRecherche' || msg.type === 'hubSearchBinaryResult') {
+    if (isStaleStaticBinaryResponse(msg, 'static-search')) return;
     const renderStarted = performance.now();
     const results = msg.results || [];
     const err = msg.error;
@@ -2504,6 +2530,7 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubHexView') {
+    if (isStaleStaticBinaryResponse(msg, 'static-hex')) return;
     const renderStarted = performance.now();
     tabDataCache.hex = { binaryPath: getStaticBinaryPath() };
     const result = msg.result || {};
@@ -2555,6 +2582,7 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubPatchResult') {
+    if (isStaleStaticBinaryResponse(msg, 'static-patch')) return;
     const result = msg.result || {};
     const status = document.getElementById('hexPatchStatus');
     if (status) {
@@ -2570,6 +2598,7 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubPatchesDone') {
+    if (isStaleStaticBinaryResponse(msg, 'static-patches')) return;
     const patchList = document.getElementById('patchList');
     const revertAllBtn = document.getElementById('btnRevertAll');
     const patchSection = document.getElementById('patchManagerSection');
@@ -2644,6 +2673,7 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubRevertPatchDone') {
+    if (isStaleStaticBinaryResponse(msg, 'static-patch-revert')) return;
     const status = document.getElementById('hexPatchStatus');
     if (status) {
       status.className = 'hex-patch-status ' + (msg.ok ? 'ok' : 'error');
@@ -2659,6 +2689,7 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubRedoPatchDone') {
+    if (isStaleStaticBinaryResponse(msg, 'static-patch-redo')) return;
     const status = document.getElementById('hexPatchStatus');
     if (status) {
       status.className = 'hex-patch-status ' + (msg.ok ? 'ok' : 'error');
@@ -2794,6 +2825,7 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubTypedDataDone') {
+    if (isStaleStaticBinaryResponse(msg, 'static-typed-data')) return;
     const container = document.getElementById('typedDataContent');
     if (!container) return;
     const {
@@ -2983,6 +3015,7 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubExceptionHandlersDone') {
+    if (isStaleStaticBinaryResponse(msg, 'static-exceptions')) return;
     const renderStarted = performance.now();
     const container = document.getElementById('exceptionsContent');
     const countEl = document.getElementById('exceptionsCount');
@@ -3044,6 +3077,7 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubPeResourcesDone') {
+    if (isStaleStaticBinaryResponse(msg, 'static-pe-resources')) return;
     const renderStarted = performance.now();
     const container = document.getElementById('peResourcesContent');
     if (!container) return;

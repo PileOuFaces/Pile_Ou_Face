@@ -1516,6 +1516,28 @@ function resetStaticBinaryDerivedState() {
   if (cfgContent) cfgContent.innerHTML = '';
   const stringsContent = document.getElementById('stringsContent');
   if (stringsContent) stringsContent.innerHTML = '';
+  [
+    'importsContent',
+    'exportsContent',
+    'symbolsContent',
+    'infoContent',
+    'sectionsContent',
+    'functionsContent',
+    'hexContent',
+    'patchList',
+    'typedDataContent',
+    'exceptionsContent',
+    'peResourcesContent',
+    'xrefsResultContent',
+  ].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = '';
+  });
+  const xrefsResult = document.getElementById('xrefsResult');
+  if (xrefsResult) {
+    xrefsResult.style.display = 'none';
+    xrefsResult.classList.remove('xrefs-panel-visible');
+  }
   const cfgFuncSelect = document.getElementById('cfgFuncSelect');
   if (cfgFuncSelect) {
     cfgFuncSelect.replaceChildren();

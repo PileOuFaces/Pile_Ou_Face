@@ -693,7 +693,7 @@ function createActions({
       const mode = message.mode || 'text';
       const section = (message.section || '').trim() || null;
       if (!exists || isDirectory || !pattern) {
-        hubPost('hubRecherche', { results: [], error: 'Binaire ou motif manquant.' });
+        hubPost('hubRecherche', { binaryPath: absPath, results: [], error: 'Binaire ou motif manquant.' });
         return;
       }
       const args = [getSearchScript(root), '--binary', absPath, '--pattern', pattern, '--mode', mode];
@@ -709,10 +709,10 @@ function createActions({
       try {
         const data = await runPythonJsonFile(args, { timeout: 30000, maxBuffer: 1024 * 1024, fallback: '[]' });
         const results = Array.isArray(data) ? data : (data.results || []);
-        hubPost('hubRecherche', { results });
+        hubPost('hubRecherche', { binaryPath: absPath, results });
       } catch (err) {
         const stderr = String(err.stderr || '').trim();
-        hubPost('hubRecherche', { results: [], error: stderr || err.message || 'Recherche échouée.' });
+        hubPost('hubRecherche', { binaryPath: absPath, results: [], error: stderr || err.message || 'Recherche échouée.' });
       }
     },
 

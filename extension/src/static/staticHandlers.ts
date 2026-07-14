@@ -1645,27 +1645,27 @@ function staticHandlers(config) {
       const { binaryPath } = message;
       try {
         const { stdout } = await runPython(['backends/static/binary/imports_analysis.py', '--binary', binaryPath]);
-        panel.webview.postMessage({ type: 'hubImportsDone', data: JSON.parse(stdout) });
+        panel.webview.postMessage({ type: 'hubImportsDone', binaryPath, data: JSON.parse(stdout) });
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubImportsDone', data: { error: String(e) } });
+        panel.webview.postMessage({ type: 'hubImportsDone', binaryPath, data: { error: String(e) } });
       }
     },
     hubLoadExports: async (message) => {
       const { binaryPath } = message;
       try {
         const { stdout } = await runPython(['backends/static/binary/binary_exports.py', '--binary', binaryPath]);
-        panel.webview.postMessage({ type: 'hubExportsDone', data: JSON.parse(stdout) });
+        panel.webview.postMessage({ type: 'hubExportsDone', binaryPath, data: JSON.parse(stdout) });
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubExportsDone', data: { error: String(e) } });
+        panel.webview.postMessage({ type: 'hubExportsDone', binaryPath, data: { error: String(e) } });
       }
     },
     hubLoadImportXrefs: async (message) => {
       const { binaryPath, fnName } = message;
       try {
         const { stdout } = await runPython(['backends/static/disasm/import_xrefs.py', '--binary', binaryPath, '--function', fnName]);
-        panel.webview.postMessage({ type: 'hubImportXrefsDone', data: JSON.parse(stdout) });
+        panel.webview.postMessage({ type: 'hubImportXrefsDone', binaryPath, data: JSON.parse(stdout) });
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubImportXrefsDone', data: { function: fnName, callsites: [], error: String(e) } });
+        panel.webview.postMessage({ type: 'hubImportXrefsDone', binaryPath, data: { function: fnName, callsites: [], error: String(e) } });
       }
     },
     hubLoadHexView: async (message) => {
@@ -1684,10 +1684,11 @@ function staticHandlers(config) {
         if (rawArch) args.push('--raw-arch', String(rawArch));
         if (rawEndian) args.push('--raw-endian', String(rawEndian));
         const { stdout } = await runPython(args);
-        panel.webview.postMessage({ type: 'hubHexView', result: JSON.parse(stdout) });
+        panel.webview.postMessage({ type: 'hubHexView', binaryPath, result: JSON.parse(stdout) });
       } catch (e) {
         panel.webview.postMessage({
           type: 'hubHexView',
+          binaryPath,
           result: { error: String(e), rows: [], sections: [] },
         });
       }
@@ -1703,6 +1704,7 @@ function staticHandlers(config) {
         // Map to the shape the webview expects for hubPatchResult
         panel.webview.postMessage({
           type: 'hubPatchResult',
+          binaryPath,
           result: {
             ok: result.ok,
             written: result.patch ? result.patch.patched_bytes.split(' ').length : 0,
@@ -1713,19 +1715,19 @@ function staticHandlers(config) {
         });
         if (result.ok) {
           const { stdout: ls } = await runPython(['backends/static/patch/patch_manager.py', 'list', '--binary', binaryPath]);
-          panel.webview.postMessage({ type: 'hubPatchesDone', data: JSON.parse(ls) });
+          panel.webview.postMessage({ type: 'hubPatchesDone', binaryPath, data: JSON.parse(ls) });
         }
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubPatchResult', result: { ok: false, error: String(e) } });
+        panel.webview.postMessage({ type: 'hubPatchResult', binaryPath, result: { ok: false, error: String(e) } });
       }
     },
     hubLoadPatches: async (message) => {
       const { binaryPath } = message;
       try {
         const { stdout } = await runPython(['backends/static/patch/patch_manager.py', 'list', '--binary', binaryPath]);
-        panel.webview.postMessage({ type: 'hubPatchesDone', data: JSON.parse(stdout) });
+        panel.webview.postMessage({ type: 'hubPatchesDone', binaryPath, data: JSON.parse(stdout) });
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubPatchesDone', data: { patches: [], error: String(e) } });
+        panel.webview.postMessage({ type: 'hubPatchesDone', binaryPath, data: { patches: [], error: String(e) } });
       }
     },
     hubRevertPatch: async (message) => {
@@ -1734,10 +1736,10 @@ function staticHandlers(config) {
         const { stdout } = await runPython(['backends/static/patch/patch_manager.py', 'revert', '--binary', binaryPath, '--id', patchId]);
         const result = JSON.parse(stdout);
         const { stdout: ls } = await runPython(['backends/static/patch/patch_manager.py', 'list', '--binary', binaryPath]);
-        panel.webview.postMessage({ type: 'hubPatchesDone', data: JSON.parse(ls) });
-        panel.webview.postMessage({ type: 'hubRevertPatchDone', ok: true, patch: result.patch || null });
+        panel.webview.postMessage({ type: 'hubPatchesDone', binaryPath, data: JSON.parse(ls) });
+        panel.webview.postMessage({ type: 'hubRevertPatchDone', binaryPath, ok: true, patch: result.patch || null });
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubRevertPatchDone', ok: false, error: String(e) });
+        panel.webview.postMessage({ type: 'hubRevertPatchDone', binaryPath, ok: false, error: String(e) });
       }
     },
     hubRedoPatch: async (message) => {
@@ -1748,10 +1750,10 @@ function staticHandlers(config) {
         const { stdout } = await runPython(args);
         const result = JSON.parse(stdout);
         const { stdout: ls } = await runPython(['backends/static/patch/patch_manager.py', 'list', '--binary', binaryPath]);
-        panel.webview.postMessage({ type: 'hubPatchesDone', data: JSON.parse(ls) });
-        panel.webview.postMessage({ type: 'hubRedoPatchDone', ok: true, patch: result.patch || null });
+        panel.webview.postMessage({ type: 'hubPatchesDone', binaryPath, data: JSON.parse(ls) });
+        panel.webview.postMessage({ type: 'hubRedoPatchDone', binaryPath, ok: true, patch: result.patch || null });
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubRedoPatchDone', ok: false, error: String(e) });
+        panel.webview.postMessage({ type: 'hubRedoPatchDone', binaryPath, ok: false, error: String(e) });
       }
     },
     hubRevertAllPatches: async (message) => {
@@ -1759,10 +1761,10 @@ function staticHandlers(config) {
       try {
         await runPython(['backends/static/patch/patch_manager.py', 'revert-all', '--binary', binaryPath]);
         const { stdout: ls } = await runPython(['backends/static/patch/patch_manager.py', 'list', '--binary', binaryPath]);
-        panel.webview.postMessage({ type: 'hubPatchesDone', data: JSON.parse(ls) });
-        panel.webview.postMessage({ type: 'hubRevertPatchDone', ok: true });
+        panel.webview.postMessage({ type: 'hubPatchesDone', binaryPath, data: JSON.parse(ls) });
+        panel.webview.postMessage({ type: 'hubRevertPatchDone', binaryPath, ok: true });
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubRevertPatchDone', ok: false, error: String(e) });
+        panel.webview.postMessage({ type: 'hubRevertPatchDone', binaryPath, ok: false, error: String(e) });
       }
     },
     hubLoadStackFrame: async (message) => {
@@ -1796,11 +1798,12 @@ function staticHandlers(config) {
           '--code', code,
           '--binary', binaryPath || '',
         ]);
-        panel.webview.postMessage({ type: 'hubScriptResult', result: JSON.parse(stdout) });
+        panel.webview.postMessage({ type: 'hubScriptResult', binaryPath, result: JSON.parse(stdout) });
       } catch (e) {
         const stderr = e.stderr || String(e);
         panel.webview.postMessage({
           type: 'hubScriptResult',
+          binaryPath,
           result: { ok: false, stdout: '', stderr, duration_ms: 0 },
         });
       }
@@ -1825,6 +1828,7 @@ function staticHandlers(config) {
         if (failed) {
           panel.webview.postMessage({
             type: 'hubFunctionsDone',
+            binaryPath,
             data: {
               error: formatPythonFailure(failed.name, failed.err),
               diagnostics,
@@ -1836,10 +1840,11 @@ function staticHandlers(config) {
         const symbols = JSON.parse(symRes.stdout);
         const cc = JSON.parse(ccRes.stdout);
         const radar = JSON.parse(radarRes.stdout);
-        panel.webview.postMessage({ type: 'hubFunctionsDone', data: { symbols, cc, radar, diagnostics } });
+        panel.webview.postMessage({ type: 'hubFunctionsDone', binaryPath, data: { symbols, cc, radar, diagnostics } });
       } catch (e) {
         panel.webview.postMessage({
           type: 'hubFunctionsDone',
+          binaryPath,
           data: {
             error: e && e.message ? String(e.message) : String(e),
             diagnostics: e && e.pythonMeta ? [e.pythonMeta] : [],
@@ -1851,27 +1856,27 @@ function staticHandlers(config) {
       const { binaryPath } = message;
       try {
         const { stdout } = await runPython(['backends/static/binary/pe_resources.py', '--binary', binaryPath]);
-        panel.webview.postMessage({ type: 'hubPeResourcesDone', data: JSON.parse(stdout) });
+        panel.webview.postMessage({ type: 'hubPeResourcesDone', binaryPath, data: JSON.parse(stdout) });
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubPeResourcesDone', data: { error: String(e), resources: [], count: 0 } });
+        panel.webview.postMessage({ type: 'hubPeResourcesDone', binaryPath, data: { error: String(e), resources: [], count: 0 } });
       }
     },
     hubLoadExceptionHandlers: async (message) => {
       const { binaryPath } = message;
       try {
         const { stdout } = await runPython(['backends/static/exception_handlers.py', '--binary', binaryPath]);
-        panel.webview.postMessage({ type: 'hubExceptionHandlersDone', data: JSON.parse(stdout) });
+        panel.webview.postMessage({ type: 'hubExceptionHandlersDone', binaryPath, data: JSON.parse(stdout) });
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubExceptionHandlersDone', data: { error: String(e), entries: [], count: 0 } });
+        panel.webview.postMessage({ type: 'hubExceptionHandlersDone', binaryPath, data: { error: String(e), entries: [], count: 0 } });
       }
     },
     hubLoadTypedData: async (message) => {
       const args = buildTypedDataArgs(message);
       try {
         const { stdout } = await runPython(args);
-        panel.webview.postMessage({ type: 'hubTypedDataDone', data: JSON.parse(stdout) });
+        panel.webview.postMessage({ type: 'hubTypedDataDone', binaryPath: message.binaryPath || '', data: JSON.parse(stdout) });
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubTypedDataDone', data: { error: String(e), entries: [], sections: [] } });
+        panel.webview.postMessage({ type: 'hubTypedDataDone', binaryPath: message.binaryPath || '', data: { error: String(e), entries: [], sections: [] } });
       }
     },
     hubPreviewTypedStruct: async (message) => {
