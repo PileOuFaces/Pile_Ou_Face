@@ -790,11 +790,179 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
   .form-actions .btn { width: 100%; }
 }
 
+/* ── Global task progress ────────────────────────────────────── */
+.task-progress-shell {
+  position: fixed;
+  left: calc(var(--icon-nav-width) + 16px);
+  right: 360px;
+  bottom: 18px;
+  z-index: 9998;
+  pointer-events: none;
+}
+.task-progress-shell[hidden] { display: none; }
+.task-progress-card {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  max-width: 560px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg-surface) 92%, #000 8%);
+  color: var(--text);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.34);
+  pointer-events: auto;
+}
+.task-progress-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255,255,255,0.18);
+  border-top-color: var(--accent-blue);
+  border-radius: 50%;
+  animation: task-progress-spin 0.8s linear infinite;
+}
+.static-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  color: var(--text-muted);
+  font: 600 12px/1.35 var(--font-mono);
+}
+.static-loading-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255,255,255,0.18);
+  border-top-color: var(--accent-blue);
+  border-radius: 999px;
+  animation: task-progress-spin 0.8s linear infinite;
+  flex: 0 0 auto;
+}
+.static-loading-text {
+  min-width: 0;
+}
+.task-progress-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+.task-progress-title {
+  overflow: hidden;
+  color: var(--text-active);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-progress-detail {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-progress-track {
+  position: relative;
+  overflow: hidden;
+  height: 3px;
+  margin-top: 2px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.12);
+}
+.task-progress-bar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 36%;
+  border-radius: inherit;
+  background: var(--accent-blue);
+  animation: task-progress-slide 1.15s ease-in-out infinite;
+}
+.task-progress-shell.has-percent .task-progress-bar {
+  animation: none;
+  transition: width 0.18s ease;
+}
+.task-progress-count {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.task-progress-details {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+.task-progress-details[hidden] { display: none; }
+.task-progress-details summary {
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+}
+.task-progress-details summary:hover {
+  color: var(--text-active);
+}
+.task-progress-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 112px;
+  margin-top: 5px;
+  overflow: auto;
+}
+.task-progress-row {
+  display: grid;
+  grid-template-columns: minmax(92px, 0.42fr) minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+  padding: 3px 0;
+  border-top: 1px solid rgba(255,255,255,0.08);
+}
+.task-progress-row-title,
+.task-progress-row-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-progress-row-title {
+  color: var(--text-active);
+  font-weight: 600;
+}
+@keyframes task-progress-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes task-progress-slide {
+  0% { transform: translateX(-120%); }
+  50% { transform: translateX(75%); }
+  100% { transform: translateX(280%); }
+}
+
+@media (max-width: 920px) {
+  .task-progress-shell {
+    right: 16px;
+  }
+}
+
+@media (max-width: 680px) {
+  .task-progress-shell {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+  }
+  .task-progress-card {
+    max-width: none;
+  }
+}
+
 /* ── Toast notifications ─────────────────────────────────────── */
 #pof-toast-container {
   position: fixed;
   bottom: 20px;
-  right: 20px;
+  left: 20px;
   z-index: 9999;
   display: flex;
   flex-direction: column;

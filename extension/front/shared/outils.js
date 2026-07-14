@@ -1510,6 +1510,27 @@ function resetStaticBinaryDerivedState() {
   decompileUiState.renderedAddr = '';
   decompileUiState.renderedBinaryPath = '';
   decompileUiState.renderedQuality = _normalizeDecompileQuality(decompileUiState.quality || 'normal');
+  const cfgContent = document.getElementById('cfgContent');
+  if (cfgContent) cfgContent.innerHTML = '';
+  const cfgFuncSelect = document.getElementById('cfgFuncSelect');
+  if (cfgFuncSelect) {
+    cfgFuncSelect.replaceChildren();
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = '\u2014 D\u00e9sassemblage complet \u2014';
+    cfgFuncSelect.appendChild(opt);
+  }
+  const callgraphContent = document.getElementById('callgraphContent');
+  if (callgraphContent) callgraphContent.innerHTML = '';
+  cfgUiState.funcAddr = '';
+  cfgUiState.binaryPath = '';
+  cfgUiState.activeAddr = '';
+  cfgUiState.expandedAddrs = [];
+  cfgUiState.graphView = null;
+  callGraphUiState.binaryPath = '';
+  callGraphUiState.activeAddr = '';
+  callGraphUiState.graphView = null;
+  window._pendingCfgHighlightAddr = null;
   updateActiveContextBars('');
   renderBookmarks();
   updateDisasmSessionSummary();

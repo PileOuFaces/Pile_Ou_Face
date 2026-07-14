@@ -313,6 +313,7 @@ class TestHmacSha256InLicense(unittest.TestCase):
                 dependencies={},
                 manifest_path=manifest_path,
                 root_path=tmp_path,
+                min_pof_version=None,
                 raw={},
             )
 
@@ -417,6 +418,7 @@ class TestRuntimeAesGcmDecryption(unittest.TestCase):
             dependencies={},
             manifest_path=bundle_dir / "manifest.json",
             root_path=bundle_dir,
+            min_pof_version=None,
             raw={},
         )
 
@@ -515,6 +517,7 @@ class _LicenseEvalBase(unittest.TestCase):
             dependencies={},
             manifest_path=manifest_path,
             root_path=tmp_path,
+            min_pof_version=None,
             raw={},
         )
 
@@ -578,16 +581,14 @@ class TestEvaluatePluginLicenseSecurityPaths(_LicenseEvalBase):
         self.assertTrue(result.verified)
 
     def test_env_content_key_uses_plugin_id_format(self):
-        """pof.vulnerability-audit-pro → POF_CONTENT_KEY_POF_VULNERABILITY_AUDIT_PRO."""
+        """pof.demo-plugin → POF_CONTENT_KEY_POF_DEMO_PLUGIN."""
         from backends.plugins.license import evaluate_plugin_license
 
         with tempfile.TemporaryDirectory() as tmp:
-            manifest = self._make_manifest(
-                Path(tmp), plugin_id="pof.vulnerability-audit-pro"
-            )
+            manifest = self._make_manifest(Path(tmp), plugin_id="pof.demo-plugin")
             result = evaluate_plugin_license(
                 manifest,
-                env={"POF_CONTENT_KEY_POF_VULNERABILITY_AUDIT_PRO": "secretkey"},
+                env={"POF_CONTENT_KEY_POF_DEMO_PLUGIN": "secretkey"},
                 search_paths=[],
             )
         self.assertEqual(result.status, "active")

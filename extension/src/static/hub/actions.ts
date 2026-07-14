@@ -27,7 +27,6 @@ function createActions({
   analysisCtx,
   handlers,
   compileCSource,
-  invokePluginRuntimeCommand,
   payloadToHex,
   buildCmpPayloadSuggestion,
   isSupportedBinary,
@@ -129,7 +128,7 @@ function createActions({
   const getRulesConfigPath = () => path.join(globalDir || context.globalStorageUri?.fsPath || '', 'rules-config.json');
 
   const ensureRulesStateDir = () => {
-    const dir = globalDir || path.join(root, '.pile-ou-face');
+    const dir = globalDir || storageDir;
     fs.mkdirSync(dir, { recursive: true });
     return dir;
   };
@@ -230,6 +229,11 @@ function createActions({
       .map((rule) => String(rule.path).trim())
       .filter(Boolean);
     if (!activePaths.length) {
+      // Fallback: dossier rules/yara/ à la racine du workspace s'il existe
+      const defaultDir = path.join(root, 'rules', 'yara');
+      if (fs.existsSync(defaultDir)) {
+        return buildStagedYaraBundle('library-default', [defaultDir]);
+      }
       throw new Error('Aucune règle YARA activée. Activez-en une ou configurez une bibliothèque globale.');
     }
     return buildStagedYaraBundle('library', activePaths);
@@ -325,8 +329,8 @@ function createActions({
         pie: false,
         symbols: { startDefault: defaultMain, stopDefault: '' },
         mvpProfile: {
-          bufferOffset: -64,
-          bufferSize: 64,
+          bufferOffset: null,
+          bufferSize: null,
           maxSteps: 800,
           startSymbol: defaultMain,
           stopSymbol: '',
@@ -353,16 +357,25 @@ function createActions({
     const startDefault = findSymbolByCandidates(symbols, mainSymbolCandidates(info)) || preferredMainSymbol(info);
     const stopDefault = '';
     const defaultProfile = {
-      bufferOffset: archBits === 32 ? -32 : -64,
-      bufferSize: archBits === 32 ? 32 : 64,
+      bufferOffset: null,
+      bufferSize: null,
       maxSteps: 800,
       startSymbol: startDefault,
       stopSymbol: stopDefault,
     };
+    const trustedBufferSource = sameBinaryTrace?.meta?.buffer_source === 'detected'
+      || sameBinaryTrace?.meta?.buffer_source === 'user';
+    const hasSameBinaryBuffer = trustedBufferSource
+      && Number.isFinite(Number(sameBinaryTrace?.meta?.buffer_offset))
+      && Number.isFinite(Number(sameBinaryTrace?.meta?.buffer_size));
     const mergedProfile = {
       ...defaultProfile,
-      ...(Number.isFinite(Number(sameBinaryTrace?.meta?.buffer_offset)) ? { bufferOffset: Number(sameBinaryTrace.meta.buffer_offset) } : {}),
-      ...(Number.isFinite(Number(sameBinaryTrace?.meta?.buffer_size)) ? { bufferSize: Number(sameBinaryTrace.meta.buffer_size) } : {}),
+      ...(hasSameBinaryBuffer
+        ? {
+          bufferOffset: Number(sameBinaryTrace.meta.buffer_offset),
+          bufferSize: Number(sameBinaryTrace.meta.buffer_size)
+        }
+        : {}),
       ...(Number.isFinite(Number(sameBinaryTrace?.meta?.steps)) && Number(sameBinaryTrace.meta.steps) > 0
         ? { maxSteps: Math.max(800, Number(sameBinaryTrace.meta.steps)) }
         : {}),
@@ -625,6 +638,8 @@ function createActions({
             emitProgress: true,
             progressTitle: `Désassemblage de ${path.basename(absPath)}`,
             useCacheDb: cacheEligible,
+            cacheWriteOnly: !useCache,
+            forceRebuild: !useCache,
           });
         } else {
           logChannel.appendLine(`[cache] Réutilisation de ${disasmPath}`);
@@ -641,39 +656,6 @@ function createActions({
       } catch (err) {
         vscode.window.showErrorMessage(`Désassemblage: ${err.message}`);
       }
-    },
-
-    hubYaraScan: async (message) => {
-      const {
-        absPath,
-        exists,
-        isDirectory,
-      } = analysisCtx.resolveBinaryInputContext(message.binaryPath, message.binaryMeta || null);
-      if (!exists || isDirectory) {
-        hubPost('hubYara', { matches: [], error: 'Binaire introuvable.' });
-        return;
-      }
-      let resolvedRulesTarget = '';
-      try {
-        const inferredRulesMode = message.rulesMode
-          || ((message.rulesPath || '').trim() ? 'manual' : 'library');
-        resolvedRulesTarget = await resolveYaraRulesTarget({
-          mode: inferredRulesMode,
-          rulesPath: message.rulesPath || '',
-        });
-      } catch (err) {
-        hubPost('hubYara', { matches: [], error: err.message || 'Règles YARA introuvables.' });
-        return;
-      }
-      const data = await invokePluginRuntimeCommand('malware.yara.run', {
-        binaryPath: absPath,
-        rulesPath: resolvedRulesTarget,
-      }, {
-        feature: 'yara_scan',
-        timeout: 60000,
-      });
-      const matches = Array.isArray(data) ? data : (data.matches || []);
-      hubPost('hubYara', { matches, error: data.error || undefined });
     },
 
     hubSearchBinary: async (message) => {
@@ -712,39 +694,6 @@ function createActions({
       }
     },
 
-    hubCapaScan: async (message) => {
-      const {
-        absPath,
-        exists,
-        isDirectory,
-        binaryMeta,
-      } = analysisCtx.resolveBinaryInputContext(message.binaryPath, message.binaryMeta || null);
-      if (!exists || isDirectory) {
-        hubPost('hubCapa', { capabilities: [], error: 'Binaire introuvable.' });
-        return;
-      }
-      const format = String(binaryMeta?.format || message.binaryMeta?.format || '').trim().toUpperCase();
-      if (format.includes('MACH')) {
-        hubPost('hubCapa', {
-          capabilities: [],
-          error: 'CAPA analyse les exécutables PE et ELF. Le binaire actif est un Mach-O macOS: utilise YARA ici ou charge un binaire Linux/Windows pour CAPA.',
-        });
-        return;
-      }
-      if (format === 'RAW') {
-        hubPost('hubCapa', {
-          capabilities: [],
-          error: 'CAPA a besoin d\u2019un exécutable PE ou ELF complet. Les blobs bruts restent analysables avec YARA, Hex, Strings et Désassemblage.',
-        });
-        return;
-      }
-      const result = await invokePluginRuntimeCommand('malware.capa.run', {
-        binaryPath: absPath,
-      }, { feature: 'capa_scan' });
-      const errMsg = result.error || (result.errors && result.errors.length ? result.errors.join('; ') : '');
-      hubPost('hubCapa', { capabilities: result.capabilities || [], error: errMsg || undefined });
-    },
-
     hubListRules: async (_message) => {
       try {
         await postRulesState();
@@ -766,16 +715,49 @@ function createActions({
       }
     },
 
+    hubBrowseImportRule: async (message) => {
+      const ruleType = String(message.ruleType || 'yara').toLowerCase();
+      const scope = String(message.scope || 'global');
+      const isYara = ruleType === 'yara';
+      const picked = await vscode.window.showOpenDialog({
+        canSelectMany: true,
+        title: `Importer des règles ${ruleType.toUpperCase()}`,
+        filters: isYara
+          ? { 'YARA Rules': ['yar', 'yara'] }
+          : { 'CAPA Rules': ['yml', 'yaml'] },
+      });
+      if (!picked?.length) {
+        hubPost('hubRuleImported', { results: [] });
+        return;
+      }
+      const results: { name: string; ok: boolean; error?: string }[] = [];
+      for (const uri of picked) {
+        const name = path.basename(uri.fsPath);
+        try {
+          const content = fs.readFileSync(uri.fsPath, 'utf8');
+          await runRulesManagerJson(
+            ['add', '--name', name, '--type', ruleType, '--content', content, '--scope', scope],
+            { timeout: 5000 },
+          );
+          results.push({ name, ok: true });
+        } catch (err) {
+          results.push({ name, ok: false, error: (err as Error).message });
+        }
+      }
+      await postRulesState();
+      hubPost('hubRuleImported', { results });
+    },
+
     hubAddUserRule: async (message) => {
       const { name, ruleType, content, scope } = message;
       try {
         const data = await runRulesManagerJson(
-          ['add', '--name', name, '--type', ruleType, '--content', content, '--scope', scope || 'project'],
+          ['add', '--name', name, '--type', ruleType, '--content', content, '--scope', scope || 'global'],
           { timeout: 5000 },
         );
         hubPost('hubRuleAdded', data);
       } catch (err) {
-        hubPost('hubRuleAdded', { error: err.message });
+        hubPost('hubRuleAdded', { error: (err as Error).message });
       }
     },
 
@@ -985,7 +967,7 @@ function createActions({
     },
 
     hubPickFile: async (message) => {
-      const isBinaryTarget = ['bindiffPathA', 'bindiffPathB'].includes(message.target);
+      const isBinaryTarget = message.fileType === 'binary';
       const isSourceTarget = message.fileType === 'sourceC' || message.target === 'dynamicSourcePath';
       const dialogOpts = {
         canSelectFiles: true, canSelectMany: false,

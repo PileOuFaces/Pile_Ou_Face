@@ -78,6 +78,91 @@ RAW_PPC32_BE_CALL_BLOB = bytes.fromhex(
     "4E800020"  # blr  (target stub at 0x900020)
 )
 
+# RISC-V64 little-endian: addi sp,-16 / jal target / ret / nops / ret
+RAW_RISCV64_CALL_BLOB = bytes.fromhex(
+    "130101ff"  # addi sp, sp, -0x10
+    "ef00c001"  # jal 0xc020 (Capstone offset normalisé par disasm.py)
+    "67800000"  # ret
+    "13000000"  # nop
+    "13000000"  # nop
+    "13000000"  # nop
+    "13000000"  # nop
+    "13000000"  # nop
+    "67800000"  # target: ret
+)
+
+# SPARC big-endian: save / call target / nop delay slot / retl / nops / retl
+RAW_SPARC_CALL_BLOB = bytes.fromhex(
+    "9DE3BFA0"  # save %sp, -0x60, %sp
+    "40000007"  # call 0xe020
+    "01000000"  # nop
+    "81C3E008"  # retl
+    "01000000"  # nop
+    "01000000"  # nop
+    "01000000"  # nop
+    "01000000"  # nop
+    "81C3E008"  # target: retl
+)
+
+# M68K big-endian: link.w / jsr absolute target / rts / nops / rts
+RAW_M68K_CALL_BLOB = bytes.fromhex(
+    "4E56FFF0"  # link.w a6, #$fff0
+    "4EB90000B020"  # jsr $b020.l
+    "4E75"  # rts
+    "4E71"  # nop
+    "4E71"  # nop
+    "4E71"  # nop
+    "4E71"  # nop
+    "4E71"  # nop
+    "4E71"  # nop
+    "4E71"  # nop
+    "4E71"  # nop
+    "4E71"  # nop
+    "4E71"  # nop
+    "4E75"  # target: rts
+)
+
+# BPF little-endian: mov64 r1,r10 / call +1 instruction / exit / target exit
+RAW_BPF_CALL_BLOB = bytes.fromhex(
+    "BFA1000000000000"  # mov64 r1, r10
+    "8500000001000000"  # call 0xa018 after eBPF relative normalization
+    "9500000000000000"  # exit
+    "9500000000000000"  # target: exit
+)
+
+# SystemZ big-endian: stmg / brasl target / br r14 / padding / target br r14
+RAW_SYSZ_CALL_BLOB = bytes.fromhex(
+    "EBEFF0700024"  # stmg %r14, %r15, 0x70(%r15)
+    "C0E50000000D"  # brasl %r14, 0xf020
+    "07FE"  # br %r14
+    "0700"  # bcr 0, %r0
+    "0700"  # bcr 0, %r0
+    "0700"  # bcr 0, %r0
+    "0700"  # bcr 0, %r0
+    "0700"  # bcr 0, %r0
+    "0700"  # bcr 0, %r0
+    "0700"  # bcr 0, %r0
+    "0700"  # bcr 0, %r0
+    "0700"  # bcr 0, %r0
+    "07FE"  # target: br %r14
+)
+
+# SH4 little-endian: mov.l r14,@-r15 / bsr target / rts / target rts
+RAW_SH4_CALL_BLOB = bytes.fromhex(
+    "E62F"  # mov.l r14, @-r15
+    "00B0"  # bsr 0xd006
+    "0B00"  # rts
+    "0B00"  # target: rts
+)
+
+# TriCore little-endian: sub.a sp,#0x10 / call target / ret / target ret
+RAW_TRICORE_CALL_BLOB = bytes.fromhex(
+    "2010"  # sub.a sp, #0x10
+    "6D000300"  # call #0x11008
+    "0090"  # ret
+    "0090"  # target: ret
+)
+
 RAW_X64_PROFILE = {
     "arch": "i386:x86-64",
     "base_addr": "0x500000",
@@ -130,6 +215,48 @@ RAW_PPC32_BE_PROFILE = {
     "arch": "ppc32",
     "base_addr": "0x900000",
     "endian": "big",
+}
+
+RAW_RISCV64_PROFILE = {
+    "arch": "riscv64",
+    "base_addr": "0xc000",
+    "endian": "little",
+}
+
+RAW_SPARC_PROFILE = {
+    "arch": "sparc",
+    "base_addr": "0xe000",
+    "endian": "big",
+}
+
+RAW_M68K_PROFILE = {
+    "arch": "m68k",
+    "base_addr": "0xb000",
+    "endian": "big",
+}
+
+RAW_BPF_PROFILE = {
+    "arch": "bpf",
+    "base_addr": "0xa000",
+    "endian": "little",
+}
+
+RAW_SYSZ_PROFILE = {
+    "arch": "sysz",
+    "base_addr": "0xf000",
+    "endian": "big",
+}
+
+RAW_SH4_PROFILE = {
+    "arch": "sh4",
+    "base_addr": "0xd000",
+    "endian": "little",
+}
+
+RAW_TRICORE_PROFILE = {
+    "arch": "tricore",
+    "base_addr": "0x11000",
+    "endian": "little",
 }
 
 
@@ -284,4 +411,88 @@ def write_raw_ppc32_be_call_fixture(tmpdir: str | Path) -> dict[str, Any]:
         raw_profile=RAW_PPC32_BE_PROFILE,
         call_site_addr="0x90000c",
         target_addr="0x900020",
+    )
+
+
+def write_raw_riscv64_call_fixture(tmpdir: str | Path) -> dict[str, Any]:
+    """Écrit un petit shellcode RISC-V64 brut avec un appel interne."""
+    return _write_raw_fixture(
+        tmpdir,
+        stem="raw_riscv64_call",
+        blob=RAW_RISCV64_CALL_BLOB,
+        raw_profile=RAW_RISCV64_PROFILE,
+        call_site_addr="0xc004",
+        target_addr="0xc020",
+    )
+
+
+def write_raw_sparc_call_fixture(tmpdir: str | Path) -> dict[str, Any]:
+    """Écrit un petit shellcode SPARC big-endian brut avec un appel interne."""
+    return _write_raw_fixture(
+        tmpdir,
+        stem="raw_sparc_call",
+        blob=RAW_SPARC_CALL_BLOB,
+        raw_profile=RAW_SPARC_PROFILE,
+        call_site_addr="0xe004",
+        target_addr="0xe020",
+    )
+
+
+def write_raw_m68k_call_fixture(tmpdir: str | Path) -> dict[str, Any]:
+    """Écrit un petit shellcode M68K big-endian brut avec un appel interne."""
+    return _write_raw_fixture(
+        tmpdir,
+        stem="raw_m68k_call",
+        blob=RAW_M68K_CALL_BLOB,
+        raw_profile=RAW_M68K_PROFILE,
+        call_site_addr="0xb004",
+        target_addr="0xb020",
+    )
+
+
+def write_raw_bpf_call_fixture(tmpdir: str | Path) -> dict[str, Any]:
+    """Écrit un petit shellcode BPF brut avec un appel interne."""
+    return _write_raw_fixture(
+        tmpdir,
+        stem="raw_bpf_call",
+        blob=RAW_BPF_CALL_BLOB,
+        raw_profile=RAW_BPF_PROFILE,
+        call_site_addr="0xa008",
+        target_addr="0xa018",
+    )
+
+
+def write_raw_sysz_call_fixture(tmpdir: str | Path) -> dict[str, Any]:
+    """Écrit un petit shellcode SystemZ brut avec un appel interne."""
+    return _write_raw_fixture(
+        tmpdir,
+        stem="raw_sysz_call",
+        blob=RAW_SYSZ_CALL_BLOB,
+        raw_profile=RAW_SYSZ_PROFILE,
+        call_site_addr="0xf006",
+        target_addr="0xf020",
+    )
+
+
+def write_raw_sh4_call_fixture(tmpdir: str | Path) -> dict[str, Any]:
+    """Écrit un petit shellcode SH4 brut avec un appel interne."""
+    return _write_raw_fixture(
+        tmpdir,
+        stem="raw_sh4_call",
+        blob=RAW_SH4_CALL_BLOB,
+        raw_profile=RAW_SH4_PROFILE,
+        call_site_addr="0xd002",
+        target_addr="0xd006",
+    )
+
+
+def write_raw_tricore_call_fixture(tmpdir: str | Path) -> dict[str, Any]:
+    """Écrit un petit shellcode TriCore brut avec un appel interne."""
+    return _write_raw_fixture(
+        tmpdir,
+        stem="raw_tricore_call",
+        blob=RAW_TRICORE_CALL_BLOB,
+        raw_profile=RAW_TRICORE_PROFILE,
+        call_site_addr="0x11002",
+        target_addr="0x11008",
     )

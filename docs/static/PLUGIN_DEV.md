@@ -39,6 +39,20 @@ mon-plugin/
     └── (clés publiques, extras)
 ```
 
+### Générer ce squelette automatiquement
+
+Depuis le repo host (`extension/`) :
+
+```bash
+python -m backends.plugins.scaffold /chemin/vers/mon-plugin \
+  --id acme.mon-plugin --name "Mon Plugin" [--with-webview]
+```
+
+Génère `manifest.json`, `python/plugin_main.py`, `README.md`, et (avec
+`--with-webview`) `webview/tab.html` + `webview/tab.js` déjà câblés sur
+`window.PoF` (voir plus bas). Valide ensuite avec
+`python -m backends.plugins.runtime validate /chemin/vers/mon-plugin`.
+
 ---
 
 ## Format `manifest.json`
@@ -369,24 +383,28 @@ context.register_ui_panel(
 
 ## Installation locale pour les tests
 
-### 1. Préparer les répertoires
+### 1. Installer dans le storage VS Code
 
-```bash
-# Dans le projet VS Code ouvert (projet workspace)
-mkdir -p .pile-ou-face/plugins/
+Depuis l'extension, utiliser `Options > Plugins > Installer…`. Le host extrait le
+plugin dans `context.storageUri/plugins/`, par exemple :
 
-# Ou dans le dossier utilisateur global
-mkdir -p ~/.pile-ou-face/plugins/
+```text
+~/Library/Application Support/Code/User/workspaceStorage/<workspace-id>/PileOuFaces.stack-visualizer/plugins/
 ```
 
-### 2. Copier le plugin
+Ne copiez pas de plugin dans `.pile-ou-face/plugins`. Ce chemin n'est pas le
+contrat de chargement de l'extension. Les plugins installes par VS Code vivent
+dans `context.storageUri/plugins/`. Le dossier `.pile-ou-face/` peut encore etre
+utilise par des tests CLI, MCP ou artefacts de developpement, mais il ne doit
+pas etre documente comme stockage principal de l'extension.
+
+### 2. Copier le plugin pour un test CLI
 
 ```bash
-# Depuis le dossier source
-cp -r mon-plugin/ .pile-ou-face/plugins/acme.mon-plugin/
+export BINHOST_PLUGIN_PATH="$HOME/Library/Application Support/Code/User/workspaceStorage/<workspace-id>/PileOuFaces.stack-visualizer/plugins"
 
 # Vérifier la structure
-ls .pile-ou-face/plugins/acme.mon-plugin/
+ls "$BINHOST_PLUGIN_PATH/acme.mon-plugin/"
 # → manifest.json  python/  README.md
 ```
 
@@ -456,11 +474,115 @@ POF_PLUGIN_PATH=/mes/plugins:/autres/plugins python -m backends.plugins.runtime 
 
 ## Chemins de découverte
 
-Le runtime scanne dans cet ordre :
+Dans l'extension VS Code, le host injecte explicitement :
 
-1. `.pile-ou-face/plugins/` dans le projet courant (si `.pile-ou-face/` existe)
-2. `~/.pile-ou-face/plugins/` (dossier utilisateur global)
-3. Chemins supplémentaires via `$POF_PLUGIN_PATH`
+```text
+BINHOST_PLUGIN_PATH=<context.storageUri>/plugins
+```
+
+Pour les tests CLI hors VS Code, définir `POF_PLUGIN_PATH` ou `BINHOST_PLUGIN_PATH`
+vers le dossier de plugins à tester.
+
+---
+
+## Webview et `window.PoF`
+
+Chaque plugin peut fournir un `webview/tab.html` et un `webview/tab.js`. Depuis
+la P3 (isolation iframe), **le webview d'un plugin tourne dans son propre
+`<iframe sandbox="allow-scripts allow-same-origin">`** (`srcdoc`), séparé du
+DOM du host et de celui des autres plugins. Le `tab.html` peut contenir un
+bloc `<style>` librement — il n'est plus scopé/réécrit par le host, puisque
+l'iframe l'isole déjà complètement (y compris ses propres `:root { --var }`).
+
+Concrètement, ça veut dire :
+
+- ton `tab.js` a son propre `document`, ses propres globals JS — il ne partage
+  **rien** avec le host ni avec les autres plugins (pas d'accès direct à
+  `document.getElementById` du host, pas de fonctions du host disponibles en
+  global).
+- La **seule** surface de contrat supportée pour parler au host est
+  **`window.PoF`** (injecté automatiquement dans chaque iframe de plugin) :
+
+  ```js
+  // Adresse binaire actuellement ouverte (synchrone)
+  const binaryPath = window.PoF?.getBinaryPath() ?? '';
+
+  // Cache par onglet, propre à ton plugin (clé = tabId)
+  window.PoF?.setTabCache('myTab', { binaryPath, result });
+  const cached = window.PoF?.getTabCache('myTab');
+
+  // Appelé quand l'utilisateur ouvre un nouveau binaire / active ton onglet
+  window.PoF?.registerTabLoader('myTab', (binaryPath) => {
+    vscode.postMessage({ type: 'hubPluginInvoke', feature: 'my.command', binaryPath, payload: {} });
+  });
+
+  // Indicateur de chargement dans TON propre DOM (pas de round-trip host)
+  window.PoF?.setLoading('myTabContent', 'Analyse en cours…');
+
+  // Stockage persistant propre au plugin
+  window.PoF?.saveStorage({ myPreference: 'value' });
+
+  // Navigation réelle dans le host (switch de panel/onglet, jump-to-address,
+  // reveal xrefs/strings) — voir la table d'actions ci-dessous
+  window.PoF?.navigateTo('jumpToAddr', { tab: 'disasm', addr, binaryPath });
+  ```
+
+  `window.PoF` est versionné (`window.PoF.version`, ex. `"1.1.0"`) ; déclare
+  `minPoFVersion` dans ton `plugin.json` si tu dépends d'une méthode récente.
+  Le host refuse d'attacher un plugin dont le `minPoFVersion` dépasse sa
+  propre version.
+
+  Méthodes disponibles sur `window.PoF` (référence complète — ne jamais
+  utiliser autre chose pour parler au host depuis un webview) :
+
+  | Méthode | Description |
+  |---|---|
+  | `version` | Chaîne SemVer de cette surface d'API (ex. `"1.1.0"`) |
+  | `getBinaryPath()` | Chemin du binaire actuellement ouvert, ou `''`. Synchrone. |
+  | `getTabCache(key)` | Lit une entrée de cache propre à ton plugin |
+  | `setTabCache(key, value)` | Écrit une entrée de cache propre à ton plugin |
+  | `registerTabLoader(tabId, fn)` | Appelle `fn(binaryPath)` quand l'utilisateur change de binaire ou active `tabId` |
+  | `saveStorage(data)` | Persiste des données clé/valeur propres au plugin |
+  | `setLoading(containerId, message)` | Affiche un indicateur de chargement dans un élément de **ton propre** DOM |
+  | `getGroupLabels()` | `{tabId: label}` pour tous les onglets enregistrés (tous plugins confondus) |
+  | `getTabFamilies()` | `{tabId: family}` pour tous les onglets enregistrés |
+  | `getDisabledFamilies()` | `Set` des familles que l'utilisateur a désactivées |
+  | `navigateTo(action, params)` | Exécute une action de navigation réelle côté host (fire-and-forget, voir table ci-dessous) |
+
+  Actions `navigateTo` :
+
+  | Action | Params | Effet |
+  |---|---|---|
+  | `showPanel` | `{panel}` | Change le panel principal (`static`, `dynamic`, `outils`, `options`) |
+  | `showGroup` | `{group, tab}` | Change le groupe/sous-onglet dans le panel `static` |
+  | `jumpToAddr` | `{tab, addr, binaryPath, opts}` | Navigue vers une adresse dans un onglet (disasm/cfg/callgraph/decompile/hex) |
+  | `setActiveAddress` | `{addr, spanLength, opts}` | Synchronise l'état "adresse active" du host |
+  | `ensureDecompileSources` | `{binaryPath}` | Charge sections/symboles/fonctions nécessaires avant une requête de décompilation |
+  | `syncFunctionsSelection` | `{addr}` | Sélectionne la ligne correspondante dans l'onglet Fonctions |
+  | `openXrefs` | `{addr, spanLength, mode}` | Révèle le panneau xrefs et lance la recherche pour `addr` |
+  | `openStringAt` | `{addr, spanLength}` | Révèle l'onglet Strings et va à `addr` |
+
+- Les résultats de tes commandes Python arrivent via un message `postMessage`
+  standard (`vscode.postMessage({type: 'hubPluginInvoke', feature, binaryPath, payload})`
+  côté plugin → réponse `{type: 'hubPluginResult', feature, plugin_id, result}`
+  relayée automatiquement dans **ton** iframe). Écoute-la avec
+  `window.addEventListener('message', (e) => { const msg = e.data; if (msg.type === 'hubPluginResult' && msg.feature === 'my.command') { ... } })`.
+
+- Ne compte sur **rien d'autre** que `window.PoF` et le message `hubPluginResult` —
+  pas de variable globale du host, pas de fonction déclarée par un autre
+  plugin (chaque iframe est isolé, même entre plugins). Si une capacité te
+  manque sur `window.PoF`, c'est un signal pour l'ajouter côté host plutôt que
+  de contourner (voir `CONTRACTS_SHARED.md`, section `window.PoF`, dans le
+  workspace root — c'est la référence normative et la plus à jour).
+
+> ⚠️ **La preview locale des plugins (`npm run preview`, `scripts/preview.mjs`)
+> n'utilise pas encore ce modèle iframe** — elle injecte encore le webview
+> directement dans sa propre page et fournit les anciens globals bruts
+> (`window.showPanel`, `window.tabDataCache`, etc.) au lieu de `window.PoF`.
+> Un plugin qui n'appelle plus que `window.PoF.*` (recommandé ci-dessus) ne
+> sera donc pas correctement exercé par cet outil tant qu'il n'aura pas été
+> mis à jour. Teste dans l'extension réelle (VS Code) pour valider le
+> comportement final.
 
 ---
 
@@ -703,6 +825,26 @@ Les commandes peuvent aussi apparaître directement dans `tools/list` sous le no
 
 ---
 
+## Distribution : dossier brut, pas de bundle `.pofplug`
+
+Aujourd'hui, il n'existe **aucun outil public** pour produire un bundle
+`.pofplug` (le format zippé utilisé pour les 4 plugins maison premium — leur
+outil de packaging vit dans un dépôt privé). La façon supportée de distribuer
+un plugin communautaire est le **dossier brut** :
+
+1. Publie ton plugin comme un dépôt git normal (dossier avec `manifest.json`,
+   `plugin_main.py`, `webview/`, etc. — la structure décrite plus haut).
+2. L'utilisateur clone/télécharge ce dossier, puis l'installe via
+   *Options → Plugins → Installer…* dans l'extension (accepte un dossier, pas
+   seulement un zip), ou en le plaçant directement dans
+   `<storageUri>/plugins/<plugin_id>/` (voir "Installation locale pour les
+   tests" plus haut — le même mécanisme sert à l'installation finale).
+
+C'est délibérément le chemin recommandé pour l'instant plutôt que d'essayer de
+répliquer l'outil de compilation/packaging premium : un plugin ouvert n'a pas
+besoin de compilation à bytecode ni de chiffrement, et un dossier brut clair
+est plus simple à auditer pour un utilisateur prudent qu'un binaire zippé.
+
 ## Limites actuelles du host
 
 Le host open source ne supporte pas encore :
@@ -710,3 +852,21 @@ Le host open source ne supporte pas encore :
 - la saisie manuelle d'une clé courte pour activer un plugin
 - la compilation ou l'obfuscation des plugins tiers
 - la révocation ou l'activation en ligne
+- un outil public de packaging en bundle `.pofplug` (voir section
+  "Distribution" ci-dessus — utilise un dossier brut en attendant)
+- un registre/annuaire centralisé des plugins communautaires disponibles
+
+### Surface Python au-delà de `backends.plugin_api`
+
+`backends.plugin_api` (7 symboles stables : `get_logger`, `configure_logging`,
+`build_offset_to_vaddr`, `ArchInfo`, `FeatureSupport`,
+`detect_binary_arch_from_path`, `get_feature_support`, `get_raw_arch_info`) est
+la **seule** surface Python dont la stabilité est garantie entre versions du
+host. D'autres modules `backends.*` existent et fonctionnent (désassemblage,
+décompilation, gestion de règles YARA…), mais leur usage n'est pas couvert par
+une promesse de compatibilité — le host peut les faire évoluer sans préavis.
+Si ton plugin en a besoin, importe-les à l'intérieur d'une fonction (jamais en
+top-level de `plugin_main.py`, voir "Isolation des imports" plus haut) et
+attends-toi à devoir ajuster ton code lors d'une mise à jour du host. Si une
+capacité te semble devoir être stable, ouvre une discussion — c'est un signal
+pour l'ajouter à `backends.plugin_api`.

@@ -517,14 +517,14 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "plugin_invoke",
-        "description": "Invoke a command exposed by an active plugin.",
+        "description": "Invoke a command or feature exposed by an active plugin.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "command_id": {"type": "string"},
+                "feature_id": {"type": "string"},
                 "payload": {"type": "object"},
             },
-            "required": ["command_id"],
             "additionalProperties": False,
         },
     },
@@ -715,7 +715,8 @@ def _python_exe() -> str:
     return venv_python if os.path.isfile(venv_python) else sys.executable
 
 
-def _plugin_runtime_records() -> list[Any]:
+def _plugin_runtime_records() -> dict[str, Any]:
+    from backends.plugins.consent import default_consent_path
     from backends.plugins.runtime import (
         HOST_API_VERSION as plugin_api_version,
     )
@@ -727,31 +728,29 @@ def _plugin_runtime_records() -> list[Any]:
     payload = collect_runtime_state(
         host_version=SERVER_VERSION,
         api_version=plugin_api_version,
-        search_paths=default_plugin_search_paths(cwd=ROOT),
+        search_paths=default_plugin_search_paths(
+            cwd=ROOT, allow_workspace_discovery=False
+        ),
+        consent_path=default_consent_path(cwd=ROOT, allow_workspace_discovery=False),
+        require_consent=True,
         attach=True,
     )
     return payload
 
 
 def _dynamic_plugin_tools() -> list[dict[str, Any]]:
-    payload = _plugin_runtime_records()
-    attached = payload.get("attached") if isinstance(payload, dict) else {}
-    if not isinstance(attached, dict):
-        return []
-    command_sources = attached.get("command_sources")
-    if not isinstance(command_sources, dict):
-        return []
+    routes = _dynamic_plugin_tool_routes()
     tools: list[dict[str, Any]] = []
-    for command_id, plugin_id in sorted(command_sources.items()):
-        command_name = str(command_id or "").strip()
-        owner = str(plugin_id or "").strip()
-        if not command_name:
-            continue
+    for tool_name, route in sorted(routes.items()):
+        command_name = str(route.get("command_id") or "")
+        feature_name = str(route.get("feature_id") or "")
+        owner = str(route.get("plugin_id") or "").strip()
+        target = feature_name or command_name
         tools.append(
             {
-                "name": f"{PLUGIN_TOOL_NAME_PREFIX}{command_name}",
+                "name": tool_name,
                 "description": (
-                    f"Plugin command exposed by {owner or 'plugin runtime'}: {command_name}"
+                    f"Plugin feature exposed by {owner or 'plugin runtime'}: {target}"
                 ),
                 "inputSchema": {
                     "type": "object",
@@ -765,12 +764,57 @@ def _dynamic_plugin_tools() -> list[dict[str, Any]]:
                             "description": "Additional parameters",
                         },
                     },
-                    "required": ["binary_path"],
                     "additionalProperties": False,
                 },
             }
         )
     return tools
+
+
+def _dynamic_plugin_tool_routes() -> dict[str, dict[str, str]]:
+    payload = _plugin_runtime_records()
+    attached = payload.get("attached") if isinstance(payload, dict) else {}
+    if not isinstance(attached, dict):
+        return {}
+    command_sources = attached.get("command_sources")
+    if not isinstance(command_sources, dict):
+        return {}
+    routes: dict[str, dict[str, str]] = {}
+    for command_id, plugin_id in sorted(command_sources.items()):
+        command_name = str(command_id or "").strip()
+        owner = str(plugin_id or "").strip()
+        if not command_name:
+            continue
+        routes[f"{PLUGIN_TOOL_NAME_PREFIX}{command_name}"] = {
+            "command_id": command_name,
+            "plugin_id": owner,
+        }
+
+    plugins = payload.get("plugins") if isinstance(payload, dict) else []
+    if not isinstance(plugins, list):
+        return routes
+    for record in plugins:
+        if not isinstance(record, dict) or record.get("state") != "active":
+            continue
+        plugin_id = str(record.get("id") or "").strip()
+        manifest = record.get("manifest")
+        if not isinstance(manifest, dict):
+            continue
+        for item in manifest.get("commands") or []:
+            if not isinstance(item, dict):
+                continue
+            command_id = str(item.get("id") or item.get("command") or "").strip()
+            feature_id = str(
+                item.get("feature") or item.get("feature_id") or ""
+            ).strip()
+            if not command_id or command_id not in command_sources or not feature_id:
+                continue
+            routes[f"{PLUGIN_TOOL_NAME_PREFIX}{feature_id}"] = {
+                "feature_id": feature_id,
+                "command_id": command_id,
+                "plugin_id": plugin_id,
+            }
+    return routes
 
 
 def _run_static_script_json(
@@ -1180,30 +1224,6 @@ def _dispatch_dynamic_tool(tool_name: str, args: dict) -> dict:
 
 
 def _call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
-    premium_plugin_tools = {
-        "detect_anti_analysis": ("pof.malware-triage-pro", "malware.anti_analysis.run"),
-        "analyze_behavior": ("pof.malware-triage-pro", "malware.behavior.run"),
-        "patch_binary": ("pof.offensive-research-pro", "offensive.patch.run"),
-        "diff_binaries": ("pof.offensive-research-pro", "offensive.bindiff.run"),
-        "capa_scan": ("pof.malware-triage-pro", "malware.capa.run"),
-        "flirt_scan": ("pof.offensive-research-pro", "offensive.flirt.run"),
-        "compare_functions": (
-            "pof.offensive-research-pro",
-            "offensive.func_similarity.run",
-        ),
-        "detect_packers": ("pof.malware-triage-pro", "malware.packer_detect.run"),
-        "find_rop_gadgets": ("pof.offensive-research-pro", "offensive.rop.run"),
-        "deobfuscate_strings": ("pof.malware-triage-pro", "malware.deobfuscate.run"),
-        "taint_analysis": ("pof.vulnerability-audit-pro", "audit.taint.run"),
-        "find_vulnerabilities": ("pof.vulnerability-audit-pro", "audit.vulns.run"),
-        "yara_scan": ("pof.malware-triage-pro", "malware.yara.run"),
-    }
-    if name in premium_plugin_tools:
-        plugin_id, command_id = premium_plugin_tools[name]
-        raise KeyError(
-            f"Tool déplacé vers plugin: {plugin_id} (utiliser plugins_list puis plugin_invoke sur {command_id})"
-        )
-
     if name == "annotations_list":
         from backends.static.annotations.annotations import AnnotationStore
 
@@ -1275,6 +1295,7 @@ def _call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return _ensure_ok(payload)
 
     if name == "plugin_invoke":
+        from backends.plugins.consent import default_consent_path
         from backends.plugins.runtime import (
             HOST_API_VERSION as plugin_api_version,
         )
@@ -1282,9 +1303,13 @@ def _call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             build_plugin_registry,
             default_plugin_search_paths,
             invoke_plugin_command,
+            invoke_plugin_feature,
         )
 
-        command_id = _required_string(args, "command_id")
+        command_id = str(args.get("command_id") or "").strip()
+        feature_id = str(args.get("feature_id") or "").strip()
+        if bool(command_id) == bool(feature_id):
+            raise ValueError("Provide exactly one of command_id or feature_id")
         payload = args.get("payload")
         if payload is None:
             payload_dict: dict[str, Any] = {}
@@ -1293,17 +1318,33 @@ def _call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         else:
             raise ValueError("payload doit être un objet")
         records = build_plugin_registry(
-            default_plugin_search_paths(cwd=ROOT),
+            default_plugin_search_paths(cwd=ROOT, allow_workspace_discovery=False),
             host_version=SERVER_VERSION,
             api_version=plugin_api_version,
         )
-        response, context, attached_records = invoke_plugin_command(
-            records,
-            command_id,
-            payload_dict,
-            host_version=SERVER_VERSION,
-            api_version=plugin_api_version,
+        mcp_consent_path = default_consent_path(
+            cwd=ROOT, allow_workspace_discovery=False
         )
+        if feature_id:
+            response, context, attached_records = invoke_plugin_feature(
+                records,
+                feature_id,
+                payload_dict,
+                host_version=SERVER_VERSION,
+                api_version=plugin_api_version,
+                consent_path=mcp_consent_path,
+                require_consent=True,
+            )
+        else:
+            response, context, attached_records = invoke_plugin_command(
+                records,
+                command_id,
+                payload_dict,
+                host_version=SERVER_VERSION,
+                api_version=plugin_api_version,
+                consent_path=mcp_consent_path,
+                require_consent=True,
+            )
         response["plugins"] = [record.to_dict() for record in attached_records]
         response["attached"] = context.snapshot()
         return _ensure_ok(response)
@@ -1847,18 +1888,32 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any] | None:
             )
         try:
             resolved_name = _resolve_tool_name(name.strip())
-            plugin_tools = {tool["name"] for tool in _dynamic_plugin_tools()}
-            if name.strip() in plugin_tools:
-                command_id = name.strip()[len(PLUGIN_TOOL_NAME_PREFIX) :]
+            plugin_routes = _dynamic_plugin_tool_routes()
+            if name.strip() in plugin_routes:
+                route = plugin_routes[name.strip()]
                 payload = _call_tool(
                     "plugin_invoke",
-                    {"command_id": command_id, "payload": arguments.get("payload", {})},
+                    {
+                        **(
+                            {"feature_id": route["feature_id"]}
+                            if route.get("feature_id")
+                            else {"command_id": route["command_id"]}
+                        ),
+                        "payload": arguments.get("payload", {}),
+                    },
                 )
-            elif resolved_name in plugin_tools:
-                command_id = resolved_name[len(PLUGIN_TOOL_NAME_PREFIX) :]
+            elif resolved_name in plugin_routes:
+                route = plugin_routes[resolved_name]
                 payload = _call_tool(
                     "plugin_invoke",
-                    {"command_id": command_id, "payload": arguments.get("payload", {})},
+                    {
+                        **(
+                            {"feature_id": route["feature_id"]}
+                            if route.get("feature_id")
+                            else {"command_id": route["command_id"]}
+                        ),
+                        "payload": arguments.get("payload", {}),
+                    },
                 )
             else:
                 payload = _call_tool(resolved_name, arguments)

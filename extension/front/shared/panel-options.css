@@ -1557,6 +1557,7 @@ button.plugin-badge {
 .decompiler-badge--local-auto { background: rgba(79,193,255,0.12); color: #7fd6ff; }
 .decompiler-badge--docker-ok  { background: rgba(0,163,212,0.15);  color: #2abde8; }
 .decompiler-badge--docker-err { background: rgba(224,82,82,0.10);  color: #e05252; }
+.decompiler-badge--docker-update { background: rgba(204,148,11,0.18); color: #d4a017; }
 .decompiler-badge--docker-off { background: rgba(255,255,255,0.08); color: var(--vscode-descriptionForeground, #aaa); }
 .decompiler-badge--custom     { background: rgba(204,148,11,0.18); color: #d4a017; }
 

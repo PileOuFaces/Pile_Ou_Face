@@ -1,23 +1,25 @@
 name: Docker — Build Decompilers
 
-# Rebuild uniquement les images dont les fichiers ont changé.
-# Optimisations quota :
-#   - Sur PR : build amd64 uniquement + pas de smoke rebuild (le build valide déjà)
-#   - Sur main/develops : build multiarch complet + push ghcr.io
+# Build once, promote tags :
+#   - PR (→develops) : build amd64 uniquement, SANS push (validation du Dockerfile)
+#   - develops       : build multiarch, push (tags : version épinglée + develops + sha-*)
+#   - main           : aucun build (pas de trigger)
+#   - Tag de version immuable lu depuis extension/backends/static/decompile/image_versions.json
+#     (source de vérité partagée avec decompile.py, qui pull ce même tag)
 #   - Cache GHA scopé par décompilateur (évite les évictions croisées)
 #   - angr : couche pip séparée pour maximiser les hits de cache
 
 on:
   push:
-    branches: [main, develops]
+    branches: [develops]
     paths:
-      - 'extension/docker/decompilers/**'
+      - 'docker/decompilers/**'
       - 'extension/backends/static/decompile/**'
       - '.github/workflows/docker-decompilers.yml'
   pull_request:
-    branches: [main, develops]
+    branches: [develops]
     paths:
-      - 'extension/docker/decompilers/**'
+      - 'docker/decompilers/**'
       - 'extension/backends/static/decompile/**'
       - '.github/workflows/docker-decompilers.yml'
   workflow_dispatch:
@@ -53,7 +55,7 @@ jobs:
       any_changed: ${{ steps.set-matrix.outputs.any_changed }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 2
 
@@ -80,11 +82,11 @@ jobs:
               REBUILD=false
 
               # Dockerfile ou fichier propre à ce décompilateur
-              if echo "$CHANGED" | grep -Eq "^extension/docker/decompilers/${d}/"; then
+              if echo "$CHANGED" | grep -Eq "^docker/decompilers/${d}/"; then
                 REBUILD=true
               fi
 
-              # Backend Python du sous-module decompile (nouveau chemin)
+              # Backend Python du sous-module decompile
               if echo "$CHANGED" | grep -Eq "^extension/backends/static/decompile/"; then
                 REBUILD=true
               fi
@@ -120,14 +122,15 @@ jobs:
           fi
 
   # ──────────────────────────────────────────────
-  # Build des images
-  #   - PR      : amd64 uniquement, sans push (validation rapide)
-  #   - push    : amd64 + arm64 (sauf retdec), push ghcr.io
+  # Build des images — PR et develops uniquement
+  #   - PR      : amd64 uniquement (validation rapide)
+  #   - develops: amd64 + arm64 (sauf retdec)
+  #   - main    : skippé → voir promote-latest
   # ──────────────────────────────────────────────
   build:
     name: Build ${{ matrix.decompiler }}
     needs: detect-changes
-    if: ${{ needs.detect-changes.outputs.any_changed == 'true' }}
+    if: ${{ needs.detect-changes.outputs.any_changed == 'true' && github.ref != 'refs/heads/main' }}
     runs-on: ubuntu-latest
 
     strategy:
@@ -136,22 +139,29 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Log in to GitHub Container Registry
-        if: ${{ github.event_name != 'pull_request' }}
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up QEMU (cross-build arm64 — push only)
+      - name: Set up QEMU (cross-build arm64 — develops uniquement)
         if: ${{ github.event_name != 'pull_request' }}
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Read pinned image version
+        id: imgver
+        env:
+          DECOMPILER: ${{ matrix.decompiler }}
+        run: |
+          V=$(jq -r --arg d "$DECOMPILER" '.[$d] // "latest"' extension/backends/static/decompile/image_versions.json)
+          echo "version=$V" >> "$GITHUB_OUTPUT"
 
       - name: Compute image metadata
         id: meta
@@ -159,18 +169,19 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/decompiler-${{ matrix.decompiler }}
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ steps.imgver.outputs.version }},enable=${{ github.event_name != 'pull_request' }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/develops' }}
             type=ref,event=branch
             type=ref,event=pr
             type=sha,prefix=sha-,format=short
 
       - name: Check Dockerfile exists
         run: |
-          if [ ! -f "extension/docker/decompilers/${{ matrix.decompiler }}/Dockerfile" ]; then
+          if [ ! -f "docker/decompilers/${{ matrix.decompiler }}/Dockerfile" ]; then
             echo "❌ Dockerfile manquant pour ${{ matrix.decompiler }}"
             exit 1
           fi
-          echo "✅ Dockerfile : extension/docker/decompilers/${{ matrix.decompiler }}/Dockerfile"
+          echo "✅ Dockerfile : docker/decompilers/${{ matrix.decompiler }}/Dockerfile"
 
       - name: Set build platforms
         id: platforms
@@ -185,74 +196,43 @@ jobs:
             echo "platforms=linux/amd64,linux/arm64" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Build ${{ matrix.decompiler }} (PR — amd64, no push)
-        if: ${{ github.event_name == 'pull_request' }}
+      - name: Build and push ${{ matrix.decompiler }}
         uses: docker/build-push-action@v6
         with:
-          context: ./extension
-          file: extension/docker/decompilers/${{ matrix.decompiler }}/Dockerfile
-          platforms: linux/amd64
-          push: false
-          load: true
-          tags: pof-smoke-${{ matrix.decompiler }}:amd64
-          cache-from: type=gha,scope=${{ matrix.decompiler }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.decompiler }}
-
-      - name: Smoke test intégré (PR — amd64)
-        if: ${{ github.event_name == 'pull_request' }}
-        run: |
-          docker run --rm --network none \
-            "pof-smoke-${{ matrix.decompiler }}:amd64" \
-            /opt/pof-venv/bin/python -m backends.static.decompile --list --provider local \
-            2>/dev/null | python3 -c "
-          import sys, json
-          raw = sys.stdin.read()
-          try:
-              d = json.loads(raw)
-              keys = [k for k in d if not k.startswith('_')][:6]
-              print('OK ${{ matrix.decompiler }}/amd64 — backends: ' + str(keys))
-              sys.exit(0)
-          except Exception as e:
-              print('FAIL Pas de JSON valide: ' + str(e))
-              sys.exit(1)
-          "
-
-      - name: Build and push ${{ matrix.decompiler }} (push — multiarch)
-        if: ${{ github.event_name != 'pull_request' }}
-        uses: docker/build-push-action@v6
-        with:
-          context: ./extension
-          file: extension/docker/decompilers/${{ matrix.decompiler }}/Dockerfile
+          context: .
+          file: docker/decompilers/${{ matrix.decompiler }}/Dockerfile
           platforms: ${{ steps.platforms.outputs.platforms }}
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.decompiler }}
           cache-to: type=gha,mode=max,scope=${{ matrix.decompiler }}
 
       - name: Image digest
-        if: ${{ github.event_name != 'pull_request' }}
         run: echo "✅ ${{ matrix.decompiler }} → ${{ steps.meta.outputs.tags }}"
 
   # ──────────────────────────────────────────────
-  # Smoke tests arm64 — uniquement sur push (main/develops)
-  # Les PR utilisent le smoke intégré dans le job build ci-dessus
+  # Smoke tests arm64 — après build develops seulement
+  # (PR ne build pas arm64, main ne build pas du tout)
   # ──────────────────────────────────────────────
   smoke-arm64:
     name: Smoke ${{ matrix.decompiler }}/arm64
     needs: [detect-changes, build]
-    if: ${{ github.event_name != 'pull_request' && needs.detect-changes.outputs.any_changed == 'true' }}
+    if: |
+      ${{ needs.detect-changes.outputs.any_changed == 'true' &&
+          github.event_name != 'pull_request' &&
+          github.ref != 'refs/heads/main' }}
     runs-on: ubuntu-latest
 
     strategy:
       fail-fast: false
       matrix:
-        decompiler: [ghidra, angr]
+        decompiler: [angr, ghidra]
         # retdec exclus : amd64-only
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Check if this decompiler was rebuilt
         id: should_run

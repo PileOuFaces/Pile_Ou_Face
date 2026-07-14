@@ -67,7 +67,11 @@ describe('dynamic/workflows active function switch', () => {
       snapshot: { func: 'main' },
       analysis: {
         function: { name: 'main' },
-        frame: { basePointer: '0x7fffffffe040', stackPointer: '0x7fffffffe000', frameSize: 64 },
+        // This fixture deliberately passes slots: [] (only exercises stale
+        // model/function-switch rejection, not raw per-step observations)
+        // -- frameReady tells the temporal gating this frame is
+        // established so model.locals content still shows.
+        frame: { basePointer: '0x7fffffffe040', stackPointer: '0x7fffffffe000', frameSize: 64, frameReady: true },
         control: { savedBpAddr: '0x7fffffffe040', retAddrAddr: '0x7fffffffe048' }
       },
       mcp: { model: latentFrames.main }
@@ -100,7 +104,7 @@ describe('dynamic/workflows active function switch', () => {
       snapshot: { func: 'challenge' },
       analysis: {
         function: { name: 'challenge' },
-        frame: { basePointer: '0x7fffffffe1c0', stackPointer: '0x7fffffffe000', frameSize: 448 },
+        frame: { basePointer: '0x7fffffffe1c0', stackPointer: '0x7fffffffe000', frameSize: 448, frameReady: true },
         control: { savedBpAddr: '0x7fffffffe1c0', retAddrAddr: '0x7fffffffe1c8' }
       },
       mcp: { model: latentFrames.challenge }

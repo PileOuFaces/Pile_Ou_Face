@@ -2,9 +2,10 @@ const { expect } = require("chai");
 
 const {
   DEFAULT_LOCAL_AUTH_URL,
-  DEFAULT_REMOTE_AUTH_URL,
   resolveAuthServerUrl,
 } = require("../shared/authConfig");
+
+const PROVIDER_URL = "https://provider.example.com";
 
 describe("auth config helpers", () => {
   it("prefers a saved auth URL when it is explicitly set", () => {
@@ -29,25 +30,39 @@ describe("auth config helpers", () => {
     expect(resolved).to.equal(DEFAULT_LOCAL_AUTH_URL);
   });
 
-  it("migrates the old saved production default to localhost in local dev", () => {
+  it("migrates a saved URL equal to the configured provider default to localhost in local dev", () => {
     const resolved = resolveAuthServerUrl({
-      savedAuthServerUrl: DEFAULT_REMOTE_AUTH_URL,
+      savedAuthServerUrl: PROVIDER_URL,
       configuredAuthServerUrl: "",
       projectRoot: "/workspace/Pile_Ou_Face",
       existsSync: (candidate) => candidate.endsWith("/Pile_ou_Face_auth/app/main.py"),
+      defaultRemoteAuthUrl: PROVIDER_URL,
     });
 
     expect(resolved).to.equal(DEFAULT_LOCAL_AUTH_URL);
   });
 
-  it("keeps the remote default outside local development", () => {
+  it("uses the configured provider default outside local development", () => {
     const resolved = resolveAuthServerUrl({
       savedAuthServerUrl: "",
       configuredAuthServerUrl: "",
       projectRoot: "/workspace/Pile_Ou_Face",
       existsSync: () => false,
+      defaultRemoteAuthUrl: PROVIDER_URL,
     });
 
-    expect(resolved).to.equal(DEFAULT_REMOTE_AUTH_URL);
+    expect(resolved).to.equal(PROVIDER_URL);
+  });
+
+  it("connects nowhere by default when no provider is configured (neutral OSS build)", () => {
+    const resolved = resolveAuthServerUrl({
+      savedAuthServerUrl: "",
+      configuredAuthServerUrl: "",
+      projectRoot: "/workspace/Pile_Ou_Face",
+      existsSync: () => false,
+      defaultRemoteAuthUrl: "",
+    });
+
+    expect(resolved).to.equal("");
   });
 });

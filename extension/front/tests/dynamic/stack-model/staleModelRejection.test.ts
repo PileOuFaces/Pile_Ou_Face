@@ -22,7 +22,13 @@ describe('dynamic/stack-model stale model rejection workflows', () => {
       frame: {
         basePointer,
         stackPointer: functionName === 'challenge' ? '0x7fffffffe000' : '0x7fffffffe000',
-        frameSize: functionName === 'challenge' ? 0x1c0 : 0x40
+        frameSize: functionName === 'challenge' ? 0x1c0 : 0x40,
+        // This fixture deliberately passes slots: [] (it only exercises
+        // stale-model/function-mismatch rejection, not raw per-step
+        // observations) -- frameReady tells the temporal gating this frame
+        // is established so model.locals content is still expected to show
+        // for the correctly-matched function/step.
+        frameReady: true
       },
       control: {
         savedBpAddr: basePointer,

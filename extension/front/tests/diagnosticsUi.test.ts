@@ -97,4 +97,53 @@ describe('dynamic diagnostics UI helpers', () => {
     expect(persistent.some((entry) => helpers.diagnosticMatchesAddress(entry, '0x401080', 'responsibleInstructionAddress'))).to.equal(true);
     expect(helpers.diagnosticsForStep(persistent, 20)).to.deep.equal([]);
   });
+
+  it('benign_termination (hello-world/printf-only) is never reclassified as fatal_crash', () => {
+    const crash = {
+      classification: 'benign_termination',
+      type: 'unmapped_fetch',
+      step: 1,
+      instructionText: 'ret',
+      instructionAddress: '0x401050',
+      reason: "Fin d'execution hors zone de code connue, sans preuve de corruption.",
+    };
+
+    const diagnostic = helpers.crashDiagnosticForStep(crash, 1);
+
+    expect(diagnostic.kind).to.equal('benign_termination');
+    expect(diagnostic.severity).to.equal('info');
+    expect(diagnostic.kind).to.not.equal('fatal_crash');
+    expect(helpers.diagnosticKindLabel(diagnostic.kind)).to.not.equal('Diagnostic runtime');
+  });
+
+  it('emulator_stop is never reclassified as fatal_crash', () => {
+    const crash = {
+      classification: 'emulator_stop',
+      type: 'unmapped_read',
+      step: 3,
+      instructionText: 'mov eax, [rax]',
+      reason: 'Emulator boundary, no corruption evidence.',
+    };
+
+    const diagnostic = helpers.crashDiagnosticForStep(crash, 3);
+
+    expect(diagnostic.kind).to.equal('emulator_stop');
+    expect(diagnostic.severity).to.equal('info');
+  });
+
+  it('a real overflow reaching the return address stays fatal_crash / error', () => {
+    const crash = {
+      classification: 'fatal_crash',
+      type: 'unmapped_fetch',
+      step: 1,
+      instructionText: 'ret',
+      instructionAddress: '0x401050',
+      reason: 'Retour vers une adresse non mappee.',
+    };
+
+    const diagnostic = helpers.crashDiagnosticForStep(crash, 1);
+
+    expect(diagnostic.kind).to.equal('fatal_crash');
+    expect(diagnostic.severity).to.equal('error');
+  });
 });

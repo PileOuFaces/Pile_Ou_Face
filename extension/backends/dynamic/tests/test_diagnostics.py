@@ -586,5 +586,302 @@ class TestCrashClassification(unittest.TestCase):
         self.assertEqual(hijack_diags[0]["severity"], "warning")
 
 
+class TestBenignTerminationClassification(unittest.TestCase):
+    """A crash must never be reported as a vulnerability without real
+    evidence: an overflow reaching a control slot, a flagged write on one, or
+    the faulting bytes matching a configured payload. Plain hello-world /
+    printf-only binaries hit this exact shape when `main` returns into
+    un-emulated libc (a real, but unmapped-in-this-trace, return address) --
+    that's the emulator running out of road, not a corrupted return address.
+    """
+
+    def _no_evidence_analysis(self, ret_value: str) -> dict:
+        analysis = _base_analysis(ret_value)
+        analysis["frame"]["slots"][2].update(
+            {
+                "valueHex": ret_value,
+                "bytesHex": _hex_bytes(
+                    bytes.fromhex(ret_value.replace("0x", "").zfill(16))[::-1]
+                ),
+                # No recentWrite/changed/flags: this slot was never touched.
+            }
+        )
+        analysis["overflow"] = {"active": False, "reached": []}
+        analysis["delta"] = {"writes": [], "reads": []}
+        return analysis
+
+    def test_hello_world_ret_to_unmapped_libc_is_not_fatal_payload_crash(self):
+        # A hello-world's `main` returns to its real (but here unmapped,
+        # since libc isn't loaded) caller address -- not literal 0, which is
+        # why the narrow zero-address guard alone doesn't catch this shape.
+        libc_return_addr = "0x7ffff7a52083"
+        analysis = self._no_evidence_analysis(libc_return_addr)
+        meta = {
+            "arch_bits": 64,
+            "word_size": 8,
+            "functions": [],
+        }  # no payload configured at all
+        crash = _build_crash_report(
+            {
+                "type": "unmapped_fetch",
+                "step": 1,
+                "instructionAddress": "0x401050",
+                "instructionText": "ret",
+                "registers": {
+                    "rip": libc_return_addr,
+                    "rsp": "0x7fffffffdf80",
+                    "rbp": "0x7fffffffe000",
+                },
+                "rip": libc_return_addr,
+                "faultAddress": libc_return_addr,
+                "reason": "Retour vers une adresse non mappee.",
+            },
+            [
+                _snapshot(
+                    step=1, instr="ret", mnemonic="ret", after_rip=libc_return_addr
+                )
+            ],
+            {"1": analysis},
+            meta,
+            [{"addr": "0x401000"}, {"addr": "0x401100"}],
+        )
+        self.assertIsNotNone(crash)
+        self.assertEqual(crash["classification"], "benign_termination")
+        self.assertIsNone(crash["probableSource"])
+        self.assertIsNone(crash["payloadOffset"])
+
+        diagnostics = build_diagnostics(
+            [
+                _snapshot(
+                    step=1, instr="ret", mnemonic="ret", after_rip=libc_return_addr
+                )
+            ],
+            {"1": analysis},
+            meta,
+            [{"addr": "0x401000"}, {"addr": "0x401100"}],
+            crash=crash,
+        )
+        kinds = {diag["kind"] for diag in diagnostics}
+        self.assertNotIn("fatal_crash", kinds)
+        self.assertNotIn("return_address_corrupted", kinds)
+        self.assertIn("benign_termination", kinds)
+        benign = next(
+            diag for diag in diagnostics if diag["kind"] == "benign_termination"
+        )
+        self.assertEqual(benign["severity"], "info")
+        self.assertIsNone(benign.get("probableSource"))
+
+    def test_printf_only_ret_after_call_is_not_flagged_vulnerable(self):
+        # Same shape as hello-world, but the last user instruction before the
+        # crashing return is a (simulated) call to printf -- printf-only
+        # binaries must not be flagged as vulnerable either.
+        unmapped_addr = "0x7ffff7a1a1b9"
+        analysis = self._no_evidence_analysis(unmapped_addr)
+        snap = _snapshot(step=2, instr="ret", mnemonic="ret", after_rip=unmapped_addr)
+        snap["effects"] = {"external_simulated": True, "external_symbol": "printf"}
+        meta = {"arch_bits": 64, "word_size": 8, "functions": []}
+        crash = _build_crash_report(
+            {
+                "type": "unmapped_fetch",
+                "step": 2,
+                "instructionAddress": "0x401060",
+                "instructionText": "ret",
+                "registers": {
+                    "rip": unmapped_addr,
+                    "rsp": "0x7fffffffdf80",
+                    "rbp": "0x7fffffffe000",
+                },
+                "rip": unmapped_addr,
+                "faultAddress": unmapped_addr,
+                "reason": "Retour vers une adresse non mappee.",
+            },
+            [snap],
+            {"2": analysis},
+            meta,
+            [{"addr": "0x401000"}, {"addr": "0x401100"}],
+        )
+        diagnostics = build_diagnostics(
+            [snap],
+            {"2": analysis},
+            meta,
+            [{"addr": "0x401000"}, {"addr": "0x401100"}],
+            crash=crash,
+        )
+        kinds = {diag["kind"] for diag in diagnostics}
+        self.assertEqual(
+            kinds
+            & {
+                "fatal_crash",
+                "buffer_overflow",
+                "return_address_corrupted",
+                "control_hijack",
+            },
+            set(),
+        )
+
+    def test_retaddr_overwrite_stays_fatal_with_evidence(self):
+        # Regression: real evidence (overflow reaching return_address + a
+        # payload match) must keep the crash strong, never downgraded.
+        analysis = _base_analysis("0x4141414141414141")
+        analysis["frame"]["slots"][2].update(
+            {
+                "valueHex": "0x4141414141414141",
+                "bytesHex": _hex_bytes(b"A" * 8),
+                "recentWrite": True,
+                "changed": True,
+                "flags": ["corrupted"],
+                "pointerKind": "unknown",
+            }
+        )
+        analysis["overflow"] = {
+            "active": True,
+            "bufferName": "buffer",
+            "reached": ["return_address"],
+            "frontier": "0x7fffffffe010",
+        }
+        analysis["delta"]["writes"] = [
+            {
+                "addr": "0x7fffffffdfc0",
+                "size": 80,
+                "bytes": _hex_bytes(b"A" * 80),
+                "source": "external",
+            }
+        ]
+        meta = {
+            "arch_bits": 64,
+            "word_size": 8,
+            "payload_hex": _hex_bytes(b"A" * 80),
+            "payload_target": "stdin",
+            "functions": [],
+        }
+        crash = _build_crash_report(
+            {
+                "type": "unmapped_fetch",
+                "step": 1,
+                "instructionAddress": "0x401050",
+                "instructionText": "ret",
+                "registers": {
+                    "rip": "0x4141414141414141",
+                    "rsp": "0x7fffffffdf80",
+                    "rbp": "0x7fffffffe000",
+                },
+                "rip": "0x4141414141414141",
+                "faultAddress": "0x4141414141414141",
+                "reason": "Retour vers une adresse non mappee.",
+            },
+            [
+                _snapshot(
+                    step=1, instr="ret", mnemonic="ret", after_rip="0x4141414141414141"
+                )
+            ],
+            {"1": analysis},
+            meta,
+            [{"addr": "0x401000"}, {"addr": "0x401100"}],
+        )
+        self.assertEqual(crash["classification"], "fatal_crash")
+        self.assertIsNotNone(crash["probableSource"])
+
+        diagnostics = build_diagnostics(
+            [
+                _snapshot(
+                    step=1, instr="ret", mnemonic="ret", after_rip="0x4141414141414141"
+                )
+            ],
+            {"1": analysis},
+            meta,
+            [{"addr": "0x401000"}, {"addr": "0x401100"}],
+            crash=crash,
+        )
+        fatal = next(diag for diag in diagnostics if diag["kind"] == "fatal_crash")
+        self.assertEqual(fatal["severity"], "error")
+
+    def test_saved_bp_overwrite_corruption_is_conserved(self):
+        # Regression: saved-bp corruption with real write evidence must keep
+        # raising saved_bp_corrupted, independent of the benign-termination gate.
+        analysis = _base_analysis("0x401080")
+        analysis["frame"]["slots"][1].update(
+            {
+                "valueHex": "0x4242424242424242",
+                "bytesHex": _hex_bytes(b"B" * 8),
+                "recentWrite": True,
+                "changed": True,
+                "flags": ["corrupted"],
+            }
+        )
+        analysis["overflow"] = {
+            "active": True,
+            "bufferName": "buffer",
+            "reached": ["saved_bp"],
+            "frontier": "0x7fffffffe008",
+        }
+        analysis["delta"]["writes"] = [
+            {
+                "addr": "0x7fffffffdfc0",
+                "size": 72,
+                "bytes": _hex_bytes(b"B" * 72),
+                "source": "external",
+            }
+        ]
+        meta = {
+            "arch_bits": 64,
+            "word_size": 8,
+            "payload_hex": _hex_bytes(b"B" * 72),
+            "payload_target": "stdin",
+        }
+
+        diagnostics = build_diagnostics(
+            [_snapshot()],
+            {"1": analysis},
+            meta,
+            [{"addr": "0x401000"}, {"addr": "0x401100"}],
+        )
+        kinds = {diag["kind"] for diag in diagnostics}
+        self.assertIn("saved_bp_corrupted", kinds)
+        saved_bp = next(
+            diag for diag in diagnostics if diag["kind"] == "saved_bp_corrupted"
+        )
+        self.assertEqual(saved_bp["severity"], "warning")
+
+    def test_max_steps_reached_produces_clear_diagnostic_without_crash(self):
+        snap = _snapshot(
+            step=500, instr="mov eax, ebx", mnemonic="mov", after_rip="0x401200"
+        )
+        analysis = _base_analysis()
+        meta = {"arch_bits": 64, "word_size": 8}
+
+        diagnostics = build_diagnostics(
+            [snap],
+            {"500": analysis},
+            meta,
+            [{"addr": "0x401000"}, {"addr": "0x401300"}],
+            crash=None,
+            max_steps_reached=True,
+        )
+        self.assertEqual([diag["kind"] for diag in diagnostics], ["max_steps_reached"])
+        self.assertEqual(diagnostics[0]["severity"], "info")
+
+    def test_max_steps_reached_is_suppressed_when_a_real_crash_exists(self):
+        analysis = self._no_evidence_analysis("0x0")
+        snap = _snapshot(step=1, instr="ret", mnemonic="ret", after_rip="0x0")
+        meta = {"arch_bits": 64, "word_size": 8}
+        crash = {
+            "type": "unmapped_fetch",
+            "step": 1,
+            "instructionText": "ret",
+            "registers": {},
+            "classification": "benign_termination",
+        }
+
+        diagnostics = build_diagnostics(
+            [snap],
+            {"1": analysis},
+            meta,
+            [{"addr": "0x401000"}, {"addr": "0x401100"}],
+            crash=crash,
+            max_steps_reached=True,
+        )
+        self.assertNotIn("max_steps_reached", {diag["kind"] for diag in diagnostics})
+
+
 if __name__ == "__main__":
     unittest.main()

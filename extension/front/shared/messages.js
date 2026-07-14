@@ -3,6 +3,22 @@ function initMessageHandler() {
 window.addEventListener('message', (event) => {
   const msg = event.data;
   if (!msg?.type) return;
+  // Forward plugin results to the plugin's iframe (no return — other handlers also need this)
+  if (msg.type === 'hubPluginResult' && window.PluginIframeRouter) {
+    window.PluginIframeRouter.dispatch(msg.plugin_id, msg);
+  }
+  if (msg.type === 'hubPluginProgress' && window.PluginIframeRouter) {
+    window.PluginIframeRouter.broadcast(msg);
+  }
+  // Generic host replies (e.g. file picker, rules manager) that plugin iframes may also be waiting on
+  const BROADCAST_TO_PLUGINS = new Set([
+    'hubPickedFile', 'hubRulesList', 'hubRulesPath', 'hubRuleContent',
+    'hubRuleToggled', 'hubRuleAdded', 'hubRuleUpdated', 'hubRuleDeleted',
+    'hubPluginState',
+  ]);
+  if (BROADCAST_TO_PLUGINS.has(msg.type) && window.PluginIframeRouter) {
+    window.PluginIframeRouter.broadcast(msg);
+  }
   if (msg.type === 'hubPrefillAiPrompt') {
     prefillOllamaPrompt(String(msg.prompt || ''));
     return;
@@ -149,37 +165,26 @@ window.addEventListener('message', (event) => {
     }
     return;
   }
-  if (msg.type === 'hubRulesPath' && msg.rulesPath) {
-    const el = document.getElementById('yaraRulesPath');
-    if (el) {
-      el.value = msg.rulesPath;
-      _saveStorage({ yaraRulesPath: msg.rulesPath });
-      setSelectedYaraMode('manual');
-    }
-    applyYaraModeUi();
-    return;
-  }
-  if (msg.type === 'hubRuleContent') {
-    if (msg.error || !msg.rule) {
+  if (msg.type === 'hubRuleImported') {
+    const results = Array.isArray(msg.results) ? msg.results : [];
+    const failed = results.filter(function(r) { return !r.ok; });
+    if (failed.length) {
       _showToast({
-        title: 'Ouverture de la règle impossible',
-        sub: String(msg.error || 'Règle introuvable'),
+        title: failed.length + ' fichier(s) non importé(s)',
+        sub: failed.map(function(r) { return r.name; }).join(', '),
         icon: '⚠️',
         variant: 'error',
-        duration: 4200,
+        duration: 5000,
       });
-      return;
+    } else if (results.length) {
+      _showToast({
+        title: results.length + ' fichier(s) importé(s)',
+        sub: results.map(function(r) { return r.name; }).join(', '),
+        icon: '✓',
+        variant: 'success',
+        duration: 3000,
+      });
     }
-    const rule = msg.rule;
-    document.getElementById('rulesEditId').value = String(rule.id || '');
-    document.getElementById('rulesAddType').value = String(rule.type || 'yara');
-    document.getElementById('rulesAddScope').value = String(rule.scope || 'project');
-    document.getElementById('rulesAddFormTitle').textContent =
-      'Modifier une règle ' + String(rule.type || 'yara').toUpperCase() + (rule.scope === 'global' ? ' globale' : ' projet');
-    document.getElementById('rulesAddName').value = String(rule.name || '');
-    document.getElementById('rulesAddContent').value = String(rule.content || '');
-    document.getElementById('rulesAddForm').style.display = '';
-    document.getElementById('rulesAddContent')?.focus();
     return;
   }
   if (msg.type === 'hubOllamaModels') {
@@ -374,6 +379,11 @@ window.addEventListener('message', (event) => {
       // rAF : s'assure que showGroup (éventuel) a fini de reconstruire la barre
       requestAnimationFrame(_refreshArchSupportBadges);
     }
+    // Si CFG ou call graph est actif, le recharger maintenant que le désassemblage est prêt
+    const activeTab = typeof getActiveStaticTab === 'function' ? getActiveStaticTab() : '';
+    if ((activeTab === 'cfg' || activeTab === 'callgraph') && typeof _autoLoadTab === 'function') {
+      _autoLoadTab(activeTab);
+    }
     return;
   }
   if (messageRouter?.handleMessage?.(msg)) {
@@ -486,8 +496,6 @@ window.addEventListener('message', (event) => {
       callgraph: 'Call graph',
       discovered: 'Fonctions',
       imports: 'Imports',
-      behavior: 'Behavior',
-      anti_analysis: 'Anti-analysis',
       decompile: 'Décompilation',
     };
     const cacheTypeShortLabels = {
@@ -499,8 +507,6 @@ window.addEventListener('message', (event) => {
       callgraph: 'CG',
       discovered: 'FUNC',
       imports: 'IMP',
-      behavior: 'BEH',
-      anti_analysis: 'ANTI',
       decompile: 'DEC',
     };
     const cacheStatusBadge = (entry) => {
@@ -627,6 +633,10 @@ window.addEventListener('message', (event) => {
         cacheEl.innerHTML = `${cache.map(renderCacheEntry).join('')}<p class="hint files-footnote">Les entrées “À recalculer” correspondent à un binaire modifié, supprimé ou à un cache devenu incohérent.</p>`;
       }
     }
+    return;
+  }
+  if (msg.type === 'refreshGeneratedFiles') {
+    vscode.postMessage({ type: 'listGeneratedFiles' });
     return;
   }
   // ── Import xrefs panel (inline sous importsContent) ─────────────────────
@@ -963,6 +973,7 @@ window.addEventListener('message', (event) => {
     if (!container) return;
     const allStrings = msg.strings || [];
     stringsCache = allStrings;
+    stringsPage = 1;
     renderStringsTable(container, allStrings, '', false);
 
     if (loadAllPending > 0) { loadAllPending--; if (loadAllPending <= 0) { const b = document.getElementById('btnLoadAll'); if (b) { b.disabled = false; b.classList.remove('loading'); } } }
@@ -1030,7 +1041,7 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubXrefs') {
-    if (msg.requestKey && _pendingXrefRequests.has(msg.requestKey)) {
+    if (msg.requestKey && typeof _pendingXrefRequests !== 'undefined' && _pendingXrefRequests.has(msg.requestKey)) {
       const pending = _pendingXrefRequests.get(msg.requestKey);
       _pendingXrefRequests.delete(msg.requestKey);
       clearTimeout(pending.timeoutId);
@@ -1195,11 +1206,13 @@ window.addEventListener('message', (event) => {
         ['Bits', info.bits ? info.bits + '-bit' : '—'],
         ['Endianness', info.endianness || '—'],
         ['Stripped', info.stripped || '—'],
-        ['Packers', info.packers || '—'],
         ['Arch (objdump)', info.arch || '—'],
         ['Interp', info.interp || '—']
       ].map(([k, v]) => `<div class="info-row"><span class="info-key">${escapeHtml(k)}</span><span class="info-val">${escapeHtml(String(v))}</span></div>`).join('');
-      container.innerHTML = `<div class="info-grid">${rows}</div>${renderPackerAnalysisHtml(info.packer_analysis)}`;
+      container.innerHTML = `<div class="info-grid">${rows}</div>`;
+    }
+    if (typeof resetDetectionStateForBinary === 'function') {
+      resetDetectionStateForBinary(getStaticBinaryPath());
     }
     updateDisasmSessionSummary();
     if (loadAllPending > 0) { loadAllPending--; if (loadAllPending <= 0) { const b = document.getElementById('btnLoadAll'); if (b) { b.disabled = false; b.classList.remove('loading'); } } }
@@ -1244,11 +1257,72 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubCfg') {
-    tabDataCache.cfg = { binaryPath: getStaticBinaryPath() };
     const container = document.getElementById('cfgContent');
     if (!container) return;
+    const normalizeCfgBinaryPath = (value) => String(value || '').trim().replace(/\\/g, '/');
     const currentBinaryPath = getStaticBinaryPath() || '';
+    const responseBinaryPath = String(msg.binaryPath || '').trim();
+    if (
+      responseBinaryPath
+      && currentBinaryPath
+      && normalizeCfgBinaryPath(responseBinaryPath) !== normalizeCfgBinaryPath(currentBinaryPath)
+    ) {
+      vscode.postMessage({
+        type: 'hubDebugLog',
+        scope: 'static-cfg',
+        event: 'ignored-stale-response',
+        details: { currentBinaryPath, responseBinaryPath },
+      });
+      return;
+    }
+    tabDataCache.cfg = { binaryPath: responseBinaryPath || currentBinaryPath };
     const cfgState = getGraphUiState('cfg', currentBinaryPath);
+    const functions = Array.isArray(msg.functions) ? msg.functions : [];
+    const requestedFuncAddr = String(msg.funcAddr || '').trim();
+    vscode.postMessage({
+      type: 'hubDebugLog',
+      scope: 'static-cfg',
+      event: 'received',
+      details: {
+        currentBinaryPath,
+        responseBinaryPath,
+        requestedFuncAddr,
+        functions: functions.length,
+        blocks: Array.isArray(msg.cfg?.blocks) ? msg.cfg.blocks.length : 0,
+        edges: Array.isArray(msg.cfg?.edges) ? msg.cfg.edges.length : 0,
+      },
+    });
+    const activeFuncAddr = requestedFuncAddr && functions.some((fn) => String(fn.addr || '') === requestedFuncAddr)
+      ? requestedFuncAddr
+      : '';
+    if (requestedFuncAddr && !activeFuncAddr && functions.length > 0 && currentBinaryPath) {
+      if (typeof cfgUiState !== 'undefined') cfgUiState.funcAddr = '';
+      tabDataCache.cfg = null;
+      setStaticLoading('cfgContent', 'Chargement CFG…');
+      postBinaryAwareMessage('hubLoadCfg', {
+        binaryPath: currentBinaryPath,
+        useCache: document.getElementById('useCache')?.checked !== false,
+      });
+      return;
+    }
+    // Sync funcAddr and populate function selector.
+    if (typeof cfgUiState !== 'undefined') cfgUiState.funcAddr = activeFuncAddr;
+    const funcSel = document.getElementById('cfgFuncSelect');
+    if (funcSel && functions.length > 0) {
+      while (funcSel.firstChild) funcSel.removeChild(funcSel.firstChild);
+      const allOpt = document.createElement('option');
+      allOpt.value = '';
+      allOpt.textContent = '\u2014 D\u00e9sassemblage complet \u2014';
+      funcSel.appendChild(allOpt);
+      functions.forEach(fn => {
+        const opt = document.createElement('option');
+        opt.value = String(fn.addr);
+        const instrInfo = fn.instrCount > 0 ? `  (${fn.instrCount} instr.)` : '';
+        opt.textContent = `${fn.name}${instrInfo}`;
+        if (fn.addr === activeFuncAddr) opt.selected = true;
+        funcSel.appendChild(opt);
+      });
+    }
     const cfg = msg.cfg || { blocks: [], edges: [] };
     const blocks = cfg.blocks || [];
     const edges = cfg.edges || [];
@@ -1258,13 +1332,30 @@ window.addEventListener('message', (event) => {
     const visibleAddrs = isolateFocus ? collectGraphNeighborhood(isolateFocus, edges, isolateRadius) : null;
     if (blocks.length === 0) {
       const bp = getStaticBinaryPath();
-      const hint = bp ? 'Aucun bloc détecté. Ouvrez le désassemblage puis rechargez.' : 'Ouvrez d\'abord le désassemblage.';
-      container.innerHTML = `<p class="hint">${hint}</p>
-        <button type="button" class="btn btn-primary" id="btnCfgOpenDisasm">Ouvrir le désassemblage</button>`;
-      document.getElementById('btnCfgOpenDisasm')?.addEventListener('click', () => {
-        if (bp) vscode.postMessage({ type: 'hubOpenDisasm', binaryPath: bp, useCache: false });
-        else vscode.postMessage({ type: 'requestBinarySelection' });
-      });
+      const hint = bp ? 'Aucun bloc CFG détecté pour cette fonction.' : 'Sélectionnez d\'abord un binaire.';
+      while (container.firstChild) container.removeChild(container.firstChild);
+      const hintEl = document.createElement('p');
+      hintEl.className = 'hint';
+      hintEl.textContent = hint;
+      container.appendChild(hintEl);
+      if (!bp) {
+        const btnSel = document.createElement('button');
+        btnSel.type = 'button';
+        btnSel.className = 'btn btn-primary';
+        btnSel.textContent = 'Sélectionner un binaire';
+        btnSel.addEventListener('click', () => vscode.postMessage({ type: 'requestBinarySelection' }));
+        container.appendChild(btnSel);
+      }
+      return;
+    }
+    const MAX_CFG_BLOCKS = 200;
+    if (blocks.length > MAX_CFG_BLOCKS && !msg.funcAddr) {
+      tabDataCache.cfg = null;
+      while (container.firstChild) container.removeChild(container.firstChild);
+      const warnEl = document.createElement('p');
+      warnEl.className = 'hint';
+      warnEl.textContent = `CFG trop large (${blocks.length} blocs). Sélectionnez une fonction dans le menu ci-dessus.`;
+      container.appendChild(warnEl);
       return;
     }
     // Table view — build with DOM API (no innerHTML with variables)
@@ -1335,7 +1426,15 @@ window.addEventListener('message', (event) => {
       caseLabels: b.incoming_case_labels || [],
     }));
     const rerenderCfgGraph = () => {
-      if (getStaticBinaryPath() === currentBinaryPath) vscode.postMessage({ type: 'hubLoadCfg', binaryPath: currentBinaryPath });
+      if (getStaticBinaryPath() === currentBinaryPath) {
+        const fa = (typeof cfgUiState !== 'undefined' ? cfgUiState.funcAddr : '') || undefined;
+        vscode.postMessage({
+          type: 'hubLoadCfg',
+          binaryPath: currentBinaryPath,
+          funcAddr: fa,
+          useCache: document.getElementById('useCache')?.checked !== false,
+        });
+      }
     };
     const svgEl = renderGraphSvg(svgNodes, graphEdges, {
       zoomState,
@@ -1536,29 +1635,60 @@ window.addEventListener('message', (event) => {
       btnCfgFit.addEventListener('click', () => zs.fitToView());
     }
     if (zs?.requestFit) zs.requestFit();
-    if (container._cfgState?.activeAddr) {
+    const _pendingHighlight = window._pendingCfgHighlightAddr || container._cfgState?.activeAddr || '';
+    if (_pendingHighlight) {
+      window._pendingCfgHighlightAddr = null;
+      // Apply class immediately (synchronous) so the border is set on first paint
+      setCfgActiveAddr(_pendingHighlight, { reveal: false, instant: true });
+      // Schedule centering after layout (needs measured coordinates)
       requestAnimationFrame(() => {
-        requestAnimationFrame(() => setCfgActiveAddr(container._cfgState.activeAddr, { reveal: isStaticTabActive('cfg'), instant: true }));
+        requestAnimationFrame(() => setCfgActiveAddr(_pendingHighlight, { reveal: true, revealTable: tableEl.style.display !== 'none', instant: true }));
       });
     }
     return;
   }
   if (msg.type === 'hubCallGraph') {
-    tabDataCache.callgraph = { binaryPath: getStaticBinaryPath() };
     const container = document.getElementById('callgraphContent');
     if (!container) return;
+    const normalizeGraphBinaryPath = (value) => String(value || '').trim().replace(/\\/g, '/');
     const currentBinaryPath = getStaticBinaryPath() || '';
+    const responseBinaryPath = String(msg.binaryPath || '').trim();
+    if (
+      responseBinaryPath
+      && currentBinaryPath
+      && normalizeGraphBinaryPath(responseBinaryPath) !== normalizeGraphBinaryPath(currentBinaryPath)
+    ) {
+      vscode.postMessage({
+        type: 'hubDebugLog',
+        scope: 'static-callgraph',
+        event: 'ignored-stale-response',
+        details: { currentBinaryPath, responseBinaryPath },
+      });
+      return;
+    }
+    tabDataCache.callgraph = { binaryPath: responseBinaryPath || currentBinaryPath };
     const cgState = getGraphUiState('callgraph', currentBinaryPath);
     const cg = msg.callGraph || { nodes: [], edges: [] };
     const cgEdges = cg.edges || [];
     const cgNodes = cg.nodes || [];
+    vscode.postMessage({
+      type: 'hubDebugLog',
+      scope: 'static-callgraph',
+      event: 'received',
+      details: {
+        currentBinaryPath,
+        responseBinaryPath,
+        nodes: cgNodes.length,
+        edges: cgEdges.length,
+      },
+    });
     if (cgEdges.length === 0 && cgNodes.length === 0) {
       const bp = getStaticBinaryPath();
       const hint = bp ? 'Aucun appel détecté. Ouvrez le désassemblage puis rechargez.' : 'Ouvrez d\'abord le désassemblage.';
       const btnHtml = bp ? '' : `<button type="button" class="btn btn-primary" id="btnCgOpenDisasm">Ouvrir le désassemblage</button>`;
       container.innerHTML = `<p class="hint">${hint}</p>${btnHtml}`;
       document.getElementById('btnCgOpenDisasm')?.addEventListener('click', () => {
-        if (bp) vscode.postMessage({ type: 'hubOpenDisasm', binaryPath: bp, useCache: false });
+        if (bp) vscode.postMessage({ type: 'hubOpenDisasm', binaryPath: bp, useCache: true });
         else vscode.postMessage({ type: 'requestBinarySelection' });
       });
       return;
@@ -1854,37 +1984,63 @@ window.addEventListener('message', (event) => {
     }
     return;
   }
-  if (msg.type === 'hubYara') {
-    detectionUiState.yaraMatches = msg.matches || [];
-    detectionUiState.yaraError = msg.error || '';
-    renderYaraResults();
-    return;
-  }
-  if (msg.type === 'hubCapa') {
-    tabDataCache.detection = { binaryPath: getStaticBinaryPath() };
-    detectionUiState.capaCapabilities = msg.capabilities || [];
-    detectionUiState.capaError = msg.error || '';
-    renderCapaResults();
-    return;
-  }
-  if (msg.type === 'hubRulesList') {
-    const rules = msg.rules || [];
-    detectionUiState.rulesError = String(msg.error || '').trim();
-    detectionUiState.activeYaraCount = Number(msg.activeYaraCount || 0);
-    _renderRulesList('yaraRulesList', rules.filter(function(r) { return r.type === 'yara'; }));
-    _renderRulesList('capaRulesList', rules.filter(function(r) { return r.type === 'capa'; }));
-    applyYaraModeUi();
-    return;
-  }
-  if (msg.type === 'hubRuleToggled' || msg.type === 'hubRuleAdded' || msg.type === 'hubRuleDeleted' || msg.type === 'hubRuleUpdated') {
-    vscode.postMessage({ type: 'hubListRules' });
-    return;
-  }
   if (msg.type === 'hubDecompilerList') {
     const newResult = msg.result || {};
+    if (window._decompilerImageUpdates) {
+      const dockerImages = newResult._meta?.docker_images || {};
+      Object.keys(window._decompilerImageUpdates).forEach((id) => {
+        if (!dockerImages[id] || window._decompilerImageUpdates[id]?.image !== dockerImages[id]) {
+          delete window._decompilerImageUpdates[id];
+        }
+      });
+    }
     _detectDecompilerStateChanges(newResult);
     populateDecompilerProfiles(newResult);
     _renderDecompilerStatusList(newResult);
+    return;
+  }
+  if (msg.type === 'hubDecompilerImageUpdates') {
+    window._decompilerImageUpdates = {
+      ...(window._decompilerImageUpdates || {}),
+      ...(msg.updates || {}),
+    };
+    _renderDecompilerStatusList({ ..._decompilerAvailability, _meta: _decompilerMeta });
+    return;
+  }
+  if (msg.type === 'hubDockerRuntimeStatus') {
+    window._dockerRuntimeStatus = msg.status || null;
+    _renderDecompilerStatusList({ ..._decompilerAvailability, _meta: _decompilerMeta });
+    return;
+  }
+  if (msg.type === 'hubDecompilerPullProgress') {
+    const area = document.getElementById('decompilerPullArea_' + msg.decompiler);
+    if (!area) return;
+    const log = area.querySelector('.decompiler-pull-log');
+    const bar = area.querySelector('.decompiler-pull-progress');
+    if (log && msg.line) {
+      const entry = document.createElement('div');
+      entry.textContent = msg.line;
+      log.appendChild(entry);
+      log.scrollTop = log.scrollHeight;
+    }
+    if (bar && msg.percent != null) bar.value = msg.percent;
+    return;
+  }
+  if (msg.type === 'hubDecompilerPullDone') {
+    const area = document.getElementById('decompilerPullArea_' + msg.decompiler);
+    if (area) {
+      const bar = area.querySelector('.decompiler-pull-progress');
+      if (bar) bar.value = msg.ok ? 100 : 0;
+      const status = document.createElement('div');
+      status.className = msg.ok ? 'decompiler-pull-status--ok' : 'decompiler-pull-status--err';
+      const doneLabel = msg.mode === 'update'
+        ? 'Image mise à jour.'
+        : msg.mode === 'force'
+          ? 'Repull terminé.'
+          : 'Image t\u00E9l\u00E9charg\u00E9e.';
+      status.textContent = msg.ok ? doneLabel : ('Échec : ' + (msg.error || 'erreur inconnue'));
+      area.appendChild(status);
+    }
     return;
   }
   if (msg.type === 'hubCommandResult') {
@@ -1927,6 +2083,21 @@ window.addEventListener('message', (event) => {
     if (msg.isBetter) {
       decompileUiState.bestDecompiler = payload.decompiler;
     }
+    // Stale-response guard: the user may have navigated to a different binary
+    // or function while this (possibly slow, Docker-backed) decompile was in
+    // flight. Bookkeeping above still applies (so the result is cached for
+    // later), but the DOM must never be overwritten with a result for a
+    // selection the user isn't looking at anymore — that's what produced the
+    // intermittent "wrong pseudo-C / stuck loader" behavior.
+    const currentSelection = getDecompileSelectionContext();
+    const currentFull = !currentSelection.addr;
+    const isStaleForCurrentSelection = payload.binaryPath !== (getStaticBinaryPath() || '')
+      || payload.full !== currentFull
+      || (!currentFull && payload.addr !== currentSelection.addr);
+    if (isStaleForCurrentSelection) {
+      _refreshDecompilePills();
+      return;
+    }
     // Decide whether to render: auto mode renders first result + better results; forced mode renders matching decompiler only
     const shouldRender = (forced === '' && (msg.isBetter || !msg.isSilentUpdate))
       || (forced !== '' && forced === payload.decompiler);
@@ -1947,197 +2118,6 @@ window.addEventListener('message', (event) => {
     _refreshDecompilePills();
     return;
   }
-  if (msg.type === 'hubBehavior') {
-    const container = document.getElementById('behaviorContent');
-    if (!container) return;
-    const payload = normalizePluginPanelPayload(msg.result || {}, ['indicators', 'results', 'items']);
-    if (payload.error) {
-      container.textContent = `Erreur : ${payload.error}`;
-      return;
-    }
-    const scoreEl = document.getElementById('behaviorScore');
-    if (scoreEl) {
-      scoreEl.style.display = '';
-      scoreEl.textContent = `Score: ${payload.result.score ?? 0}/100`;
-      const s = payload.result.score ?? 0;
-      scoreEl.style.background = s >= 70 ? '#c72e2e' : s >= 30 ? '#c47a00' : '#0e639c';
-      scoreEl.style.color = '#fff';
-      scoreEl.style.padding = '2px 8px';
-      scoreEl.style.borderRadius = '4px';
-    }
-    const indicators = payload.items;
-    const nodes = [];
-    appendProofDossierSection(nodes, payload.proofDossiers, {
-      hintText: 'Dossiers de preuve comportementaux. Les adresses ci-dessous sont cliquables pour naviguer dans le désassemblage.',
-      kindLabel: {
-        NETWORK: 'Réseau',
-        CRYPTO: 'Crypto',
-        EVASION: 'Évasion',
-        PERSISTENCE: 'Persistance',
-        EXFILTRATION: 'Exfiltration',
-      },
-    });
-    if (indicators.length === 0) {
-      const empty = document.createElement('p');
-      empty.className = 'empty-state';
-      empty.textContent = payload.proofDossiers.length
-        ? 'Aucun indicateur plat supplémentaire. Consulte les dossiers de preuve ci-dessus.'
-        : 'Aucun indicateur détecté.';
-      nodes.push(empty);
-      container.replaceChildren(...nodes);
-      return;
-    }
-    const table = document.createElement('table');
-    table.className = 'data-table';
-    const thead = document.createElement('thead');
-    const hrow = document.createElement('tr');
-    ['Catégorie', 'Sévérité', 'Confiance', 'Fonction', 'Preuve', 'Adresse / Offset'].forEach(h => {
-      const th = document.createElement('th');
-      th.textContent = h;
-      hrow.appendChild(th);
-    });
-    thead.appendChild(hrow);
-    table.appendChild(thead);
-    const tbody = document.createElement('tbody');
-    indicators.forEach(ind => {
-      const tr = document.createElement('tr');
-      const offsetStr = ind.offset !== undefined
-        ? (typeof ind.offset === 'number' ? '0x' + ind.offset.toString(16) : String(ind.offset))
-        : '?';
-      [ind.category, ind.severity, ind.confidence || '—', ind.function || '—'].forEach(v => {
-        const td = document.createElement('td');
-        td.textContent = v ?? '';
-        tr.appendChild(td);
-      });
-      const tdEvidence = document.createElement('td');
-      tdEvidence.textContent = formatPremiumEvidence(ind.evidence);
-      if (ind.needs_review) tdEvidence.title = 'Revue manuelle recommandée';
-      tr.appendChild(tdEvidence);
-      const tdAddr = document.createElement('td');
-      tdAddr.appendChild(buildNavigableAddrNode(ind.addr || offsetStr));
-      tr.appendChild(tdAddr);
-      tbody.appendChild(tr);
-    });
-    table.appendChild(tbody);
-    nodes.push(table);
-    container.replaceChildren(...nodes);
-    tabDataCache.behavior = { binaryPath: getStaticBinaryPath(), result: payload.result };
-    return;
-  }
-
-  if (msg.type === 'hubAntiAnalysisDone') {
-    const el = document.getElementById('antiAnalysisContent');
-    if (!el) return;
-    const payload = normalizePluginPanelPayload(
-      msg.result !== undefined ? msg.result : msg.data,
-      ['techniques', 'results', 'items'],
-    );
-    if (payload.error) {
-      el.replaceChildren();
-      const p = document.createElement('p');
-      p.className = 'hint';
-      p.textContent = payload.error;
-      el.appendChild(p);
-      return;
-    }
-    const techniques = payload.items;
-    tabDataCache.anti_analysis = { binaryPath: getStaticBinaryPath(), result: payload.result };
-    const nodes = [];
-    appendProofDossierSection(nodes, payload.proofDossiers, {
-      hintText: 'Dossiers de preuve anti-analyse. Les adresses ci-dessous sont cliquables pour naviguer dans le désassemblage.',
-    });
-    if (!techniques.length) {
-      const p = document.createElement('p');
-      p.className = 'empty-state';
-      p.textContent = payload.proofDossiers.length
-        ? 'Aucune technique plate supplémentaire. Consulte les dossiers de preuve ci-dessus.'
-        : 'Aucune technique anti-analyse détectée.';
-      nodes.push(p);
-      el.replaceChildren(...nodes);
-      return;
-    }
-    const table = document.createElement('table');
-    const head = document.createElement('thead');
-    const hrow = document.createElement('tr');
-    ['Technique','Confiance','Fonction','Description','Bypass','Adresse'].forEach((h) => {
-      const th = document.createElement('th');
-      th.textContent = h;
-      hrow.appendChild(th);
-    });
-    head.appendChild(hrow);
-    table.appendChild(head);
-    const body = document.createElement('tbody');
-    techniques.forEach((t) => {
-      const tr = document.createElement('tr');
-      const c1 = document.createElement('td'); c1.className = 'name'; c1.textContent = t.technique; tr.appendChild(c1);
-      const c2 = document.createElement('td');
-      c2.className = t.confidence === 'HIGH' ? 'sev-high' : t.confidence === 'MEDIUM' ? 'sev-medium' : 'sev-low';
-      c2.textContent = t.confidence || '—';
-      tr.appendChild(c2);
-      const c3 = document.createElement('td'); c3.textContent = t.function || '—'; tr.appendChild(c3);
-      const c4 = document.createElement('td'); c4.textContent = formatPremiumEvidence(t.evidence, t.description || '—'); tr.appendChild(c4);
-      const c5 = document.createElement('td'); c5.className = 'type'; c5.textContent = t.bypass || '—'; tr.appendChild(c5);
-      const c6 = document.createElement('td'); c6.appendChild(buildNavigableAddrNode(t.addr || '')); tr.appendChild(c6);
-      if (t.needs_review) tr.title = 'Revue manuelle recommandée';
-      body.appendChild(tr);
-    });
-    table.appendChild(body);
-    nodes.push(table);
-    el.replaceChildren(...nodes);
-    return;
-  }
-
-
-  if (msg.type === 'hubDeobfuscateDone') {
-    const el = document.getElementById('deobfuscateContent');
-    if (!el) return;
-    const results = Array.isArray(msg.data) ? msg.data : [];
-    tabDataCache.deobfuscate = { binaryPath: getStaticBinaryPath() };
-    if (!results.length) {
-      el.replaceChildren();
-      const p = document.createElement('p');
-      p.className = 'empty-state';
-      p.textContent = 'Aucune string déobfusquée trouvée.';
-      el.appendChild(p);
-      return;
-    }
-    const table = document.createElement('table');
-    const head = document.createElement('thead');
-    const hrow = document.createElement('tr');
-    ['Adresse','Décodé','Méthode','Confiance'].forEach((h) => {
-      const th = document.createElement('th');
-      th.textContent = h;
-      hrow.appendChild(th);
-    });
-    head.appendChild(hrow);
-    table.appendChild(head);
-    const body = document.createElement('tbody');
-    results.forEach((r) => {
-      const tr = document.createElement('tr');
-      const c1 = document.createElement('td');
-      const addrCode = document.createElement('code');
-      addrCode.className = 'addr-link';
-      addrCode.dataset.addr = r.addr;
-      addrCode.textContent = r.addr;
-      addrCode.style.cursor = 'pointer';
-      addrCode.addEventListener('click', () => {
-        vscode.postMessage({ type: 'hubGoToAddress', addr: r.addr, binaryPath: getStaticBinaryPath() });
-      });
-      c1.appendChild(addrCode);
-      tr.appendChild(c1);
-      const c2 = document.createElement('td'); c2.className = 'value'; c2.textContent = r.decoded; tr.appendChild(c2);
-      const c3 = document.createElement('td'); c3.className = 'type'; c3.textContent = r.method; tr.appendChild(c3);
-      const c4 = document.createElement('td');
-      const confMap = { high: '🟢 haute', medium: '🟡 moyenne', low: '🔴 basse' };
-      c4.textContent = confMap[r.confidence] || r.confidence || '—';
-      tr.appendChild(c4);
-      body.appendChild(tr);
-    });
-    table.appendChild(body);
-    el.replaceChildren(table);
-    return;
-  }
-
   if (msg.type === 'hubRecherche' || msg.type === 'hubSearchBinaryResult') {
     const results = msg.results || [];
     const err = msg.error;
@@ -2283,10 +2263,23 @@ window.addEventListener('message', (event) => {
     const cmtEl = document.getElementById('annotationComment');
     if (nameEl) nameEl.value = ann?.name || '';
     if (cmtEl) cmtEl.value = ann?.comment || '';
-    syncCfgActiveAddress(msg.addr, {
+    const cfgBlockFound = syncCfgActiveAddress(msg.addr, {
       reveal: isStaticTabActive('cfg'),
       revealTable: isStaticTabActive('cfg') && document.querySelector('#cfgContent .cfg-table-view')?.style.display !== 'none',
     });
+    // Auto-switch CFG function scope: demander au backend de trouver la bonne fonction via BFS inverse
+    if (!cfgBlockFound) {
+      const cfgPane = document.getElementById('cfgContent');
+      if (cfgPane && cfgPane.style.display !== 'none') {
+        const bp = getStaticBinaryPath();
+        if (bp) {
+          cfgUiState.activeAddr = msg.addr;
+          window._pendingCfgHighlightAddr = msg.addr;
+          tabDataCache.cfg = null;
+          postBinaryAwareMessage('hubLoadCfgForAddr', { binaryPath: bp, addr: msg.addr });
+        }
+      }
+    }
     syncCallGraphActiveAddress(msg.addr, {
       reveal: isStaticTabActive('callgraph'),
       revealTable: isStaticTabActive('callgraph') && document.querySelector('#callgraphContent .cfg-table-view')?.style.display !== 'none',
@@ -2802,13 +2795,17 @@ window.addEventListener('message', (event) => {
     });
     updateTypedDataActiveSelection(window._lastDisasmAddr, hexSelectionModel.spanLength, { reveal: false });
     const bp = getStaticBinaryPath();
-    document.getElementById('btnTypedPrev')?.addEventListener('click', () => {
-      if (currentPage > 0)
-        vscode.postMessage(buildTypedDataRequest(bp, { page: currentPage - 1, valueType: type || 'auto' }));
+    container.querySelectorAll('#btnTypedPrev').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (currentPage > 0)
+          vscode.postMessage(buildTypedDataRequest(bp, { page: currentPage - 1, valueType: type || 'auto' }));
+      });
     });
-    document.getElementById('btnTypedNext')?.addEventListener('click', () => {
-      if (currentPage < totalPages - 1)
-        vscode.postMessage(buildTypedDataRequest(bp, { page: currentPage + 1, valueType: type || 'auto' }));
+    container.querySelectorAll('#btnTypedNext').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (currentPage < totalPages - 1)
+          vscode.postMessage(buildTypedDataRequest(bp, { page: currentPage + 1, valueType: type || 'auto' }));
+      });
     });
     return;
   }
@@ -2896,43 +2893,96 @@ window.addEventListener('message', (event) => {
       if (!byType[r.type]) byType[r.type] = [];
       byType[r.type].push(r);
     }
-    const tree = document.createElement('div');
-    tree.className = 'resource-tree';
-    const detail = document.createElement('div');
-    detail.className = 'resource-detail';
-    detail.style.display = 'none';
 
-    for (const [type, items] of Object.entries(byType)) {
-      const typeRow = document.createElement('div');
-      typeRow.className = 'resource-tree-type';
-      typeRow.textContent = '\u25B8 ' + type + ' (' + items.length + ')';
-      const itemsDiv = document.createElement('div');
-      itemsDiv.className = 'resource-tree-items';
-      itemsDiv.style.display = 'none';
+    // Layout: filtre + arbre gauche / détail droite
+    const layout = document.createElement('div');
+    layout.className = 'resource-layout';
 
-      typeRow.addEventListener('click', () => {
-        const visible = itemsDiv.style.display !== 'none';
-        itemsDiv.style.display = visible ? 'none' : '';
-        typeRow.textContent = (visible ? '\u25B8 ' : '\u25BE ') + type + ' (' + items.length + ')';
-      });
+    const treePaneEl = document.createElement('div');
+    treePaneEl.className = 'resource-tree-pane';
 
-      items.forEach((r) => {
-        const item = document.createElement('div');
-        item.className = 'resource-tree-item';
-        item.textContent = 'ID ' + r.id + ' \u2014 Lang ' + r.lang + ' \u2014 ' + r.size + ' o';
-        item.addEventListener('click', () => {
-          detail.style.display = '';
-          let text = 'Type: ' + r.type + '\nID: ' + r.id + '\nLang: ' + r.lang + '\nSize: ' + r.size + ' octets\n\n';
-          if (r.decoded) text += 'Decoded:\n' + JSON.stringify(r.decoded, null, 2) + '\n\n';
-          text += 'Hex preview:\n' + (r.hex_preview || '\u2014');
-          detail.textContent = text;
+    const filterWrap = document.createElement('div');
+    filterWrap.className = 'resource-filter-wrap';
+    const filterInput = document.createElement('input');
+    filterInput.type = 'text';
+    filterInput.className = 'resource-filter';
+    filterInput.placeholder = 'Filtrer (type, ID\u2026)';
+    filterInput.spellcheck = false;
+    filterWrap.appendChild(filterInput);
+    treePaneEl.appendChild(filterWrap);
+
+    const treeEl = document.createElement('div');
+    treeEl.className = 'resource-tree';
+    treePaneEl.appendChild(treeEl);
+
+    const detailEl = document.createElement('div');
+    detailEl.className = 'resource-detail';
+    const detailPlaceholder = document.createElement('p');
+    detailPlaceholder.className = 'hint';
+    detailPlaceholder.textContent = 'S\u00e9lectionne une ressource pour voir le d\u00e9tail.';
+    detailEl.appendChild(detailPlaceholder);
+
+    layout.appendChild(treePaneEl);
+    layout.appendChild(detailEl);
+
+    let activeItem = null;
+
+    function buildResourceTree(filterStr) {
+      const f = (filterStr || '').toLowerCase().trim();
+      treeEl.textContent = '';
+      for (const [type, items] of Object.entries(byType)) {
+        const filtered = f
+          ? items.filter((r) =>
+              type.toLowerCase().includes(f) ||
+              String(r.id).toLowerCase().includes(f) ||
+              String(r.lang).toLowerCase().includes(f)
+            )
+          : items;
+        if (!filtered.length) continue;
+
+        const typeRow = document.createElement('div');
+        typeRow.className = 'resource-tree-type';
+        const itemsDiv = document.createElement('div');
+        itemsDiv.className = 'resource-tree-items';
+        let open = !!f;
+        const setLabel = (o) => {
+          typeRow.textContent = (o ? '\u25BE ' : '\u25B8 ') + type + ' (' + filtered.length + ')';
+        };
+        setLabel(open);
+        itemsDiv.style.display = open ? '' : 'none';
+        typeRow.addEventListener('click', () => {
+          open = !open;
+          itemsDiv.style.display = open ? '' : 'none';
+          setLabel(open);
         });
-        itemsDiv.appendChild(item);
-      });
-      tree.appendChild(typeRow);
-      tree.appendChild(itemsDiv);
+
+        filtered.forEach((r) => {
+          const item = document.createElement('div');
+          item.className = 'resource-tree-item';
+          item.textContent = 'ID\u00a0' + r.id + '\u00b7 Lang\u00a0' + r.lang + '\u00b7 ' + r.size + '\u00a0o';
+          item.addEventListener('click', () => {
+            if (activeItem) activeItem.classList.remove('is-active');
+            item.classList.add('is-active');
+            activeItem = item;
+            if (typeof renderPeResourceDetail === 'function') {
+              renderPeResourceDetail(r, detailEl);
+            } else {
+              let text = 'Type: ' + r.type + '\nID: ' + r.id + '\nLang: ' + r.lang + '\nSize: ' + r.size + ' octets\n\n';
+              if (r.decoded) text += 'Decoded:\n' + JSON.stringify(r.decoded, null, 2) + '\n\n';
+              text += 'Hex preview:\n' + (r.hex_preview || '\u2014');
+              detailEl.textContent = text;
+            }
+          });
+          itemsDiv.appendChild(item);
+        });
+        treeEl.appendChild(typeRow);
+        treeEl.appendChild(itemsDiv);
+      }
     }
-    container.replaceChildren(tree, detail);
+
+    buildResourceTree('');
+    filterInput.addEventListener('input', () => buildResourceTree(filterInput.value));
+    container.replaceChildren(layout);
     return;
   }
 

@@ -29,6 +29,7 @@ from backends.static.annotations.typed_struct_refs import (
     collect_typed_struct_hints,
 )
 from backends.static.binary.arch import (
+    FEATURES,
     detect_binary_arch,
     get_feature_support_matrix,
     get_raw_arch_info,
@@ -39,6 +40,11 @@ from backends.static.binary.symbols import extract_symbols
 logger = get_logger(__name__)
 
 PROGRESS_PREFIX = "POF_PROGRESS "
+_MACHO_HEADER_SYMBOLS = {
+    "__mh_execute_header",
+    "__mh_dylib_header",
+    "__mh_bundle_header",
+}
 
 
 def _emit_progress(
@@ -64,6 +70,10 @@ def _emit_progress(
         payload["percent"] = max(0, min(100, int(percent)))
     with contextlib.suppress(Exception):
         progress_callback(payload)
+
+
+def _is_generic_macho_header_symbol(name: str | None) -> bool:
+    return str(name or "").strip() in _MACHO_HEADER_SYMBOLS
 
 
 try:
@@ -109,6 +119,11 @@ def _resolve_arch_payload(
     if info is None:
         return None
     support_matrix = get_feature_support_matrix()
+    support = support_matrix.get(info.adapter.key)
+    if support is None:
+        support = {
+            feature: info.adapter.support_for(feature).as_dict() for feature in FEATURES
+        }
     return {
         "key": info.key,
         "family": info.family,
@@ -117,7 +132,7 @@ def _resolve_arch_payload(
         "ptr_size": info.ptr_size,
         "abi": info.abi,
         "endian": info.endian,
-        "support": support_matrix.get(info.adapter.key, {}),
+        "support": support,
     }
 
 
@@ -129,6 +144,75 @@ def _apply_capstone_syntax(md, cs_arch: int, syntax: str) -> None:
         md.syntax = capstone.CS_OPT_SYNTAX_INTEL
     elif syntax == "att":
         md.syntax = capstone.CS_OPT_SYNTAX_ATT
+
+
+_RISCV_PC_RELATIVE_MNEMONICS = {
+    "b",
+    "beq",
+    "beqz",
+    "bge",
+    "bgez",
+    "bgeu",
+    "bgt",
+    "bgtu",
+    "bgtz",
+    "ble",
+    "bleu",
+    "blez",
+    "blt",
+    "bltu",
+    "bltz",
+    "bne",
+    "bnez",
+    "j",
+    "jal",
+    "tail",
+}
+
+
+def _parse_capstone_immediate(value: str) -> int | None:
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    try:
+        return int(text, 16) if text.startswith("0x") else int(text)
+    except ValueError:
+        return None
+
+
+def _normalize_capstone_operands(cs_arch: int, instr) -> str:
+    """Normalise certains opérandes Capstone vers les adresses attendues.
+
+    Capstone RISC-V expose les cibles PC-relatives comme offsets (`jal 0x1c`)
+    alors que CFG/Call Graph attendent des adresses virtuelles (`jal 0xc020`).
+    Capstone BPF expose `call imm` avec l'immédiat eBPF relatif en instructions
+    de 8 octets ; le CFG attend aussi une adresse virtuelle.
+    """
+    op_str = str(getattr(instr, "op_str", "") or "")
+    if not capstone:
+        return op_str
+    mnemonic = str(getattr(instr, "mnemonic", "") or "").lower()
+    operands = [part.strip() for part in op_str.split(",") if part.strip()]
+    if not operands:
+        return op_str
+
+    if cs_arch == getattr(capstone, "CS_ARCH_RISCV", None):
+        if mnemonic not in _RISCV_PC_RELATIVE_MNEMONICS:
+            return op_str
+        offset = _parse_capstone_immediate(operands[-1])
+        if offset is None:
+            return op_str
+        operands[-1] = f"0x{int(instr.address) + offset:x}"
+        return ", ".join(operands)
+
+    if cs_arch == getattr(capstone, "CS_ARCH_BPF", None) and mnemonic == "call":
+        offset = _parse_capstone_immediate(operands[-1])
+        if offset is None:
+            return op_str
+        operands[-1] = f"0x{int(instr.address) + (offset + 1) * 8:x}"
+        return ", ".join(operands)
+
+    return op_str
 
 
 def _parse_base_addr(value: str | int | None) -> int:
@@ -296,15 +380,16 @@ def disassemble_with_capstone(
             # Format similaire à objdump : "mnemonic\toperands"
             # Ajouter les bytes hex au début (comme objdump -d)
             bytes_hex = " ".join(f"{b:02x}" for b in instr.bytes)
+            op_str = _normalize_capstone_operands(cs_arch, instr)
             # Format : "bytes_hex  mnemonic  op_str"
-            text = f"{bytes_hex:<20} {instr.mnemonic:<8} {instr.op_str}"
+            text = f"{bytes_hex:<20} {instr.mnemonic:<8} {op_str}"
             lines.append(
                 {
                     "addr": addr,
                     "text": text.strip(),
                     "bytes": bytes_hex,
                     "mnemonic": instr.mnemonic,
-                    "operands": instr.op_str,
+                    "operands": op_str,
                 }
             )
             processed = min(
@@ -392,14 +477,15 @@ def disassemble_raw_blob(
         for instr in md.disasm(code_bytes, base_addr):
             addr = f"0x{instr.address:x}"
             bytes_hex = " ".join(f"{b:02x}" for b in instr.bytes)
-            text = f"{bytes_hex:<20} {instr.mnemonic:<8} {instr.op_str}"
+            op_str = _normalize_capstone_operands(cs_arch, instr)
+            text = f"{bytes_hex:<20} {instr.mnemonic:<8} {op_str}"
             lines.append(
                 {
                     "addr": addr,
                     "text": text.strip(),
                     "bytes": bytes_hex,
                     "mnemonic": instr.mnemonic,
-                    "operands": instr.op_str,
+                    "operands": op_str,
                 }
             )
             processed = min(
@@ -569,6 +655,98 @@ def _location_matches_text(location: str, text: str) -> bool:
     return bool(pattern.search(text))
 
 
+def _build_cfg_attribution(
+    lines: list[dict],
+    function_ranges: list[tuple[int, int | None, dict]],
+) -> dict[int, str]:
+    """Attribue chaque instruction à une fonction par BFS dans le graphe de flot.
+
+    Contrairement à l'attribution linéaire par plage d'adresses, cette méthode
+    suit le flux de contrôle réel (sauts, branches) depuis chaque point d'entrée.
+    Les instructions non-atteignables tombent en fallback linéaire dans l'appelant.
+
+    Returns: {addr_int -> normalized_func_addr_str}
+    """
+    import bisect
+    from collections import deque
+
+    try:
+        from backends.static.disasm.cfg import _get_mnemonic, _is_branch
+    except ImportError:
+        return {}
+
+    if not function_ranges:
+        return {}
+
+    # Ordered address list for fast "next instruction" lookup
+    addr_sorted: list[int] = []
+    for line in lines:
+        a = _addr_to_int(line.get("addr"))
+        if a is not None:
+            addr_sorted.append(a)
+    addr_sorted.sort()
+    addr_set = set(addr_sorted)
+
+    # Successor map: addr_int -> [next reachable addr_int] (calls not followed)
+    successors: dict[int, list[int]] = {}
+    for line in lines:
+        a = _addr_to_int(line.get("addr"))
+        if a is None:
+            continue
+        text = line.get("text", "")
+        is_br, is_call, target_str = _is_branch(text)
+        pos = bisect.bisect_right(addr_sorted, a)
+        next_a = addr_sorted[pos] if pos < len(addr_sorted) else None
+        succs: list[int] = []
+        if not is_br or is_call:
+            if next_a is not None:
+                succs.append(next_a)
+        else:
+            target_int = _addr_to_int(target_str) if target_str else None
+            is_unconditional = _get_mnemonic(text) in {"jmp", "jmpq", "b", "br"}
+            if target_int is not None and target_int in addr_set:
+                succs.append(target_int)
+            if not is_unconditional and target_int is not None and next_a is not None:
+                succs.append(next_a)
+        successors[a] = succs
+
+    # Entry map: addr_int -> normalized_addr_str
+    entry_map: dict[int, str] = {}
+    for _, _, fn in function_ranges:
+        e = _addr_to_int(fn.get("addr"))
+        if e is not None and e in addr_set:
+            entry_map[e] = _normalize_addr(fn.get("addr", ""))
+
+    if not entry_map:
+        return {}
+
+    # Pre-mark all entry points so cross-function jumps (tail calls) stop BFS
+    attribution: dict[int, str] = {e: s for e, s in entry_map.items()}
+
+    # BFS in ascending address order so earlier functions are claimed first
+    for entry_int, entry_str in sorted(entry_map.items()):
+        queue: deque[int] = deque([entry_int])
+        seen: set[int] = {entry_int}
+        while queue:
+            curr = queue.popleft()
+            owner = attribution.get(curr)
+            if owner is not None and owner != entry_str:
+                continue
+            attribution[curr] = entry_str
+            for succ in successors.get(curr, []):
+                if succ in seen:
+                    continue
+                if succ in entry_map and entry_map[succ] != entry_str:
+                    continue  # tail call → stop
+                succ_owner = attribution.get(succ)
+                if succ_owner is not None and succ_owner != entry_str:
+                    continue  # already claimed by another function
+                seen.add(succ)
+                queue.append(succ)
+
+    return attribution
+
+
 def _build_function_ranges(functions: list[dict]) -> list[tuple[int, int | None, dict]]:
     starts = []
     for fn in functions:
@@ -675,12 +853,18 @@ def _load_disasm_context(
                 cached_functions = cache.get_functions(binary_path) or []
                 cached_symbols = cache.get_symbols(binary_path) or []
                 cached_annotations = cache.get_annotations(binary_path) or []
-                functions = cached_functions
+                functions = [
+                    fn
+                    for fn in cached_functions
+                    if not _is_generic_macho_header_symbol(fn.get("name"))
+                ]
                 for symbol in cached_symbols:
                     if symbol.get("type") not in {"T", "t"}:
                         continue
                     addr = _addr_to_int(symbol.get("addr"))
                     name = str(symbol.get("name") or "").strip()
+                    if _is_generic_macho_header_symbol(name):
+                        continue
                     if addr is None or not name:
                         continue
                     label_map.setdefault(addr, name)
@@ -713,6 +897,8 @@ def _load_disasm_context(
                 continue
             addr = _addr_to_int(symbol.get("addr"))
             name = str(symbol.get("name") or "").strip()
+            if _is_generic_macho_header_symbol(name):
+                continue
             if addr is None or not name:
                 continue
             label_map.setdefault(addr, name)
@@ -733,6 +919,49 @@ def _load_disasm_context(
         "stack_frames": stack_frames,
         "typed_struct_index": typed_struct_index,
     }
+
+
+def _augment_context_with_discovered_functions(
+    context: dict,
+    lines: list[dict],
+    binary_path: str,
+    *,
+    raw_mode: bool = False,
+) -> dict:
+    if raw_mode or context.get("function_ranges") or not lines:
+        return context
+    try:
+        from backends.static.disasm.discover_functions import discover_functions
+
+        known_addrs: set[str] = set()
+        for symbol in extract_symbols(binary_path):
+            if symbol.get("type") not in {"T", "t"}:
+                continue
+            name = str(symbol.get("name") or "").strip()
+            if _is_generic_macho_header_symbol(name):
+                continue
+            addr = str(symbol.get("addr") or "").strip()
+            if addr:
+                known_addrs.add(addr if addr.startswith("0x") else f"0x{addr}")
+        discovered = discover_functions(
+            lines,
+            known_addrs,
+            binary_path=binary_path,
+        )
+    except Exception:
+        return context
+    if not discovered:
+        return context
+    context = dict(context)
+    label_map = dict(context.get("label_map") or {})
+    for fn in discovered:
+        addr = _addr_to_int(fn.get("addr"))
+        name = str(fn.get("name") or "").strip()
+        if addr is not None and name and not _is_generic_macho_header_symbol(name):
+            label_map.setdefault(addr, name)
+    context["label_map"] = label_map
+    context["function_ranges"] = _build_function_ranges(discovered)
+    return context
 
 
 _X86_BRANCH_MNEMONICS = {
@@ -926,6 +1155,22 @@ def _write_disasm_outputs(
     with open(output_asm, "w", encoding="utf-8") as f:
         f.write("\n".join(asm_output))
 
+    # CFG-based function attribution (more accurate than linear address ranges)
+    cfg_attribution = _build_cfg_attribution(lines, function_ranges)
+    entry_addr_to_fn: dict[str, dict] = {
+        _normalize_addr(fn.get("addr", "")): fn for _, _, fn in function_ranges
+    }
+
+    def _resolve_function(addr_int: int | None) -> dict | None:
+        if addr_int is None:
+            return None
+        cfg_addr = cfg_attribution.get(addr_int)
+        if cfg_addr:
+            fn = entry_addr_to_fn.get(cfg_addr)
+            if fn is not None:
+                return fn
+        return _find_function_context(function_ranges, addr_int)
+
     lines_with_line_num = []
     if label_map:
         addr_to_line: dict[str, int] = {}
@@ -937,7 +1182,7 @@ def _write_disasm_outputs(
                     addr_to_line[addr] = physical_lineno
         for line in lines:
             addr_int = _addr_to_int(line.get("addr"))
-            current_function = _find_function_context(function_ranges, addr_int)
+            current_function = _resolve_function(addr_int)
             function_addr = (
                 _normalize_addr(current_function.get("addr", ""))
                 if current_function
@@ -976,7 +1221,7 @@ def _write_disasm_outputs(
     else:
         for idx, line in enumerate(lines, start=1):
             addr_int = _addr_to_int(line.get("addr"))
-            current_function = _find_function_context(function_ranges, addr_int)
+            current_function = _resolve_function(addr_int)
             function_addr = (
                 _normalize_addr(current_function.get("addr", ""))
                 if current_function
@@ -1109,6 +1354,12 @@ def disassemble(
         cache_db_path=cache_db_path,
         raw_mode=bool(raw_arch),
     )
+    context = _augment_context_with_discovered_functions(
+        context,
+        lines,
+        binary_path,
+        raw_mode=bool(raw_arch),
+    )
     raw_info = get_raw_arch_info(raw_arch, raw_endian) if raw_arch else None
     return _write_disasm_outputs(
         lines,
@@ -1180,6 +1431,11 @@ def main() -> int:
         "--no-cache", action="store_true", help="Disable cache (always recompute)"
     )
     parser.add_argument(
+        "--cache-write-only",
+        action="store_true",
+        help="Recompute even when cache exists, then save the fresh result to cache.",
+    )
+    parser.add_argument(
         "--progress",
         action="store_true",
         help="Emit machine-readable progress events on stderr.",
@@ -1221,7 +1477,11 @@ def main() -> int:
         if cache_db == "auto":
             cache_db = default_cache_path(args.binary)
         with DisasmCache(cache_db) as cache:
-            hit = cache.get_disasm(args.binary)
+            hit = (
+                None
+                if getattr(args, "cache_write_only", False)
+                else cache.get_disasm(args.binary)
+            )
             if hit is not None:
                 _, cached_lines = hit
                 logger.debug("Cache hit — skipping disassembly")

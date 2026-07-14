@@ -164,16 +164,34 @@ Le runtime plugin gere la discovery, la validation de manifest, l'attachement Py
 
 ## Cache et persistance
 
-Le projet evite de recalculer certaines analyses lourdes.
+Le projet evite de recalculer certaines analyses lourdes. Dans l'extension VS
+Code, le dossier de reference est `context.storageUri`, c'est-a-dire le
+`workspaceStorage` de VS Code pour le workspace courant :
+
+```text
+<workspaceStorage>/<workspace-id>/PileOuFaces.stack-visualizer/
+```
+
+Le dossier projet `.pile-ou-face/` reste un fallback de compatibilite pour
+certains lancements CLI, MCP ou artefacts de developpement ; ce n'est pas le
+stockage principal de l'extension.
 
 Elements persistants :
 
-- `.pile-ou-face/static_cache/` : caches par binaire;
-- `.pile-ou-face/annotations/` : labels, commentaires, bookmarks;
-- `.pile-ou-face/decompile_cache/` : pseudo-C mis en cache;
-- `.pile-ou-face/pfdb/` : base d'analyse SQLite selon les modules;
-- `.pile-ou-face/structs.json` : definitions de structs/unions/enums;
-- `.pile-ou-face/patches/` : patchs persistants.
+- `static_cache/` : caches par binaire;
+- `decompile_cache/` : pseudo-C mis en cache;
+- `pfdb/` : base d'analyse SQLite selon les modules (desassemblage, CFG, symboles...);
+- `patches/` : patchs persistants;
+- `plugins/` : plugins installes par l'extension;
+- `licenses/` : licences importees dans le workspace;
+- `decompilers.json` : configuration des decompilateurs.
+
+**Annotations (labels, commentaires, renommages, bookmarks, revue)** : cas particulier,
+stockees a part dans `~/.pile-ou-face/annotations.db` (base SQLite dediee, dans le home
+de l'utilisateur — pas sous `storageUri`, pas dans le projet). Ce chemin fixe est
+resolu de la meme facon par l'extension VS Code (via subprocess CLI) et par le serveur
+MCP (process independant, sans acces aux API VS Code), qui partagent donc desormais
+les memes annotations. Voir `annotations.py` / `annotation_db.py` plus bas.
 
 ## Formats supportes
 
@@ -193,13 +211,19 @@ Architectures prises en charge selon les modules :
 - PowerPC;
 - SPARC;
 - RISC-V;
+- SystemZ / s390x;
 - BPF;
 - WebAssembly;
 - M68K;
 - SH;
 - TriCore.
 
-Toutes les features n'ont pas le meme niveau de support sur chaque architecture. Le module `backends/static/arch.py` centralise la matrice de support et les conventions propres aux ISA.
+Toutes les features n'ont pas le meme niveau de support sur chaque architecture. Le module `extension/backends/static/binary/arch.py` centralise la matrice de support et les conventions propres aux ISA.
+
+Certaines architectures Capstone sont exposees en `disasm-only` : les octets
+peuvent etre decodes, mais le host ne pretend pas construire un CFG ou un Call
+Graph fiable sans table semantique ISA. Dans ce cas l'UI doit afficher un
+support limite au lieu d'un graphe vide ambigu.
 
 ## Tests
 

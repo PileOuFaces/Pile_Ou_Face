@@ -69,6 +69,7 @@ class TestRawArchInfo(unittest.TestCase):
             "ppc": ("ppc32", 4),
             "sparc64": ("sparcv9", 8),
             "sysz": ("sysz", 8),
+            "s390x": ("sysz", 8),
             "m68k": ("m68k", 4),
             "wasm": ("wasm", 4),
             "bpf": ("bpf", 8),
@@ -122,6 +123,15 @@ class TestArchAdapters(unittest.TestCase):
                 self.assertEqual(adapter.classify_code_ref_mnemonic(jcc), "jcc")
                 self.assertEqual(adapter.classify_code_ref_mnemonic(jmp), "jmp")
                 self.assertEqual(adapter.classify_code_ref_mnemonic(ret), "ret")
+        self.assertEqual(
+            arch_module.SYSZ_ADAPTER.classify_code_ref_mnemonic("brasl"), "call"
+        )
+        self.assertEqual(
+            arch_module.SYSZ_ADAPTER.classify_code_ref_mnemonic("jne"), "jcc"
+        )
+        self.assertEqual(
+            arch_module.SYSZ_ADAPTER.classify_code_ref_mnemonic("j"), "jmp"
+        )
 
     def test_extended_adapters_recognize_operand_based_returns(self):
         self.assertTrue(arch_module.ARM32_ADAPTER.is_return_instruction("bx", "lr"))
@@ -133,6 +143,8 @@ class TestArchAdapters(unittest.TestCase):
         )
         self.assertTrue(arch_module.MIPS_ADAPTER.is_return_instruction("jr", "$ra"))
         self.assertFalse(arch_module.MIPS_ADAPTER.is_return_instruction("jr", "$t9"))
+        self.assertTrue(arch_module.SYSZ_ADAPTER.is_return_instruction("br", "%r14"))
+        self.assertFalse(arch_module.SYSZ_ADAPTER.is_return_instruction("br", "%r1"))
 
     def test_extended_prologue_patterns_accept_hex_immediates(self):
         cases = [
@@ -149,11 +161,22 @@ class TestArchAdapters(unittest.TestCase):
         self.assertEqual(matrix["x86"]["cfg"]["level"], "full")
         self.assertEqual(matrix["arm64"]["stack_frame"]["level"], "full")
         self.assertEqual(matrix["mips"]["cfg"]["level"], "partial")
-        self.assertEqual(matrix["wasm"]["stack_frame"]["level"], "partial")
+        self.assertEqual(matrix["sysz"]["cfg"]["level"], "partial")
+        self.assertEqual(matrix["wasm"]["disasm"]["level"], "full")
+        self.assertEqual(matrix["wasm"]["cfg"]["level"], "unsupported")
+        self.assertEqual(matrix["wasm"]["call_graph"]["level"], "unsupported")
+        self.assertEqual(matrix["wasm"]["stack_frame"]["level"], "unsupported")
         self.assertEqual(matrix["mips"]["calling_convention"]["level"], "partial")
         self.assertNotIn("taint", matrix["riscv"])
         self.assertNotIn("string_deobfuscate", matrix["sparc"])
         self.assertNotIn("generic", matrix)
+
+    def test_generic_raw_adapters_do_not_claim_semantic_cfg(self):
+        adapter = arch_module._generic_adapter("xcore", "XCore")
+
+        self.assertEqual(adapter.support_for("disasm").level, "disasm-only")
+        self.assertEqual(adapter.support_for("cfg").level, "unsupported")
+        self.assertEqual(adapter.support_for("call_graph").level, "unsupported")
 
 
 class TestDetectBinaryArch(unittest.TestCase):

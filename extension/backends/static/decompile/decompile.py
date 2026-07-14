@@ -449,11 +449,48 @@ def _get_decompiler_docker_image(decompiler: str) -> str:
         img = str(entry.get("docker_image") or "").strip()
         if img:
             return img
-    # Fallback conventionnel : pile-ou-face/decompiler-{name}:latest
-    # Permet d'utiliser un décompilateur builtin même sans entrée dans decompilers.json
-    if normalized:
-        return f"pile-ou-face/decompiler-{normalized}:latest"
+    # Pas de défaut : la décompilation Docker est opt-in. Sans override d'env
+    # (POF_DECOMPILER_IMAGE_<NAME>) ni `docker_image` configuré — via les réglages :
+    # décompilateur perso OU « utiliser le nôtre » (images ghcr versionnées) — aucune
+    # image n'est retournée et le chemin Docker n'est pas tenté pour cet outil.
     return ""
+
+
+def _docker_pull_image(image_name: str, platform: str = "") -> bool:
+    """Lance docker pull sur l'image et retourne True si succès.
+
+    Uniquement pour les images avec un registre distant (ghcr.io, etc.).
+    Ne tente pas de puller des images locales de dev.
+    """
+    if _is_local_dev_docker_image(image_name):
+        return False
+    docker_exe = _find_docker_executable() or "docker"
+    _log.info("Pulling Docker image %s …", image_name)
+    cmd = [docker_exe, "pull"]
+    if platform:
+        cmd += ["--platform", platform]
+    cmd.append(image_name)
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        if proc.returncode == 0:
+            _log.info("Pull réussi : %s", image_name)
+            _DOCKER_AVAILABLE_CACHE[image_name] = True
+            return True
+        _log.warning(
+            "docker pull %s a échoué (code %d): %s",
+            image_name,
+            proc.returncode,
+            proc.stderr.strip()[-400:],
+        )
+        return False
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        _log.warning("docker pull %s exception: %s", image_name, exc)
+        return False
 
 
 def _get_all_docker_images() -> dict[str, str]:
@@ -1196,6 +1233,31 @@ def _run_custom_decompiler_in_docker(
                 stderr_tail = (proc.stderr or "").strip()[-800:]
                 if _docker_run_failed_because_image_missing(stderr_tail):
                     _DOCKER_AVAILABLE_CACHE[image_name] = False
+                    # Tenter un pull automatique puis relancer
+                    if _docker_pull_image(image_name, platform=pof_platform):
+                        proc2 = subprocess.run(
+                            docker_cmd,
+                            capture_output=True,
+                            timeout=timeout,
+                            text=True,
+                        )
+                        parsed = _parse_external_decompiler_output(
+                            proc2.stdout,
+                            decompiler=decompiler,
+                            addr=addr,
+                            out_file=output_mount_dir / f"out{out_ext}",
+                            full=full,
+                            output_format=output_format,
+                        )
+                        parsed["provider"] = "docker"
+                        parsed["docker_image"] = image_name
+                        if proc2.returncode != 0:
+                            parsed["error"] = (
+                                (proc2.stderr or "").strip()[-800:]
+                                or f"{decompiler} Docker exited with code {proc2.returncode}"
+                            )
+                            parsed["error_type"] = "tool_error"
+                        return parsed
                     parsed["error"] = _docker_missing_image_error(
                         decompiler, image_name
                     )
@@ -1394,8 +1456,13 @@ def _is_docker_image_available_for_decompiler(decompiler: str) -> bool:
 
 
 def _is_local_dev_docker_image(image_name: str) -> bool:
-    normalized = str(image_name or "").strip().lower()
-    return normalized.startswith("pile-ou-face/decompiler-")
+    """Retourne True si l'image est une image de dev local (sans registre distant).
+
+    Les images OCI publiées ont un hostname avec un '.' dans le premier segment
+    (ex: ghcr.io/..., docker.io/...). Les images locales n'en ont pas.
+    """
+    first_segment = str(image_name or "").strip().split("/")[0]
+    return "." not in first_segment and ":" not in first_segment
 
 
 def _docker_missing_image_error(decompiler: str, image_name: str) -> str:
@@ -1409,7 +1476,13 @@ def _docker_missing_image_error(decompiler: str, image_name: str) -> str:
             f"Ou surcharge l'image avec {_docker_env_var_name_for_decompiler(normalized)}=registry/image:tag"
         )
     else:
-        lines.append(f"Fais un docker pull {image_name} ou configure une image valide.")
+        lines.append(f"Pull automatique échoué pour {image_name}.")
+        lines.append(
+            f"Vérifie ta connexion ou tente manuellement : docker pull {image_name}"
+        )
+        lines.append(
+            f"Surcharge possible avec {_docker_env_var_name_for_decompiler(normalized)}=registry/image:tag"
+        )
     return "\n".join(lines)
 
 
@@ -1441,7 +1514,8 @@ def _preferred_docker_platform_for_decompiler(decompiler: str) -> str:
     forced = os.environ.get("DOCKER_PLATFORM", "").strip()
     if forced:
         return forced
-    return ""
+    entry = _load_decompilers().get(_normalize_decompiler_id(decompiler)) or {}
+    return str(entry.get("docker_platform") or "").strip()
 
 
 def _load_annotations_payload(
@@ -2424,6 +2498,11 @@ def list_available_decompilers(
         "full": bool(full),
         "docker_images": docker_images,
         "docker_images_available": docker_avail,
+        "docker_platform": {
+            did: str(all_decompilers[did].get("docker_platform") or "").strip()
+            for did in all_decompilers
+            if all_decompilers[did].get("docker_platform")
+        },
         "local_available": local_available,
         "labels": _custom_decompiler_labels(),
         "reasons": reasons,
@@ -2540,6 +2619,7 @@ def decompile_function(
     stack_vars: list[dict] | None = None,
     cache_dir: Path | None = None,
     provider: str = "auto",
+    no_cache: bool = False,
 ) -> dict[str, Any]:
     """Décompile une fonction. decompiler='' → sélection automatique parmi les outils disponibles."""
     provider = _normalize_provider(provider)
@@ -2588,7 +2668,7 @@ def decompile_function(
         stack_signature=_stack_signature(stack_frame_data, stack_vars),
         typed_structs_signature=typed_struct_signature(binary_path),
     )
-    cached = _read_cache(_key, _cdir)
+    cached = None if no_cache else _read_cache(_key, _cdir)
     if cached is not None:
         if not cached.get("error") and not isinstance(
             cached.get("score"), (int, float)

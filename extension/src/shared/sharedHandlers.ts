@@ -12,7 +12,8 @@ const cp = require('child_process');
 const crypto = require('crypto');
 const readline = require('readline');
 const fileManager = require('./fileManager');
-const { detectPythonExecutable, getExtensionPath } = require('./utils');
+const { detectPythonExecutable, getExtensionPath, buildRuntimeEnv } = require('./utils');
+const { makeAnnotationsBridge } = require('./annotationsBridge');
 const {
   cancelAiProcess,
   clearAiProcess,
@@ -211,9 +212,11 @@ function normalizeRawProfile(profile) {
 function getAnnotationsPath(root, binaryPath, storageDir?) {
   const absPath = path.isAbsolute(binaryPath) ? binaryPath : path.join(root, binaryPath);
   const hash = crypto.createHash('sha256').update(absPath).update(fs.existsSync(absPath) ? String(fs.statSync(absPath).mtimeMs) : '').digest('hex').slice(0, 16);
-  const annotationsBase = storageDir || path.join(root, '.pile-ou-face');
+  const annotationsBase = storageDir;
   const dir = path.join(annotationsBase, 'annotations');
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  if (!fs.existsSync(dir)) {
+    try { fs.mkdirSync(dir, { recursive: true }); } catch (_) { /* best-effort: read-only checks must not throw */ }
+  }
   return path.join(dir, `${hash}.json`);
 }
 
@@ -227,22 +230,6 @@ function readAnnotationsFile(filePath) {
     return {};
   }
   return {};
-}
-
-function writeAnnotationsAndNotify(panel, filePath, binaryPath, annotations) {
-  fs.writeFileSync(filePath, JSON.stringify(annotations, null, 2), 'utf8');
-  panel.webview.postMessage({ type: 'hubAnnotations', annotations });
-  panel.webview.postMessage({ type: 'hubAnnotationSaved', binaryPath });
-}
-
-function isEmptyAnnotationEntry(entry) {
-  return !entry || (
-    !entry.comment
-    && !entry.name
-    && !entry.bookmark
-    && !entry.reviewStatus
-    && !entry.reviewNotes
-  );
 }
 
 /**
@@ -261,7 +248,19 @@ function sharedHandlers(ctx) {
     setRawProfile,
     clearRawProfile,
   } = ctx;
-  const getAnnPath = (binaryPath) => getAnnotationsPath(root, binaryPath, storageDir);
+  const getAnnPath = (binaryPath) => getAnnotationsPath(root, binaryPath, storageDir || root);
+
+  const annotationsBridge = ctx.annotationsBridge || makeAnnotationsBridge({
+    root,
+    extensionPath: context?.extensionPath || getExtensionPath() || root,
+    getPythonExecutable: () => detectPythonExecutable(root),
+    buildPythonEnv: () => buildRuntimeEnv(root, storageDir),
+  });
+
+  const notifyAnnotations = (binaryPath, annotations) => {
+    panel.webview.postMessage({ type: 'hubAnnotations', annotations });
+    panel.webview.postMessage({ type: 'hubAnnotationSaved', binaryPath });
+  };
 
   const forgetRecentBinary = (binaryPath) => {
     panel.webview.postMessage({ type: 'hubForgetRecentBinary', binaryPath });
@@ -287,11 +286,15 @@ function sharedHandlers(ctx) {
     if (context) await forgetRecentBinaryState(context, target);
     await Promise.resolve(clearRawProfile?.(target));
     if (answer === 'Retirer et nettoyer') {
-      const result = fileManager.cleanupForBinary(root, target, { purgeStale: true });
+      const result = fileManager.cleanupForBinary(storageDir || root, target, {
+        purgeStale: true,
+        root,
+      });
       if (result.total > 0) {
         vscode.window.showInformationMessage(`Reverse Workspace : ${result.total} fichier(s) généré(s) supprimé(s).`);
       }
-      panel.webview.postMessage({ type: 'generatedFiles', files: fileManager.listAll(root) });
+      panel.webview.postMessage({ type: 'refreshGeneratedFiles' });
+      panel.webview.postMessage({ type: 'generatedFiles', files: fileManager.listAll(storageDir || root) });
     }
     return null;
   };
@@ -495,6 +498,15 @@ function sharedHandlers(ctx) {
       if (!binaryPath || !context) return;
       const absPath = path.isAbsolute(binaryPath) ? binaryPath : path.join(root, binaryPath);
       await forgetRecentBinaryState(context, absPath);
+      await Promise.resolve(clearRawProfile?.(absPath));
+      const result = fileManager.cleanupForBinary(storageDir || root, absPath, {
+        purgeStale: true,
+        root,
+      });
+      if (result.total > 0) {
+        panel.webview.postMessage({ type: 'refreshGeneratedFiles' });
+        panel.webview.postMessage({ type: 'generatedFiles', files: fileManager.listAll(storageDir || root) });
+      }
     },
     hubClearRecentBinaries: async () => {
       if (!context) return;
@@ -529,7 +541,7 @@ function sharedHandlers(ctx) {
       }
     },
     listGeneratedFiles: () => {
-      const summary = fileManager.listAll(root);
+      const summary = fileManager.listAll(storageDir || root);
       panel.webview.postMessage({ type: 'generatedFiles', files: summary });
     },
     cleanupGeneratedFiles: async (message) => {
@@ -542,135 +554,118 @@ function sharedHandlers(ctx) {
         );
         if (choice !== 'Supprimer') return;
       }
-      const { removedArtifacts, removedCache } = fileManager.cleanupAll(root);
+      const { removedArtifacts, removedCache } = fileManager.cleanupAll(storageDir || root);
       const total = removedArtifacts + removedCache;
       if (total > 0) {
         vscode.window.showInformationMessage(`Reverse Workspace : ${total} fichier(s) supprimé(s).`);
       }
-      panel.webview.postMessage({ type: 'generatedFiles', files: fileManager.listAll(root) });
+      panel.webview.postMessage({ type: 'refreshGeneratedFiles' });
+      panel.webview.postMessage({ type: 'generatedFiles', files: fileManager.listAll(storageDir || root) });
     },
     purgeStaleCache: () => {
-      const { removed } = fileManager.purgeStaleCache(root);
-      if (removed > 0) {
-        vscode.window.showInformationMessage(`Reverse Workspace : ${removed} entrée(s) de cache obsolète(s) supprimée(s).`);
-      }
-      panel.webview.postMessage({ type: 'generatedFiles', files: fileManager.listAll(root) });
+      const { removed } = fileManager.purgeStaleCache(storageDir || root, root);
+      vscode.window.showInformationMessage(
+        removed > 0
+          ? `Reverse Workspace : ${removed} entrée(s) de cache obsolète(s) supprimée(s).`
+          : 'Reverse Workspace : aucune entrée de cache obsolète trouvée.'
+      );
+      panel.webview.postMessage({ type: 'refreshGeneratedFiles' });
+      panel.webview.postMessage({ type: 'generatedFiles', files: fileManager.listAll(storageDir || root) });
     },
     hubError: (message) => {
       vscode.window.showErrorMessage(message.message || 'Erreur');
     },
-    hubLoadAnnotations: (message) => {
+    hubLoadAnnotations: async (message) => {
       const { binaryPath } = message;
       if (!binaryPath) {
         panel.webview.postMessage({ type: 'hubAnnotations', annotations: {} });
         return;
       }
-      const p = getAnnPath(binaryPath);
-      const annotations = readAnnotationsFile(p);
-      panel.webview.postMessage({ type: 'hubAnnotations', annotations });
+      try {
+        const legacyPath = getAnnPath(binaryPath);
+        if (fs.existsSync(legacyPath)) {
+          const legacy = readAnnotationsFile(legacyPath);
+          if (Object.keys(legacy).length) {
+            await annotationsBridge.migrateLegacyJson(binaryPath, legacy);
+          }
+          if (fs.existsSync(legacyPath)) {
+            fs.renameSync(legacyPath, `${legacyPath}.migrated`);
+          }
+        }
+        const annotations = await annotationsBridge.loadAnnotations(binaryPath);
+        panel.webview.postMessage({ type: 'hubAnnotations', annotations });
+      } catch (err) {
+        vscode.window.showErrorMessage(`Impossible de charger les annotations : ${err?.message || err}`);
+      }
     },
-    hubSaveAnnotation: (message) => {
+    hubSaveAnnotation: async (message) => {
       const { binaryPath, addr, comment, name } = message;
       if (!binaryPath || !addr) return;
       const normAddr = addr.startsWith('0x') ? addr : '0x' + addr;
-      const p = getAnnPath(binaryPath);
-      const annotations = readAnnotationsFile(p);
-      const existing = annotations[normAddr] || {};
-      annotations[normAddr] = {
-        ...existing,
-        comment: comment !== undefined ? (comment || '') : (existing.comment || ''),
-        name: name !== undefined ? (name || '') : (existing.name || ''),
-        updated: new Date().toISOString(),
-      };
-      writeAnnotationsAndNotify(panel, p, binaryPath, annotations);
-      vscode.window.showInformationMessage(`Annotation enregistrée pour ${normAddr}`);
+      try {
+        const annotations = await annotationsBridge.saveAnnotation(binaryPath, normAddr, { comment, name });
+        notifyAnnotations(binaryPath, annotations);
+        vscode.window.showInformationMessage(`Annotation enregistrée pour ${normAddr}`);
+      } catch (err) {
+        vscode.window.showErrorMessage(`Impossible d'enregistrer l'annotation : ${err?.message || err}`);
+      }
     },
-    hubSaveFunctionReview: (message) => {
+    hubSaveFunctionReview: async (message) => {
       const { binaryPath, addr, reviewStatus, reviewNotes } = message;
       if (!binaryPath || !addr) return;
       const normAddr = addr.startsWith('0x') ? addr : '0x' + addr;
-      const p = getAnnPath(binaryPath);
-      const annotations = readAnnotationsFile(p);
-      const existing = annotations[normAddr] || {};
-      const nextStatus = String(reviewStatus || '').trim();
-      const nextNotes = String(reviewNotes || '').trim();
-      const nextEntry = {
-        ...existing,
-        reviewStatus: nextStatus,
-        reviewNotes: nextNotes,
-        reviewUpdated: new Date().toISOString(),
-      };
-      if (!nextStatus) delete nextEntry.reviewStatus;
-      if (!nextNotes) delete nextEntry.reviewNotes;
-      if (!nextStatus && !nextNotes) delete nextEntry.reviewUpdated;
-      if (isEmptyAnnotationEntry(nextEntry)) delete annotations[normAddr];
-      else annotations[normAddr] = nextEntry;
-      writeAnnotationsAndNotify(panel, p, binaryPath, annotations);
+      try {
+        const annotations = await annotationsBridge.saveFunctionReview(binaryPath, normAddr, { reviewStatus, reviewNotes });
+        notifyAnnotations(binaryPath, annotations);
+      } catch (err) {
+        vscode.window.showErrorMessage(`Impossible d'enregistrer la revue : ${err?.message || err}`);
+      }
     },
-    hubSaveBookmark: (message) => {
+    hubSaveBookmark: async (message) => {
       const { binaryPath, addr, label, color } = message;
       if (!binaryPath || !addr) return;
       const normAddr = addr.startsWith('0x') ? addr : '0x' + addr;
-      const p = getAnnPath(binaryPath);
-      const annotations = readAnnotationsFile(p);
-      const existing = annotations[normAddr] || {};
-      annotations[normAddr] = {
-        ...existing,
-        bookmark: true,
-        bookmarkLabel: label || existing.bookmarkLabel || existing.name || normAddr,
-        bookmarkColor: color || existing.bookmarkColor || '#4ec9b0',
-        bookmarkUpdated: new Date().toISOString(),
-      };
-      writeAnnotationsAndNotify(panel, p, binaryPath, annotations);
+      try {
+        const existing = (await annotationsBridge.loadAnnotations(binaryPath))[normAddr] || {};
+        const resolvedLabel = label || existing.bookmarkLabel || existing.name || normAddr;
+        const resolvedColor = color || existing.bookmarkColor || '#4ec9b0';
+        const annotations = await annotationsBridge.saveBookmark(binaryPath, normAddr, { label: resolvedLabel, color: resolvedColor });
+        notifyAnnotations(binaryPath, annotations);
+      } catch (err) {
+        vscode.window.showErrorMessage(`Impossible d'enregistrer le bookmark : ${err?.message || err}`);
+      }
     },
-    hubDeleteBookmark: (message) => {
+    hubDeleteBookmark: async (message) => {
       const { binaryPath, addr } = message;
       if (!binaryPath || !addr) return;
       const normAddr = addr.startsWith('0x') ? addr : '0x' + addr;
-      const p = getAnnPath(binaryPath);
-      const annotations = readAnnotationsFile(p);
-      const existing = annotations[normAddr];
-      if (!existing) return;
-      delete existing.bookmark;
-      delete existing.bookmarkLabel;
-      delete existing.bookmarkColor;
-      delete existing.bookmarkUpdated;
-      if (isEmptyAnnotationEntry(existing)) delete annotations[normAddr];
-      else annotations[normAddr] = existing;
-      writeAnnotationsAndNotify(panel, p, binaryPath, annotations);
+      try {
+        const annotations = await annotationsBridge.deleteBookmark(binaryPath, normAddr);
+        notifyAnnotations(binaryPath, annotations);
+      } catch (err) {
+        vscode.window.showErrorMessage(`Impossible de supprimer le bookmark : ${err?.message || err}`);
+      }
     },
-    hubClearBookmarks: (message) => {
+    hubClearBookmarks: async (message) => {
       const { binaryPath } = message;
       if (!binaryPath) return;
-      const p = getAnnPath(binaryPath);
-      const annotations = readAnnotationsFile(p);
-      Object.keys(annotations).forEach((addr) => {
-        const entry = annotations[addr];
-        if (!entry || !entry.bookmark) return;
-        delete entry.bookmark;
-        delete entry.bookmarkLabel;
-        delete entry.bookmarkColor;
-        delete entry.bookmarkUpdated;
-        if (isEmptyAnnotationEntry(entry)) delete annotations[addr];
-        else annotations[addr] = entry;
-      });
-      writeAnnotationsAndNotify(panel, p, binaryPath, annotations);
+      try {
+        const annotations = await annotationsBridge.clearBookmarks(binaryPath);
+        notifyAnnotations(binaryPath, annotations);
+      } catch (err) {
+        vscode.window.showErrorMessage(`Impossible d'effacer les bookmarks : ${err?.message || err}`);
+      }
     },
-    hubDeleteAnnotation: (message) => {
+    hubDeleteAnnotation: async (message) => {
       const { binaryPath, addr } = message;
       if (!binaryPath || !addr) return;
-      const p = getAnnPath(binaryPath);
-      const annotations = readAnnotationsFile(p);
       const normAddr = addr.startsWith('0x') ? addr : '0x' + addr;
-      const existing = annotations[normAddr];
-      if (existing) {
-        delete existing.comment;
-        delete existing.name;
-        delete existing.updated;
-        if (isEmptyAnnotationEntry(existing)) delete annotations[normAddr];
-        else annotations[normAddr] = existing;
+      try {
+        const annotations = await annotationsBridge.deleteAnnotation(binaryPath, normAddr);
+        notifyAnnotations(binaryPath, annotations);
+      } catch (err) {
+        vscode.window.showErrorMessage(`Impossible de supprimer l'annotation : ${err?.message || err}`);
       }
-      writeAnnotationsAndNotify(panel, p, binaryPath, annotations);
     },
     hubAiProvidersGet: () => {
       const getSavedSettings = () => {

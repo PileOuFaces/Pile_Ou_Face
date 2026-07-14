@@ -2,7 +2,7 @@
   "name": "stack-visualizer",
   "displayName": "Pile ou Face",
   "description": "Binary reverse engineering tool for CTF: disassembly, CFG, call graph, xrefs, decompilation and annotations for ELF/PE/Mach-O binaries.",
-  "version": "0.1.6",
+  "version": "0.2.0",
   "publisher": "PileOuFaces",
   "type": "commonjs",
   "license": "AGPL-3.0-only",
@@ -42,7 +42,7 @@
     "onStartupFinished",
     "onLanguage:asm"
   ],
-  "main": "./out/extension.js",
+  "main": "./dist/extension.js",
   "contributes": {
     "commands": [
       {
@@ -119,6 +119,11 @@
         "command": "pileOuFace.decompilerOpenConfig",
         "title": "Pile ou Face: Ouvrir la config des décompilateurs",
         "category": "Pile ou Face"
+      },
+      {
+        "command": "pileOuFace.showLogs",
+        "title": "Pile ou Face: Afficher les logs",
+        "category": "Pile ou Face"
       }
     ],
     "menus": {
@@ -193,6 +198,10 @@
           "when": "true"
         },
         {
+          "command": "pileOuFace.showLogs",
+          "when": "true"
+        },
+        {
           "command": "pileOuFace.decompilerTest",
           "when": "true"
         },
@@ -246,20 +255,34 @@
           "type": "string",
           "default": "https://auth.pileouface.io",
           "description": "URL du serveur d'authentification Pile Ou Face"
+        },
+        "pileOuFace.logLevel": {
+          "type": "string",
+          "enum": [
+            "debug",
+            "info",
+            "warning",
+            "error"
+          ],
+          "default": "warning",
+          "description": "Niveau de log de l'extension et des backends Python qu'elle lance (propagé via BINHOST_LOG_LEVEL)."
         }
       }
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run build",
-    "build": "tsc -p tsconfig.json",
-    "build:watch": "tsc -p tsconfig.json --watch",
+    "vscode:prepublish": "npm run package",
+    "build": "npm run typecheck && node esbuild.js",
+    "build:watch": "node esbuild.js --watch",
+    "package": "npm run typecheck && node esbuild.js --production",
+    "test:bundle": "npm run package && tsx scripts/smoke-bundle.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "test": "tsx node_modules/.bin/_mocha '{front/tests,src/tests}/**/*.test.ts' --ignore 'front/tests/hubPayloadCore.test.ts' --require src/tests/setup.ts --exit",
     "test:watch": "tsx node_modules/.bin/_mocha '{front/tests,src/tests}/**/*.test.ts' --watch --ignore 'front/tests/hubPayloadCore.test.ts' --require src/tests/setup.ts",
     "test:coverage": "c8 tsx node_modules/.bin/_mocha '{front/tests,src/tests}/**/*.test.ts' --ignore 'front/tests/hubPayloadCore.test.ts' --require src/tests/setup.ts --exit",
+    "coverage:summary": "node scripts/coverage-summary.mjs --python coverage-python.json --javascript coverage/coverage-summary.json --output .pile-ou-face/test-artifacts/coverage-summary.md",
     "nexus:analyze": "npx gitnexus analyze ..",
     "nexus:status": "npx gitnexus status",
     "nexus:wiki": "npx gitnexus wiki .."
@@ -269,15 +292,18 @@
     "esm": false
   },
   "devDependencies": {
-    "@vscode/vsce": "^3.3.2",
     "@eslint/js": "^9.0.0",
+    "@types/jsdom": "^28.0.3",
     "@types/mocha": "^10.0.10",
     "@types/node": "^25.9.1",
     "@types/vscode": "^1.120.0",
+    "@vscode/vsce": "^3.3.2",
     "c8": "^10.1.3",
     "chai": "^4.3.10",
+    "esbuild": "^0.28.1",
     "eslint": "^9.39.2",
     "eslint-config-prettier": "^10.1.8",
+    "jsdom": "^29.1.1",
     "mocha": "^10.2.0",
     "prettier": "^3.8.1",
     "proxyquire": "^2.1.3",

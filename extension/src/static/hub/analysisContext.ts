@@ -41,6 +41,16 @@ function createAnalysisContext({
     return safe || fallback;
   };
 
+  const getDisasmCacheDbPath = (binaryPath) => {
+    if (!storageDir) return 'auto';
+    const absPath = resolvePathFromWorkspace(binaryPath);
+    const cacheDir = path.join(storageDir, 'pfdb');
+    fs.mkdirSync(cacheDir, { recursive: true });
+    const cacheName = sanitizeArtifactToken(path.basename(absPath), 'binary');
+    const cacheKey = crypto.createHash('sha256').update(String(path.resolve(absPath))).digest('hex').slice(0, 16);
+    return path.join(cacheDir, `${cacheName}.${cacheKey}.pfdb`);
+  };
+
   const getBinaryRuntimeProfile = (binaryPath, messageMeta = null) => {
     const absPath = resolvePathFromWorkspace(binaryPath);
     const explicit = normalizeRawProfile(messageMeta?.rawConfig || messageMeta);
@@ -89,19 +99,18 @@ function createAnalysisContext({
     const stats = fs.statSync(binaryPath);
     const arch = rawProfile?.arch || 'unknown';
     const descriptor = getRawArchDescriptor(arch);
-    return {
-      format: 'RAW',
-      machine: descriptor.displayName || 'Raw blob',
-      entry: rawProfile?.baseAddr || '0x0',
-      type: 'blob',
-      bits: descriptor.bits || '',
-      stripped: 'n/a',
-      packers: 'n/a',
-      arch,
-      endianness: rawProfile?.endian || 'little',
-      interp: 'n/a',
-      size: stats.size,
-    };
+      return {
+        format: 'RAW',
+        machine: descriptor.displayName || 'Raw blob',
+        entry: rawProfile?.baseAddr || '0x0',
+        type: 'blob',
+        bits: descriptor.bits || '',
+        stripped: 'n/a',
+        arch,
+        endianness: rawProfile?.endian || 'little',
+        interp: 'n/a',
+        size: stats.size,
+      };
   };
 
   const resolveArtifactBinaryPath = (inputPath) => {
@@ -171,6 +180,7 @@ function createAnalysisContext({
     annotationsJson = null,
     dwarfLines = false,
     useCacheDb = false,
+    cacheWriteOnly = false,
     emitProgress = false,
   }) => {
     const args = [
@@ -190,7 +200,8 @@ function createAnalysisContext({
     if (rawBaseAddr) args.push('--raw-base-addr', rawBaseAddr);
     if (rawEndian) args.push('--raw-endian', rawEndian);
     if (dwarfLines) args.push('--dwarf-lines');
-    if (useCacheDb) args.push('--cache-db', 'auto');
+    if (useCacheDb) args.push('--cache-db', typeof useCacheDb === 'string' ? useCacheDb : getDisasmCacheDbPath(binaryPath));
+    if (cacheWriteOnly) args.push('--cache-write-only');
     if (emitProgress) args.push('--progress');
     return args;
   };
@@ -273,6 +284,8 @@ function createAnalysisContext({
     emitProgress = false,
     progressTitle = '',
     useCacheDb = null,
+    cacheWriteOnly = false,
+    forceRebuild = false,
   }) => {
     const absPath = resolvePathFromWorkspace(binaryPath);
     if (!fs.existsSync(absPath) || fs.statSync(absPath).isDirectory()) {
@@ -282,7 +295,7 @@ function createAnalysisContext({
     const shouldUseCacheDb = useCacheDb !== null
       ? useCacheDb
       : (artifacts.binaryMeta.kind !== 'raw' && !section && syntax === 'intel');
-    if (!fs.existsSync(artifacts.disasmPath) || !fs.existsSync(artifacts.mappingPath)) {
+    if (forceRebuild || !fs.existsSync(artifacts.disasmPath) || !fs.existsSync(artifacts.mappingPath)) {
       const inflightKey = artifacts.disasmPath;
       if (_disasmInFlight.has(inflightKey)) {
         await _disasmInFlight.get(inflightKey);
@@ -308,6 +321,7 @@ function createAnalysisContext({
             annotationsJson,
             dwarfLines,
             useCacheDb: shouldUseCacheDb,
+            cacheWriteOnly: cacheWriteOnly && !!shouldUseCacheDb,
             emitProgress,
           });
           if (emitProgress) {
@@ -352,7 +366,31 @@ function createAnalysisContext({
     if (!fs.existsSync(tempDir)) return current;
     const mappingFiles = fs.readdirSync(tempDir).filter((n) => n.endsWith('.disasm.mapping.json'));
     if (mappingFiles.length === 0) return current;
-    const fallbackName = mappingFiles[0];
+
+    const expectedBinaryPath = current.effectiveAbsPath
+      ? path.resolve(resolvePathFromWorkspace(current.effectiveAbsPath))
+      : '';
+    const normalizeComparablePath = (value) => {
+      const text = String(value || '').trim();
+      if (!text) return '';
+      return path.resolve(resolvePathFromWorkspace(text));
+    };
+    const fallbackName = mappingFiles.find((candidateName) => {
+      if (!expectedBinaryPath) return true;
+      const candidatePath = path.join(tempDir, candidateName);
+      try {
+        const mapping = JSON.parse(fs.readFileSync(candidatePath, 'utf8'));
+        const mappedBinary = normalizeComparablePath(mapping?.binary);
+        return !!mappedBinary && mappedBinary === expectedBinaryPath;
+      } catch (_) {
+        return false;
+      }
+    });
+    if (!fallbackName) {
+      logChannel.appendLine(`[${logPrefix}] Mapping fallback ignoré: aucun mapping ne correspond au binaire courant`);
+      return current;
+    }
+
     const fallbackBase = fallbackName.replace('.disasm.mapping.json', '');
     current.mappingPath = path.join(tempDir, fallbackName);
     if (current.disasmPath !== null) {
@@ -410,13 +448,13 @@ function createAnalysisContext({
   const readAnalysisCacheEntry = (effectiveAbsPath, allowCache, cacheKey) => {
     const target = getAnalysisCacheTarget(effectiveAbsPath, allowCache);
     if (!target) return null;
-    return readCache(root, target, cacheKey);
+    return readCache(storageDir, target, cacheKey);
   };
 
   const writeAnalysisCacheEntry = (effectiveAbsPath, allowCache, cacheKey, value) => {
     const target = getAnalysisCacheTarget(effectiveAbsPath, allowCache);
     if (!target) return false;
-    writeCache(root, target, cacheKey, value);
+    writeCache(storageDir, target, cacheKey, value);
     return true;
   };
 
@@ -444,6 +482,7 @@ function createAnalysisContext({
     symbolsPath = undefined,
     discoveredPath = undefined,
     useCacheDb = false,
+    cacheWriteOnly = false,
   }) => {
     if (fs.existsSync(mappingPath)) {
       return { mappingPath, symbolsPath, discoveredPath };
@@ -452,6 +491,7 @@ function createAnalysisContext({
       binaryPath,
       binaryMeta: artifacts?.binaryMeta || null,
       useCacheDb,
+      cacheWriteOnly,
     });
     return {
       mappingPath: ensured.artifacts.mappingPath,
@@ -580,6 +620,7 @@ function createAnalysisContext({
     logPrefix = 'Artifacts',
     exampleLimit = null,
     ensureMapping = false,
+    useCache = true,
   }) => {
     const context = buildAnalysisArtifactContext(binaryPath, binaryMeta);
     const { absPath, tempDir, artifacts } = context;
@@ -606,7 +647,8 @@ function createAnalysisContext({
     const hasAnalyzableBinary = !!binaryPath
       && fs.existsSync(absPath)
       && !fs.statSync(absPath).isDirectory();
-    const allowCache = !(artifacts?.binaryMeta?.kind === 'raw');
+    const cacheDbEligible = !(artifacts?.binaryMeta?.kind === 'raw');
+    const allowCache = useCache !== false && cacheDbEligible;
     if (ensureMapping && !fs.existsSync(mappingPath) && hasAnalyzableBinary) {
       ({
         mappingPath,
@@ -618,7 +660,8 @@ function createAnalysisContext({
         mappingPath,
         symbolsPath,
         discoveredPath,
-        useCacheDb: allowCache,
+        useCacheDb: cacheDbEligible,
+        cacheWriteOnly: useCache === false,
       }));
     }
     return {

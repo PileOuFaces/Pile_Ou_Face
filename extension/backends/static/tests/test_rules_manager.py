@@ -45,6 +45,22 @@ class TestRulesManager(unittest.TestCase):
         f = Path(self.tmpdir) / ".pile-ou-face" / "rules" / "capa" / "my.yml"
         self.assertTrue(f.exists())
 
+    def test_add_rule_rejects_path_traversal_name(self):
+        with self.assertRaises(ValueError):
+            self._mgr().add_user_rule(
+                "../escape.yar", "rule X { condition: false }", "yara"
+            )
+
+    def test_update_rule_rejects_path_traversal_name(self):
+        mgr = self._mgr()
+        mgr.add_user_rule("test.yar", "rule Foo { condition: false }", "yara")
+        with self.assertRaises(ValueError):
+            mgr.update_user_rule(
+                "user:yara:test.yar",
+                "../renamed.yar",
+                "rule Foo { condition: true }",
+            )
+
     def test_list_returns_added_rule_enabled_by_default(self):
         mgr = self._mgr()
         mgr.add_user_rule("test.yar", "rule Foo { condition: false }", "yara")

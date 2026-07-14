@@ -1,5 +1,22 @@
 
 /* ── CFG / Call Graph ────────────────────────────────────────── */
+.cfg-func-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 0 8px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+.cfg-func-label { font-size: 11px; color: var(--text-muted); white-space: nowrap; flex-shrink: 0; }
+.cfg-func-select {
+  flex: 1 1 0; min-width: 0;
+  height: 28px; padding: 0 28px 0 10px;
+  background: var(--bg-surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23888'/%3E%3C/svg%3E") no-repeat right 10px center;
+  background-size: 8px; border: 1px solid var(--border); border-radius: var(--radius);
+  color: var(--text); font-size: 12px; font-family: var(--font-mono);
+  appearance: none; -webkit-appearance: none; cursor: pointer;
+}
+.cfg-func-select:hover, .cfg-func-select:focus { border-color: var(--accent-blue); outline: none; }
+.cfg-func-select option { background: var(--bg-surface); color: var(--text); }
 .cfg-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
 .cfg-view-toggle { display: flex; gap: 8px; align-items: center; font-size: 12px; }
 .cfg-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; padding: 5px 8px; background: rgba(255,255,255,0.03); border-radius: 6px; margin-bottom: 6px; }

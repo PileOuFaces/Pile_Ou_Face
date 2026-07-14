@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.2.0] - 2026-07-13
+
+Consolide les changements livrés depuis `0.1.0` (les incréments internes `0.1.x` n'avaient pas d'entrées de changelog).
+
+### Added
+
+- Distribution sur **Open VSX** (VSCodium, Cursor, Gitpod) en plus du Marketplace VS Code.
+- **Mode debug** : réglage `pileOuFace.logLevel` (`debug`/`info`/`warning`/`error`) qui pilote les logs de l'extension et se propage aux backends Python via `BINHOST_LOG_LEVEL`, plus une commande pour afficher les logs.
+- Annotations : **statut de revue** et **favoris (bookmarks)** par annotation.
+- Générateur de scaffold de plugin.
+- Progression en flux (streaming) des scans de plugins.
+- API plugin `window.PoF` (accès binaire, groupes/familles, `navigateTo`, helpers UI) et surface d'import stable `backends.plugin_api` pour les plugins.
+
+### Changed
+
+- Annotations désormais stockées en **SQLite** (clé = hash de contenu du binaire), avec migration automatique depuis l'ancien format JSON par fichier. WAL et clés étrangères activées.
+- Extension **bundlée avec esbuild** : VSIX plus léger et activation plus rapide.
+- Webviews de plugins **isolées dans des iframes sandboxées** (séparation host/plugin).
+
+### Fixed
+
+- Sécurité : clé API Gemini envoyée via en-tête HTTP au lieu de la query string.
+- Émulation dynamique : lecture mémoire non mappée sur `getpid`/`getuid` corrigée.
+- Boucle de rechargement du désassemblage lors d'un rafraîchissement du chemin binaire.
+- Décompilateur : les résultats obsolètes après navigation sont ignorés.
+- Échecs des handlers d'annotation remontés à l'utilisateur au lieu d'échouer en silence.
+- Activation sur VSCodium sans workspace storage (fallback).
+- Filet de sécurité global `unhandledRejection` / `uncaughtException`.
+
 ## [0.1.0] - 2026-06-29
 
 Initial release.

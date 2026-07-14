@@ -473,6 +473,10 @@ function matchSourceLocalsToModelLocals(modelLocals, sourceLocals) {
     if (localRole === 'padding' && sourceKind !== 'padding') score -= 500;
     if (sourceName === 'check' && /\b(compare|cmp)\b/.test(localEvidence)) score += 260;
     if (sourceName === 'var' && /\b(compare|cmp)\b/.test(localEvidence)) score -= 120;
+    // A local whose address was taken (lea) is used as a pointer/array
+    // base, not a plain scalar -- it can only be the source's array.
+    const localAddressTaken = /\blea to local stack address\b/.test(localEvidence);
+    if (localAddressTaken) score += sourceKind === 'buffer' ? 400 : -400;
     if (isGenericLocalName(local?.name)) score += 60;
     score += Math.max(0, 60 - localIndex * 10);
     return score;

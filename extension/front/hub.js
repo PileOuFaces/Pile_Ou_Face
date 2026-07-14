@@ -443,13 +443,46 @@ renderOllamaConversationHistory();
 requestOllamaModels();
 vscode.postMessage({ type: 'hubReady' });
 
-// À l'ouverture : si binaire restauré, préparer le mapping sans forcer l'ouverture de boîte de dialogue.
-const initialBp = getStaticBinaryPath();
-const initialPanelId = document.body.dataset.initialPanel || 'dashboard';
-if (initialBp) {
-  requestRunTraceInit(null, initialBp);
-} else if (initialPanelId === 'dynamic') {
-  requestRunTraceInit();
+// Initialize plugin iframe router and register all plugin frames
+if (window.PluginIframeRouter) {
+  window.PluginIframeRouter.init(window, vscode);
+  document.querySelectorAll('iframe.plugin-iframe').forEach(function (frame) {
+    var slug = frame.dataset.pluginSlug;
+    if (slug) window.PluginIframeRouter.register(slug, frame);
+  });
+  // Forward VS Code CSS variables to plugin iframes for correct theme rendering
+  var _pofCssVars = {};
+  var _computedStyle = getComputedStyle(document.documentElement);
+  for (var i = 0; i < _computedStyle.length; i++) {
+    var prop = _computedStyle[i];
+    if (prop.startsWith('--vscode-')) {
+      _pofCssVars[prop] = _computedStyle.getPropertyValue(prop).trim();
+    }
+  }
+  if (Object.keys(_pofCssVars).length > 0) {
+    setTimeout(function () {
+      window.PluginIframeRouter.broadcast({ type: '__cssVars', vars: _pofCssVars });
+    }, 200);
+  }
+  // Forward the currently selected binary path so plugin iframes opened after
+  // a binary was already loaded don't see an empty getStaticBinaryPath().
+  setTimeout(function () {
+    var bp = typeof getStaticBinaryPath === 'function' ? getStaticBinaryPath() : '';
+    if (bp) window.PluginIframeRouter.broadcast({ type: '__binaryPath', binaryPath: bp });
+  }, 200);
+}
+
+// À l'ouverture : si le panel dynamic n'était pas déjà affiché (auquel cas showPanel l'a déjà init),
+// pré-charger le profil binaire pour que la tab soit prête quand l'utilisateur la bascule.
+const _dynamicAlreadyInit = document.getElementById('panel-dynamic')?.classList.contains('active') ?? false;
+if (!_dynamicAlreadyInit) {
+  const initialBp = getStaticBinaryPath();
+  const initialPanelId = document.body.dataset.initialPanel || 'dashboard';
+  if (initialBp) {
+    requestRunTraceInit(null, initialBp);
+  } else if (initialPanelId === 'dynamic') {
+    requestRunTraceInit();
+  }
 }
 
 updateTabOverflow();

@@ -7,6 +7,7 @@ const STORAGE_KEY = window.POFHubState?.STORAGE_KEY || 'pile-ou-face-hub';
 // hubPayloadCore is declared in hub.js — payloadCore.js must load first (position 185 in hub.html)
 let loadAllPending = 0;
 let stringsCache = [];
+let stringsPage = 1;
 let pendingStringsFocusAddr = '';
 // Cache des onglets : évite de recharger à chaque clic si les données sont déjà chargées
 let tabDataCache = {};  // tabId -> { binaryPath }
@@ -54,6 +55,7 @@ let cfgUiState = {
   binaryPath: '',
   viewMode: _loadStorage().cfgViewMode || 'graph',
   search: _loadStorage().cfgSearch || '',
+  funcAddr: '',
   expandedAddrs: [],
   graphView: null,
   activeAddr: '',
@@ -189,15 +191,6 @@ let ollamaUiState = {
 };
 let currentBinaryMeta = null;
 let pendingStaticQuickAction = '';
-let detectionUiState = {
-  capaCapabilities: [],
-  capaError: '',
-  yaraMatches: [],
-  yaraError: '',
-  yaraMode: String(_loadStorage().yaraRulesMode || 'library'),
-  activeYaraCount: 0,
-  rulesError: '',
-};
 let functionsUiState = {
   sort: String(_loadStorage().functionsSort || 'priority_desc'),
   quickFilter: String(_loadStorage().functionsQuickFilter || 'all'),
@@ -258,6 +251,7 @@ function _normalizePluginStaticGroup(group, family) {
 
 // Plugin tab registration (populated via registerPluginTabs / clearPluginTabs)
 let _pluginTabRegistrations = [];
+const _tabIdToPluginSlug = {};
 
 function registerPluginTabs(tabRegistrations) {
   clearPluginTabs();
@@ -268,12 +262,14 @@ function registerPluginTabs(tabRegistrations) {
     const family = String(reg.family || '').trim();
     const group  = _normalizePluginStaticGroup(reg.group, family);
     const hint   = String(reg.hint   || '').trim();
+    const pluginSlug = String(reg.pluginSlug || '').trim();
     if (!tabId || !group) return;
     if (!GROUPS[group]) GROUPS[group] = [];
     if (!GROUPS[group].includes(tabId)) GROUPS[group].push(tabId);
-    if (label)  GROUP_LABELS[tabId]      = label;
-    if (family) PREMIUM_TAB_FAMILY[tabId] = family;
-    if (hint)   STATIC_FLOW_HINTS[tabId]  = hint;
+    if (label)      GROUP_LABELS[tabId]       = label;
+    if (family)     PREMIUM_TAB_FAMILY[tabId] = family;
+    if (hint)       STATIC_FLOW_HINTS[tabId]  = hint;
+    if (pluginSlug) _tabIdToPluginSlug[tabId] = pluginSlug;
   });
 }
 
@@ -289,8 +285,13 @@ function clearPluginTabs() {
     delete GROUP_LABELS[tabId];
     delete PREMIUM_TAB_FAMILY[tabId];
     delete STATIC_FLOW_HINTS[tabId];
+    delete _tabIdToPluginSlug[tabId];
   });
   _pluginTabRegistrations = [];
+}
+
+function getPluginSlugForTab(tabId) {
+  return _tabIdToPluginSlug[String(tabId || '')] || null;
 }
 
 // Tab loader registration — plugins register their own load handlers
@@ -454,49 +455,8 @@ const ACTIVE_CONTEXT_INJECTED_PANELS = [
   'staticFuncSimilarity',
   'staticDeobfuscate',
 ];
-const RAW_UNSUPPORTED_TABS = {
-  decompile: ['decompileContent'],
-  stack: ['stackContent'],
-  behavior: ['behaviorContent'],
-  taint: ['taintContent'],
-  anti_analysis: ['antiAnalysisContent'],
-  attck: ['attckContent'],
-  vulns: ['vulnsContent'],
-  flirt: ['flirtContent'],
-  func_similarity: ['funcSimilarityContent'],
-  pe_resources: ['peResourcesContent'],
-  exceptions: ['exceptionsContent'],
-  bindiff: ['bindiffStats', 'bindiffResults'],
-};
-const RAW_TAB_CAPABILITIES = {
-  disasm: { level: 'full', note: 'Vue principale pour shellcodes et firmwares bruts.' },
-  discovered: { level: 'full', note: 'Découverte de fonctions sur le blob désassemblé.' },
-  cfg: { level: 'full', note: 'CFG généré à partir du profil d’architecture brut.' },
-  callgraph: { level: 'full', note: 'Call graph basé sur les appels détectés dans le blob.' },
-  hex: { level: 'full', note: 'Hex, base virtuelle, endian et taille de pointeur restent fiables.' },
-  sections: { level: 'full', note: 'Le blob est exposé comme une section brute unique.' },
-  info: { level: 'full', note: 'Résumé pseudo-binaire basé sur le profil brut choisi.' },
-  strings: { level: 'full', note: 'Extraction de chaînes directement depuis le blob.' },
-  recherche: { level: 'full', note: 'Recherche textuelle et offsets disponibles sur le blob.' },
-  typed_data: { level: 'full', note: 'Décodage typé à partir de la base, endian et ptr size du profil brut.' },
-  script: { level: 'full', note: 'Automatisation disponible tant que le script vise le blob courant.' },
-  symbols: { level: 'limited', note: 'Symboles heuristiques ou découverts, sans vraie table native.' },
-  imports: { level: 'limited', note: 'Indices heuristiques uniquement, pas de table d’imports réelle.' },
-  detection: { level: 'limited', note: 'YARA reste utile ; CAPA ne couvre pas les blobs bruts.' },
-  deobfuscate: { level: 'limited', note: 'Résultats utiles sur chaînes et motifs simples, moins fiables qu’un exécutable complet.' },
-  rop: { level: 'limited', note: 'Dépend du profil d’architecture brut et du plugin offensif.' },
-  func_similarity: { level: 'unsupported', note: 'La similarité a besoin d’un binaire structuré et d’une base de références.' },
-  decompile: { level: 'unsupported', note: 'Pas de décompilation fiable sans format exécutable complet.' },
-  stack: { level: 'unsupported', note: 'La reconstruction de stack frame n’est pas encore fiable sur blob brut.' },
-  pe_resources: { level: 'unsupported', note: 'Un blob brut n’expose pas de ressources PE structurées.' },
-  exceptions: { level: 'unsupported', note: 'Pas de tables d’exceptions exploitables sur blob brut.' },
-  taint: { level: 'unsupported', note: 'La taint n’est pas encore câblée pour les blobs bruts.' },
-  behavior: { level: 'unsupported', note: 'Le comportement shellcode/firmware reste à stabiliser côté plugin.' },
-  anti_analysis: { level: 'unsupported', note: 'La vue anti-analyse n’est pas encore exposée proprement pour blob brut.' },
-  vulns: { level: 'unsupported', note: 'L’audit vulnérabilités reste pensé pour des exécutables complets.' },
-  flirt: { level: 'unsupported', note: 'Les signatures FLIRT attendent des structures natives plus riches.' },
-  bindiff: { level: 'unsupported', note: 'Le diff de binaires n’est pas encore prévu pour les blobs bruts.' },
-};
+const RAW_UNSUPPORTED_TABS = window.POFRawTabCapabilities?.RAW_UNSUPPORTED_TABS || {};
+const RAW_TAB_CAPABILITIES = window.POFRawTabCapabilities?.RAW_TAB_CAPABILITIES || {};
 
 // Panels
 const panels = document.querySelectorAll('.panel');
@@ -576,29 +536,10 @@ function _migrateDisabledFamilies() {
     }
     return;
   }
-  // First migration: convert plugin IDs → family names
-  if (Array.isArray(store.disabledPlugins) && store.disabledPlugins.length > 0) {
-    const OLD_PLUGIN_FAMILY = {
-      'pof.vulnerability-audit-pro': 'audit',
-      'pof.vuln-audit-pro': 'audit',
-      'pof.malware-triage-pro': 'malware',
-      'pof.offensive-research-pro': 'offensif',
-      'pof.cross-analysis-pro': 'croisee',
-    };
-    const families = [...new Set(
-      store.disabledPlugins.map((id) => OLD_PLUGIN_FAMILY[id]).filter(Boolean)
-    )];
-    const merged = { ...store, disabledFamilies: families };
-    delete merged.disabledPlugins;
-    delete merged.disabledCrossPlugins;
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(merged)); } catch (_) {}
-  } else {
-    // No plugins were disabled — just initialize disabledFamilies and clean up legacy keys
-    const merged = { ...store, disabledFamilies: [] };
-    delete merged.disabledPlugins;
-    delete merged.disabledCrossPlugins;
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(merged)); } catch (_) {}
-  }
+  const merged = { ...store, disabledFamilies: [] };
+  delete merged.disabledPlugins;
+  delete merged.disabledCrossPlugins;
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(merged)); } catch (_) {}
 }
 function getDisabledFamilies() {
   const raw = _loadStorage().disabledFamilies;
@@ -613,3 +554,78 @@ function _normalizeDecompileQuality(quality) {
   if (normalized === 'max' || normalized === 'precision') return 'precision';
   return 'normal';
 }
+
+// Plugin API — stable contract surface for plugin webviews.
+// See CONTRACTS_SHARED.md §Plugin Webview API.
+window.PoF = {
+  // Contract version — plugins declare minPoFVersion in plugin.json to enforce compatibility.
+  version: '1.0.0',
+
+  // Returns the currently loaded binary path (empty string if none).
+  getBinaryPath: () => (typeof getStaticBinaryPath === 'function' ? getStaticBinaryPath() : ''),
+
+  // Tab data cache access (plugins own their tab keys, e.g. 'detection', 'packer').
+  getTabCache: (key) => (typeof tabDataCache !== 'undefined' ? (tabDataCache[String(key)] ?? null) : null),
+  setTabCache: (key, value) => { if (typeof tabDataCache !== 'undefined') tabDataCache[String(key)] = value; },
+
+  // Binary change hook — fn(binaryPath: string) is called when the user opens a new binary.
+  registerTabLoader: (tabId, fn) => registerTabLoader(tabId, fn),
+
+  // Persistent storage (defined in state.js, no lazy guard needed).
+  saveStorage: (data) => _saveStorage(data),
+
+  // Navigation actions that only make sense in the host's own DOM/scope
+  // (panel/group switching, address-context sync, xrefs/strings reveal).
+  // See CONTRACTS_SHARED.md §Plugin Webview API for the full action list.
+  navigateTo: (action, params) => {
+    const p = params || {};
+    switch (action) {
+      case 'showPanel':
+        if (typeof showPanel === 'function') showPanel(p.panel);
+        break;
+      case 'showGroup':
+        if (typeof showPanel === 'function') showPanel('static');
+        if (typeof showGroup === 'function') showGroup(p.group, p.tab);
+        break;
+      case 'jumpToAddr':
+        if (typeof jumpToAddrInContextTab === 'function') jumpToAddrInContextTab(p.tab, p.addr, p.binaryPath, p.opts || {});
+        break;
+      case 'setActiveAddress':
+        if (typeof setActiveAddressContext === 'function') setActiveAddressContext(p.addr, p.spanLength, p.opts || {});
+        break;
+      case 'ensureDecompileSources':
+        if (typeof ensureDecompileSelectionSourcesLoaded === 'function') ensureDecompileSelectionSourcesLoaded(p.binaryPath);
+        break;
+      case 'syncFunctionsSelection':
+        if (typeof syncFunctionsSelectionFromContext === 'function') syncFunctionsSelectionFromContext(p.addr);
+        break;
+      case 'openXrefs': {
+        const addr = typeof normalizeHexAddress === 'function' ? normalizeHexAddress(p.addr || '') : String(p.addr || '');
+        if (!addr) break;
+        if (typeof setActiveAddressContext === 'function') setActiveAddressContext(addr, p.spanLength || 1, { preserveHexSelection: true });
+        if (typeof showPanel === 'function') showPanel('static');
+        if (typeof showGroup === 'function') showGroup('code', 'disasm');
+        const el = document.getElementById('xrefsResult');
+        const contentEl = document.getElementById('xrefsResultContent');
+        if (el) {
+          el.style.display = 'block';
+          if (contentEl) contentEl.textContent = 'Analyse des références croisées…';
+          el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+        window.vscode.postMessage({ type: 'hubLoadXrefs', addr, binaryPath: (typeof getStaticBinaryPath === 'function' ? getStaticBinaryPath() : '') || '', mode: p.mode || 'to' });
+        break;
+      }
+      case 'openStringAt': {
+        const addr = typeof normalizeHexAddress === 'function' ? normalizeHexAddress(p.addr || '') : String(p.addr || '');
+        if (!addr) break;
+        if (typeof setActiveAddressContext === 'function') setActiveAddressContext(addr, p.spanLength || 1, { preserveHexSelection: true });
+        if (typeof showPanel === 'function') showPanel('static');
+        if (typeof showGroup === 'function') showGroup('data', 'strings');
+        if (typeof focusStringsAddress === 'function') focusStringsAddress(addr, { reveal: true });
+        break;
+      }
+      default:
+        break;
+    }
+  },
+};

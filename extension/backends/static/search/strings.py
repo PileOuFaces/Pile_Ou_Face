@@ -66,6 +66,62 @@ def _extract_strings_for_encoding(
     return strings
 
 
+def _extract_from_pe_imports(binary_path: str, min_len: int = 4) -> list[dict]:
+    """Extrait noms DLL et fonctions depuis la table d'imports PE via lief.
+
+    Fonctionne même sur un binaire packé : le loader PE doit pouvoir lire
+    la table d'imports pour résoudre les adresses au démarrage.
+    Retourne [] si lief est indisponible, si le binaire n'est pas un PE,
+    ou en cas d'erreur.
+    """
+    try:
+        import lief  # type: ignore[import-untyped]
+
+        binary = lief.parse(binary_path)
+        if binary is None or not isinstance(binary, lief.PE.Binary):
+            return []
+        base = binary.optional_header.imagebase
+        results: list[dict] = []
+        seen: set[str] = set()
+        for imp in binary.imports:
+            raw_dll = imp.name or ""
+            dll = (raw_dll.decode() if isinstance(raw_dll, bytes) else raw_dll).strip()
+            if dll and len(dll) >= min_len and dll not in seen:
+                seen.add(dll)
+                results.append(
+                    {
+                        "addr": "0x0",
+                        "value": dll,
+                        "length": len(dll),
+                        "encoding": "utf-8",
+                        "source": "pe_import",
+                    }
+                )
+            for entry in imp.entries:
+                raw_fn = entry.name or ""
+                fn = (raw_fn.decode() if isinstance(raw_fn, bytes) else raw_fn).strip()
+                if not fn or len(fn) < min_len:
+                    continue
+                iat_va = (base + entry.iat_address) if entry.iat_address else 0
+                addr_str = f"0x{iat_va:x}" if iat_va else "0x0"
+                key = f"{addr_str}:{fn}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                results.append(
+                    {
+                        "addr": addr_str,
+                        "value": fn,
+                        "length": len(fn),
+                        "encoding": "utf-8",
+                        "source": "pe_import",
+                    }
+                )
+        return results
+    except Exception:
+        return []
+
+
 def extract_strings(
     binary_path: str,
     min_len: int = 4,
@@ -75,8 +131,10 @@ def extract_strings(
     """Extrait les chaînes lisibles d'un binaire.
 
     encoding: "auto", "utf-8", "utf-16-le", "utf-16-be"
-    section: si fourni, limite aux octets de cette section (ELF uniquement)
+    section: si fourni, limite aux octets de cette section (ELF/PE/Mach-O via lief).
+             Si la section n'existe pas dans le binaire, retourne [].
     Returns [{addr, value, length, encoding}, ...].
+    Les entrées issues de la table d'imports PE ont en plus un champ source="pe_import".
     """
     if encoding not in SUPPORTED_ENCODINGS:
         raise ValueError(f"unsupported encoding: {encoding}")
@@ -110,6 +168,16 @@ def extract_strings(
                 continue
             seen.add(key)
             merged.append(entry)
+
+    # Augmente avec la table d'imports PE — fonctionne même si le binaire est packé,
+    # car le loader PE doit pouvoir lire les imports au démarrage.
+    # Appliqué uniquement sans filtre de section et pour encodages ASCII-compatibles.
+    if section is None and encoding in ("auto", "utf-8"):
+        for entry in _extract_from_pe_imports(binary_path, min_len=min_len):
+            key = (entry["addr"], entry["value"], entry["encoding"])
+            if key not in seen:
+                seen.add(key)
+                merged.append(entry)
 
     merged.sort(
         key=lambda entry: (
@@ -176,11 +244,19 @@ def main() -> int:
         default="auto",
         help="String encoding (auto = ASCII + wide strings)",
     )
-    parser.add_argument("--section", help="Limit to section (ELF only, e.g. .rodata)")
+    parser.add_argument(
+        "--section", help="Limit to section (ELF/PE/Mach-O, e.g. .rodata, .rdata)"
+    )
     parser.add_argument(
         "--no-system",
         action="store_true",
         help="Use Python impl instead of system strings",
+    )
+    parser.add_argument(
+        "--max-results",
+        type=int,
+        default=0,
+        help="Limit raw strings to N entries (0 = unlimited). PE imports are always included.",
     )
     args = parser.parse_args()
 
@@ -197,6 +273,21 @@ def main() -> int:
             strings = extract_strings(
                 args.binary, min_len=args.min_len, encoding=args.encoding
             )
+
+    if args.max_results > 0 and len(strings) > args.max_results:
+        pe_imports = [s for s in strings if s.get("source") == "pe_import"]
+        raw = [s for s in strings if s.get("source") != "pe_import"]
+        limit_raw = max(0, args.max_results - len(pe_imports))
+        strings = raw[:limit_raw] + pe_imports
+        strings.sort(
+            key=lambda entry: (
+                int(str(entry.get("addr", "0")).replace("0x", ""), 16)
+                if str(entry.get("addr", "")).startswith("0x")
+                else 0,
+                str(entry.get("encoding", "")),
+                str(entry.get("value", "")),
+            )
+        )
 
     out = json.dumps(strings, indent=2, ensure_ascii=False)
 

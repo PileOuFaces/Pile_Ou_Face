@@ -9,8 +9,19 @@ const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
 const cp = require('child_process');
+const logger = require('./logger');
 
 const logChannel = vscode.window.createOutputChannel('Pile ou Face');
+
+function logAt(level, message) {
+  if (!logger.shouldLog(level)) return;
+  logChannel.appendLine(logger.formatLine(level, logger.redact(message)));
+}
+
+const logDebug = (message) => logAt('debug', message);
+const logInfo = (message) => logAt('info', message);
+const logWarning = (message) => logAt('warning', message);
+const logError = (message) => logAt('error', message);
 
 const TEMP_DIR_NAME = '.pile-ou-face';
 
@@ -42,7 +53,9 @@ function resolveProjectRoot(root) {
         return candidate;
       }
     }
-  } catch (_) {}
+  } catch (err) {
+    logDebug(`[resolveProjectRoot] readdirSync(${absValue}) a échoué: ${err.message || err}`);
+  }
   return absValue;
 }
 
@@ -53,7 +66,9 @@ function findGitRoot(dir) {
     const entries = fs.readdirSync(dir, { withFileTypes: true });
     const gitSubs = entries.filter(e => e.isDirectory() && fs.existsSync(path.join(dir, e.name, '.git')));
     if (gitSubs.length === 1) return path.join(dir, gitSubs[0].name);
-  } catch (_) {}
+  } catch (err) {
+    logDebug(`[findGitRoot] readdirSync(${dir}) a échoué: ${err.message || err}`);
+  }
   return dir;
 }
 
@@ -70,9 +85,9 @@ function ensureTempDir(root) {
   return dir;
 }
 
-// Returns '' when context.storageUri is unavailable — check before use.
+// Returns '' when both workspace and global storage are unavailable — check before use.
 function getStorageDir(context) {
-  return String(context?.storageUri?.fsPath || '');
+  return String(context?.storageUri?.fsPath || context?.globalStorageUri?.fsPath || '');
 }
 
 // Returns '' when context.globalStorageUri is unavailable — check before use.
@@ -82,7 +97,7 @@ function getGlobalStorageDir(context) {
 
 function ensureStorageDir(context) {
   const dir = getStorageDir(context);
-  if (!dir) throw new Error('[storage] context.storageUri non disponible');
+  if (!dir) throw new Error('[storage] context.storageUri/globalStorageUri non disponible');
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
     logChannel.appendLine(`[storage] Dossier créé: ${dir}`);
@@ -90,7 +105,8 @@ function ensureStorageDir(context) {
   return dir;
 }
 
-async function ensurePythonDependencies(pythonExe, root) {
+async function ensurePythonDependencies(pythonExe, root, options = {}) {
+  const { quiet = false } = options || {};
   const backendBase = _extensionPath || path.resolve(String(root || '').trim());
   const requirementsPath = path.join(backendBase, 'backends', 'requirements.txt');
   if (!fs.existsSync(requirementsPath)) {
@@ -118,12 +134,14 @@ async function ensurePythonDependencies(pythonExe, root) {
             break;
           }
         }
-      } catch (venvErr) {
-        logChannel.appendLine(`[venv] Erreur: ${venvErr.message}`);
+    } catch (venvErr) {
+      logChannel.appendLine(`[venv] Erreur: ${venvErr.message}`);
+      if (!quiet) {
         vscode.window.showWarningMessage(`Impossible de créer backends/.venv: ${venvErr.message}`);
-        return;
       }
+      return;
     }
+  }
   }
   const coreDeps = ['unicorn', 'capstone'];
   let needInstall = false;
@@ -144,16 +162,18 @@ async function ensurePythonDependencies(pythonExe, root) {
   logChannel.appendLine('[pip] Installation des dépendances…');
   try {
     await new Promise((resolve, reject) => {
-      cp.exec(`${pythonExe} -m pip install -r "${requirementsPath}" --quiet`, (error, stdout, stderr) =>
+      cp.execFile(pythonExe, ['-m', 'pip', 'install', '-r', requirementsPath, '--quiet', '--break-system-packages'], (error, stdout, stderr) =>
         error ? reject(new Error(stderr || error.message)) : resolve());
     });
     logChannel.appendLine('[pip] Installation terminée.');
   } catch (installErr) {
     const msg = installErr.message || '';
     logChannel.appendLine(`[pip] Erreur: ${msg}`);
-    vscode.window.showWarningMessage(
-      `Dépendances manquantes. Exécutez: ${pythonExe} -m pip install -r requirements.txt`
-    );
+    if (!quiet) {
+      vscode.window.showWarningMessage(
+        `Dépendances manquantes. Exécutez: ${pythonExe} -m pip install -r requirements.txt`
+      );
+    }
   }
 }
 
@@ -212,12 +232,25 @@ function buildRuntimeEnv(root, storageDirOrExtra, extraEnv = {}) {
   }
   const backendBase = _extensionPath || path.resolve(String(root || '').trim());
   const env = { ...process.env, ...mergedExtra };
+  if (!mergedExtra.BINHOST_LOG_LEVEL) {
+    env.BINHOST_LOG_LEVEL = logger.mapLevelToEnv(logger.getLevel());
+  }
   if (storageDir) {
     env.POF_STORAGE_DIR    = storageDir;
     env.DECOMPILERS_CONFIG = path.join(storageDir, 'decompilers.json');
     env.COMPILERS_CONFIG   = path.join(storageDir, 'compilers.json');
   }
   if (backendBase) env.PYTHONPATH = mergedExtra.PYTHONPATH || backendBase;
+  // On macOS, VS Code launched from Dock/Finder has a minimal PATH that omits
+  // Homebrew and other user-installed tool directories. Augment with common paths
+  // so subprocesses (e.g. yara, capa) are found via shutil.which().
+  if (process.platform === 'darwin') {
+    const extraDirs = ['/opt/homebrew/bin', '/usr/local/bin', '/opt/homebrew/sbin', '/usr/local/sbin'];
+    const currentPath = String(env.PATH || '');
+    const parts = currentPath ? currentPath.split(path.delimiter) : [];
+    const augmented = [...new Set([...extraDirs.filter(d => !parts.includes(d)), ...parts])].filter(Boolean);
+    env.PATH = augmented.join(path.delimiter);
+  }
   const dockerExe = resolveDockerExecutable();
   if (dockerExe && dockerExe.includes(path.sep)) {
     const dockerDir = path.dirname(dockerExe);
@@ -334,6 +367,10 @@ function escapeHtml(s) {
 
 module.exports = {
   logChannel,
+  logDebug,
+  logInfo,
+  logWarning,
+  logError,
   TEMP_DIR_NAME,
   getTempDir,
   ensureTempDir,

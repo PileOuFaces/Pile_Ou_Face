@@ -13,9 +13,18 @@ function requestDisasmOpen({ forceRebuild = false } = {}) {
     currentBinaryMeta = binaryMeta;
     saveBinarySelection(bp, binaryMeta);
   }
-  const useCache = forceRebuild ? false : document.getElementById('useCache')?.checked !== false;
+  const useCache = !forceRebuild;
   vscode.postMessage({ type: 'hubOpenDisasm', binaryPath: bp, binaryMeta, syntax, section, useCache });
 }
+
+// Persist useCache checkbox across sessions
+(function initUseCacheCheckbox() {
+  const el = document.getElementById('useCache');
+  if (!el) return;
+  const stored = _loadStorage();
+  if (typeof stored.useCache === 'boolean') el.checked = stored.useCache;
+  el.addEventListener('change', () => _saveStorage({ useCache: el.checked }));
+})();
 
 document.getElementById('btnOpenDisasm')?.addEventListener('click', () => {
   requestDisasmOpen();
@@ -83,7 +92,9 @@ function reloadStrings() {
 }
 document.getElementById('stringsEncoding')?.addEventListener('change', reloadStrings);
 document.getElementById('stringsSection')?.addEventListener('change', reloadStrings);
-document.getElementById('stringsMinLen')?.addEventListener('change', reloadStrings);
+document.getElementById('stringsMinLen')?.addEventListener('change', () => { stringsPage = 1; applyStringsFilter(); });
+document.getElementById('stringsSource')?.addEventListener('change', () => { stringsPage = 1; applyStringsFilter(); });
+document.getElementById('stringsPageSize')?.addEventListener('change', () => { stringsPage = 1; applyStringsFilter(); });
 // ── Recherche : mode pills (A) ───────────────────────────────────────────────
 let searchMode = 'text';
 const modePills = document.querySelectorAll('.search-mode-pill');
@@ -423,355 +434,6 @@ document.getElementById('btnSearchExportJson')?.addEventListener('click', () => 
   URL.revokeObjectURL(url);
 });
 
-function _renderRulesList(containerId, rules) {
-  const container = document.getElementById(containerId);
-  if (!container) return;
-  while (container.firstChild) container.removeChild(container.firstChild);
-
-  if (!rules.length) {
-    const hint = document.createElement('p');
-    hint.className = 'hint-sm rules-empty-hint';
-    hint.textContent = 'Aucune règle — ajoutez-en une au projet ou au niveau global.';
-    container.appendChild(hint);
-    return;
-  }
-
-  rules.forEach(function(rule) {
-    const row = document.createElement('div');
-    row.className = 'rule-item';
-    row.dataset.ruleId = rule.id;
-
-    const main = document.createElement('div');
-    main.className = 'rule-item-main';
-
-    const labelEl = document.createElement('label');
-    labelEl.style.cssText = 'display:flex;align-items:flex-start;gap:8px;cursor:pointer;flex:1;min-width:0';
-
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.className = 'rule-toggle-cb';
-    cb.dataset.ruleId = rule.id;
-    cb.checked = rule.enabled;
-    cb.addEventListener('change', function() {
-      vscode.postMessage({ type: 'hubToggleRule', ruleId: rule.id, enabled: cb.checked });
-    });
-
-    const copy = document.createElement('div');
-    copy.className = 'rule-item-copy';
-
-    const nameSpan = document.createElement('span');
-    nameSpan.className = 'rule-item-name';
-    nameSpan.textContent = rule.name;
-
-    const meta = document.createElement('div');
-    meta.className = 'rule-item-meta';
-
-    const scopeBadge = document.createElement('span');
-    scopeBadge.className = `rule-meta-badge ${rule.scope === 'global' ? 'is-global' : 'is-project'}`;
-    scopeBadge.textContent = rule.scope === 'global' ? 'global' : 'projet';
-    meta.appendChild(scopeBadge);
-
-    const typeBadge = document.createElement('span');
-    typeBadge.className = `rule-meta-badge ${String(rule.type || '').toLowerCase() === 'yara' ? 'is-yara' : 'is-capa'}`;
-    typeBadge.textContent = String(rule.type || '').toUpperCase();
-    meta.appendChild(typeBadge);
-
-    if (rule.path) {
-      const pathEl = document.createElement('div');
-      pathEl.className = 'rule-item-path';
-      pathEl.textContent = rule.path;
-      copy.appendChild(pathEl);
-    }
-
-    copy.insertBefore(nameSpan, copy.firstChild);
-    copy.insertBefore(meta, copy.children[1] || null);
-
-    labelEl.appendChild(cb);
-    labelEl.appendChild(copy);
-    main.appendChild(labelEl);
-
-    const delBtn = document.createElement('button');
-    const editBtn = document.createElement('button');
-    editBtn.type = 'button';
-    editBtn.className = 'btn-rule-edit';
-    editBtn.title = 'Modifier';
-    editBtn.textContent = '✎';
-    editBtn.style.cssText = 'background:none;border:none;cursor:pointer;padding:2px 6px;opacity:0.7';
-    editBtn.addEventListener('mouseenter', function() { editBtn.style.opacity = '1'; });
-    editBtn.addEventListener('mouseleave', function() { editBtn.style.opacity = '0.7'; });
-    editBtn.addEventListener('click', function() {
-      vscode.postMessage({ type: 'hubGetRuleContent', ruleId: rule.id });
-    });
-
-    delBtn.type = 'button';
-    delBtn.className = 'btn-rule-delete';
-    delBtn.title = 'Supprimer';
-    delBtn.textContent = '🗑';
-    delBtn.style.cssText = 'background:none;border:none;cursor:pointer;padding:2px 6px;opacity:0.6';
-    delBtn.addEventListener('mouseenter', function() { delBtn.style.opacity = '1'; });
-    delBtn.addEventListener('mouseleave', function() { delBtn.style.opacity = '0.6'; });
-    delBtn.addEventListener('click', function() {
-      if (!confirm('Supprimer la règle ' + rule.name + ' ?')) return;
-      vscode.postMessage({ type: 'hubDeleteUserRule', ruleId: rule.id });
-    });
-
-    const actions = document.createElement('div');
-    actions.className = 'rule-item-actions';
-    actions.appendChild(editBtn);
-    actions.appendChild(delBtn);
-
-    row.appendChild(main);
-    row.appendChild(actions);
-    container.appendChild(row);
-  });
-}
-
-function getSelectedYaraMode() {
-  const checked = document.querySelector('input[name="yaraRulesMode"]:checked');
-  const mode = String(checked?.value || detectionUiState.yaraMode || 'library').trim().toLowerCase();
-  return ['library', 'manual'].includes(mode) ? mode : 'library';
-}
-
-function setSelectedYaraMode(mode, options = {}) {
-  const normalized = ['library', 'manual'].includes(mode) ? mode : 'library';
-  detectionUiState.yaraMode = normalized;
-  const input = document.querySelector(`input[name="yaraRulesMode"][value="${normalized}"]`);
-  if (input) input.checked = true;
-  if (!options.skipSave) {
-    _saveStorage({ yaraRulesMode: normalized });
-  }
-  applyYaraModeUi();
-}
-
-function applyYaraModeUi() {
-  const mode = getSelectedYaraMode();
-  const manualWrap = document.getElementById('yaraManualPathWrap');
-  const statusEl = document.getElementById('yaraSourceStatus');
-  const managedSummaryEl = document.getElementById('yaraManagedSummary');
-  const activeCount = Number(detectionUiState.activeYaraCount || 0);
-  if (managedSummaryEl) {
-    managedSummaryEl.textContent = activeCount
-      ? `${activeCount} règle(s) YARA activée(s) seront regroupées automatiquement pour le prochain scan.`
-      : 'La bibliothèque active regroupe les règles projet et globales cochées dans cette interface.';
-  }
-  if (manualWrap) {
-    manualWrap.style.display = mode === 'manual' ? '' : 'none';
-  }
-  if (statusEl) {
-    let label = 'À configurer';
-    let variant = 'warn';
-    if (mode === 'library') {
-      label = activeCount ? `${activeCount} règle(s) actives` : 'Aucune règle active';
-      variant = activeCount ? 'ready' : 'warn';
-    } else if (mode === 'manual') {
-      const manualPath = String(document.getElementById('yaraRulesPath')?.value || '').trim();
-      label = manualPath ? 'Chemin prêt' : 'Chemin à choisir';
-      variant = manualPath ? 'ready' : 'warn';
-    }
-    statusEl.textContent = label;
-    statusEl.className = `soft-badge ${variant}`;
-  }
-}
-
-function updateDetectionSummaries() {
-  const capaEl = document.getElementById('capaSummaryCount');
-  const yaraEl = document.getElementById('yaraSummaryCount');
-  if (capaEl) {
-    capaEl.textContent = detectionUiState.capaError
-      ? 'Erreur'
-      : String(detectionUiState.capaCapabilities.length || 0);
-  }
-  if (yaraEl) {
-    const hitCount = detectionUiState.yaraMatches.reduce((acc, rule) => acc + (rule.matches || []).length, 0);
-    yaraEl.textContent = detectionUiState.yaraError ? 'Erreur' : String(hitCount || 0);
-  }
-}
-
-function getCapaUnsupportedReason() {
-  const meta = getCurrentBinaryMeta();
-  const format = String(meta?.format || '').trim().toUpperCase();
-  if (!format) return '';
-  if (format.includes('MACH')) {
-    return 'CAPA analyse les exécutables PE et ELF. Le binaire actif est un Mach-O macOS, donc lance plutôt YARA ici ou charge un binaire Linux/Windows pour CAPA.';
-  }
-  if (format === 'RAW') {
-    return "CAPA a besoin d'un exécutable PE ou ELF complet. Les blobs bruts restent analysables avec YARA, Hex, Strings et Désassemblage.";
-  }
-  return '';
-}
-
-function renderCapaUnsupported(reason = getCapaUnsupportedReason()) {
-  detectionUiState.capaCapabilities = [];
-  detectionUiState.capaError = '';
-  updateDetectionSummaries();
-  const container = document.getElementById('capaContent');
-  if (container) {
-    container.innerHTML = detectionEmptyHtml('CAPA non disponible pour ce format', reason);
-  }
-}
-
-function detectionEmptyHtml(title, desc) {
-  return `<div class="detection-empty"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(desc)}</span></div>`;
-}
-
-function renderCapaResults() {
-  const container = document.getElementById('capaContent');
-  if (!container) return;
-  updateDetectionSummaries();
-  if (detectionUiState.capaError) {
-    container.innerHTML = detectionEmptyHtml('Erreur CAPA', detectionUiState.capaError);
-    return;
-  }
-  const allCaps = detectionUiState.capaCapabilities || [];
-  const query = String(document.getElementById('capaFilterInput')?.value || '').trim().toLowerCase();
-  const namespaceSelect = document.getElementById('capaNamespaceFilter');
-  const requestedNamespace = String(namespaceSelect?.value || '').trim();
-  if (namespaceSelect) {
-    const namespaces = Array.from(new Set(allCaps.map((cap) => String(cap.namespace || '').trim()).filter(Boolean))).sort();
-    namespaceSelect.replaceChildren(new Option('Tous les namespaces', ''));
-    namespaces.forEach((ns) => namespaceSelect.appendChild(new Option(ns, ns)));
-    namespaceSelect.value = namespaces.includes(requestedNamespace) ? requestedNamespace : '';
-  }
-  const namespace = String(namespaceSelect?.value || '').trim();
-  const caps = allCaps.filter((cap) => {
-    const haystack = `${cap.name || ''} ${cap.namespace || ''} ${cap.matches || ''}`.toLowerCase();
-    if (namespace && String(cap.namespace || '') !== namespace) return false;
-    return !query || haystack.includes(query);
-  });
-  if (!allCaps.length) {
-    container.innerHTML = detectionEmptyHtml('Aucune capacité détectée', 'Le scan CAPA est terminé sans match exploitable.');
-    return;
-  }
-  if (!caps.length) {
-    container.innerHTML = detectionEmptyHtml('Aucun résultat filtré', 'Change le filtre ou le namespace pour revoir les capacités.');
-    return;
-  }
-  const rows = caps.map(c => `<tr><td><code>${escapeHtml(c.name || '')}</code></td><td>${escapeHtml(c.namespace || '')}</td><td>${escapeHtml((c.matches || '').substring(0, 90))}</td></tr>`).join('');
-  container.innerHTML = `<div class="detection-results-header"><span class="detection-results-count">${caps.length} / ${allCaps.length} capacité(s)</span></div><table class="data-table"><thead><tr><th>Capacité</th><th>Namespace</th><th>Match</th></tr></thead><tbody>${rows}</tbody></table>`;
-}
-
-function renderYaraResults() {
-  const container = document.getElementById('yaraContent');
-  if (!container) return;
-  updateDetectionSummaries();
-  if (detectionUiState.yaraError) {
-    container.innerHTML = detectionEmptyHtml('Erreur YARA', detectionUiState.yaraError);
-    return;
-  }
-  const allMatches = detectionUiState.yaraMatches || [];
-  const query = String(document.getElementById('yaraFilterInput')?.value || '').trim().toLowerCase();
-  const filteredRules = allMatches
-    .map((rule) => ({
-      ...rule,
-      matches: (rule.matches || []).filter((match) => {
-        const haystack = `${rule.rule || ''} ${match.offset_hex || ''} ${match.matched || ''}`.toLowerCase();
-        return !query || haystack.includes(query);
-      }),
-    }))
-    .filter((rule) => (rule.matches || []).length > 0);
-  const totalHits = allMatches.reduce((acc, r) => acc + (r.matches || []).length, 0);
-  const filteredHits = filteredRules.reduce((acc, r) => acc + (r.matches || []).length, 0);
-  if (!totalHits) {
-    container.innerHTML = detectionEmptyHtml('Aucune règle ne correspond', 'Le scan YARA est terminé sans signature détectée.');
-    return;
-  }
-  if (!filteredHits) {
-    container.innerHTML = detectionEmptyHtml('Aucun résultat filtré', 'Change le filtre pour revoir les correspondances YARA.');
-    return;
-  }
-  const decodeYaraPreview = (hexValue) => {
-    const normalized = String(hexValue || '').replace(/[^0-9a-f]/gi, '');
-    if (!normalized || normalized.length < 2) return '';
-    const bytes = [];
-    for (let index = 0; index < normalized.length; index += 2) {
-      const value = parseInt(normalized.slice(index, index + 2), 16);
-      if (!Number.isFinite(value)) continue;
-      bytes.push(value);
-    }
-    if (!bytes.length) return '';
-    const previewBytes = [];
-    for (const byte of bytes) {
-      if (byte === 0x00) break;
-      previewBytes.push(byte);
-      if (previewBytes.length >= 48) break;
-    }
-    if (!previewBytes.length) return '';
-    const printableCount = previewBytes.filter((byte) => byte >= 0x20 && byte <= 0x7e).length;
-    if ((printableCount / previewBytes.length) < 0.78) return '';
-    return previewBytes
-      .map((byte) => String.fromCharCode(byte))
-      .join('')
-      .replace(/\s+/g, ' ')
-      .trim();
-  };
-  const summarizeHex = (hexValue) => {
-    const normalized = String(hexValue || '').replace(/\s+/g, '').toLowerCase();
-    if (!normalized) return '';
-    return normalized.length > 48 ? `${normalized.slice(0, 48)}…` : normalized;
-  };
-  const cards = filteredRules.map((rule) => {
-    const ruleMatches = (rule.matches || []).map((match, index) => {
-      const span = getYaraMatchSpanLength(match);
-      const preview = decodeYaraPreview(match.matched || '');
-      const hexPreview = summarizeHex(match.matched || '');
-      return `
-        <div class="yara-hit-card">
-          <div class="yara-hit-head">
-            <button type="button" class="yara-offset-pill addr-link" data-addr="${escapeHtml(match.offset_hex)}" data-span="${escapeHtml(String(span))}">
-              ${escapeHtml(match.offset_hex)}
-            </button>
-            <div class="yara-hit-badges">
-              <span class="yara-hit-badge">match ${index + 1}</span>
-              <span class="yara-hit-badge">${escapeHtml(String(span))} octet${span > 1 ? 's' : ''}</span>
-            </div>
-          </div>
-          ${preview ? `<div class="yara-hit-preview">"${escapeHtml(preview)}"</div>` : ''}
-          <div class="yara-hit-hex-wrap">
-            <span class="yara-hit-hex-label">hex</span>
-            <code class="yara-hit-hex" title="${escapeHtml(match.matched || '')}">${escapeHtml(hexPreview)}</code>
-          </div>
-        </div>
-      `;
-    }).join('');
-    return `
-      <section class="yara-rule-card">
-        <div class="yara-rule-card-head">
-          <div class="yara-rule-card-title-wrap">
-            <span class="yara-rule-badge">${escapeHtml(rule.rule || 'Règle sans nom')}</span>
-            <span class="yara-rule-hit-count">${(rule.matches || []).length} correspondance(s)</span>
-          </div>
-        </div>
-        <div class="yara-hit-grid">${ruleMatches}</div>
-      </section>
-    `;
-  }).join('');
-  container.innerHTML = `
-    <div class="yara-results-header">
-      <span class="yara-results-count">${filteredHits} / ${totalHits} correspondance(s) • ${filteredRules.length} règle(s)</span>
-      <span class="hint">Clique sur un offset pour ouvrir la zone correspondante</span>
-    </div>
-    <div class="yara-rule-results">${cards}</div>
-  `;
-  container.querySelectorAll('.addr-link').forEach(el => {
-    el.addEventListener('click', () => {
-      const a = el.dataset.addr;
-      const bp = getStaticBinaryPath();
-      const spanLength = normalizeSpanLength(el.dataset.span || 1);
-      if (a && bp) vscode.postMessage({ type: 'hubGoToFileOffset', fileOffset: a, binaryPath: bp, spanLength });
-    });
-  });
-}
-
-
-function downloadDetectionJson(filename, payload) {
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
 
 function downloadTextFile(filename, content, mimeType = 'text/plain') {
   const blob = new Blob([content], { type: mimeType });
@@ -880,67 +542,6 @@ function buildNavigableAddrNode(addr) {
   return code;
 }
 
-function getPackerScoreBadgeClass(score) {
-  const value = Number(score || 0);
-  if (value >= 55) return 'critical';
-  if (value >= 30) return 'high';
-  return '';
-}
-
-function renderPackerAnalysisHtml(analysis) {
-  if (!analysis || typeof analysis !== 'object') return '';
-  const score = Number(analysis.score || 0);
-  const summary = String(analysis.summary || '').trim();
-  const signals = Array.isArray(analysis.signals) ? analysis.signals : [];
-  const suspiciousSections = Array.isArray(analysis.suspicious_sections) ? analysis.suspicious_sections : [];
-  const regions = Array.isArray(analysis.high_entropy_regions) ? analysis.high_entropy_regions : [];
-  const badgeClass = getPackerScoreBadgeClass(score);
-  const chips = [];
-  chips.push(`<span class="score-badge ${badgeClass}">score ${escapeHtml(String(score))}/100</span>`);
-  if (analysis.global_entropy !== null && analysis.global_entropy !== undefined) {
-    chips.push(`<span class="count-badge">entropie globale ${escapeHtml(Number(analysis.global_entropy).toFixed(2))}</span>`);
-  }
-  if (analysis.import_count !== null && analysis.import_count !== undefined) {
-    chips.push(`<span class="count-badge">${escapeHtml(String(analysis.import_count))} imports</span>`);
-  }
-  if (analysis.resource_count !== null && analysis.resource_count !== undefined) {
-    chips.push(`<span class="count-badge">${escapeHtml(String(analysis.resource_count))} ressource(s)</span>`);
-  }
-  const signalsHtml = signals.length
-    ? `<ul>${signals.map((signal) => `<li><strong>${escapeHtml(signal.label || signal.kind || 'Signal')}</strong> — ${escapeHtml(signal.detail || '—')}</li>`).join('')}</ul>`
-    : '<p class="hint">Aucun signal heuristique fort relevé.</p>';
-  const sectionsHtml = suspiciousSections.length
-    ? `<div class="data-table-wrap"><table class="data-table"><thead><tr><th>Section</th><th>Type</th><th>Offset</th><th>Entropie</th><th>Pourquoi</th></tr></thead><tbody>${suspiciousSections.map((section) => `<tr><td><code>${escapeHtml(section.name || '')}</code></td><td>${escapeHtml(section.type || '—')}</td><td><code>${escapeHtml(section.offset_hex || '—')}</code></td><td>${section.entropy !== null && section.entropy !== undefined ? escapeHtml(Number(section.entropy).toFixed(2)) : '—'}</td><td>${escapeHtml((Array.isArray(section.reasons) ? section.reasons : []).join(' ; ') || '—')}</td></tr>`).join('')}</tbody></table></div>`
-    : '<p class="hint">Aucune section ne ressort comme clairement compressée ou chiffrée.</p>';
-  const yaraMatches = Array.isArray(analysis.yara_matches) ? analysis.yara_matches : [];
-  const regionsHtml = regions.length
-    ? `<p class="hint">Zones locales à revoir : ${regions.map((region) => `${escapeHtml(region.offset_hex || '?')} (${escapeHtml(String(region.entropy || '?'))})`).join(', ')}.</p>`
-    : '';
-  const hintHtml = yaraMatches.length
-    ? `<p class="hint">Signature formelle identifiée (YARA) : ${escapeHtml(yaraMatches.map((m) => m.rule || m.family || '?').join(', '))}. Les patterns byte correspondent à un packer connu.</p>`
-    : '<p class="hint">Lecture rapide : ces indices croisent entropie, noms de sections, imports et ressources PE. Ce n\'est pas une signature packer formelle.</p>';
-  return `
-    <div style="margin-top:12px">
-      <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap">
-        <div>
-          <div class="info-key">Packing / compression</div>
-          <div class="info-val" style="margin:4px 0 0 0">${escapeHtml(summary || '—')}</div>
-        </div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${chips.join('')}</div>
-      </div>
-      ${hintHtml}
-      <div style="margin-top:10px">
-        <div class="info-key">Signaux</div>
-        ${signalsHtml}
-      </div>
-      <div style="margin-top:10px">
-        <div class="info-key">Sections suspectes</div>
-        ${sectionsHtml}
-      </div>
-      ${regionsHtml}
-    </div>`;
-}
-
 // ── Plugin shared helpers (globals consumed by plugin webviews) ───────────────
 function asVI(v) {
   return (v && typeof v === 'object' ? v : {});
@@ -986,11 +587,12 @@ function renderVulnProofDossiers(dossiers, {
     const subtitle = document.createElement('p');
     subtitle.className = 'vuln-dossier-subtitle';
     const findingCount = Number(dossier.finding_count || 0);
-    const taintCount = Array.isArray(related.taint_flows) ? related.taint_flows.length : 0;
     const callsiteCount = Array.isArray(related.callsites) ? related.callsites.length : 0;
-    const behaviorCount = Array.isArray(related.behavior) ? related.behavior.length : 0;
-    const antiCount = Array.isArray(related.anti_analysis) ? related.anti_analysis.length : 0;
-    subtitle.textContent = `${findingCount} signal${findingCount > 1 ? 'aux' : ''} \u00b7 ${taintCount} flux taint \u00b7 ${callsiteCount} callsite${callsiteCount > 1 ? 's' : ''} \u00b7 ${behaviorCount} behavior \u00b7 ${antiCount} anti-analysis`;
+    const relatedListCounts = Object.entries(related)
+      .filter(([key, value]) => !['apis', 'families', 'callsites', 'patch_targets'].includes(key) && Array.isArray(value))
+      .map(([key, value]) => [key, value.length]);
+    const relatedTotal = relatedListCounts.reduce((total, [, count]) => total + count, 0);
+    subtitle.textContent = `${findingCount} signal${findingCount > 1 ? 'aux' : ''} \u00b7 ${callsiteCount} callsite${callsiteCount > 1 ? 's' : ''} \u00b7 ${relatedTotal} corr\u00e9lation${relatedTotal > 1 ? 's' : ''}`;
     titleWrap.append(title, subtitle);
     const badges = document.createElement('div');
     badges.className = 'vuln-dossier-badges';
@@ -1006,8 +608,9 @@ function renderVulnProofDossiers(dossiers, {
       makeBadge('Exploit', exploitScore ? `${exploitLevel} ${exploitScore}` : exploitLevel, exploitClass(exploitLevel)),
       makeBadge('S\u00e9v\u00e9rit\u00e9', dossierSeverity || '?', severityClass(dossierSeverity), severityColor[dossierSeverity] || ''),
     );
-    if (behaviorCount) badges.append(makeBadge('Behavior', String(behaviorCount), 'is-behavior'));
-    if (antiCount) badges.append(makeBadge('Anti-analysis', String(antiCount), 'is-anti'));
+    relatedListCounts.slice(0, 3).forEach(([key, count]) => {
+      if (count) badges.append(makeBadge(String(key), String(count)));
+    });
     head.append(titleWrap, badges);
     card.appendChild(head);
     const relatedApis = Array.isArray(related.apis) ? related.apis.filter(Boolean) : [];
@@ -1098,49 +701,28 @@ function renderVulnProofDossiers(dossiers, {
       section.append(labelEl, list);
       card.appendChild(section);
     }
-    const behaviorSignals = Array.isArray(related.behavior) ? related.behavior.filter((item) => {
-      const i = asVI(item);
-      return i.category || i.evidence;
-    }) : [];
-    if (behaviorSignals.length) {
+    Object.entries(related).forEach(([key, value]) => {
+      if (['apis', 'families', 'callsites', 'patch_targets'].includes(key) || !Array.isArray(value)) return;
+      const signals = value.filter((item) => item && typeof item === 'object');
+      if (!signals.length) return;
       const section = document.createElement('section');
       section.className = 'vuln-dossier-section';
       const labelEl = document.createElement('div');
       labelEl.className = 'vuln-dossier-label';
-      labelEl.textContent = 'Corr\u00e9lation Behavior';
+      labelEl.textContent = `Corr\u00e9lation ${String(key)}`;
       const list = document.createElement('ul');
       list.className = 'vuln-dossier-list';
-      behaviorSignals.slice(0, 3).forEach((rawSignal) => {
+      signals.slice(0, 3).forEach((rawSignal) => {
         const signal = asVI(rawSignal);
         const item = document.createElement('li');
-        const evidenceText = formatPremiumEvidence(signal.evidence, '');
-        item.textContent = `${signal.category || 'SIGNAL'}${evidenceText ? `: ${evidenceText}` : ''}`;
+        const label = signal.category || signal.technique || signal.kind || signal.name || 'SIGNAL';
+        const detail = signal.description || signal.summary || formatPremiumEvidence(signal.evidence, '');
+        item.textContent = `${label}${detail ? `: ${detail}` : ''}`;
         list.appendChild(item);
       });
       section.append(labelEl, list);
       card.appendChild(section);
-    }
-    const antiSignals = Array.isArray(related.anti_analysis) ? related.anti_analysis.filter((item) => {
-      const i = asVI(item);
-      return i.technique || i.description;
-    }) : [];
-    if (antiSignals.length) {
-      const section = document.createElement('section');
-      section.className = 'vuln-dossier-section';
-      const labelEl = document.createElement('div');
-      labelEl.className = 'vuln-dossier-label';
-      labelEl.textContent = 'Corr\u00e9lation Anti-analysis';
-      const list = document.createElement('ul');
-      list.className = 'vuln-dossier-list';
-      antiSignals.slice(0, 3).forEach((rawSignal) => {
-        const signal = asVI(rawSignal);
-        const item = document.createElement('li');
-        item.textContent = `${signal.technique || 'SIGNAL'}${signal.description ? `: ${signal.description}` : ''}`;
-        list.appendChild(item);
-      });
-      section.append(labelEl, list);
-      card.appendChild(section);
-    }
+    });
     const callsites = Array.isArray(related.callsites) ? related.callsites.filter((item) => {
       const i = asVI(item);
       return i.addr;
@@ -1862,7 +1444,15 @@ function updateTypedDataActiveSelection(addr = window._lastDisasmAddr, spanLengt
 
 function setStaticLoading(containerId, msg) {
   const el = document.getElementById(containerId);
-  if (el) el.innerHTML = msg ? `<p class="loading">${escapeHtml(msg)}</p>` : '';
+  if (!el) return;
+  if (!msg) {
+    el.innerHTML = '';
+    return;
+  }
+  el.innerHTML = '<div class="static-loading loading" role="status" aria-live="polite">'
+    + '<span class="static-loading-spinner" aria-hidden="true"></span>'
+    + `<span class="static-loading-text">${escapeHtml(msg)}</span>`
+    + '</div>'; // eslint-disable-line -- msg is escaped
 }
 
 function applyHexLayoutMode() {
@@ -3349,37 +2939,69 @@ function renderGraphSvg(nodes, edges, opts) {
 }
 
 function renderStringsTable(container, strings, filterText, useRegex) {
-  let filtered = strings;
+  const encodingLabel = (encoding) => {
+    if (encoding === 'utf-16-le') return 'UTF-16 LE';
+    if (encoding === 'utf-16-be') return 'UTF-16 BE';
+    return 'UTF-8 / ASCII';
+  };
+
+  // minLen filter — applied client-side, no extension round-trip on minLen change
+  const minLenFilter = parseInt(document.getElementById('stringsMinLen')?.value || '4', 10);
+  const afterMinLen = strings.filter((s) => Number(s.length || 0) >= minLenFilter);
+
+  // Source filter
+  const sourceFilter = document.getElementById('stringsSource')?.value || 'all';
+  let afterSource = afterMinLen;
+  if (sourceFilter === 'pe_import') afterSource = afterMinLen.filter((s) => s.source === 'pe_import');
+  else if (sourceFilter === 'raw') afterSource = afterMinLen.filter((s) => !s.source);
+
+  // Text filter
+  let filtered = afterSource;
   let regexError = false;
   if (filterText) {
     if (useRegex) {
       try {
         const re = new RegExp(filterText);
-        filtered = strings.filter((s) => re.test(String(s.value)));
+        filtered = afterSource.filter((s) => re.test(String(s.value)));
       } catch {
         filtered = [];
         regexError = true;
       }
     } else {
       const q = filterText.toLowerCase();
-      filtered = strings.filter((s) => String(s.value).toLowerCase().includes(q));
+      filtered = afterSource.filter((s) => String(s.value).toLowerCase().includes(q));
     }
   }
-  const toShow = filtered.slice(0, 500);
-  const encodingLabel = (encoding) => {
-    if (encoding === 'utf-16-le') return 'UTF-16 LE';
-    if (encoding === 'utf-16-be') return 'UTF-16 BE';
-    return 'UTF-8 / ASCII';
-  };
-  const rows = toShow.map((s) => {
-    const val = String(s.value);
-    const display = val.length > 80 ? val.substring(0, 80) + '…' : val;
-    const addr = escapeHtml(String(s.addr || ''));
-    const spanLength = Math.max(1, Number(s.length || val.length || 1));
-    return `<tr class="nav-addr-row" data-addr="${addr}" data-addr-match="span" data-span-length="${escapeHtml(String(spanLength))}"><td><code class="addr-link" data-addr="${addr}" data-span="${escapeHtml(String(spanLength))}">${addr}</code></td><td>${escapeHtml(encodingLabel(String(s.encoding || 'utf-8')))}</td><td>${escapeHtml(String(s.length))}</td><td>${escapeHtml(display)}</td></tr>`;
-  }).join('');
+
+  // Empty state (based on total strings, not filtered)
+  if (!regexError && strings.length === 0) {
+    const activeSection = escapeHtml(document.getElementById('stringsSection')?.value || '');
+    const p = document.createElement('p');
+    p.className = 'hint';
+    if (activeSection) {
+      p.innerHTML = `Aucune chaîne dans la section <code>${activeSection}</code> — elle n'existe pas dans ce binaire ou est vide.`
+        + ' PE → <code>.rdata</code>, ELF → <code>.rodata</code>, Mach-O → <code>__cstring</code>.'
+        + ' Essayez le filtre <strong>Toutes</strong>.';
+    } else {
+      p.innerHTML = 'Aucune chaîne trouvée. Les chaînes sont extraites des octets bruts, indépendamment des symboles'
+        + ' (un binaire strippé les conserve). Si le résultat est vide, le binaire est probablement'
+        + ' <strong>packé ou chiffré</strong> : les chaînes lisibles sont absentes sans déchiffrement préalable.';
+    }
+    container.replaceChildren(p);
+    return;
+  }
+
+  // Pagination
+  const pageSize = parseInt(document.getElementById('stringsPageSize')?.value || '50', 10);
+  const totalFiltered = filtered.length;
+  const totalPages = Math.max(1, Math.ceil(totalFiltered / pageSize));
+  stringsPage = Math.max(1, Math.min(stringsPage, totalPages));
+  const pageStart = (stringsPage - 1) * pageSize;
+  const toShow = filtered.slice(pageStart, pageStart + pageSize);
+
+  // Hint
   const hintCls = regexError ? 'hint error' : 'hint';
-  let hint = regexError ? 'Regex invalide' : (filterText ? `${filtered.length} / ${strings.length} chaîne(s)` : `${strings.length} chaîne(s)`);
+  let hint = regexError ? 'Regex invalide' : `${filtered.length}${afterMinLen.length !== filtered.length ? ` / ${afterMinLen.length}` : ''} chaîne(s)`;
   const encodingCounts = filtered.reduce((acc, entry) => {
     const key = String(entry.encoding || 'utf-8');
     acc[key] = (acc[key] || 0) + 1;
@@ -3388,9 +3010,32 @@ function renderStringsTable(container, strings, filterText, useRegex) {
   const encodingSummary = Object.entries(encodingCounts)
     .map(([encoding, count]) => `${encodingLabel(encoding)}: ${count}`)
     .join(' · ');
-  hint += ' — Les adresses sont des adresses virtuelles.';
+  hint += ' — Adresses virtuelles (VA).';
   if (encodingSummary) hint += ` — ${encodingSummary}`;
-  container.innerHTML = `<table class="data-table"><thead><tr><th>Adresse</th><th>Encodage</th><th>Long.</th><th>Valeur</th></tr></thead><tbody>${rows}</tbody></table><p class="${hintCls}">${hint}</p>`;
+
+  // Pagination bar
+  const paginationBar = (totalPages > 1)
+    ? `<div class="strings-pagination"><button class="btn btn-sm btn-secondary strings-page-btn" data-dir="-1"${stringsPage <= 1 ? ' disabled' : ''}>◀</button><span>Page ${stringsPage} / ${totalPages}</span><button class="btn btn-sm btn-secondary strings-page-btn" data-dir="1"${stringsPage >= totalPages ? ' disabled' : ''}>▶</button></div>`
+    : '';
+
+  // Rows
+  const rows = toShow.map((s) => {
+    const val = String(s.value);
+    const display = val.length > 80 ? val.substring(0, 80) + '…' : val;
+    const addr = escapeHtml(String(s.addr || ''));
+    const spanLength = Math.max(1, Number(s.length || val.length || 1));
+    const sourceBadge = s.source === 'pe_import' ? ' <span class="badge-source">PE</span>' : '';
+    return `<tr class="nav-addr-row" data-addr="${addr}" data-addr-match="span" data-span-length="${escapeHtml(String(spanLength))}"><td><code class="addr-link" data-addr="${addr}" data-span="${escapeHtml(String(spanLength))}">${addr}</code></td><td>${escapeHtml(encodingLabel(String(s.encoding || 'utf-8')))}${sourceBadge}</td><td>${escapeHtml(String(s.length))}</td><td>${escapeHtml(display)}</td></tr>`;
+  }).join('');
+
+  container.innerHTML = `${paginationBar}<table class="data-table"><thead><tr><th>Adresse</th><th>Encodage</th><th>Long.</th><th>Valeur</th></tr></thead><tbody>${rows}</tbody></table><p class="${hintCls}">${escapeHtml(hint)}</p>${paginationBar}`;
+
+  container.querySelectorAll('.strings-page-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      stringsPage += parseInt(btn.dataset.dir, 10);
+      renderStringsTable(container, strings, filterText, useRegex);
+    });
+  });
   container.querySelectorAll('.addr-link[data-addr]').forEach((link) => {
     link.addEventListener('click', (event) => {
       event.preventDefault();
@@ -3502,4 +3147,5 @@ document.getElementById('btnExportCgSvg')?.addEventListener('click', () => {
   const svg = svgEl.outerHTML;
   vscode.postMessage({ type: 'hubExportCgSvg', svg });
 });
+
 }

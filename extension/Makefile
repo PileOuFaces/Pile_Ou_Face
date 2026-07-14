@@ -29,7 +29,7 @@ MULTIARCH_PLATFORMS ?= linux/amd64,linux/arm64
 
 EFFECTIVE_PLATFORM := $(PLATFORM)
 
-.PHONY: help venv install install-dev pipeline lint fix format format-check test test-python test-python-coverage test-extension test-extension-coverage test-real-corpus test-coverage test-security ci clean demo demo-similarity demo-suite demo-elf demo-push-ret capa-rules capa-docker \
+.PHONY: help venv install install-dev pipeline lint fix format format-check test test-python test-python-coverage test-extension test-extension-coverage coverage-summary test-real-corpus test-coverage test-security ci clean demo demo-similarity demo-suite demo-elf demo-push-ret capa-rules capa-docker \
         decompiler-docker-build decompiler-docker-list decompiler-docker-build-multiarch \
         decompiler-smoke-test decompilers-smoke-test-all \
         decompilers-docker-build decompilers-docker-list decompilers-docker-build-all \
@@ -81,6 +81,7 @@ help:
 	@echo "  test-python-coverage Run Python tests with the coverage threshold"
 	@echo "  test-extension Run extension tests"
 	@echo "  test-extension-coverage Run extension tests with c8 thresholds"
+	@echo "  coverage-summary Write the combined Python/JS coverage summary"
 	@echo "  test-real-corpus Run real-binary corpus tests and write metrics JSON"
 	@echo "  test-coverage Run Python and extension coverage checks"
 	@echo "  test-security  Bandit (SAST) + pip-audit + npm audit"
@@ -284,6 +285,7 @@ decompilers-docker-list-all:
 
 venv:
 	$(PYTHON) -m venv $(VENV)
+	@[ -x $(PIP) ] || $(PY) -m pip install --upgrade pip -q
 
 install: venv
 	@if [ -f backends/requirements.txt ]; then \
@@ -294,6 +296,7 @@ install: venv
 	@$(MAKE) capa-rules 2>/dev/null || true
 
 install-dev: venv
+	@if [ -f backends/requirements.txt ]; then $(PIP) install -r backends/requirements.txt -q; fi
 	$(PIP) install -r backends/requirements-dev.txt
 
 pipeline: venv
@@ -320,6 +323,7 @@ test-python-coverage: install-dev
 	PYTHONPATH=. $(PY) -m coverage run -m pytest
 	$(PY) -m coverage report
 	$(PY) -m coverage xml
+	$(PY) -m coverage json -o coverage-python.json
 
 test-extension:
 	npm test
@@ -327,13 +331,17 @@ test-extension:
 test-extension-coverage:
 	npm run test:coverage
 
+coverage-summary:
+	@mkdir -p .pile-ou-face/test-artifacts
+	npm run coverage:summary
+
 test-real-corpus:
 	@mkdir -p .pile-ou-face/test-artifacts
 	POF_REAL_CORPUS_SUMMARY_JSON=.pile-ou-face/test-artifacts/real_binary_corpus_metrics.json \
 		PYTHONPATH=. $(PY) -m pytest backends/static/tests/test_real_binary_corpus.py -q
 	@echo "Résumé corpus: .pile-ou-face/test-artifacts/real_binary_corpus_metrics.json"
 
-test-coverage: test-python-coverage test-extension-coverage
+test-coverage: test-python-coverage test-extension-coverage coverage-summary
 
 test: lint format-check test-coverage
 
@@ -352,7 +360,7 @@ test-security: install-dev
 	@echo "==> test-security terminé. Vérifier les résultats ci-dessus."
 
 # Pipeline CI complète simulée en local : lint + types + tests + couverture + sécurité
-ci: lint format-check test-python-coverage test-extension-coverage test-security
+ci: lint format-check test-python-coverage test-extension-coverage coverage-summary test-security
 	@echo ""
 	@echo "=== Pipeline CI locale terminée ==="
 
@@ -364,7 +372,7 @@ test-features:
 	@echo "Push+ret sur binaire : make demo-push-ret"
 
 clean:
-	rm -rf $(VENV) .coverage coverage.xml htmlcov .pytest_cache .ruff_cache extension/node_modules extension/coverage extension/.c8_output
+	rm -rf $(VENV) .coverage coverage.xml coverage-python.json htmlcov .pytest_cache .ruff_cache node_modules coverage .c8_output .pile-ou-face/test-artifacts/coverage-summary.md
 	find . -type d \( -name __pycache__ -o -name .pytest_cache -o -name .ruff_cache \) -prune -exec rm -rf {} + 2>/dev/null || true
 
 # ---------------------------------------------------------------------------

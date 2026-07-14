@@ -7,12 +7,11 @@
 
 const vscode = require('vscode');
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const cp = require('child_process');
 const { getHubContent } = require('../shared/webview');
-const { buildRuntimeEnv, resolveProjectRoot, getExtensionPath } = require('../shared/utils');
+const { buildRuntimeEnv, resolveProjectRoot, getExtensionPath, logDebug } = require('../shared/utils');
 const { AuthService } = require('../shared/authService');
 const { resolveAuthServerUrl } = require('../shared/authConfig');
 const {
@@ -118,7 +117,6 @@ function createHub(config) {
     aiPricingRules: [],
     decompilerProvider: 'docker',
     decompilerLocalPaths: {},
-    bindiffThreshold: 0.60,
     stringsEncoding: 'auto',
     stringsMinLen: 4,
     asmSyntax: 'intel',
@@ -161,6 +159,7 @@ function createHub(config) {
       vscode.window.showErrorMessage('Aucun workspace ouvert.');
       return null;
     }
+    const workspaceRoot = folders[0].uri.fsPath;
     const root = resolveProjectRoot(folders[0].uri.fsPath);
     const backendRoot = getExtensionPath() || root;
     const pythonExe = detectPythonExecutable(root);
@@ -262,10 +261,10 @@ function createHub(config) {
         localResourceRoots: [
           context.extensionUri,
           vscode.Uri.file(root),
-          vscode.Uri.file(storageDir || path.join(root, '.pile-ou-face')),
-          vscode.Uri.file(path.join(storageDir || path.join(root, '.pile-ou-face'), 'plugins')),
-          vscode.Uri.file(globalDir || path.join(os.homedir(), '.pile-ou-face')),
-          vscode.Uri.file(path.join(globalDir || path.join(os.homedir(), '.pile-ou-face'), 'plugins')),
+          ...(storageDir ? [
+            vscode.Uri.file(storageDir),
+            vscode.Uri.file(path.join(storageDir, 'plugins')),
+          ] : []),
         ],
       }
     );
@@ -372,6 +371,7 @@ function createHub(config) {
       globalDir,
       panel,
       context,
+      logChannel,
       getTempDir,
       ensureTempDir,
       refreshSidebar,
@@ -393,11 +393,34 @@ function createHub(config) {
         });
       }, 80);
     }
+    // Proactively push rules state to webview on hub open so rules
+    // are always visible after reload without relying on DOMContentLoaded.
+    globalThis.setTimeout(() => {
+      if (typeof handlers.hubListRules === 'function') {
+        handlers.hubListRules({}).catch((err) => {
+          logChannel.appendLine(`[hub] Rules init error: ${err?.message || err}`);
+        });
+      }
+    }, 200);
 
     const runPythonJson = (scriptPath, args) => new Promise((resolve, reject) => {
-      cp.execFile(pythonExe, [scriptPath, ...args], { encoding: 'utf8', cwd: root, maxBuffer: 4 * 1024 * 1024, timeout: 60000, env: pythonEnv }, (err, stdout) => {
+      cp.execFile(pythonExe, [scriptPath, ...args], { encoding: 'utf8', cwd: root, maxBuffer: 32 * 1024 * 1024, timeout: 60000, env: pythonEnv }, (err, stdout) => {
         if (err) { reject(err.message ? err : new Error(String(err))); return; }
         try { resolve(JSON.parse(stdout)); } catch (e) { reject(e); }
+      });
+    });
+    const runPythonJsonViaFile = (scriptPath, args, tmpFile) => new Promise((resolve, reject) => {
+      cp.execFile(pythonExe, [scriptPath, ...args, '--output', tmpFile], { cwd: root, timeout: 120000, env: pythonEnv }, (err) => {
+        if (err) { reject(err.message ? err : new Error(String(err))); return; }
+        try {
+          const data = fs.readFileSync(tmpFile, 'utf8');
+          try {
+            fs.unlinkSync(tmpFile);
+          } catch (err) {
+            logDebug(`[runPythonJsonViaFile] suppression du fichier temporaire échouée (${tmpFile}): ${err.message || err}`);
+          }
+          resolve(JSON.parse(data));
+        } catch (e) { reject(e); }
       });
     });
     const runPythonJsonFile = (args, {
@@ -455,10 +478,10 @@ function createHub(config) {
       feature,
       ...extra,
     });
-    const invokePluginRuntimeCommand = async (commandId, payload, {
+    const invokePluginRuntimeCommand = async (featureId, payload, {
       timeout = 120000,
       pluginId = '',
-      feature = commandId,
+      feature = featureId,
     } = {}) => {
       try {
         const pluginEnv = await buildPluginRuntimeEnv();
@@ -469,8 +492,8 @@ function createHub(config) {
               path.join(backendRoot, 'backends/plugins/runtime.py'),
               '--host-version', '0.1.0',
               '--api-version', '1',
-              'invoke',
-              commandId,
+              'invoke-feature',
+              featureId,
               '--payload-json',
               JSON.stringify(payload || {}),
             ],
@@ -488,14 +511,14 @@ function createHub(config) {
         }
         return {
           ok: false,
-          error: String(response?.error || `Échec plugin: ${commandId}`),
+          error: String(response?.error || `Échec plugin: ${featureId}`),
           plugin_required: pluginId || undefined,
           feature,
-          plugin_command: commandId,
+          plugin_command: String(response?.command || ''),
         };
       } catch (error) {
         if (pluginId) return buildPluginRequiredPayload(pluginId, feature);
-        return { ok: false, error: String(error?.message || error || `Échec plugin: ${commandId}`) };
+        return { ok: false, error: String(error?.message || error || `Échec plugin: ${featureId}`) };
       }
     };
     const resolvePathFromWorkspace = (inputPath) => (
@@ -680,7 +703,7 @@ function createHub(config) {
       getCfgScript, getCallGraphScript, getDiscoverFunctionsScript,
     });
     const loadersHandlers = createLoaders({
-      panel, analysisCtx, root, storageDir, globalDir, runPythonJson, logChannel, fs, path,
+      panel, analysisCtx, root, storageDir, globalDir, runPythonJson, runPythonJsonViaFile, logChannel, fs, path,
       readCache, writeCache, getStringsScript, getSectionsScript, getXrefsScript,
     });
     const traceHistoryHandlers = createTraceHistory({
@@ -690,7 +713,7 @@ function createHub(config) {
       vscode, fs, path, crypto,
     });
     const actionsHandlers = createActions({
-      panel, context, vscode, root, storageDir, globalDir, logChannel, fs, path,
+      panel, context, vscode, root, workspaceRoot, storageDir, globalDir, logChannel, fs, path,
       runPythonJson, runPythonJsonFile,
       ensureTempDir, getTempDir,
       resolvePathFromWorkspace, toWebviewPath,
@@ -781,7 +804,7 @@ function createHub(config) {
           hostPath = resolvePathFromWorkspace(String(file.hostPath || '').trim());
           if (!hostPath || !fs.existsSync(hostPath)) throw new Error(`Fichier payload introuvable: ${hostPath}`);
         } else {
-          const dir = storageDir || ensureTempDir(root);
+          const dir = storageDir;
           hostPath = path.join(dir, `dynamic-input-${Date.now()}-${Math.random().toString(16).slice(2)}.txt`);
           fs.writeFileSync(hostPath, String(file.inlineContent || ''), 'utf8');
         }
@@ -803,7 +826,6 @@ function createHub(config) {
           type: 'blob',
           bits: descriptor.bits || '',
           stripped: 'n/a',
-          packers: 'n/a',
           arch,
           endianness: rawProfile?.endian || 'little',
           interp: 'n/a',
@@ -816,7 +838,7 @@ function createHub(config) {
         mappingPath,
         baseName,
       }) => {
-        const discoveredPath = artifacts?.discoveredPath || path.join(storageDir || ensureTempDir(root), `${baseName}.discovered.json`);
+        const discoveredPath = artifacts?.discoveredPath || path.join(storageDir, `${baseName}.discovered.json`);
         if (fs.existsSync(discoveredPath)) return discoveredPath;
         if (!fs.existsSync(mappingPath)) return null;
         const discScript = getDiscoverFunctionsScript(root);
@@ -920,8 +942,8 @@ function createHub(config) {
             pie: false,
             symbols: { startDefault: defaultMain, stopDefault: '' },
             mvpProfile: {
-              bufferOffset: -64,
-              bufferSize: 64,
+              bufferOffset: null,
+              bufferSize: null,
               maxSteps: 800,
               startSymbol: defaultMain,
               stopSymbol: ''
@@ -948,16 +970,25 @@ function createHub(config) {
         const startDefault = findSymbolByCandidates(symbols, mainSymbolCandidates(info)) || preferredMainSymbol(info);
         const stopDefault = '';
         const defaultProfile = {
-          bufferOffset: archBits === 32 ? -32 : -64,
-          bufferSize: archBits === 32 ? 32 : 64,
+          bufferOffset: null,
+          bufferSize: null,
           maxSteps: 800,
           startSymbol: startDefault,
           stopSymbol: stopDefault
         };
+        const trustedBufferSource = sameBinaryTrace?.meta?.buffer_source === 'detected'
+          || sameBinaryTrace?.meta?.buffer_source === 'user';
+        const hasSameBinaryBuffer = trustedBufferSource
+          && Number.isFinite(Number(sameBinaryTrace?.meta?.buffer_offset))
+          && Number.isFinite(Number(sameBinaryTrace?.meta?.buffer_size));
         const mergedProfile = {
           ...defaultProfile,
-          ...(Number.isFinite(Number(sameBinaryTrace?.meta?.buffer_offset)) ? { bufferOffset: Number(sameBinaryTrace.meta.buffer_offset) } : {}),
-          ...(Number.isFinite(Number(sameBinaryTrace?.meta?.buffer_size)) ? { bufferSize: Number(sameBinaryTrace.meta.buffer_size) } : {}),
+          ...(hasSameBinaryBuffer
+            ? {
+              bufferOffset: Number(sameBinaryTrace.meta.buffer_offset),
+              bufferSize: Number(sameBinaryTrace.meta.buffer_size)
+            }
+            : {}),
           ...(Number.isFinite(Number(sameBinaryTrace?.meta?.steps)) && Number(sameBinaryTrace.meta.steps) > 0
             ? { maxSteps: Math.max(800, Number(sameBinaryTrace.meta.steps)) }
             : {}),
@@ -1028,8 +1059,10 @@ function createHub(config) {
       const archBits = String(payload.archBits || '64');
       const pieChoice = String(payload.pieChoice || (payload.pie === true ? 'yes' : 'no') || 'no');
       const traceMode = String(payload.traceMode || 'dynamic');
-      const bufferOffset = String(payload.bufferOffset || '-64');
-      const bufferSize = String(payload.bufferSize || '64');
+      const hasBufferOffset = payload.bufferOffset !== null && payload.bufferOffset !== undefined && payload.bufferOffset !== '';
+      const hasBufferSize = payload.bufferSize !== null && payload.bufferSize !== undefined && payload.bufferSize !== '';
+      const bufferOffset = hasBufferOffset ? String(payload.bufferOffset) : null;
+      const bufferSize = hasBufferSize ? String(payload.bufferSize) : null;
       const maxSteps = String(payload.maxSteps || '800');
 
       let startSymbol = String(payload.startSymbol || 'main').trim();
@@ -1160,13 +1193,13 @@ function createHub(config) {
             getRunPipelineScript(root),
             '--binary', binaryOutPath,
             '--stdin', injectStdin && !payloadHex ? payloadString : '',
-            '--buffer-offset', bufferOffset,
-            '--buffer-size', bufferSize,
             '--stack-entries', '40',
             '--output', isolatedJsonPath,
             '--start-symbol', startSymbol,
             '--max-steps', maxSteps
           ];
+          if (bufferOffset !== null) pythonArgs.push('--buffer-offset', bufferOffset);
+          if (bufferSize !== null) pythonArgs.push('--buffer-size', bufferSize);
           if (injectStdin && payloadHex) pythonArgs.push('--stdin-hex', payloadHex);
           if (injectArgv && payloadHex) pythonArgs.push('--argv1-hex', payloadHex);
           else if (injectArgv) pythonArgs.push('--argv1', payloadString);
@@ -1242,6 +1275,10 @@ function createHub(config) {
             crash: trace.crash && typeof trace.crash === 'object' ? trace.crash : null,
             diagnostics: Array.isArray(trace.diagnostics) ? trace.diagnostics : [],
             risks: Array.isArray(trace.risks) ? trace.risks : [],
+            // Same field the standalone visualizer's 'init' message carries
+            // (visualizer.ts::sendInitToWebview) -- the embedded Hub Runtime
+            // view must see the same per-step Evidence, not just snapshots.
+            analysisByStep: trace.analysisByStep && typeof trace.analysisByStep === 'object' ? trace.analysisByStep : {},
             enrichment: trace.enrichment && typeof trace.enrichment === 'object' ? trace.enrichment : {},
             tracePath: isolatedJsonPath,
           });

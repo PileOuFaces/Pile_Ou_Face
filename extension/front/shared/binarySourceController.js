@@ -409,7 +409,7 @@
 
     // --- Apply / finalize selection ---
 
-    function applyStaticBinarySelectionUi(binaryPath, binaryMeta) {
+    function applyStaticBinarySelectionUi(binaryPath, binaryMeta, skipAutoLoad = false) {
       if (staticBinaryInput) staticBinaryInput.value = binaryPath;
       if (binaryPathInput) binaryPathInput.value = binaryPath;
       currentBinaryMeta = binaryMeta;
@@ -421,7 +421,7 @@
       if (document.getElementById('panel-static')?.classList.contains('active')) {
         const stored = typeof _loadStorage === 'function' ? _loadStorage() : {};
         if (typeof showGroup === 'function' && typeof getActiveStaticTab === 'function') {
-          showGroup(stored.group || 'code', getActiveStaticTab() || stored.tab || 'disasm');
+          showGroup(stored.group || 'code', getActiveStaticTab() || stored.tab || 'disasm', skipAutoLoad);
         }
       }
       if (typeof syncStaticWorkspaceSummary === 'function') syncStaticWorkspaceSummary();
@@ -488,11 +488,26 @@
         const prevMetaKey = JSON.stringify(getCurrentBinaryMeta() || null);
         const nextMetaKey = JSON.stringify(nextMeta || null);
         const sameSelection = prevBp === bp && prevMetaKey === nextMetaKey;
+        safePostMessage({
+          type: 'hubDebugLog',
+          scope: 'static-binary',
+          event: 'set',
+          details: {
+            previous: prevBp || '',
+            next: bp,
+            sameSelection,
+            skipAutoLoad,
+            activeTab: typeof getActiveStaticTab === 'function' ? getActiveStaticTab() : '',
+          },
+        });
         if (!sameSelection && typeof resetStaticBinaryDerivedState === 'function') {
           resetStaticBinaryDerivedState();
         }
-        applyStaticBinarySelectionUi(bp, nextMeta);
+        applyStaticBinarySelectionUi(bp, nextMeta, skipAutoLoad);
         finalizeStaticBinarySelection(bp, nextMeta, { sameSelection, skipAutoLoad });
+        if (window.PluginIframeRouter) {
+          window.PluginIframeRouter.broadcast({ type: '__binaryPath', binaryPath: bp });
+        }
         return true;
       }
       if (msg.type === 'hubForgetRecentBinary' && msg.binaryPath) {

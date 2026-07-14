@@ -14,6 +14,7 @@ const {
   readMeta,
   listIndexedCacheEntries,
   pruneIndexedCacheEntries,
+  clearIndexedCacheEntries,
 } = require('./staticCache');
 
 const CACHE_DIR_NAME = 'static_cache';
@@ -244,12 +245,14 @@ function purgeStalePfdb(storageDir, fingerprints) {
 function cleanupArtifactsForBinary(storageDir, binaryPath) {
   const baseDir = getBaseDir(storageDir);
   if (!fs.existsSync(baseDir)) return 0;
-  const baseName = path.basename(String(binaryPath || '').trim());
-  if (!baseName) return 0;
+  const targetName = path.basename(String(binaryPath || '').trim());
+  if (!targetName) return 0;
+  const targetStem = path.basename(targetName, path.extname(targetName));
+  const candidateStems = [...new Set([targetName, targetStem].filter(Boolean))];
   let removed = 0;
   for (const name of fs.readdirSync(baseDir)) {
     if (PROTECTED_NAMES.has(name) || name === MANIFEST_FILE || name === CACHE_DIR_NAME) continue;
-    if (name !== baseName && !name.startsWith(`${baseName}.`)) continue;
+    if (!candidateStems.some((stem) => name === stem || name.startsWith(`${stem}.`))) continue;
     const fullPath = path.join(baseDir, name);
     if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) continue;
     removeRecursive(fullPath);
@@ -326,6 +329,18 @@ function cleanupSupportFilesForBinary(storageDir, binaryPath) {
     }
   }
 
+  return removed;
+}
+
+function clearPfdbCache(storageDir) {
+  const dir = path.join(getBaseDir(storageDir), PFDB_DIR_NAME);
+  if (!fs.existsSync(dir)) return 0;
+  let removed = 0;
+  for (const name of fs.readdirSync(dir)) {
+    if (!name.endsWith('.pfdb') && !name.endsWith('.pfdb-journal')) continue;
+    removeRecursive(path.join(dir, name));
+    removed++;
+  }
   return removed;
 }
 
@@ -511,7 +526,11 @@ function cleanupAll(storageDir, options = {}) {
         removeRecursive(path.join(cacheDir, name));
         removedCache++;
       }
+      clearIndexedCacheEntries(storageDir);
     }
+  }
+  if (!artifactsOnly) {
+    removedCache += clearPfdbCache(storageDir);
   }
   return { removedArtifacts, removedCache, purgedStale };
 }

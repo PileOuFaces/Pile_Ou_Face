@@ -417,8 +417,17 @@ export function toSafeNumber(addr, rsp) {
   return Number(delta);
 }
 
-export function buildModelRegions(model, rbp, meta = {}) {
+export function buildModelRegions(model, rbp, meta = {}, frameIsReady = true) {
   if (rbp === null) return [];
+  // model.locals (mcp.model, backend/pedagogy.ts) is a trace-wide, per-
+  // function aggregate: it already knows about buffers/args/locals the
+  // current invocation will only actually reserve at a later step. Before
+  // the frame is allocated at THIS step, none of that is legitimate
+  // evidence yet -- surfacing it here would leak buffer/arg/local regions
+  // (and the offset-based legacy fallback below) straight into
+  // resolveSemanticRole/buildSimpleSourceItems, upstream of and bypassing
+  // the Core-level trustedModelSeeds gating entirely.
+  if (!frameIsReady) return [];
 
   const regions = [];
   if (model && Array.isArray(model.locals)) {
@@ -501,6 +510,16 @@ export function buildSemanticStackItems(analysis) {
     end: slot.end ?? null,
     pos: null,
     size: Number.isFinite(Number(slot.size)) ? Math.trunc(Number(slot.size)) : 1,
+    // Whether `size` is a proven exact size or just a drawn-to-bound
+    // estimate -- set by the backend, never guessed here from label text.
+    size_exact: typeof slot.size_exact === 'boolean' ? slot.size_exact : true,
+    // Passthrough only, never derived/defaulted here -- so a backend
+    // Evidence verdict on this slot survives downstream (stackWorkspaceCore
+    // / RuntimeEvidence) instead of being silently dropped.
+    observed_write_size: slot.observed_write_size,
+    estimated_bound: slot.estimated_bound,
+    classification: slot.classification,
+    evidenceClassification: slot.evidenceClassification,
     value: slot.valueHex ?? slot.bytesHex ?? slot.valueDisplay ?? '??',
     valueDisplay: slot.valueDisplay ?? slot.valueHex ?? slot.bytesHex ?? '??',
     label: slot.label ?? `slot_${index}`,
@@ -649,7 +668,15 @@ export function buildSimpleSourceItems(sorted, context) {
       ascii: item.ascii ?? '',
       source: item.source ?? '',
       confidence: Number.isFinite(Number(item.confidence)) ? Number(item.confidence) : null,
-      activePointers: Array.isArray(item.activePointers) ? item.activePointers : []
+      activePointers: Array.isArray(item.activePointers) ? item.activePointers : [],
+      // Passthrough only, never derived/defaulted here -- carries the
+      // backend Evidence verdict (when present) through to
+      // stackWorkspaceCore / RuntimeEvidence instead of dropping it.
+      size_exact: item.size_exact,
+      observed_write_size: item.observed_write_size,
+      estimated_bound: item.estimated_bound,
+      classification: item.classification,
+      evidenceClassification: item.evidenceClassification
     });
   });
 

@@ -87,7 +87,7 @@ function createTraceHistory({
   };
 
   const buildDynamicTraceHistoryItems = () => {
-    const tempDir = storageDir || (ensureTempDir ? ensureTempDir(root) : '');
+    const tempDir = storageDir;
     if (!tempDir || !fs.existsSync(tempDir)) return [];
     const activePath = normalizeHistoryPath(_activeDynamicTracePath);
     const candidates = fs.readdirSync(tempDir)

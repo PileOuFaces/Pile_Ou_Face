@@ -30,6 +30,7 @@ pythonpath = ["."]
 testpaths = [
     "backends/static/tests",
     "backends/plugins/tests",
+    "backends/plugin_api/tests",
 ]
 
 [tool.coverage.run]

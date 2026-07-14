@@ -15,8 +15,7 @@ const path = require('path');
 const http = require('http');
 const https = require('https');
 const readline = require('readline');
-const { detectPythonExecutable, buildRuntimeEnv } = require('../shared/utils');
-const { normalizeRawArchName } = require('../shared/sharedHandlers');
+const { detectPythonExecutable, buildRuntimeEnv, resolveDockerExecutable, logDebug, logWarning } = require('../shared/utils');
 const { emptyPluginUiState, summarizePluginRuntimeState } = require('./pluginState');
 const { AuthService } = require('../shared/authService');
 const { resolveAuthServerUrl } = require('../shared/authConfig');
@@ -24,8 +23,385 @@ const {
   clearAiProcess,
   registerAiProcess,
 } = require('../shared/aiProcessRegistry');
+const { getKnownOciImagePlatform } = require('./decompilerCommands');
 
 const AUTH_STRICT_LICENSE_ENV = 'BINHOST_DISABLE_LICENSE_FALLBACK';
+const DOCKER_IMAGE_UPDATE_CACHE_TTL_MS = 10 * 60 * 1000;
+const _dockerImageUpdateCache = new Map();
+let _dockerRuntimeStatusCache = null;
+
+function _collectProcessOutput(command, args, options = {}) {
+  return new Promise((resolve) => {
+    if (typeof cp.spawn !== 'function') {
+      resolve({ code: -1, stdout: '', stderr: 'spawn unavailable' });
+      return;
+    }
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const proc = cp.spawn(command, args, {
+      env: options.env || process.env,
+      cwd: options.cwd,
+    });
+    const timeoutMs = options.timeout || 12000;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try {
+        proc.kill('SIGTERM');
+      } catch (err) {
+        logDebug(`[_collectProcessOutput] kill(${command}) après timeout a échoué: ${err.message || err}`);
+      }
+      resolve({ code: -1, stdout, stderr: stderr || 'timeout' });
+    }, timeoutMs);
+    proc.stdout?.on('data', (chunk) => { stdout += chunk.toString(); });
+    proc.stderr?.on('data', (chunk) => { stderr += chunk.toString(); });
+    proc.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ code: -1, stdout, stderr: String(err.message || err) });
+    });
+    proc.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ code, stdout, stderr });
+    });
+  });
+}
+
+function _extractDockerDigests(value, digests = new Set()) {
+  if (value == null) return digests;
+  if (typeof value === 'string') {
+    for (const match of value.matchAll(/sha256:[a-f0-9]{64}/gi)) {
+      digests.add(match[0].toLowerCase());
+    }
+    return digests;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item) => _extractDockerDigests(item, digests));
+    return digests;
+  }
+  if (typeof value === 'object') {
+    Object.values(value).forEach((item) => _extractDockerDigests(item, digests));
+  }
+  return digests;
+}
+
+function _extractLocalRepoDigests(payload) {
+  const digests = new Set();
+  const entries = Array.isArray(payload) ? payload : [];
+  entries.forEach((entry) => {
+    const repoDigests = Array.isArray(entry?.RepoDigests) ? entry.RepoDigests : [];
+    repoDigests.forEach((digestRef) => _extractDockerDigests(digestRef, digests));
+  });
+  return Array.from(digests);
+}
+
+function _extractRemoteManifestDigests(payload) {
+  const digests = new Set();
+  const add = (value) => _extractDockerDigests(value, digests);
+  const entries = Array.isArray(payload) ? payload : [payload];
+  entries.forEach((entry) => {
+    if (!entry || typeof entry !== 'object') return;
+    add(entry.Descriptor?.digest);
+    add(entry.digest);
+    if (Array.isArray(entry.manifests)) {
+      entry.manifests.forEach((manifest) => add(manifest?.digest));
+    }
+  });
+  return Array.from(digests);
+}
+
+function _extractImagetoolsDigests(stdout) {
+  const digests = new Set();
+  const text = String(stdout || '');
+  for (const match of text.matchAll(/(?:^|\s)Digest:\s*(sha256:[a-f0-9]{64})/gim)) {
+    digests.add(match[1].toLowerCase());
+  }
+  for (const match of text.matchAll(/@((?:sha256:)[a-f0-9]{64})/gim)) {
+    digests.add(match[1].toLowerCase());
+  }
+  return Array.from(digests);
+}
+
+function _shortDockerDigest(digest) {
+  const value = String(digest || '').trim();
+  const match = value.match(/sha256:([a-f0-9]{12})[a-f0-9]*/i);
+  return match ? match[1].toLowerCase() : '';
+}
+
+function _dockerImageUpdateCacheKey(image, platform = '') {
+  return `${String(image || '').trim()}|${String(platform || '').trim()}`;
+}
+
+function _getCachedDockerImageUpdate(image, platform = '') {
+  const cached = _dockerImageUpdateCache.get(_dockerImageUpdateCacheKey(image, platform));
+  if (!cached || Date.now() - cached.cachedAt > DOCKER_IMAGE_UPDATE_CACHE_TTL_MS) return null;
+  return { ...cached.value, cached: true, cacheAgeMs: Date.now() - cached.cachedAt };
+}
+
+function _setCachedDockerImageUpdate(image, platform, value) {
+  _dockerImageUpdateCache.set(_dockerImageUpdateCacheKey(image, platform), {
+    cachedAt: Date.now(),
+    value,
+  });
+}
+
+function _getCachedDockerRuntimeStatus() {
+  if (!_dockerRuntimeStatusCache || Date.now() - _dockerRuntimeStatusCache.cachedAt > DOCKER_IMAGE_UPDATE_CACHE_TTL_MS) return null;
+  return { ..._dockerRuntimeStatusCache.value, cached: true, cacheAgeMs: Date.now() - _dockerRuntimeStatusCache.cachedAt };
+}
+
+function _setCachedDockerRuntimeStatus(value) {
+  _dockerRuntimeStatusCache = { cachedAt: Date.now(), value };
+}
+
+function _formatLogDetails(details = {}) {
+  return Object.entries(details)
+    .filter(([, value]) => value !== undefined && value !== null && value !== '')
+    .map(([key, value]) => `${key}=${JSON.stringify(value)}`)
+    .join(' ');
+}
+
+function _logDecompilerDocker(logChannel, event, details = {}) {
+  if (!logChannel?.appendLine) return;
+  const suffix = _formatLogDetails(details);
+  logChannel.appendLine(`[decompiler/docker] ${event}${suffix ? ` ${suffix}` : ''}`);
+}
+
+function _pullProgressSummary(layersDone, layersTotal) {
+  if (!layersTotal) return '';
+  return `Layers ${layersDone}/${layersTotal}`;
+}
+
+function _classifyDockerStatusError(stderr) {
+  const text = String(stderr || '').trim();
+  if (/docker.*buildx.*not.*command|unknown command.*buildx|is not a docker command/i.test(text)) {
+    return { errorKind: 'buildx-missing', errorLabel: 'Docker buildx indisponible' };
+  }
+  if (/ENOENT|not found|no such file or directory|executable file not found/i.test(text)) {
+    return { errorKind: 'docker-missing', errorLabel: 'Docker introuvable' };
+  }
+  if (/cannot connect to the docker daemon|is the docker daemon running|docker daemon/i.test(text)) {
+    return { errorKind: 'daemon-unavailable', errorLabel: 'Daemon Docker indisponible' };
+  }
+  if (/unauthorized|authentication required|denied|forbidden/i.test(text)) {
+    return { errorKind: 'auth-required', errorLabel: 'Authentification registry requise' };
+  }
+  if (/manifest unknown|name unknown|not found|does not exist/i.test(text)) {
+    return { errorKind: 'manifest-missing', errorLabel: 'Manifest distant introuvable' };
+  }
+  if (/lookup|no such host|connection refused|i\/o timeout|timed out|tls handshake|network is unreachable|timeout/i.test(text)) {
+    return { errorKind: 'registry-unreachable', errorLabel: 'Registry inaccessible' };
+  }
+  return { errorKind: text ? 'unknown' : '', errorLabel: text ? 'Update non vérifiable' : '' };
+}
+
+function _readLocalDockerImageMetadata(payload) {
+  const entries = Array.isArray(payload) ? payload : [];
+  const first = entries[0] || {};
+  const localDigests = _extractLocalRepoDigests(entries);
+  const imageId = String(first.Id || '').trim();
+  const osName = String(first.Os || '').trim();
+  const architecture = String(first.Architecture || '').trim();
+  return {
+    localDigests,
+    localDigest: localDigests[0] || '',
+    localDigestShort: _shortDockerDigest(localDigests[0] || ''),
+    localImageId: imageId,
+    localImageIdShort: _shortDockerDigest(imageId),
+    localCreated: String(first.Created || '').trim(),
+    localOs: osName,
+    localArchitecture: architecture,
+    localPlatform: osName && architecture ? `${osName}/${architecture}` : '',
+  };
+}
+
+async function _checkDockerRuntimeStatus(options = {}) {
+  if (!options.force) {
+    const cached = _getCachedDockerRuntimeStatus();
+    if (cached) return cached;
+  }
+  const dockerExe = resolveDockerExecutable();
+  const version = await _collectProcessOutput(dockerExe, ['--version'], { env: buildRuntimeEnv(''), timeout: 5000 });
+  const info = version.code === 0
+    ? await _collectProcessOutput(dockerExe, ['info'], { env: buildRuntimeEnv(''), timeout: 8000 })
+    : { code: -1, stdout: '', stderr: version.stderr };
+  const buildx = version.code === 0
+    ? await _collectProcessOutput(dockerExe, ['buildx', 'version'], { env: buildRuntimeEnv(''), timeout: 8000 })
+    : { code: -1, stdout: '', stderr: version.stderr };
+  const runtimeError = version.code !== 0
+    ? _classifyDockerStatusError(version.stderr)
+    : info.code !== 0
+      ? _classifyDockerStatusError(info.stderr)
+      : buildx.code !== 0
+        ? _classifyDockerStatusError(buildx.stderr)
+        : { errorKind: '', errorLabel: '' };
+  const value = {
+    dockerFound: version.code === 0,
+    daemonOk: info.code === 0,
+    buildxOk: buildx.code === 0,
+    dockerVersion: String(version.stdout || '').trim(),
+    buildxVersion: String(buildx.stdout || '').trim(),
+    checkedAt: new Date().toISOString(),
+    ...runtimeError,
+  };
+  _setCachedDockerRuntimeStatus(value);
+  return value;
+}
+
+async function _postDockerRuntimeStatus(panel, options = {}) {
+  const status = await _checkDockerRuntimeStatus(options);
+  _logDecompilerDocker(options.logChannel, 'runtime.status', {
+    dockerFound: status.dockerFound,
+    daemonOk: status.daemonOk,
+    buildxOk: status.buildxOk,
+    cached: status.cached === true,
+    errorKind: status.errorKind,
+  });
+  panel.webview.postMessage({ type: 'hubDockerRuntimeStatus', status });
+}
+
+async function _checkDockerImageUpdate(image, platform = '', options = {}) {
+  if (!options.force) {
+    const cached = _getCachedDockerImageUpdate(image, platform);
+    if (cached) return cached;
+  }
+  const dockerExe = resolveDockerExecutable();
+  const local = await _collectProcessOutput(
+    dockerExe,
+    ['image', 'inspect', image],
+    { env: buildRuntimeEnv(''), timeout: 8000 },
+  );
+  if (local.code !== 0) {
+    const classified = _classifyDockerStatusError(local.stderr);
+    const value = { image, platform, status: 'missing', error: local.stderr.trim(), ...classified };
+    _setCachedDockerImageUpdate(image, platform, value);
+    return value;
+  }
+
+  let localPayload = null;
+  try {
+    localPayload = JSON.parse(local.stdout || '[]');
+  } catch (err) {
+    logDebug(`[docker image status] parsing "image inspect" échoué pour ${image}: ${err.message || err}`);
+  }
+  const localMeta = _readLocalDockerImageMetadata(localPayload);
+  const localDigests = localMeta.localDigests;
+  if (localDigests.length === 0) {
+    const value = { image, platform, status: 'unknown', ...localMeta, error: 'image locale sans digest registry', errorKind: 'local-digest-missing', errorLabel: 'Digest local absent' };
+    _setCachedDockerImageUpdate(image, platform, value);
+    return value;
+  }
+
+  const imagetools = await _collectProcessOutput(
+    dockerExe,
+    ['buildx', 'imagetools', 'inspect', image],
+    { env: buildRuntimeEnv(''), timeout: 15000 },
+  );
+  let remoteDigests = [];
+  if (imagetools.code === 0) {
+    remoteDigests = _extractImagetoolsDigests(imagetools.stdout);
+  }
+
+  const remoteArgs = ['manifest', 'inspect', '--verbose', image];
+  const remote = await _collectProcessOutput(
+    dockerExe,
+    remoteArgs,
+    { env: buildRuntimeEnv(''), timeout: 15000 },
+  );
+  if (remote.code === 0) {
+    let remotePayload = null;
+    try {
+      remotePayload = JSON.parse(remote.stdout || '{}');
+    } catch (err) {
+      logDebug(`[docker image status] parsing "manifest inspect" échoué pour ${image}: ${err.message || err}`);
+    }
+    remoteDigests = Array.from(new Set([
+      ...remoteDigests,
+      ..._extractRemoteManifestDigests(remotePayload),
+    ]));
+  }
+  if (remoteDigests.length === 0) {
+    const classified = _classifyDockerStatusError(imagetools.stderr || remote.stderr);
+    const value = {
+      image,
+      platform,
+      status: 'unknown',
+      ...localMeta,
+      error: imagetools.stderr.trim() || remote.stderr.trim() || 'digest distant introuvable',
+      ...classified,
+    };
+    _setCachedDockerImageUpdate(image, platform, value);
+    return value;
+  }
+
+  const isCurrent = localDigests.some((digest) => remoteDigests.includes(digest));
+  const value = {
+    image,
+    platform,
+    status: isCurrent ? 'up-to-date' : 'update-available',
+    ...localMeta,
+    remoteDigests,
+    remoteDigest: remoteDigests[0] || '',
+    remoteDigestShort: _shortDockerDigest(remoteDigests[0] || ''),
+    checkedAt: new Date().toISOString(),
+  };
+  _setCachedDockerImageUpdate(image, platform, value);
+  return value;
+}
+
+async function _postDecompilerImageUpdateStatus(panel, result, options = {}) {
+  const meta = result?._meta || {};
+  const dockerImages = meta.docker_images || {};
+  const dockerAvail = meta.docker_images_available || {};
+  const dockerPlatform = meta.docker_platform || {};
+  const ids = Object.keys(dockerImages).filter((id) => dockerImages[id] && dockerAvail[id]);
+  if (!ids.length) return;
+
+  const pendingIds = [];
+  const cached = {};
+  ids.forEach((id) => {
+    const image = dockerImages[id];
+    const platform = dockerPlatform[id] || '';
+    const cachedStatus = options.force ? null : _getCachedDockerImageUpdate(image, platform);
+    if (cachedStatus) cached[id] = cachedStatus;
+    else pendingIds.push(id);
+  });
+  if (Object.keys(cached).length) {
+    Object.entries(cached).forEach(([id, status]) => {
+      _logDecompilerDocker(options.logChannel, 'image.status.cached', {
+        id,
+        status: status.status,
+        image: status.image,
+      });
+    });
+    panel.webview.postMessage({ type: 'hubDecompilerImageUpdates', updates: cached });
+  }
+  if (!pendingIds.length) return;
+
+  const checking = {};
+  pendingIds.forEach((id) => {
+    checking[id] = { image: dockerImages[id], platform: dockerPlatform[id] || '', status: 'checking' };
+  });
+  panel.webview.postMessage({ type: 'hubDecompilerImageUpdates', updates: checking });
+
+  const entries = await Promise.all(pendingIds.map(async (id) => {
+    const status = await _checkDockerImageUpdate(dockerImages[id], dockerPlatform[id] || '', options);
+    _logDecompilerDocker(options.logChannel, 'image.status', {
+      id,
+      status: status.status,
+      image: dockerImages[id],
+      localDigest: status.localDigestShort,
+      remoteDigest: status.remoteDigestShort,
+      errorKind: status.errorKind,
+    });
+    return [id, status];
+  }));
+  panel.webview.postMessage({ type: 'hubDecompilerImageUpdates', updates: Object.fromEntries(entries) });
+}
 
 function staticHandlers(config) {
   const { root, panel, context, logChannel, storageDir, globalDir } = config;
@@ -48,11 +424,13 @@ function staticHandlers(config) {
   };
   const getHostArtifactRoot = (kind) => {
     const normalizedKind = String(kind || '').trim();
-    const baseDir = storageDir || path.join(root, '.pile-ou-face');
+    const baseDir = storageDir;
     const base = normalizedKind ? path.join(baseDir, normalizedKind) : baseDir;
     try {
       if (!fs.existsSync(base)) fs.mkdirSync(base, { recursive: true });
-    } catch (_) {}
+    } catch (err) {
+      logWarning(`[getHostArtifactRoot] création du dossier ${base} échouée: ${err.message || err}`);
+    }
     return base;
   };
   const buildPythonEnv = () => {
@@ -187,6 +565,135 @@ function staticHandlers(config) {
     };
   };
 
+  const createPluginProgressFilter = (onProgress) => {
+    let buffer = '';
+    return {
+      push(chunk) {
+        buffer += String(chunk || '');
+        const lines = buffer.split(/\r?\n/);
+        buffer = lines.pop() || '';
+        const passthrough = [];
+        for (const line of lines) {
+          if (line.startsWith('POF_PROGRESS ')) {
+            try {
+              const payload = JSON.parse(line.slice('POF_PROGRESS '.length));
+              onProgress?.({
+                percent: Number.isFinite(Number(payload.percent)) ? Number(payload.percent) : null,
+                message: String(payload.message || 'Analyse plugin…'),
+                raw: payload,
+              });
+              continue;
+            } catch (_) {
+              // Invalid progress lines are kept in the subprocess output.
+            }
+          }
+          passthrough.push(line);
+        }
+        return passthrough.length ? `${passthrough.join('\n')}\n` : '';
+      },
+      flush() {
+        const tail = buffer;
+        buffer = '';
+        if (!tail) return '';
+        if (tail.startsWith('POF_PROGRESS ')) {
+          try {
+            const payload = JSON.parse(tail.slice('POF_PROGRESS '.length));
+            onProgress?.({
+              percent: Number.isFinite(Number(payload.percent)) ? Number(payload.percent) : null,
+              message: String(payload.message || 'Analyse plugin…'),
+              raw: payload,
+            });
+            return '';
+          } catch (_) {
+            // Invalid progress lines are kept in the subprocess output.
+          }
+        }
+        return tail;
+      },
+    };
+  };
+
+  const runPluginRuntimeStreaming = async (runtimeArgs, options = {}) => {
+    if (typeof cp.spawn !== 'function') return runPluginRuntime(runtimeArgs, options);
+    const pluginEnv = await buildPluginRuntimeEnv();
+    const {
+      timeout = 60000,
+      maxBuffer = 4 * 1024 * 1024,
+      onProgress,
+    } = options;
+    const scriptPath = path.join(extensionPath, 'backends/plugins/runtime.py');
+    const args = [
+      scriptPath,
+      '--host-version',
+      '0.1.0',
+      '--api-version',
+      '1',
+      ...runtimeArgs,
+    ];
+    const stdoutFilter = createPluginProgressFilter(onProgress);
+    const stderrFilter = createPluginProgressFilter(onProgress);
+    const stdoutChunks = [];
+    const stderrChunks = [];
+    let stdoutSize = 0;
+    let stderrSize = 0;
+
+    const append = (chunks, text, sizeKey) => {
+      if (!text) return sizeKey;
+      const nextSize = sizeKey + Buffer.byteLength(text, 'utf8');
+      if (nextSize <= maxBuffer) chunks.push(text);
+      return nextSize;
+    };
+
+    const stdout = await new Promise((resolve, reject) => {
+      let settled = false;
+      const proc = cp.spawn(getPythonExecutable(), args, {
+        cwd: root,
+        env: pluginEnv,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      const finish = (fn, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        fn(value);
+      };
+      const timer = setTimeout(() => {
+        try {
+          proc.kill('SIGTERM');
+        } catch (error) {
+          logDebug(`[plugin-progress] kill après timeout ignoré: ${error?.message || error}`);
+        }
+        const error = new Error(`Timeout plugin runtime après ${timeout} ms`);
+        error.stderr = stderrChunks.join('');
+        finish(reject, error);
+      }, timeout);
+
+      proc.stdout?.on('data', (chunk) => {
+        stdoutSize = append(stdoutChunks, stdoutFilter.push(chunk), stdoutSize);
+      });
+      proc.stderr?.on('data', (chunk) => {
+        stderrSize = append(stderrChunks, stderrFilter.push(chunk), stderrSize);
+      });
+      proc.on('error', (error) => {
+        error.stderr = stderrChunks.join('');
+        finish(reject, error);
+      });
+      proc.on('close', (code) => {
+        stdoutSize = append(stdoutChunks, stdoutFilter.flush(), stdoutSize);
+        stderrSize = append(stderrChunks, stderrFilter.flush(), stderrSize);
+        const stderr = stderrChunks.join('');
+        if (code) {
+          const error = new Error(stderr || `Plugin runtime exited with code ${code}`);
+          error.stderr = stderr;
+          finish(reject, error);
+          return;
+        }
+        finish(resolve, stdoutChunks.join(''));
+      });
+    });
+    return JSON.parse(String(stdout || '{}'));
+  };
+
   const runPluginRuntime = async (runtimeArgs, options = {}) => {
     const pluginEnv = await buildPluginRuntimeEnv();
     const { timeout = 60000, maxBuffer = 4 * 1024 * 1024 } = options;
@@ -215,47 +722,38 @@ function staticHandlers(config) {
     ...extra,
   });
 
-  const invokePluginCommand = async (commandId, payload, {
+  const invokePluginFeature = async (featureId, payload, {
     timeout = 120000,
-    feature = commandId,
+    onProgress = null,
   } = {}) => {
     try {
-      const response = await runPluginRuntime([
-        'invoke',
-        commandId,
+      const response = await runPluginRuntimeStreaming([
+        'invoke-feature',
+        featureId,
         '--payload-json',
         JSON.stringify(payload || {}),
-      ], { timeout });
+      ], { timeout, onProgress });
       if (response?.ok === true) {
-        return response.result ?? {};
+        return { pluginId: String(response.plugin_id || ''), result: response.result ?? {} };
       }
       const available = Array.isArray(response?.available_commands) ? response.available_commands : [];
       if (available.length === 0) {
-        return buildPluginRequiredPayload(feature);
+        return { pluginId: '', result: buildPluginRequiredPayload(featureId) };
       }
       return {
-        ok: false,
-        error: String(response?.error || `Échec plugin: ${commandId}`),
-        plugin_command: commandId,
-        plugin_required: feature,
-        feature,
+        pluginId: '',
+        result: {
+          ok: false,
+          error: String(response?.error || `Échec plugin: ${featureId}`),
+          plugin_command: String(response?.command || ''),
+          plugin_required: featureId,
+          feature: featureId,
+        },
       };
     } catch (error) {
-      return buildPluginRequiredPayload(feature);
+      return { pluginId: '', result: buildPluginRequiredPayload(featureId) };
     }
   };
-
-  const loadFuncSimilarityState = async ({
-    binaryPath,
-    threshold = 0.4,
-    top = 3,
-  } = {}) => invokePluginCommand('offensive.func_similarity.run', {
-    action: 'search_db',
-    binaryPath,
-    threshold,
-    top,
-    workspaceRoot: root,
-  }, { feature: 'func_similarity' });
 
   const buildTypedDataArgs = (message) => {
     const {
@@ -278,15 +776,6 @@ function staticHandlers(config) {
     if (rawArch) args.push('--raw-arch', String(rawArch));
     if (rawEndian) args.push('--raw-endian', String(rawEndian));
     return args;
-  };
-
-  const normalizeRopArch = (message = {}) => {
-    const meta = message.binaryMeta || {};
-    const rawArch = String(meta.rawConfig?.arch || meta.rawArch || message.rawArch || '').trim();
-    if (rawArch) return rawArch;
-    const arch = String(meta.arch || message.arch || '').trim().toLowerCase();
-    const normalized = normalizeRawArchName(arch);
-    return normalized || '';
   };
 
   const listOllamaModels = (baseUrlRaw) => new Promise((resolve, reject) => {
@@ -353,6 +842,97 @@ function staticHandlers(config) {
         });
       }
     },
+    hubGrantPluginConsent: async (message = {}) => {
+      const pluginId = String(message.pluginId || message.plugin_id || '').trim();
+      if (!pluginId) return;
+      try {
+        await runPluginRuntime(['consent-grant', pluginId]);
+      } catch (error) {
+        panel.webview.postMessage({
+          type: 'hubPluginState',
+          state: emptyPluginUiState(String(error?.message || error || 'runtime indisponible')),
+        });
+        return;
+      }
+      // Re-fetch full state so the freshly-approved plugin flips to "active".
+      await handlers.hubLoadPluginState();
+    },
+    hubPluginInvoke: async (message = {}) => {
+      const feature = String(message.feature || message.featureId || '').trim();
+      const requestId = String(message.requestId || message.id || '');
+      if (!feature) {
+        panel.webview.postMessage({
+          type: 'hubPluginResult',
+          requestId,
+          feature: '',
+          plugin_id: '',
+          result: { ok: false, error: 'feature manquante', plugin_required: '', feature: '' },
+        });
+        return;
+      }
+      const payload = message.payload && typeof message.payload === 'object'
+        ? { ...message.payload }
+        : {};
+      if (message.binaryPath && payload.binaryPath == null && payload.binary_path == null) {
+        payload.binaryPath = message.binaryPath;
+      }
+      // Inject workspace context so plugins (yara_scan, capa_scan) can locate rules via RulesManager
+      if (payload.workspaceRoot == null) payload.workspaceRoot = root;
+      if (payload.globalConfigPath == null) {
+        const gcDir = globalDir || context?.globalStorageUri?.fsPath || '';
+        if (gcDir) payload.globalConfigPath = path.join(gcDir, 'rules-config.json');
+      }
+      const featureLabel = feature.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+      let lastPercent = 0;
+      const reportPluginProgress = (progress, update = {}) => {
+        const rawPercent = update.percent;
+        const hasPercent = rawPercent !== null
+          && rawPercent !== undefined
+          && rawPercent !== ''
+          && Number.isFinite(Number(rawPercent));
+        const nextPercent = hasPercent
+          ? Math.max(lastPercent, Math.min(100, Number(rawPercent)))
+          : null;
+        const messageText = String(update.message || 'Analyse plugin…');
+        if (nextPercent !== null) {
+          progress.report({ increment: nextPercent - lastPercent, message: messageText });
+          lastPercent = nextPercent;
+        } else {
+          progress.report({ increment: 0, message: messageText });
+        }
+        panel.webview.postMessage({
+          type: 'hubPluginProgress',
+          requestId,
+          feature,
+          percent: nextPercent,
+          message: messageText,
+        });
+      };
+      const withProgress = typeof vscode.window?.withProgress === 'function'
+        ? vscode.window.withProgress.bind(vscode.window)
+        : async (_options, task) => task({ report: () => {} });
+      const { pluginId, result } = await withProgress(
+        {
+          location: vscode.ProgressLocation?.Notification,
+          title: `Plugin : ${featureLabel}…`,
+          cancellable: false,
+        },
+        (progress) => {
+          reportPluginProgress(progress, { percent: null, message: 'Démarrage…' });
+          return invokePluginFeature(feature, payload, {
+              timeout: Number(message.timeout || 120000),
+              onProgress: (update) => reportPluginProgress(progress, update),
+            });
+        },
+      );
+      panel.webview.postMessage({
+        type: 'hubPluginResult',
+        requestId,
+        feature,
+        plugin_id: pluginId,
+        result,
+      });
+    },
     hubOpenPluginDirectory: async (message = {}) => {
       const requestedScope = String(message.scope || 'user').trim() === 'workspace' ? 'workspace' : 'user';
       const pluginDir = getHostArtifactRoot('plugins');
@@ -397,7 +977,7 @@ function staticHandlers(config) {
     },
     hubInstallPlugin: async (message = {}) => {
       const requestedScope = String(message.scope || 'user').trim() === 'workspace' ? 'workspace' : 'user';
-      const selectedScope = (storageDir || fs.existsSync(path.join(root, '.pile-ou-face'))) ? 'workspace' : requestedScope;
+      const selectedScope = storageDir ? 'workspace' : requestedScope;
       try {
         const picked = await vscode.window.showOpenDialog({
           canSelectFiles: true,
@@ -685,15 +1265,94 @@ function staticHandlers(config) {
     },
     hubListDecompilers: async (message = {}) => {
       const provider = message.provider || 'auto';
+      _logDecompilerDocker(logChannel, 'list.start', { provider });
       try {
         const { stdout } = await runPython(['backends/static/decompile/decompile.py', '--list', '--provider', provider]);
-        panel.webview.postMessage({ type: 'hubDecompilerList', result: JSON.parse(stdout) });
+        const result = JSON.parse(stdout);
+        const count = Object.keys(result || {}).filter((key) => !key.startsWith('_')).length;
+        _logDecompilerDocker(logChannel, 'list.done', { provider, count });
+        panel.webview.postMessage({ type: 'hubDecompilerList', result });
+        _postDockerRuntimeStatus(panel, { logChannel }).catch(() => {});
+        _postDecompilerImageUpdateStatus(panel, result, { logChannel }).catch(() => {});
       } catch (e) {
+        _logDecompilerDocker(logChannel, 'list.error', { provider, error: e?.message || String(e) });
         panel.webview.postMessage({
           type: 'hubDecompilerList',
           result: { _meta: { provider, docker_images: {}, local_available: {}, labels: {} } },
         });
       }
+    },
+    hubPullDecompilerImage: async (message = {}) => {
+      const decompiler = String(message.decompiler || '').trim();
+      const image = String(message.image || '').trim();
+      const mode = String(message.mode || 'pull').trim();
+      if (!decompiler || !image) {
+        panel.webview.postMessage({ type: 'hubDecompilerPullDone', decompiler, ok: false, error: 'Nom de décompilateur ou image manquant' });
+        return;
+      }
+      const actionLabel = mode === 'update' ? 'Updating' : mode === 'force' ? 'Repulling' : 'Pulling';
+      panel.webview.postMessage({ type: 'hubDecompilerPullProgress', decompiler, line: `${actionLabel} ${image}…`, percent: 0 });
+      let layersTotal = 0;
+      let layersDone = 0;
+      let lastError = '';
+      const platform = String(message.platform || '').trim() || getKnownOciImagePlatform(image);
+      const pullArgs = platform ? ['pull', '--platform', platform, image] : ['pull', image];
+      _logDecompilerDocker(logChannel, 'pull.start', { decompiler, mode, image, platform });
+      const proc = cp.spawn('docker', pullArgs, { env: process.env });
+      let lastUiSummary = '';
+      let lastUiSummaryAt = 0;
+      const postPullSummary = (force = false) => {
+        const summary = _pullProgressSummary(layersDone, layersTotal);
+        if (!summary || summary === lastUiSummary) return;
+        const now = Date.now();
+        if (!force && now - lastUiSummaryAt < 500) return;
+        lastUiSummary = summary;
+        lastUiSummaryAt = now;
+        const percent = layersTotal > 0 ? Math.min(100, Math.round((layersDone / layersTotal) * 100)) : null;
+        panel.webview.postMessage({ type: 'hubDecompilerPullProgress', decompiler, line: summary, percent });
+      };
+      const handlePullChunk = (chunk: Buffer, isError = false) => {
+        for (const line of chunk.toString().split('\n').filter(Boolean)) {
+          if (/Pulling fs layer/i.test(line)) layersTotal++;
+          if (/Pull complete|Already exists|Download complete/i.test(line)) layersDone++;
+          const percent = layersTotal > 0 ? Math.min(100, Math.round((layersDone / layersTotal) * 100)) : null;
+          const trimmed = line.trim();
+          if (/Pulling from|Digest:|Status:|Downloaded newer image|Image is up to date/i.test(trimmed)) {
+            panel.webview.postMessage({ type: 'hubDecompilerPullProgress', decompiler, line: trimmed, percent });
+          } else {
+            postPullSummary(false);
+          }
+          if (isError) lastError = line.trim();
+        }
+      };
+      proc.stdout.on('data', (chunk: Buffer) => handlePullChunk(chunk, false));
+      proc.stderr.on('data', (chunk: Buffer) => handlePullChunk(chunk, true));
+      proc.on('close', async (code: number | null) => {
+        const ok = code === 0;
+        postPullSummary(true);
+        _logDecompilerDocker(logChannel, ok ? 'pull.done' : 'pull.error', {
+          decompiler,
+          mode,
+          image,
+          platform,
+          code,
+          layersDone,
+          layersTotal,
+          error: ok ? '' : lastError,
+        });
+        panel.webview.postMessage({ type: 'hubDecompilerPullDone', decompiler, ok, error: ok ? null : lastError, mode });
+        if (ok) {
+          try {
+            const { stdout } = await runPython(['backends/static/decompile/decompile.py', '--list', '--provider', 'auto']);
+            const result = JSON.parse(stdout);
+            panel.webview.postMessage({ type: 'hubDecompilerList', result });
+            _postDockerRuntimeStatus(panel, { force: true, logChannel }).catch(() => {});
+            _postDecompilerImageUpdateStatus(panel, result, { force: true, logChannel }).catch(() => {});
+          } catch (_e) {
+            _logDecompilerDocker(logChannel, 'pull.refresh.error', { decompiler, error: _e?.message || String(_e) });
+          }
+        }
+      });
     },
     compilerBrowseSource: async (message = {}) => {
       const lang = String(message.lang || 'c');
@@ -761,8 +1420,10 @@ function staticHandlers(config) {
       const commandId = String(message?.command || '').trim();
       const requestId = message?.requestId || null;
       if (!commandId) return;
+      logChannel?.appendLine(`[hub] hubExecuteCommand START: ${commandId}`);
 
       const _sendResult = (status, detail = '') => {
+        logChannel?.appendLine(`[hub] hubCommandResult: ${commandId} → ${status}${detail ? ' | ' + detail : ''}`);
         panel.webview.postMessage({ type: 'hubCommandResult', requestId, command: commandId, status, detail });
       };
 
@@ -793,7 +1454,7 @@ function staticHandlers(config) {
       }
     },
     hubLoadDecompile: async (message) => {
-      const { binaryPath, addr, funcName, full, decompiler, provider } = message;
+      const { binaryPath, addr, funcName, full, decompiler, provider, useCache = true } = message;
       const decompilersJsonPath = storageDir ? path.join(storageDir, 'decompilers.json') : '';
 
       // Build base args (annotation injection preserved)
@@ -803,6 +1464,7 @@ function staticHandlers(config) {
         else if (addr) { args.push('--addr', addr); if (funcName) args.push('--func-name', funcName); }
         if (targetDecompiler) args.push('--decompiler', targetDecompiler);
         if (provider && provider !== 'auto') args.push('--provider', provider);
+        if (!useCache) args.push('--no-cache');
         // annotation injection (keep existing logic)
         const absPath = path.isAbsolute(binaryPath) ? binaryPath : path.join(root, binaryPath);
         const annHash = crypto.createHash('sha256')
@@ -938,156 +1600,6 @@ function staticHandlers(config) {
         await Promise.all(targets.map((t, i) => runOne(t, i)));
       }
     },
-    hubLoadBehavior: async (message) => {
-      const { binaryPath } = message;
-      const result = await invokePluginCommand('malware.behavior.run', { binaryPath }, {
-        feature: 'behavior',
-      });
-      panel.webview.postMessage({ type: 'hubBehavior', result });
-    },
-    hubLoadAttck: async (message) => {
-      const { binaryPath } = message;
-      const result = await invokePluginCommand('malware.attck.tag', { binaryPath }, {
-        feature: 'behavior',
-      });
-      panel.webview.postMessage({ type: 'hubAttck', result });
-    },
-    hubLoadTaint: async (message) => {
-      const { binaryPath } = message;
-      const result = await invokePluginCommand('audit.taint.run', { binaryPath }, {
-        feature: 'taint',
-      });
-      panel.webview.postMessage({ type: 'hubTaint', result });
-    },
-    hubLoadCrossAnalysis: async (message) => {
-      const { binaryPath, disabledFamilies } = message;
-      const result = await invokePluginCommand(
-        'croisee.cross_analyze.run',
-        { binaryPath, disabled_families: Array.isArray(disabledFamilies) ? disabledFamilies : [] },
-        { feature: 'cross_analyze' }
-      );
-      panel.webview.postMessage({ type: 'hubCrossAnalysis', result });
-    },
-    hubLoadFuncSimilarity: async (message = {}) => {
-      const { binaryPath, threshold = 0.4, top = 3 } = message;
-      const result = await loadFuncSimilarityState({ binaryPath, threshold, top });
-      panel.webview.postMessage({ type: 'hubFuncSimilarity', result });
-    },
-    hubFuncSimilarityIndexReference: async (message = {}) => {
-      const { binaryPath, threshold = 0.4, top = 3 } = message;
-      try {
-        const picked = await vscode.window.showOpenDialog({
-          canSelectFiles: true,
-          canSelectFolders: false,
-          canSelectMany: false,
-          openLabel: 'Indexer comme référence',
-        });
-        if (!picked || picked.length === 0) {
-          panel.webview.postMessage({
-            type: 'hubFuncSimilarity',
-            result: {
-              matches: [],
-              references: [],
-              proof_dossiers: [],
-              stats: {},
-              summary: {},
-              error: 'Indexation de référence annulée.',
-            },
-          });
-          return;
-        }
-        const sourceUri = picked[0];
-        const indexed = await invokePluginCommand('offensive.func_similarity.run', {
-          action: 'index_reference',
-          referencePath: sourceUri.fsPath,
-          label: path.basename(sourceUri.fsPath),
-          workspaceRoot: root,
-        }, {
-          feature: 'func_similarity',
-        });
-        const result = binaryPath
-          ? await loadFuncSimilarityState({ binaryPath, threshold, top })
-          : await invokePluginCommand('offensive.func_similarity.run', {
-            action: 'list_db',
-            workspaceRoot: root,
-          }, {
-            feature: 'func_similarity',
-          });
-        result.operation = {
-          action: 'index_reference',
-          ok: indexed?.ok !== false && !indexed?.error,
-          indexed: indexed?.indexed || null,
-          error: indexed?.error || null,
-        };
-        panel.webview.postMessage({ type: 'hubFuncSimilarity', result });
-      } catch (error) {
-        panel.webview.postMessage({
-          type: 'hubFuncSimilarity',
-          result: {
-            matches: [],
-            references: [],
-            proof_dossiers: [],
-            stats: {},
-            summary: {},
-            error: String(error?.message || error || 'Échec indexation référence'),
-          },
-        });
-      }
-    },
-    hubFuncSimilarityRemoveReference: async (message = {}) => {
-      const { binaryPath, threshold = 0.4, top = 3, referenceId } = message;
-      const removed = await invokePluginCommand('offensive.func_similarity.run', {
-        action: 'remove_reference',
-        referenceId,
-        workspaceRoot: root,
-      }, {
-        feature: 'func_similarity',
-      });
-      const result = binaryPath
-        ? await loadFuncSimilarityState({ binaryPath, threshold, top })
-        : await invokePluginCommand('offensive.func_similarity.run', {
-          action: 'list_db',
-          workspaceRoot: root,
-        }, {
-          feature: 'func_similarity',
-        });
-      result.operation = {
-        action: 'remove_reference',
-        ok: removed?.ok !== false && !removed?.error,
-        removed: removed?.removed || null,
-        error: removed?.error || null,
-      };
-      panel.webview.postMessage({ type: 'hubFuncSimilarity', result });
-    },
-    hubLoadRop: async (message) => {
-      const { binaryPath } = message;
-      const arch = normalizeRopArch(message);
-      const result = await invokePluginCommand('offensive.rop.run', { binaryPath, arch }, {
-        feature: 'rop_gadgets',
-      });
-      panel.webview.postMessage({ type: 'hubRop', result });
-    },
-    hubLoadRopBuild: async (message) => {
-      const { binaryPath, goal, cmd } = message;
-      const result = await invokePluginCommand('offensive.rop.build', { binaryPath, goal, cmd }, {
-        feature: 'rop_gadgets',
-      });
-      panel.webview.postMessage({ type: 'hubRopBuild', result });
-    },
-    hubLoadVulns: async (message) => {
-      const { binaryPath } = message;
-      const result = await invokePluginCommand('audit.vulns.run', { binaryPath }, {
-        feature: 'vuln_patterns',
-      });
-      panel.webview.postMessage({ type: 'hubVulns', result });
-    },
-    hubLoadAntiAnalysis: async (message) => {
-      const { binaryPath } = message;
-      const result = await invokePluginCommand('malware.anti_analysis.run', { binaryPath }, {
-        feature: 'anti_analysis',
-      });
-      panel.webview.postMessage({ type: 'hubAntiAnalysisDone', result });
-    },
     hubLoadImports: async (message) => {
       const { binaryPath } = message;
       try {
@@ -1114,20 +1626,6 @@ function staticHandlers(config) {
       } catch (e) {
         panel.webview.postMessage({ type: 'hubImportXrefsDone', data: { function: fnName, callsites: [], error: String(e) } });
       }
-    },
-    hubLoadFlirt: async (message) => {
-      const { binaryPath } = message;
-      const result = await invokePluginCommand('offensive.flirt.run', { binaryPath }, {
-        feature: 'flirt',
-      });
-      panel.webview.postMessage({ type: 'hubFlirtDone', result });
-    },
-    hubLoadDeobfuscate: async (message) => {
-      const { binaryPath } = message;
-      const data = await invokePluginCommand('malware.deobfuscate.run', { binaryPath }, {
-        feature: 'string_deobfuscate',
-      });
-      panel.webview.postMessage({ type: 'hubDeobfuscateDone', data });
     },
     hubLoadHexView: async (message) => {
       const { binaryPath, offset = 0, length = 512 } = message;
@@ -1248,18 +1746,6 @@ function staticHandlers(config) {
           result: { error: String(e), vars: [], args: [], frame_size: 0 },
         });
       }
-    },
-    hubLoadBindiff: async (message) => {
-      const { binaryA, binaryB, threshold = 0.60 } = message;
-      const result = await invokePluginCommand('offensive.bindiff.run', { binaryA, binaryB, threshold }, {
-        feature: 'bindiff',
-      });
-      panel.webview.postMessage({
-        type: 'hubBindiff',
-        result: result?.ok === false && result?.plugin_required
-          ? { ...result, functions: [], stats: {} }
-          : result,
-      });
     },
     hubRunScript: async (message) => {
       const { code, binaryPath } = message;

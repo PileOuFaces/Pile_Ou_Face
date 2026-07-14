@@ -48,6 +48,18 @@ _POF_DIR = (
 _DOCKER_AVAILABLE_CACHE: dict[str, bool] = {}
 
 
+def _normalize_flags(flags: list[str] | None) -> list[str]:
+    """Retourne une liste de flags sûre pour subprocess."""
+    if not flags:
+        return []
+    normalized: list[str] = []
+    for flag in flags:
+        text = str(flag).strip()
+        if text and "\x00" not in text and "\n" not in text and "\r" not in text:
+            normalized.append(text)
+    return normalized
+
+
 def _load_compilers(config_path: Path | None = None) -> dict[str, dict[str, Any]]:
     """Charge les toolchains depuis le chemin défini par COMPILERS_CONFIG ou ~/.config/pile-ou-face/compilers.json."""
     env_path = os.environ.get("COMPILERS_CONFIG", "").strip()
@@ -129,7 +141,7 @@ def _run_native_compiler(
         else cfg.get("native_cmd", "")
     )
     arch_flags = _build_target_flags_native(toolchain_id, target)
-    extra = flags if flags else ["-O0", "-g"]
+    extra = _normalize_flags(flags) or ["-O0", "-g"]
     cmd: list[str] = [native_cmd, *arch_flags, *extra, "-o", output, src]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
@@ -162,6 +174,7 @@ def _run_docker_compiler(
     """Invoque le compilateur via Docker."""
     image = cfg.get("docker_image", "")
     docker_cmd_template = cfg.get("docker_command", [])
+    normalized_flags = _normalize_flags(flags)
 
     src_path = Path(src).resolve()
     out_path = Path(output).resolve()
@@ -190,7 +203,7 @@ def _run_docker_compiler(
         f"{out_dir}:/out",
         image,
         *docker_cmd,
-        *(["--flags", json.dumps(flags)] if flags else []),
+        *(["--flags", json.dumps(normalized_flags)] if normalized_flags else []),
     ]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)

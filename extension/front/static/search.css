@@ -1,4 +1,28 @@
 
+/* ── Strings pagination ──────────────────────────────────────── */
+.strings-pagination {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.strings-pagination span { min-width: 80px; text-align: center; }
+
+/* ── Strings source badge ────────────────────────────────────── */
+.badge-source {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  margin-left: 4px;
+  background: color-mix(in srgb, var(--accent-blue) 15%, transparent);
+  color: var(--accent-blue);
+  border: 1px solid color-mix(in srgb, var(--accent-blue) 40%, transparent);
+}
+
 /* ── Hex View ────────────────────────────────────────────────── */
 #staticHex.active {
   display: flex;

@@ -48,11 +48,12 @@ class TestDecompile(unittest.TestCase):
         for field in ("functions", "error"):
             self.assertIn(field, r)
 
-    def test_builtin_docker_image_defaults_to_per_backend_image(self):
-        self.assertEqual(
-            _get_decompiler_docker_image("retdec"),
-            "pile-ou-face/decompiler-retdec:latest",
-        )
+    def test_no_default_docker_image_when_unconfigured(self):
+        # Docker est opt-in : sans override d'env ni `docker_image` configuré,
+        # aucune image n'est retournée (pas de fallback `:latest`).
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("POF_DECOMPILER_IMAGE_RETDEC", None)
+            self.assertEqual(_get_decompiler_docker_image("retdec"), "")
 
     def test_missing_builtin_docker_image_error_suggests_make(self):
         error = _docker_missing_image_error(
@@ -62,10 +63,10 @@ class TestDecompile(unittest.TestCase):
         self.assertIn("POF_DECOMPILER_IMAGE_RETDEC", error)
 
     def test_builtin_docker_run_reports_missing_image_helpfully(self):
+        image = "ghcr.io/pileoufaces/pile-ou-face/decompiler-retdec:1.0.0"
         missing_stderr = (
-            "Unable to find image 'pile-ou-face/decompiler-retdec:latest' locally\n"
-            "docker: Error response from daemon: pull access denied for pile-ou-face/decompiler-retdec, "
-            "repository does not exist or may require 'docker login': denied: requested access to the resource is denied"
+            f"Unable to find image '{image}' locally\n"
+            "docker: Error response from daemon: pull access denied"
         )
         completed = subprocess.CompletedProcess(
             args=["docker", "run"],
@@ -74,6 +75,7 @@ class TestDecompile(unittest.TestCase):
             stderr=missing_stderr,
         )
         with (
+            mock.patch.dict(os.environ, {"POF_DECOMPILER_IMAGE_RETDEC": image}),
             mock.patch(
                 "backends.static.decompile.decompile._is_docker_decompiler_image_available",
                 return_value=True,
@@ -86,12 +88,10 @@ class TestDecompile(unittest.TestCase):
             result = _run_custom_decompiler_in_docker(
                 "retdec", "/bin/ls", addr="0x401000"
             )
-        self.assertIn(
-            "make decompiler-docker-build DECOMPILER=retdec", result.get("error", "")
-        )
-        self.assertEqual(
-            result.get("docker_image"), "pile-ou-face/decompiler-retdec:latest"
-        )
+        # Le pull automatique a été tenté (subprocess.run mocké → échec) → message d'erreur OCI
+        self.assertIn("docker pull", result.get("error", ""))
+        self.assertIn(image, result.get("error", ""))
+        self.assertEqual(result.get("docker_image"), image)
 
     def test_builtin_docker_run_uses_real_container_result_even_if_probe_is_unreliable(
         self,
@@ -109,6 +109,12 @@ class TestDecompile(unittest.TestCase):
             stderr="",
         )
         with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "POF_DECOMPILER_IMAGE_RETDEC": "ghcr.io/pileoufaces/pile-ou-face/decompiler-retdec:1.0.0"
+                },
+            ),
             mock.patch(
                 "backends.static.decompile.decompile._is_docker_decompiler_image_available",
                 side_effect=AssertionError(
@@ -126,7 +132,8 @@ class TestDecompile(unittest.TestCase):
         self.assertIsNone(result.get("error"))
         self.assertEqual(result.get("provider"), "docker")
         self.assertEqual(
-            result.get("docker_image"), "pile-ou-face/decompiler-retdec:latest"
+            result.get("docker_image"),
+            "ghcr.io/pileoufaces/pile-ou-face/decompiler-retdec:1.0.0",
         )
         self.assertIn("return 5", result.get("code", ""))
 

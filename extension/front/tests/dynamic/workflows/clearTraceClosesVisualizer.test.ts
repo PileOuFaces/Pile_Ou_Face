@@ -75,6 +75,37 @@ describe('dynamic/workflows clear trace history', () => {
     expect(cleared).to.deep.equal([{ type: 'clearTrace' }]);
   });
 
+  it('runtime-session-passes-analysisByStep-through-to-POFHubRuntime-loadTrace', () => {
+    const runtimeNavSlot = createElement('div');
+    const documentRef = createDocument({ runtimeNavSlot });
+    const loadedTraces: unknown[] = [];
+    const analysisByStepFixture = {
+      '1': { frame: { slots: [], basePointer: '0x1000' }, control: { savedBpAddr: '0x1000' } }
+    };
+    const controller = loadRuntimeSessionController({
+      POFHubRuntime: {
+        loadTrace: (data: unknown) => loadedTraces.push(data),
+        clearTrace: () => {}
+      }
+    }).initRuntimeSessionController({
+      document: documentRef,
+      showPanel: () => {},
+      fallbackRenderer: { clearPanel: () => {} }
+    });
+
+    controller.handleMessage({
+      type: 'dynamicTraceReady',
+      traceRunId: '9',
+      tracePath: '/tmp/pof/output.run-9-a.json',
+      snapshots: [{ step: 1, func: 'main' }],
+      meta: { binary: '/repo/chal' },
+      analysisByStep: analysisByStepFixture
+    });
+
+    expect(loadedTraces).to.have.length(1);
+    expect((loadedTraces[0] as any).analysisByStep).to.deep.equal(analysisByStepFixture);
+  });
+
   it('deleting-active-history-trace-notifies-hub-and-standalone-visualizer-clear', async () => {
     const fsMod = require('fs');
     const sinon = require('sinon');

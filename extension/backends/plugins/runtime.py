@@ -26,6 +26,12 @@ if str(ROOT) not in sys.path:
 
 import contextlib
 
+from backends.plugins.consent import (
+    default_consent_path,
+    ensure_consent_baseline,
+    is_plugin_consented,
+    load_consent_store,
+)
 from backends.plugins.license import (
     _ENV_PREFIX as _LICENSE_ENV_PREFIX,
 )
@@ -48,8 +54,32 @@ from backends.shared.log import configure_logging, get_logger
 _log = get_logger(__name__)
 HOST_API_VERSION = 1
 DEFAULT_HOST_VERSION = "0.1.0"
+# Must stay in sync with window.PoF.version in extension/front/shared/state.js
+POF_VERSION = "1.0.0"
 _DECRYPTED_PLUGIN_CACHE: dict[str, Path] = {}
 _DECRYPTED_PLUGIN_TEMPS: list[tempfile.TemporaryDirectory[str]] = []
+
+
+def _check_pof_compatibility(manifest: PluginManifest, pof_version: str) -> None:
+    """Raise PluginManifestError if plugin requires a higher window.PoF version than the host provides."""
+    min_ver = manifest.min_pof_version
+    if not min_ver:
+        return
+    from packaging.version import InvalidVersion, Version
+
+    try:
+        required = Version(min_ver)
+        provided = Version(pof_version)
+    except InvalidVersion as exc:
+        raise PluginManifestError(
+            f"{manifest.plugin_id}: minPoFVersion invalide '{min_ver}': {exc}"
+        ) from exc
+    if provided < required:
+        raise PluginManifestError(
+            f"{manifest.plugin_id} requiert window.PoF >= {min_ver} "
+            f"(cette version de l'extension fournit {pof_version}). "
+            f"Mettez à jour l'extension."
+        )
 
 
 def _cleanup_decrypted_plugin_cache() -> None:
@@ -88,21 +118,32 @@ def default_plugin_search_paths(
     cwd: str | Path | None = None,
     home: str | Path | None = None,
     env: dict[str, str] | None = None,
+    allow_workspace_discovery: bool = True,
 ) -> list[Path]:
     env_map = env or os.environ
-    cwd_path = Path(cwd or Path.cwd()).expanduser().resolve()
-    home_path = Path(home or Path.home()).expanduser().resolve()
-    workspace_root = cwd_path / ".pile-ou-face"
-    if workspace_root.is_dir():
-        paths = [workspace_root / "plugins"]
-    else:
-        paths = [home_path / ".pile-ou-face" / "plugins"]
     extra = str(env_map.get(f"{_LICENSE_ENV_PREFIX}_PLUGIN_PATH", "") or "").strip()
     if extra:
-        for raw_item in extra.split(os.pathsep):
-            item = raw_item.strip()
-            if item:
-                paths.append(Path(item).expanduser())
+        paths = [
+            Path(item.strip()).expanduser()
+            for item in extra.split(os.pathsep)
+            if item.strip()
+        ]
+    else:
+        paths = []
+    cwd_path = Path(cwd or Path.cwd()).expanduser().resolve()
+    home_path = Path(home or Path.home()).expanduser().resolve()
+    if not paths:
+        # allow_workspace_discovery=False skips the cwd/.pile-ou-face/plugins
+        # fallback entirely — a caller that doesn't control what directory it
+        # runs in (e.g. an MCP server, whose cwd may be an arbitrary checked-
+        # out repo) must not silently auto-attach whatever plugins happen to
+        # sit in that repo's .pile-ou-face/plugins/. Only an explicit
+        # BINHOST_PLUGIN_PATH or the user's own home directory count then.
+        workspace_root = cwd_path / ".pile-ou-face"
+        if allow_workspace_discovery and workspace_root.is_dir():
+            paths = [workspace_root / "plugins"]
+        else:
+            paths = [home_path / ".pile-ou-face" / "plugins"]
     unique: list[Path] = []
     seen: set[Path] = set()
     for path in paths:
@@ -166,6 +207,23 @@ class PluginContext:
         }
 
 
+@contextlib.contextmanager
+def _plugin_python_path(plugin_root: Path):
+    python_root = plugin_root / "python"
+    inserted = False
+    if python_root.is_dir():
+        python_root_text = str(python_root)
+        if python_root_text not in sys.path:
+            sys.path.insert(0, python_root_text)
+            inserted = True
+    try:
+        yield
+    finally:
+        if inserted:
+            with contextlib.suppress(ValueError):
+                sys.path.remove(str(python_root))
+
+
 def _load_plugin_module(
     manifest: PluginManifest, *, license_search_paths: list[Path] | None = None
 ):
@@ -187,7 +245,8 @@ def _load_plugin_module(
                     raise ImportError(f"Spec introuvable pour {module_path}")
                 module = importlib.util.module_from_spec(spec)
                 sys.modules[unique_name] = module
-                spec.loader.exec_module(module)
+                with _plugin_python_path(plugin_root):
+                    spec.loader.exec_module(module)
                 return module
     return importlib.import_module(entrypoint.module)
 
@@ -303,14 +362,37 @@ def attach_plugins(
     host_version: str = DEFAULT_HOST_VERSION,
     api_version: int = HOST_API_VERSION,
     license_search_paths: list[Path] | None = None,
+    consent_path: str | Path | None = None,
+    require_consent: bool = False,
 ) -> tuple[PluginContext, list[PluginRecord]]:
     context = PluginContext(
         host_version=host_version,
         api_version=api_version,
         paths={"cwd": str(Path.cwd()), "home": str(Path.home())},
     )
+    resolved_consent_path = consent_path or default_consent_path()
+    consent_store: dict[str, dict[str, Any]] = {}
+    if require_consent:
+        ensure_consent_baseline(records, resolved_consent_path)
+        consent_store = load_consent_store(resolved_consent_path)
     for record in records:
         if record.state != "active" or record.manifest is None:
+            continue
+        if require_consent and not is_plugin_consented(
+            record.plugin_id, record.manifest.version, consent_store
+        ):
+            record.state = "pending_consent"
+            record.error = (
+                "Consentement requis avant d'exécuter ce plugin — "
+                "voir Options > Plugins pour l'autoriser."
+            )
+            continue
+        try:
+            _check_pof_compatibility(record.manifest, POF_VERSION)
+        except Exception as exc:
+            _log.warning("plugin attach failed for %s: %s", record.plugin_id, exc)
+            record.state = "failed"
+            record.error = str(exc)
             continue
         entrypoint = record.manifest.entrypoints.python
         if entrypoint is None:
@@ -321,7 +403,11 @@ def attach_plugins(
                 record.manifest, license_search_paths=license_search_paths
             )
             register = getattr(module, entrypoint.register)
-            register(context)
+            plugin_root = _resolve_effective_plugin_root(
+                record.manifest, license_search_paths=license_search_paths
+            )
+            with _plugin_python_path(plugin_root):
+                register(context)
         except Exception as exc:  # pragma: no cover - safety net
             _log.warning("plugin attach failed for %s: %s", record.plugin_id, exc)
             record.state = "failed"
@@ -364,15 +450,20 @@ def invoke_plugin_command(
     command_id: str,
     payload: dict[str, Any] | None = None,
     *,
+    feature_name: str = "",
     host_version: str = DEFAULT_HOST_VERSION,
     api_version: int = HOST_API_VERSION,
     license_search_paths: list[Path] | None = None,
+    consent_path: str | Path | None = None,
+    require_consent: bool = False,
 ) -> tuple[dict[str, Any], PluginContext, list[PluginRecord]]:
     context, attached_records = attach_plugins(
         records,
         host_version=host_version,
         api_version=api_version,
         license_search_paths=license_search_paths,
+        consent_path=consent_path,
+        require_consent=require_consent,
     )
     command_name = str(command_id or "").strip()
     if not command_name:
@@ -424,8 +515,15 @@ def invoke_plugin_command(
         try:
             sub_sig = inspect.signature(sub_cb)
             if len(sub_sig.parameters) >= 2:
-                return sub_cb(dict(sub_payload or {}), _invoke_fn)
-            return sub_cb(dict(sub_payload or {}))
+                sub_result = sub_cb(dict(sub_payload or {}), _invoke_fn)
+            else:
+                sub_result = sub_cb(dict(sub_payload or {}))
+            return _apply_analysis_enrichers(
+                context,
+                attached_records,
+                sub_result,
+                str(cmd or "").strip(),
+            )
         except Exception as sub_exc:
             return {"error": str(sub_exc)}
 
@@ -435,10 +533,18 @@ def invoke_plugin_command(
             result = callback(dict(payload or {}), _invoke_fn)
         else:
             result = callback(dict(payload or {}))
+        result = _apply_analysis_enrichers(
+            context,
+            attached_records,
+            result,
+            command_name,
+            feature_name=feature_name,
+        )
         return (
             {
                 "ok": True,
                 "command": command_name,
+                "plugin_id": source_plugin_id,
                 "result": result,
             },
             context,
@@ -456,6 +562,295 @@ def invoke_plugin_command(
             context,
             attached_records,
         )
+
+
+def _as_list(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    return [value]
+
+
+def _add_unique_text(items: list[str], seen: set[str], value: Any) -> None:
+    text = str(value or "").strip()
+    if text and text not in seen:
+        seen.add(text)
+        items.append(text)
+
+
+def _candidate_enricher_targets(
+    context: PluginContext,
+    records: list[PluginRecord],
+    command_name: str,
+    feature_name: str = "",
+) -> list[str]:
+    available = set(context.analysis_enrichers.keys())
+    if not available:
+        return []
+
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def add(value: Any) -> None:
+        text = str(value or "").strip()
+        if text in available:
+            _add_unique_text(candidates, seen, text)
+
+    add(feature_name)
+    add(command_name)
+
+    for record in records:
+        if record.state != "active" or record.manifest is None:
+            continue
+        for spec in _iter_declared_command_specs(record.manifest):
+            command = str(
+                spec.get("id") or spec.get("command") or spec.get("command_id") or ""
+            ).strip()
+            if command != command_name:
+                continue
+            for key in ("feature", "feature_id", "tabId", "label"):
+                add(spec.get(key))
+            for alias in _as_list(spec.get("aliases")):
+                add(alias)
+
+    for target in sorted(available):
+        feature_matches_target = bool(
+            feature_name and (_feature_tokens(feature_name) & _feature_tokens(target))
+        )
+        if (
+            _fallback_command_matches_feature(command_name, target)
+            or feature_matches_target
+        ):
+            add(target)
+
+    return candidates
+
+
+def _apply_analysis_enrichers(
+    context: PluginContext,
+    records: list[PluginRecord],
+    result: Any,
+    command_name: str,
+    *,
+    feature_name: str = "",
+) -> Any:
+    if not isinstance(result, dict):
+        return result
+
+    targets = _candidate_enricher_targets(context, records, command_name, feature_name)
+    if not targets:
+        return result
+
+    enriched: dict[str, Any] = result
+    errors: list[dict[str, str]] = []
+    for target in targets:
+        for callback in context.analysis_enrichers.get(target, []):
+            try:
+                next_payload = callback(dict(enriched))
+            except Exception as exc:  # pragma: no cover - defensive plugin boundary
+                _log.warning(
+                    "plugin enricher failed for %s/%s: %s",
+                    command_name,
+                    target,
+                    exc,
+                )
+                errors.append({"target": target, "error": str(exc)})
+                continue
+            if isinstance(next_payload, dict):
+                enriched = next_payload
+            else:
+                errors.append(
+                    {
+                        "target": target,
+                        "error": (
+                            f"enricher returned {type(next_payload).__name__}, "
+                            "expected dict"
+                        ),
+                    }
+                )
+
+    if errors:
+        enriched = dict(enriched)
+        enriched["plugin_enrichment_errors"] = [
+            *list(enriched.get("plugin_enrichment_errors") or []),
+            *errors,
+        ]
+    return enriched
+
+
+def _normalize_feature_name(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    out = []
+    prev_sep = False
+    for char in text:
+        if char.isalnum():
+            out.append(char)
+            prev_sep = False
+        elif not prev_sep:
+            out.append("_")
+            prev_sep = True
+    return "".join(out).strip("_")
+
+
+def _feature_tokens(value: Any) -> set[str]:
+    text = str(value or "").strip()
+    if not text:
+        return set()
+    tokens = {_normalize_feature_name(text)}
+    parts = [part for part in text.replace("-", ".").split(".") if part]
+    if parts:
+        tokens.add(_normalize_feature_name(parts[0]))
+        if len(parts) >= 2 and parts[-1] in {"run", "enrich", "build", "tag"}:
+            tokens.add(_normalize_feature_name(".".join(parts[:-1])))
+            tokens.add(_normalize_feature_name(parts[-2]))
+    return {token for token in tokens if token}
+
+
+def _iter_declared_command_specs(manifest: PluginManifest) -> list[dict[str, Any]]:
+    raw = manifest.raw if isinstance(manifest.raw, dict) else {}
+    specs: list[dict[str, Any]] = []
+
+    for item in _as_list(raw.get("commands")):
+        if isinstance(item, dict):
+            specs.append(item)
+
+    ui = raw.get("ui") if isinstance(raw.get("ui"), dict) else {}
+    for tab in _as_list(ui.get("tabs")):
+        if not isinstance(tab, dict):
+            continue
+        command = str(tab.get("command") or tab.get("command_id") or "").strip()
+        if not command:
+            continue
+        feature = str(
+            tab.get("feature") or tab.get("feature_id") or tab.get("tabId") or ""
+        ).strip()
+        aliases = _as_list(tab.get("aliases"))
+        specs.append(
+            {
+                "id": command,
+                "feature": feature,
+                "aliases": aliases,
+                "tabId": tab.get("tabId"),
+                "label": tab.get("label"),
+            }
+        )
+
+    capabilities = raw.get("capabilities")
+    if isinstance(capabilities, dict):
+        for entries in capabilities.values():
+            for entry in _as_list(entries):
+                if isinstance(entry, dict):
+                    specs.append(entry)
+                    continue
+                command = str(entry or "").strip()
+                if command.count(".") >= 2:
+                    specs.append({"id": command, "feature": command})
+    return specs
+
+
+def _declared_command_matches_feature(spec: dict[str, Any], feature: str) -> bool:
+    wanted = _feature_tokens(feature)
+    if not wanted:
+        return False
+    candidates: set[str] = set()
+    for key in (
+        "feature",
+        "feature_id",
+        "id",
+        "command",
+        "command_id",
+        "tabId",
+        "label",
+    ):
+        candidates.update(_feature_tokens(spec.get(key)))
+    for alias in _as_list(spec.get("aliases")):
+        candidates.update(_feature_tokens(alias))
+    return bool(wanted & candidates)
+
+
+def _fallback_command_matches_feature(command_id: str, feature: str) -> bool:
+    wanted = _feature_tokens(feature)
+    command_tokens = _feature_tokens(command_id)
+    return bool(wanted & command_tokens)
+
+
+def resolve_plugin_command_for_feature(
+    context: PluginContext,
+    records: list[PluginRecord],
+    feature: str,
+) -> str | None:
+    feature_name = str(feature or "").strip()
+    if not feature_name:
+        return None
+    if feature_name in context.commands:
+        return feature_name
+
+    for record in records:
+        if record.state != "active" or record.manifest is None:
+            continue
+        for spec in _iter_declared_command_specs(record.manifest):
+            command = str(
+                spec.get("id") or spec.get("command") or spec.get("command_id") or ""
+            ).strip()
+            if (
+                command
+                and command in context.commands
+                and _declared_command_matches_feature(spec, feature_name)
+            ):
+                return command
+
+    for command in sorted(context.commands.keys()):
+        if _fallback_command_matches_feature(command, feature_name):
+            return command
+    return None
+
+
+def invoke_plugin_feature(
+    records: list[PluginRecord],
+    feature: str,
+    payload: dict[str, Any] | None = None,
+    *,
+    host_version: str = DEFAULT_HOST_VERSION,
+    api_version: int = HOST_API_VERSION,
+    license_search_paths: list[Path] | None = None,
+    consent_path: str | Path | None = None,
+    require_consent: bool = False,
+) -> tuple[dict[str, Any], PluginContext, list[PluginRecord]]:
+    context, attached_records = attach_plugins(
+        records,
+        host_version=host_version,
+        api_version=api_version,
+        license_search_paths=license_search_paths,
+        consent_path=consent_path,
+        require_consent=require_consent,
+    )
+    feature_name = str(feature or "").strip()
+    command_name = resolve_plugin_command_for_feature(
+        context, attached_records, feature_name
+    )
+    if not command_name:
+        return (
+            {
+                "ok": False,
+                "error": f"Feature plugin introuvable: {feature_name}",
+                "feature": feature_name,
+                "available_commands": sorted(context.commands.keys()),
+            },
+            context,
+            attached_records,
+        )
+    response, _context, _records = invoke_plugin_command(
+        attached_records,
+        command_name,
+        payload,
+        feature_name=feature_name,
+        host_version=host_version,
+        api_version=api_version,
+        license_search_paths=license_search_paths,
+    )
+    response["feature"] = feature_name
+    return response, context, attached_records
 
 
 def _build_registry_from_args(args: argparse.Namespace) -> list[PluginRecord]:
@@ -496,6 +891,8 @@ def collect_runtime_state(
     license_search_paths: list[Path] | None = None,
     disabled_plugin_ids: list[str] | None = None,
     attach: bool = False,
+    consent_path: str | Path | None = None,
+    require_consent: bool = False,
 ) -> dict[str, Any]:
     effective_paths = search_paths or default_plugin_search_paths(cwd=Path.cwd())
     effective_license_paths = license_search_paths or default_license_search_paths(
@@ -515,6 +912,8 @@ def collect_runtime_state(
             host_version=host_version,
             api_version=api_version,
             license_search_paths=effective_license_paths,
+            consent_path=consent_path,
+            require_consent=require_consent,
         )
     payload: dict[str, Any] = {
         "host_version": host_version,
@@ -546,6 +945,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
         search_paths=search_paths,
         disabled_plugin_ids=disabled,
         attach=bool(args.attach),
+        require_consent=True,
     )
     print(json.dumps(payload, indent=2, ensure_ascii=False))
     return 0
@@ -624,12 +1024,98 @@ def _cmd_invoke(args: argparse.Namespace) -> int:
         host_version=args.host_version,
         api_version=args.api_version,
         license_search_paths=license_search_paths,
+        require_consent=True,
     )
     response["host_version"] = args.host_version
     response["api_version"] = args.api_version
     response["plugins"] = [record.to_dict() for record in records]
     response["attached"] = context.snapshot()
     print(json.dumps(response, indent=2, ensure_ascii=False))
+    return 0
+
+
+def _cmd_invoke_feature(args: argparse.Namespace) -> int:
+    try:
+        payload = _load_invoke_payload(args)
+    except ValueError as exc:
+        print(
+            json.dumps({"ok": False, "error": str(exc)}, indent=2, ensure_ascii=False)
+        )
+        return 0
+    license_search_paths = default_license_search_paths(cwd=Path.cwd())
+    records = apply_plugin_licensing(
+        _build_registry_from_args(args), search_paths=license_search_paths
+    )
+    response, context, records = invoke_plugin_feature(
+        records,
+        args.feature,
+        payload,
+        host_version=args.host_version,
+        api_version=args.api_version,
+        license_search_paths=license_search_paths,
+        require_consent=True,
+    )
+    response["host_version"] = args.host_version
+    response["api_version"] = args.api_version
+    response["plugins"] = [record.to_dict() for record in records]
+    response["attached"] = context.snapshot()
+    print(json.dumps(response, indent=2, ensure_ascii=False))
+    return 0
+
+
+def _consent_path_from_args(args: argparse.Namespace) -> Path:
+    override = str(getattr(args, "consent_path", "") or "").strip()
+    if override:
+        return Path(override).expanduser()
+    return default_consent_path(cwd=Path.cwd())
+
+
+def _cmd_consent_list(args: argparse.Namespace) -> int:
+    from backends.plugins.consent import load_consent_store
+
+    store = load_consent_store(_consent_path_from_args(args))
+    print(json.dumps(store, indent=2, ensure_ascii=False, sort_keys=True))
+    return 0
+
+
+def _cmd_consent_grant(args: argparse.Namespace) -> int:
+    from backends.plugins.consent import grant_plugin_consent
+
+    records = _build_registry_from_args(args)
+    record = get_plugin_record(records, args.plugin_id)
+    if record is None or record.manifest is None:
+        print(
+            json.dumps(
+                {"ok": False, "error": f"Plugin introuvable: {args.plugin_id}"},
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return 0
+    store = grant_plugin_consent(
+        record.plugin_id, record.manifest.version, _consent_path_from_args(args)
+    )
+    print(
+        json.dumps(
+            {"ok": True, "plugin_id": record.plugin_id, "consent": store},
+            indent=2,
+            ensure_ascii=False,
+        )
+    )
+    return 0
+
+
+def _cmd_consent_revoke(args: argparse.Namespace) -> int:
+    from backends.plugins.consent import revoke_plugin_consent
+
+    store = revoke_plugin_consent(args.plugin_id, _consent_path_from_args(args))
+    print(
+        json.dumps(
+            {"ok": True, "plugin_id": args.plugin_id, "consent": store},
+            indent=2,
+            ensure_ascii=False,
+        )
+    )
     return 0
 
 
@@ -645,6 +1131,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     list_parser.add_argument("--paths", nargs="*", default=[])
     list_parser.add_argument("--disable", default="")
     list_parser.add_argument("--attach", action="store_true")
+    list_parser.add_argument("--json", action="store_true")
     list_parser.set_defaults(func=_cmd_list)
 
     inspect_parser = sub.add_parser("inspect", help="Inspecter un plugin par id")
@@ -668,6 +1155,38 @@ def build_arg_parser() -> argparse.ArgumentParser:
     invoke_parser.add_argument("--paths", nargs="*", default=[])
     invoke_parser.add_argument("--disable", default="")
     invoke_parser.set_defaults(func=_cmd_invoke)
+
+    invoke_feature_parser = sub.add_parser(
+        "invoke-feature", help="Executer une feature exposee par un plugin actif"
+    )
+    invoke_feature_parser.add_argument("feature")
+    invoke_feature_parser.add_argument("--payload-json", default="")
+    invoke_feature_parser.add_argument("--payload-file", default="")
+    invoke_feature_parser.add_argument("--paths", nargs="*", default=[])
+    invoke_feature_parser.add_argument("--disable", default="")
+    invoke_feature_parser.set_defaults(func=_cmd_invoke_feature)
+
+    consent_list_parser = sub.add_parser(
+        "consent-list", help="Lister les consentements plugins enregistrés"
+    )
+    consent_list_parser.add_argument("--consent-path", default="")
+    consent_list_parser.set_defaults(func=_cmd_consent_list)
+
+    consent_grant_parser = sub.add_parser(
+        "consent-grant", help="Autoriser explicitement un plugin à s'exécuter"
+    )
+    consent_grant_parser.add_argument("plugin_id")
+    consent_grant_parser.add_argument("--paths", nargs="*", default=[])
+    consent_grant_parser.add_argument("--disable", default="")
+    consent_grant_parser.add_argument("--consent-path", default="")
+    consent_grant_parser.set_defaults(func=_cmd_consent_grant)
+
+    consent_revoke_parser = sub.add_parser(
+        "consent-revoke", help="Révoquer le consentement d'un plugin"
+    )
+    consent_revoke_parser.add_argument("plugin_id")
+    consent_revoke_parser.add_argument("--consent-path", default="")
+    consent_revoke_parser.set_defaults(func=_cmd_consent_revoke)
 
     return parser
 

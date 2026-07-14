@@ -33,6 +33,94 @@ const OUTPUT_FORMATS = [
   { label: 'Texte brut', description: 'Sortie quelconque retournée telle quelle', value: 'text' },
 ];
 
+function _compareSemver(a, b) {
+  const pa = String(a).split('.').map((n) => parseInt(n, 10) || 0);
+  const pb = String(b).split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0);
+  }
+  return 0;
+}
+
+/** Ne garde que les tags de version X.Y.Z (exclut latest/develops/sha-*), triés décroissant. */
+function _filterOciVersionTags(tags) {
+  const semver = /^\d+\.\d+\.\d+$/;
+  return (Array.isArray(tags) ? tags : [])
+    .map((t) => String(t).trim())
+    .filter((t) => semver.test(t))
+    .sort((a, b) => _compareSemver(b, a));
+}
+
+/**
+ * Liste les versions disponibles sur ghcr pour une image OCI PileOuFaces publique
+ * (token anonyme du registre OCI → /tags/list). Retourne [] si hors-ligne / privé /
+ * échec — l'appelant retombe alors sur la version épinglée du catalogue.
+ */
+async function _fetchOciVersions(imageRepo) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 6000);
+  try {
+    const tokenUrl = `https://ghcr.io/token?service=ghcr.io&scope=repository:${imageRepo}:pull`;
+    const tokRes = await fetch(tokenUrl, { signal: controller.signal });
+    if (!tokRes.ok) return [];
+    const tok = await tokRes.json();
+    const token = tok.token || tok.access_token;
+    if (!token) return [];
+    const tagsRes = await fetch(`https://ghcr.io/v2/${imageRepo}/tags/list`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal,
+    });
+    if (!tagsRes.ok) return [];
+    const data = await tagsRes.json();
+    return _filterOciVersionTags(data && data.tags);
+  } catch (_) {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Métadonnées des décompilateurs OCI officiels PileOuFaces (« utiliser le nôtre »).
+ * PAS de version ici : le tag est choisi au moment de l'ajout parmi les versions
+ * publiées sur ghcr (fetch dynamique). On ne stocke que label/commandes/plateforme.
+ */
+let _ociDecompilersCache = null;
+function ociDecompilers() {
+  if (_ociDecompilersCache) return _ociDecompilersCache;
+  _ociDecompilersCache = {
+    ghidra: {
+      label: 'Ghidra',
+      description: 'Décompilateur open-source de la NSA, très complet',
+      docker_command: ['/opt/pof-venv/bin/python3', '/opt/pof/decompile.py', '--binary', '{binary}', '--addr', '{addr}'],
+      docker_full_command: ['/opt/pof-venv/bin/python3', '/opt/pof/decompile.py', '--binary', '{binary}', '--full'],
+      output_format: 'json',
+      timeout: 180,
+      env: { GHIDRA_INSTALL_DIR: '/opt/ghidra' },
+    },
+    retdec: {
+      label: 'RetDec',
+      description: 'Décompilateur en C par Avast, léger et rapide',
+      docker_command: ['retdec-decompiler', '--select-decode-only', '--select-functions', '{func_name}', '-o', '{out}', '{binary}'],
+      docker_full_command: ['retdec-decompiler', '-o', '{out}', '{binary}'],
+      output_format: 'c',
+      timeout: 120,
+      env: null,
+      platform: 'linux/amd64', // binaire pré-compilé amd64-only
+    },
+    angr: {
+      label: 'Angr',
+      description: 'Framework d\'analyse binaire Python, symbolique',
+      docker_command: ['/opt/pof-venv/bin/python3', '/opt/pof/decompile.py', '--binary', '{binary}', '--addr', '{addr}'],
+      docker_full_command: ['/opt/pof-venv/bin/python3', '/opt/pof/decompile.py', '--binary', '{binary}', '--full'],
+      output_format: 'json',
+      timeout: 180,
+      env: null,
+    },
+  };
+  return _ociDecompilersCache;
+}
+
 // ─── Helpers config ───────────────────────────────────────────────────────────
 
 function _configPath(storageDir) {
@@ -92,12 +180,144 @@ function _suggestDockerImages(hint) {
 }
 
 function _dockerMissingImageHint(id, image) {
-  const normalizedId = _normalizeId(id);
   const normalizedImage = String(image || '').trim().toLowerCase();
-  if (normalizedImage.startsWith('pile-ou-face/decompiler-')) {
-    return `Construis-la d'abord avec: make decompiler-docker-build DECOMPILER=${normalizedId}`;
+  if (normalizedImage.startsWith('ghcr.io/pileoufaces/')) {
+    return `Lance \`docker pull ${image}\` ou utilise le bouton "Télécharger" dans Réglages.`;
   }
   return `Fais un 'docker pull ${image}' ou utilise une image registry valide.`;
+}
+
+// ─── Auto-check silencieux (partagé) ─────────────────────────────────────────
+
+/**
+ * Lance --list en arrière-plan et notifie l'utilisateur du résultat.
+ * Appelé après chaque ajout/modification de décompilateur.
+ */
+async function _autoCheckDecompiler(root, storageDir, id, label) {
+  let result = null;
+  let timedOut = false;
+
+  await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: `Vérification de "${label || id}"…`, cancellable: true },
+    async (_progress, token) => {
+      const pythonExe = _findPythonExe(root);
+      const child = cp.spawn(
+        pythonExe,
+        [path.join(getExtensionPath() || root, 'backends/static/decompile/decompile.py'), '--list', '--provider', 'auto'],
+        { encoding: 'utf8', cwd: root, env: buildRuntimeEnv(root, storageDir) },
+      );
+      let stdout = '';
+      let killed = false;
+      child.stdout.on('data', (d) => { stdout += d; });
+
+      const killTimer = setTimeout(() => {
+        killed = true;
+        timedOut = true;
+        child.kill('SIGTERM');
+      }, 12000);
+
+      token.onCancellationRequested(() => {
+        killed = true;
+        clearTimeout(killTimer);
+        child.kill('SIGTERM');
+      });
+
+      await new Promise((resolve) => child.on('close', resolve));
+      clearTimeout(killTimer);
+
+      if (!killed && stdout.trim()) {
+        try { result = JSON.parse(stdout.trim()); } catch (_e) { /* intentional */ }
+      }
+    }
+  );
+
+  if (timedOut) {
+    const action = await vscode.window.showWarningMessage(
+      `"${label || id}" ajouté — vérification trop longue (Docker lent ?). Teste manuellement.`,
+      'Tester manuellement', 'OK'
+    );
+    if (action === 'Tester manuellement') await cmdDecompilerTest(root, storageDir, null, id);
+    return;
+  }
+  if (!result) return;
+
+  const isAvailable = !!result[id];
+  const meta = result._meta || {};
+  const localOk = !!(meta.local_available || {})[id];
+  const dockerOk = !!(meta.docker_images_available || {})[id];
+  const dockerImage = (meta.docker_images || {})[id] || '';
+
+  if (isAvailable) {
+    const via = localOk ? 'local' : dockerOk ? `Docker (${dockerImage})` : 'auto';
+    const action = await vscode.window.showInformationMessage(
+      `"${label || id}" est prêt — disponible via ${via}.`,
+      'Tester une décompilation', 'OK'
+    );
+    if (action === 'Tester une décompilation') await cmdDecompilerTest(root, storageDir, null, id);
+  } else {
+    const why = !dockerImage
+      ? 'Aucune image Docker configurée et outil non trouvé en local.'
+      : !dockerOk
+        ? `Image Docker "${dockerImage}" introuvable — utilise le bouton Télécharger dans Réglages.`
+        : 'Outil non détecté en local (exécutable introuvable dans PATH).';
+    const action = await vscode.window.showWarningMessage(
+      `"${label || id}" configuré mais non disponible. ${why}`,
+      'Tester quand même', 'Ouvrir config JSON', 'OK'
+    );
+    if (action === 'Tester quand même') await cmdDecompilerTest(root, storageDir, null, id);
+    else if (action === 'Ouvrir config JSON') await cmdDecompilerOpenConfig(storageDir);
+  }
+}
+
+/**
+ * Lance `docker pull <image>` avec une barre de progression VS Code.
+ * Retourne true si le pull a réussi.
+ */
+async function _pullOciImageWithProgress(image, label, platform = '') {
+  let ok = false;
+  let lastError = '';
+  await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: `Téléchargement de ${label}…`, cancellable: true },
+    async (progress, token) => {
+      const dockerExe = resolveDockerExecutable();
+      const pullArgs = platform ? ['pull', '--platform', platform, image] : ['pull', image];
+      const proc = cp.spawn(dockerExe, pullArgs, { env: buildRuntimeEnv('') });
+      let layersTotal = 0;
+      let layersDone = 0;
+      let killed = false;
+
+      token.onCancellationRequested(() => { killed = true; proc.kill('SIGTERM'); });
+
+      proc.stdout.on('data', (chunk) => {
+        for (const line of chunk.toString().split('\n').filter(Boolean)) {
+          if (/Pulling fs layer/i.test(line)) layersTotal++;
+          if (/Pull complete/i.test(line)) layersDone++;
+          const pct = layersTotal > 0 ? Math.round((layersDone / layersTotal) * 100) : undefined;
+          progress.report({ message: line.trim(), increment: pct });
+        }
+      });
+
+      proc.stderr.on('data', (chunk) => {
+        lastError = chunk.toString().trim();
+      });
+
+      await new Promise((resolve) => proc.on('close', (code) => {
+        if (!killed) ok = code === 0;
+        resolve(undefined);
+      }));
+    }
+  );
+  if (ok) {
+    vscode.window.showInformationMessage(`Image "${image}" téléchargée avec succès.`);
+  } else {
+    const hint = /not found|manifest unknown|does not exist/i.test(lastError)
+      ? 'Image introuvable sur le registry — les images PileOuFaces ne sont peut-être pas encore publiées.'
+      : /unauthorized|denied/i.test(lastError)
+        ? 'Accès refusé — fais `docker login ghcr.io` si le registry est privé.'
+        : lastError || 'Erreur inconnue.';
+    vscode.window.showErrorMessage(`Echec du téléchargement de "${image}" : ${hint}`);
+  }
+  return ok;
 }
 
 // ─── Wizard d'ajout / modification ───────────────────────────────────────────
@@ -113,35 +333,13 @@ async function cmdDecompilerAdd(root, storageDir, editId = null) {
   const isEdit = editId !== null;
   const existing = isEdit ? (cfg.decompilers[editId] || {}) : {};
 
-  // ── ÉTAPE 1 : Identité ────────────────────────────────────────────────────
-  const rawId = await vscode.window.showInputBox({
-    title: isEdit ? `Modifier "${editId}" — ID` : 'Nouveau décompilateur — Identifiant',
-    prompt: 'Identifiant unique (lettres, chiffres, tirets). Ex: binja, idalite, my-tool',
-    value: isEdit ? editId : '',
-    validateInput: (v) => {
-      const n = _normalizeId(v);
-      if (!n) return 'ID invalide (utilise lettres, chiffres, tirets)';
-      if (!isEdit && cfg.decompilers[n]) return `"${n}" existe déjà — utilise "Modifier" pour l'éditer`;
-      return null;
-    },
-  });
-  if (rawId === undefined) return;
-  const id = _normalizeId(rawId);
-
-  const label = await vscode.window.showInputBox({
-    title: `"${id}" — Nom affiché`,
-    prompt: 'Label visible dans l\'interface Pile ou Face',
-    value: existing.label || id,
-  });
-  if (label === undefined) return;
-
-  // ── ÉTAPE 2 : Mode d'exécution ────────────────────────────────────────────
+  // ── ÉTAPE 1 : Mode d'exécution ────────────────────────────────────────────
   const modeChoice = await vscode.window.showQuickPick(
     [
       {
-        label: '$(cloud) Docker uniquement',
-        description: 'L\'outil tourne dans un container Docker',
-        detail: 'Idéal pour les outils difficiles à installer localement (Ghidra, IDA…)',
+        label: '$(cloud) Container Docker',
+        description: 'Images Docker officielles PileOuFaces ou image personnalisée',
+        detail: 'Idéal pour Ghidra, RetDec, Angr — pas besoin d\'installation locale',
         value: 'docker',
       },
       {
@@ -151,35 +349,220 @@ async function cmdDecompilerAdd(root, storageDir, editId = null) {
         value: 'local',
       },
       {
-        label: '$(repo-sync) Local + Docker (fallback)',
+        label: '$(repo-sync) Local + Container (fallback)',
         description: 'Essaie local d\'abord, Docker si indisponible',
         detail: 'Le mode "auto" de Pile ou Face gère le fallback automatiquement',
         value: 'both',
       },
     ],
     {
-      title: `"${id}" — Mode d'exécution`,
-      placeHolder: 'Choisir comment lancer ce décompilateur',
+      title: isEdit ? `Modifier "${editId}" — Mode` : 'Ajouter un décompilateur — Mode d\'exécution',
+      placeHolder: 'Comment lancer ce décompilateur ?',
     }
   );
   if (!modeChoice) return;
   const mode = modeChoice.value;
 
-  const config = { label: label || id };
+  let id = isEdit ? editId : null;
+  let label = isEdit ? (existing.label || editId) : '';
+  const config = {};
 
-  // ── ÉTAPE 3 : Configuration Docker ───────────────────────────────────────
+  // ── ÉTAPE 2 : Source de l'image Docker ───────────────────────────────────
   if (mode === 'docker' || mode === 'both') {
-    // Suggestion d'images disponibles
+    let dockerSource = 'custom';
+
+    if (!isEdit) {
+      const sourceChoice = await vscode.window.showQuickPick(
+        [
+          {
+            label: '$(package) Nos images PileOuFaces',
+            description: 'Ghidra, RetDec, Angr — images officielles maintenues par PileOuFaces',
+            detail: 'Configuration automatique — un clic suffit',
+            value: 'oci',
+          },
+          {
+            label: '$(tools) Image personnalisée',
+            description: 'Ton propre registry, image custom ou tierce',
+            detail: 'Tu saisis l\'image et les commandes manuellement',
+            value: 'custom',
+          },
+        ],
+        {
+          title: 'Ajouter un décompilateur — Source de l\'image',
+          placeHolder: 'Quel type d\'image Docker ?',
+        }
+      );
+      if (!sourceChoice) return;
+      dockerSource = sourceChoice.value;
+    }
+
+    // ── ÉTAPE 3a : Image OCI PileOuFaces ─────────────────────────────────
+    if (dockerSource === 'oci') {
+      const ociChoices = Object.entries(ociDecompilers()).map(([key, d]) => {
+        const alreadyHere = !!cfg.decompilers[key];
+        const localAvail = _checkDockerImageSync(`ghcr.io/pileoufaces/pile-ou-face/decompiler-${key}:latest`);
+        const statusIcon = localAvail ? '$(check)' : '$(cloud-download)';
+        const statusDetail = localAvail
+          ? 'Image disponible localement'
+          : 'Image à télécharger depuis ghcr.io/pileoufaces';
+        return {
+          label: `${statusIcon} ${d.label}${alreadyHere ? ' (déjà configuré)' : ''}`,
+          description: d.description,
+          detail: statusDetail,
+          value: key,
+        };
+      });
+
+      const ociPicked = await vscode.window.showQuickPick(ociChoices, {
+        title: 'Images PileOuFaces — Choisir un décompilateur',
+        placeHolder: 'Sélectionne le décompilateur à installer',
+      });
+      if (!ociPicked) return;
+
+      const ociKey = ociPicked.value;
+      const ociDef = ociDecompilers()[ociKey];
+
+      // Confirmer si déjà présent
+      if (cfg.decompilers[ociKey]) {
+        const overwrite = await vscode.window.showWarningMessage(
+          `Un décompilateur "${ociKey}" existe déjà dans ta configuration. Écraser ?`,
+          { modal: true },
+          'Écraser'
+        );
+        if (overwrite !== 'Écraser') return;
+      }
+
+      // ── Choix de la version (toutes les versions publiées sur ghcr) ──────
+      const imageRepo = `pileoufaces/pile-ou-face/decompiler-${ociKey}`;
+      // Liste 100 % dynamique : uniquement les versions publiées sur ghcr, plus
+      // récente en tête (= recommandée ; les breaking changes vont au CHANGELOG).
+      const versions = await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: `Recherche des versions de ${ociDef.label} sur ghcr…`,
+          cancellable: false,
+        },
+        () => _fetchOciVersions(imageRepo),
+      );
+      let chosenVersion;
+      if (versions.length >= 1) {
+        const versionPick = await vscode.window.showQuickPick(
+          versions.map((v, i) => ({
+            label: i === 0 ? `$(star-full) ${v}` : v,
+            description: i === 0 ? 'la plus récente (recommandée)' : '',
+            value: v,
+          })),
+          {
+            title: `${ociDef.label} — Choisir la version`,
+            placeHolder: `${versions.length} version(s) publiée(s) sur ghcr`,
+          },
+        );
+        if (!versionPick) return;
+        chosenVersion = versionPick.value;
+      } else {
+        const fallback = await vscode.window.showWarningMessage(
+          `Impossible de lister les versions de ${ociDef.label} sur ghcr (hors-ligne, ou aucune version publiée). Utiliser le tag « latest » ?`,
+          { modal: true },
+          'Utiliser latest',
+        );
+        if (fallback !== 'Utiliser latest') return;
+        chosenVersion = 'latest';
+      }
+      const chosenImage = `ghcr.io/pileoufaces/pile-ou-face/decompiler-${ociKey}:${chosenVersion}`;
+
+      // Auto-configuration complète depuis le catalogue OCI
+      id = ociKey;
+      label = ociDef.label;
+      const ociConfig: Record<string, unknown> = {
+        label: ociDef.label,
+        docker_image: chosenImage,
+        docker_command: ociDef.docker_command,
+        docker_full_command: ociDef.docker_full_command,
+        supports_full: true,
+        output_format: ociDef.output_format,
+        timeout: ociDef.timeout,
+      };
+      if (ociDef.env) ociConfig.env = ociDef.env;
+      if (ociDef.platform) ociConfig.docker_platform = ociDef.platform;
+
+      // Si mode === 'both', on demande quand même la commande locale
+      if (mode === 'both') {
+        const localCmd = await vscode.window.showInputBox({
+          title: `"${id}" — Commande locale (décompilation de fonction)`,
+          prompt: TOKEN_HELP,
+          value: existing.command ? existing.command.join(' ') : `${id} --json {binary} --addr {addr}`,
+          validateInput: (v) => (v.trim() ? null : 'Commande requise'),
+        });
+        if (localCmd === undefined) return;
+        ociConfig.command = _splitCommand(localCmd.trim());
+
+        const localFullCmd = await vscode.window.showInputBox({
+          title: `"${id}" — Commande locale (binaire complet, optionnel)`,
+          prompt: TOKEN_HELP + '  •  Laisser vide pour désactiver --full en local',
+          value: '',
+        });
+        if (localFullCmd === undefined) return;
+        if (localFullCmd.trim()) ociConfig.full_command = _splitCommand(localFullCmd.trim());
+      }
+
+      // Enregistrement immédiat — le wizard se termine ici
+      cfg.decompilers[id] = ociConfig;
+      _writeConfig(storageDir, cfg);
+      _autoCheckDecompiler(root, storageDir, id, label);
+
+      // Proposer de télécharger l'image si absente — fire-and-forget (non-bloquant)
+      const imageReady = _checkDockerImageSync(ociDef.image);
+      if (!imageReady) {
+        (async () => {
+          const pullNow = await vscode.window.showInformationMessage(
+            `"${ociDef.label}" n'est pas encore téléchargée (${ociDef.image}).`,
+            'Télécharger maintenant', 'Plus tard'
+          );
+          if (pullNow === 'Télécharger maintenant') {
+            await _pullOciImageWithProgress(ociDef.image, ociDef.label, ociDef.platform || '');
+          }
+        })().catch(() => {});
+      }
+
+      return;
+    }
+
+    // ── ÉTAPE 3b : Image personnalisée ───────────────────────────────────
+    // Demander l'ID si pas encore connu
+    if (!id) {
+      const rawId = await vscode.window.showInputBox({
+        title: 'Nouveau décompilateur — Identifiant',
+        prompt: 'Identifiant unique (lettres, chiffres, tirets). Ex: binja, idalite, my-tool',
+        value: '',
+        validateInput: (v) => {
+          const n = _normalizeId(v);
+          if (!n) return 'ID invalide (utilise lettres, chiffres, tirets)';
+          if (cfg.decompilers[n]) return `"${n}" existe déjà — utilise "Modifier" pour l'éditer`;
+          return null;
+        },
+      });
+      if (rawId === undefined) return;
+      id = _normalizeId(rawId);
+
+      const labelInput = await vscode.window.showInputBox({
+        title: `"${id}" — Nom affiché`,
+        prompt: 'Label visible dans l\'interface Pile ou Face',
+        value: id,
+      });
+      if (labelInput === undefined) return;
+      label = labelInput || id;
+    }
+
     const localImages = _suggestDockerImages(id);
     const defaultImage = existing.docker_image
       || localImages.find(i => i.includes(id))
-      || `pile-ou-face/decompiler-${id}:latest`;
+      || `ghcr.io/myregistry/decompiler-${id}:latest`;
 
     const dockerImage = await vscode.window.showInputBox({
       title: `"${id}" — Image Docker`,
       prompt: localImages.length
         ? `Images disponibles : ${localImages.slice(0, 3).join(', ')}`
-        : 'Ex: pile-ou-face/decompiler-mytool:latest  ou  registry.io/mytool:1.0',
+        : 'Ex: ghcr.io/myregistry/decompiler-mytool:latest',
       value: defaultImage,
       validateInput: (v) => {
         if (!v.trim()) return 'Image requise';
@@ -190,25 +573,20 @@ async function cmdDecompilerAdd(root, storageDir, editId = null) {
     if (dockerImage === undefined) return;
     config.docker_image = dockerImage.trim();
 
-    // Vérification de disponibilité de l'image
     const imageOk = _checkDockerImageSync(config.docker_image);
     if (!imageOk) {
-      const pullChoice = await vscode.window.showWarningMessage(
-        `L'image "${config.docker_image}" n'est pas disponible localement.\n${_dockerMissingImageHint(id, config.docker_image)}`,
+      const cont = await vscode.window.showWarningMessage(
+        `L'image "${config.docker_image}" n'est pas disponible localement. ${_dockerMissingImageHint(id, config.docker_image)}`,
         { modal: false },
-        'Continuer quand même',
-        'Annuler'
+        'Continuer quand même', 'Annuler'
       );
-      if (pullChoice !== 'Continuer quand même') return;
+      if (cont !== 'Continuer quand même') return;
     }
 
-    // Commande Docker — fonction
     const dockerCmd = await vscode.window.showInputBox({
       title: `"${id}" — Commande Docker (décompilation de fonction)`,
       prompt: TOKEN_HELP + '  •  Laisser vide si non supporté',
-      value: existing.docker_command
-        ? existing.docker_command.join(' ')
-        : `/usr/bin/${id} --json {binary} --addr {addr}`,
+      value: existing.docker_command ? existing.docker_command.join(' ') : `/usr/bin/${id} --json {binary} --addr {addr}`,
       validateInput: (v) => {
         if (!v.trim() && mode === 'docker') return 'Commande requise pour le mode Docker-only';
         return null;
@@ -217,7 +595,6 @@ async function cmdDecompilerAdd(root, storageDir, editId = null) {
     if (dockerCmd === undefined) return;
     if (dockerCmd.trim()) config.docker_command = _splitCommand(dockerCmd.trim());
 
-    // Commande Docker — binaire complet
     const dockerFullCmd = await vscode.window.showInputBox({
       title: `"${id}" — Commande Docker (binaire complet, optionnel)`,
       prompt: TOKEN_HELP + '  •  Laisser vide pour désactiver --full',
@@ -232,6 +609,31 @@ async function cmdDecompilerAdd(root, storageDir, editId = null) {
 
   // ── ÉTAPE 4 : Configuration locale ───────────────────────────────────────
   if (mode === 'local' || mode === 'both') {
+    // Demander l'ID si on n'est pas passé par le chemin Docker
+    if (!id) {
+      const rawId = await vscode.window.showInputBox({
+        title: isEdit ? `Modifier "${editId}" — ID` : 'Nouveau décompilateur — Identifiant',
+        prompt: 'Identifiant unique (lettres, chiffres, tirets). Ex: binja, idalite, my-tool',
+        value: isEdit ? editId : '',
+        validateInput: (v) => {
+          const n = _normalizeId(v);
+          if (!n) return 'ID invalide (utilise lettres, chiffres, tirets)';
+          if (!isEdit && cfg.decompilers[n]) return `"${n}" existe déjà`;
+          return null;
+        },
+      });
+      if (rawId === undefined) return;
+      id = _normalizeId(rawId);
+
+      const labelInput = await vscode.window.showInputBox({
+        title: `"${id}" — Nom affiché`,
+        prompt: 'Label visible dans l\'interface Pile ou Face',
+        value: existing.label || id,
+      });
+      if (labelInput === undefined) return;
+      label = labelInput || id;
+    }
+
     const localCmd = await vscode.window.showInputBox({
       title: `"${id}" — Commande locale (décompilation de fonction)`,
       prompt: TOKEN_HELP,
@@ -253,6 +655,9 @@ async function cmdDecompilerAdd(root, storageDir, editId = null) {
     }
   }
 
+  if (!id) return;
+  config.label = label || id;
+
   // ── ÉTAPE 5 : Options avancées (optionnel) ────────────────────────────────
   const advanced = await vscode.window.showQuickPick(
     [
@@ -264,7 +669,6 @@ async function cmdDecompilerAdd(root, storageDir, editId = null) {
   if (!advanced) return;
 
   if (advanced.value === 'advanced') {
-    // Format de sortie
     const fmtChoice = await vscode.window.showQuickPick(OUTPUT_FORMATS, {
       title: `"${id}" — Format de sortie`,
       placeHolder: 'Comment le décompilateur retourne ses résultats',
@@ -272,7 +676,6 @@ async function cmdDecompilerAdd(root, storageDir, editId = null) {
     if (!fmtChoice) return;
     if (fmtChoice.value !== 'json') config.output_format = fmtChoice.value;
 
-    // Timeout
     const timeoutStr = await vscode.window.showInputBox({
       title: `"${id}" — Timeout (secondes)`,
       prompt: 'Durée max d\'exécution. 120 par défaut pour une fonction, 300 pour --full.',
@@ -288,7 +691,6 @@ async function cmdDecompilerAdd(root, storageDir, editId = null) {
     if (timeoutStr === undefined) return;
     if (timeoutStr.trim()) config.timeout = parseInt(timeoutStr.trim(), 10);
 
-    // Variables d'environnement (si mode local ou les deux)
     if (mode !== 'docker') {
       const envStr = await vscode.window.showInputBox({
         title: `"${id}" — Variables d'environnement (optionnel)`,
@@ -297,12 +699,9 @@ async function cmdDecompilerAdd(root, storageDir, editId = null) {
         placeHolder: 'Ex: TOOL_HOME=/opt/mytool,JAVA_OPTS=-Xmx2g',
       });
       if (envStr === undefined) return;
-      if (envStr.trim()) {
-        config.env = _parseEnvString(envStr.trim());
-      }
+      if (envStr.trim()) config.env = _parseEnvString(envStr.trim());
     }
 
-    // Réseau Docker
     if (mode !== 'local') {
       const networkChoice = await vscode.window.showQuickPick(
         [
@@ -315,7 +714,6 @@ async function cmdDecompilerAdd(root, storageDir, editId = null) {
       if (!networkChoice) return;
       if (networkChoice.value !== 'none') config.network = networkChoice.value;
 
-      // Variables d'env Docker
       const dockerEnvStr = await vscode.window.showInputBox({
         title: `"${id}" — Variables d'environnement Docker (optionnel)`,
         prompt: 'Injectées via -e dans docker run. Format : KEY=value,KEY2=value2',
@@ -323,11 +721,8 @@ async function cmdDecompilerAdd(root, storageDir, editId = null) {
         placeHolder: 'Ex: TOOL_HOME=/opt/tool,LICENSE_KEY=xxx',
       });
       if (dockerEnvStr === undefined) return;
-      if (dockerEnvStr.trim()) {
-        config.env = _parseEnvString(dockerEnvStr.trim());
-      }
+      if (dockerEnvStr.trim()) config.env = _parseEnvString(dockerEnvStr.trim());
 
-      // Arguments docker run supplémentaires
       const extraArgs = await vscode.window.showInputBox({
         title: `"${id}" — Arguments docker run supplémentaires (optionnel)`,
         prompt: 'Ajoutés avant le nom de l\'image. Ex: --memory 2g --cpus 2',
@@ -340,98 +735,11 @@ async function cmdDecompilerAdd(root, storageDir, editId = null) {
   }
 
   // ── ÉTAPE 6 : Enregistrement ──────────────────────────────────────────────
-  // Pour le mode docker-only sans command locale, on n'ajoute PAS de stub command
-  // (le backend Python supporte maintenant docker-only)
-  if ((mode === 'local' || mode === 'both') && !config.command) {
-    vscode.window.showErrorMessage(`Configuration incomplète : commande locale manquante pour "${id}".`);
-    return;
-  }
-
   if (isEdit) delete cfg.decompilers[editId];
   cfg.decompilers[id] = config;
   _writeConfig(storageDir, cfg);
 
-  // ── Auto-test silencieux ──────────────────────────────────────────────────
-  // Lance --list en arrière-plan et affiche une notif quand c'est terminé.
-  // Le withProgress se ferme dès que Python répond (ou timeout 12s).
-  // Les showMessage sont hors du withProgress pour ne pas bloquer le spinner.
-  const _autoCheckDecompiler = async () => {
-    let result = null;
-    let timedOut = false;
-
-    await vscode.window.withProgress(
-      { location: vscode.ProgressLocation.Notification, title: `Vérification de "${label || id}"…`, cancellable: true },
-      async (_progress, token) => {
-        const pythonExe = _findPythonExe(root);
-        const child = cp.spawn(
-          pythonExe,
-          [path.join(getExtensionPath() || root, 'backends/static/decompile/decompile.py'), '--list', '--provider', 'auto'],
-          { encoding: 'utf8', cwd: root, env: buildRuntimeEnv(root, storageDir) },
-        );
-        let stdout = '';
-        let killed = false;
-        child.stdout.on('data', (d) => { stdout += d; });
-
-        const killTimer = setTimeout(() => {
-          killed = true;
-          timedOut = true;
-          child.kill('SIGTERM');
-        }, 12000);
-
-        token.onCancellationRequested(() => {
-          killed = true;
-          clearTimeout(killTimer);
-          child.kill('SIGTERM');
-        });
-
-        await new Promise((resolve) => child.on('close', resolve));
-        clearTimeout(killTimer);
-
-        if (!killed && stdout.trim()) {
-          try { result = JSON.parse(stdout.trim()); } catch (_) { /* intentional */ }
-        }
-      }
-    );
-
-    // Hors du withProgress — le spinner est fermé, on peut afficher des messages
-    if (timedOut) {
-      const action = await vscode.window.showWarningMessage(
-        `"${label || id}" ajouté — vérification trop longue (Docker lent ?). Teste manuellement.`,
-        'Tester manuellement', 'OK'
-      );
-      if (action === 'Tester manuellement') await cmdDecompilerTest(root, storageDir, null, id);
-      return;
-    }
-    if (!result) return; // annulé ou erreur silencieuse
-
-    const isAvailable = !!result[id];
-    const meta = result._meta || {};
-    const localOk = !!(meta.local_available || {})[id];
-    const dockerOk = !!(meta.docker_images_available || {})[id];
-    const dockerImage = (meta.docker_images || {})[id] || '';
-
-    if (isAvailable) {
-      const via = localOk ? 'local' : dockerOk ? `Docker (${dockerImage})` : 'auto';
-      const action = await vscode.window.showInformationMessage(
-        `✅ "${label || id}" est prêt — disponible via ${via}.`,
-        'Tester une décompilation', 'OK'
-      );
-      if (action === 'Tester une décompilation') await cmdDecompilerTest(root, storageDir, null, id);
-    } else {
-      const why = !dockerImage
-        ? 'Aucune image Docker configurée et outil non trouvé en local.'
-        : !dockerOk
-          ? `Image Docker "${dockerImage}" introuvable — lance \`make decompiler-docker-build DECOMPILER=${id}\`.`
-          : 'Outil non détecté en local (champ "detect" absent ou exécutable introuvable dans PATH).';
-      const action = await vscode.window.showWarningMessage(
-        `⚠️ "${label || id}" configuré mais non disponible. ${why}`,
-        'Tester quand même', 'Ouvrir config JSON', 'OK'
-      );
-      if (action === 'Tester quand même') await cmdDecompilerTest(root, storageDir, null, id);
-      else if (action === 'Ouvrir config JSON') await cmdDecompilerOpenConfig(storageDir);
-    }
-  };
-  _autoCheckDecompiler();
+  _autoCheckDecompiler(root, storageDir, id, label);
 }
 
 // ─── Helpers wizard ───────────────────────────────────────────────────────────
@@ -798,4 +1106,16 @@ function registerDecompilerCommands(context, deps, root, storageDir) {
   return subs;
 }
 
-module.exports = { registerDecompilerCommands };
+/** Retourne la platform docker requise pour une image OCI connue (ex: 'linux/amd64'), ou '' si aucune contrainte. */
+function getKnownOciImagePlatform(image: string): string {
+  const img = String(image || '').trim();
+  const repo = img.split(':')[0]; // tolérant au tag (:latest, :1.0.0, …)
+  for (const key of Object.keys(ociDecompilers())) {
+    const defRepo = `ghcr.io/pileoufaces/pile-ou-face/decompiler-${key}`;
+    const platform = (ociDecompilers()[key] as { platform?: string }).platform;
+    if (defRepo === repo && platform) return platform;
+  }
+  return '';
+}
+
+module.exports = { registerDecompilerCommands, getKnownOciImagePlatform, _filterOciVersionTags };

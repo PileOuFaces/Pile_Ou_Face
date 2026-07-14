@@ -66,17 +66,16 @@ class TestMcpServer(unittest.TestCase):
         self.assertIn("find_files", names)
         self.assertIn("plugins_list", names)
         self.assertIn("plugin_invoke", names)
-        self.assertNotIn("find_vulnerabilities", names)
-        self.assertNotIn("taint_analysis", names)
+        self.assertNotIn("legacy_private_tool", names)
 
     @patch("backends.mcp.server._dynamic_plugin_tools")
-    def test_tools_list_includes_dynamic_plugin_commands(
+    def test_tools_list_includes_dynamic_plugin_features(
         self, mock_dynamic_plugin_tools
     ):
         mock_dynamic_plugin_tools.return_value = [
             {
-                "name": "plugin.audit.vulns.run",
-                "description": "Plugin command exposed by pof.vulnerability-audit-pro: audit.vulns.run",
+                "name": "plugin.demo_feature",
+                "description": "Plugin feature exposed by pof.demo-plugin: demo_feature",
                 "inputSchema": {
                     "type": "object",
                     "properties": {"payload": {"type": "object"}},
@@ -89,23 +88,25 @@ class TestMcpServer(unittest.TestCase):
         self.assertIsNotNone(response)
         assert response is not None
         names = {tool["name"] for tool in response["result"]["tools"]}
-        self.assertIn("plugin.audit.vulns.run", names)
+        self.assertIn("plugin.demo_feature", names)
 
     @patch("backends.mcp.server._plugin_runtime_records")
     def test_tools_call_plugins_list(self, mock_plugin_runtime_records):
         mock_plugin_runtime_records.return_value = {
             "host_version": "0.1.0",
             "api_version": 1,
-            "search_paths": ["/repo/.pile-ou-face/plugins"],
+            "search_paths": [
+                "/workspaceStorage/df663d3d38c329fe16f94cf93e5fd4d5/PileOuFaces.stack-visualizer/plugins"
+            ],
             "summary": {"active": 1},
             "plugins": [
                 {
-                    "id": "pof.vulnerability-audit-pro",
+                    "id": "pof.demo-plugin",
                     "state": "active",
-                    "manifest": {"name": "Vulnerability Audit Pro"},
+                    "manifest": {"name": "Demo Plugin"},
                 }
             ],
-            "attached": {"commands": ["audit.vulns.run"]},
+            "attached": {"commands": ["demo.scan.run"]},
         }
         request = {
             "jsonrpc": "2.0",
@@ -126,12 +127,16 @@ class TestMcpServer(unittest.TestCase):
     def test_tools_call_plugin_invoke(
         self, mock_search_paths, mock_build_registry, mock_invoke
     ):
-        mock_search_paths.return_value = [Path("/repo/.pile-ou-face/plugins")]
+        mock_search_paths.return_value = [
+            Path(
+                "/workspaceStorage/df663d3d38c329fe16f94cf93e5fd4d5/PileOuFaces.stack-visualizer/plugins"
+            )
+        ]
         mock_build_registry.return_value = []
         mock_invoke.return_value = (
-            {"ok": True, "command": "audit.vulns.run", "result": {"findings": 1}},
+            {"ok": True, "command": "demo.scan.run", "result": {"findings": 1}},
             type(
-                "Ctx", (), {"snapshot": lambda self: {"commands": ["audit.vulns.run"]}}
+                "Ctx", (), {"snapshot": lambda self: {"commands": ["demo.scan.run"]}}
             )(),
             [],
         )
@@ -142,7 +147,7 @@ class TestMcpServer(unittest.TestCase):
             "params": {
                 "name": "plugin_invoke",
                 "arguments": {
-                    "command_id": "audit.vulns.run",
+                    "command_id": "demo.scan.run",
                     "payload": {"binaryPath": "/repo/demo.bin"},
                 },
             },
@@ -153,35 +158,96 @@ class TestMcpServer(unittest.TestCase):
         result = response["result"]
         self.assertFalse(result["isError"])
         self.assertEqual(result["structuredContent"]["result"], {"findings": 1})
+        # plugin_invoke must not auto-discover plugins from an arbitrary
+        # workspace/cwd (the MCP server's cwd may be any checked-out repo).
+        self.assertTrue(mock_search_paths.called)
+        for call in mock_search_paths.call_args_list:
+            self.assertEqual(
+                call.kwargs,
+                {"cwd": mcp_impl.ROOT, "allow_workspace_discovery": False},
+            )
+        # plugin_invoke must require explicit user consent before executing
+        # a plugin's Python code.
+        self.assertEqual(mock_invoke.call_args.kwargs.get("require_consent"), True)
 
-    @patch("backends.mcp.server._dynamic_plugin_tools")
-    @patch("backends.plugins.runtime.invoke_plugin_command")
+    @patch("backends.plugins.runtime.invoke_plugin_feature")
     @patch("backends.plugins.runtime.build_plugin_registry")
     @patch("backends.plugins.runtime.default_plugin_search_paths")
-    def test_tools_call_dynamic_plugin_tool_name(
+    def test_tools_call_plugin_invoke_by_feature(
+        self, mock_search_paths, mock_build_registry, mock_invoke_feature
+    ):
+        mock_search_paths.return_value = [
+            Path(
+                "/workspaceStorage/df663d3d38c329fe16f94cf93e5fd4d5/PileOuFaces.stack-visualizer/plugins"
+            )
+        ]
+        mock_build_registry.return_value = []
+        mock_invoke_feature.return_value = (
+            {
+                "ok": True,
+                "feature": "demo_feature",
+                "command": "demo.feature.run",
+                "result": {"items": []},
+            },
+            type(
+                "Ctx", (), {"snapshot": lambda self: {"commands": ["demo.feature.run"]}}
+            )(),
+            [],
+        )
+        request = {
+            "jsonrpc": "2.0",
+            "id": 24,
+            "method": "tools/call",
+            "params": {
+                "name": "plugin_invoke",
+                "arguments": {
+                    "feature_id": "demo_feature",
+                    "payload": {"binaryPath": "/repo/demo.bin"},
+                },
+            },
+        }
+        response = mcp_server.handle_request(request)
+        self.assertIsNotNone(response)
+        assert response is not None
+        result = response["result"]
+        self.assertFalse(result["isError"])
+        self.assertEqual(result["structuredContent"]["result"], {"items": []})
+        self.assertEqual(
+            mock_invoke_feature.call_args.kwargs.get("require_consent"), True
+        )
+
+    @patch("backends.mcp.server._dynamic_plugin_tool_routes")
+    @patch("backends.plugins.runtime.invoke_plugin_feature")
+    @patch("backends.plugins.runtime.build_plugin_registry")
+    @patch("backends.plugins.runtime.default_plugin_search_paths")
+    def test_tools_call_dynamic_plugin_feature_tool_name(
         self,
         mock_search_paths,
         mock_build_registry,
-        mock_invoke,
-        mock_dynamic_plugin_tools,
+        mock_invoke_feature,
+        mock_dynamic_plugin_tool_routes,
     ):
-        mock_dynamic_plugin_tools.return_value = [
-            {
-                "name": "plugin.audit.vulns.run",
-                "description": "Plugin command",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {"payload": {"type": "object"}},
-                    "additionalProperties": False,
-                },
+        mock_dynamic_plugin_tool_routes.return_value = {
+            "plugin.demo_feature": {
+                "feature_id": "demo_feature",
+                "command_id": "demo.scan.run",
             }
+        }
+        mock_search_paths.return_value = [
+            Path(
+                "/workspaceStorage/df663d3d38c329fe16f94cf93e5fd4d5/PileOuFaces.stack-visualizer/plugins"
+            )
         ]
-        mock_search_paths.return_value = [Path("/repo/.pile-ou-face/plugins")]
         mock_build_registry.return_value = []
-        mock_invoke.return_value = (
-            {"ok": True, "command": "audit.vulns.run", "result": {"findings": 2}},
+        mock_invoke_feature.return_value = (
+            {
+                "ok": True,
+                "feature": "demo_feature",
+                "command": "demo.scan.run",
+                "result": {"findings": 2},
+            },
             type(
-                "Ctx", (), {"snapshot": lambda self: {"commands": ["audit.vulns.run"]}}
+                "Ctx", (), {"snapshot": lambda self: {"commands": ["demo.scan.run"]}}
             )(),
             [],
         )
@@ -190,7 +256,7 @@ class TestMcpServer(unittest.TestCase):
             "id": 23,
             "method": "tools/call",
             "params": {
-                "name": "plugin.audit.vulns.run",
+                "name": "plugin.demo_feature",
                 "arguments": {
                     "payload": {"binaryPath": "/repo/demo.bin"},
                 },
@@ -443,11 +509,45 @@ class TestMcpServer(unittest.TestCase):
     ):
         mock_isfile.return_value = False
         mock_iter_files.return_value = [
-            "/repo/examples/vuln_demo.elf",
+            "/repo/examples/sample_demo.elf",
             "/repo/examples/demo_analysis.elf",
         ]
-        resolved = mcp_impl._resolve_binary_path("vul_demo.elf")
-        self.assertEqual(resolved, "/repo/examples/vuln_demo.elf")
+        resolved = mcp_impl._resolve_binary_path("sample_demo.elf")
+        self.assertEqual(resolved, "/repo/examples/sample_demo.elf")
+
+    @patch("backends.plugins.runtime.collect_runtime_state")
+    @patch("backends.plugins.runtime.default_plugin_search_paths")
+    def test_plugin_runtime_records_disables_workspace_discovery(
+        self, mock_search_paths, mock_collect_state
+    ):
+        mock_search_paths.return_value = []
+        mock_collect_state.return_value = {"plugins": []}
+        mcp_impl._plugin_runtime_records()
+        mock_search_paths.assert_called_once_with(
+            cwd=mcp_impl.ROOT, allow_workspace_discovery=False
+        )
+
+    def test_plugin_runtime_records_does_not_auto_attach_workspace_local_plugin(self):
+        """End-to-end guard (no mocking of default_plugin_search_paths): a
+        plugin planted in <ROOT>/.pile-ou-face/plugins/ (e.g. by a malicious
+        PR, or leftover from local dev testing) must not be silently
+        discovered just because the MCP server's cwd happens to be ROOT.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_root = Path(tmp) / "repo"
+            plugin_dir = fake_root / ".pile-ou-face" / "plugins" / "evil-plugin"
+            plugin_dir.mkdir(parents=True)
+            (plugin_dir / "manifest.json").write_text(
+                '{"id": "evil.plugin", "name": "Evil", "version": "1.0.0", '
+                '"kind": "analysis-pack", "host": {"api_version": 1}, '
+                '"entrypoints": {}}',
+                encoding="utf-8",
+            )
+            with patch.object(mcp_impl, "ROOT", str(fake_root)):
+                payload = mcp_impl._plugin_runtime_records()
+
+        plugin_ids = {p.get("id") for p in payload.get("plugins", [])}
+        self.assertNotIn("evil.plugin", plugin_ids)
 
 
 if __name__ == "__main__":

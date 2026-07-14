@@ -141,6 +141,109 @@ class TestPayloadScriptRunner(unittest.TestCase):
         self.assertTrue(result["captured"][0]["hex"].startswith("41414141"))
         self.assertIn("payload", result["globals"])
 
+    def test_arbitrary_file_read_is_blocked(self):
+        script = "\n".join(
+            [
+                "data = open('/etc/passwd').read()",
+                "payload = data[:8].encode() if isinstance(data, str) else data[:8]",
+            ]
+        )
+
+        result = analyze_script_text(script, source_file_name="solve.py")
+
+        self.assertFalse(result["ok"])
+        self.assertIn("lecture disque bloquee", result["error"])
+
+    def test_arbitrary_file_write_is_blocked_even_for_the_allowed_binary_path(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            binary_path = Path(tmpdir) / "chall"
+            binary_path.write_bytes(b"\x7fELF")
+            script = "\n".join(
+                [
+                    "import sys",
+                    "open(sys.argv[1], 'wb').write(b'pwned')",
+                    "payload = b'A'",
+                ]
+            )
+
+            result = analyze_script_text(
+                script,
+                source_file_name="solve.py",
+                script_args=[str(binary_path)],
+                script_root=tmpdir,
+            )
+
+            self.assertFalse(result["ok"])
+            self.assertIn("ecriture disque bloquee", result["error"])
+            # The file must be untouched.
+            self.assertEqual(binary_path.read_bytes(), b"\x7fELF")
+
+    def test_reading_a_path_not_passed_as_script_arg_is_blocked(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            binary_path = Path(tmpdir) / "chall"
+            binary_path.write_bytes(b"\x7fELF")
+            other_path = Path(tmpdir) / "other_secret_file"
+            other_path.write_text("secret")
+            script = "\n".join(
+                [
+                    f"data = open({str(other_path)!r}).read()",
+                    "payload = b'A'",
+                ]
+            )
+
+            result = analyze_script_text(
+                script,
+                source_file_name="solve.py",
+                script_args=[str(binary_path)],
+                script_root=tmpdir,
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertIn("lecture disque bloquee", result["error"])
+
+    def test_filesystem_mutation_builtins_are_blocked(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "victim"
+            target.write_text("original")
+            script = "\n".join(
+                [
+                    "import os",
+                    f"os.remove({str(target)!r})",
+                    "payload = b'A'",
+                ]
+            )
+
+            result = analyze_script_text(script, source_file_name="solve.py")
+
+            self.assertFalse(result["ok"])
+            self.assertTrue(target.exists())
+            self.assertEqual(target.read_text(), "original")
+
+    def test_elf_symbol_loading_still_reads_the_allowed_binary(self):
+        """Regression guard: the filesystem lockdown must not break the
+        legitimate ELF(path) parsing path scripts commonly rely on."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            binary_path = Path(tmpdir) / "chall"
+            binary_path.write_bytes(b"\x7fELF\x00main\x00")
+            script = "\n".join(
+                [
+                    "from pwn import *",
+                    "import sys",
+                    "elf = ELF(sys.argv[1])",
+                    "payload = p32(elf.symbols.get('main', 0))",
+                ]
+            )
+
+            result = analyze_script_text(
+                script,
+                source_file_name="solve.py",
+                script_args=[str(binary_path)],
+                script_root=tmpdir,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertIn("payload", result["globals"])
+
 
 if __name__ == "__main__":
     unittest.main()

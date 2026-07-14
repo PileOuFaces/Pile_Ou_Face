@@ -267,6 +267,76 @@ def _has_buffer_evidence(snapshot: dict, bp: int | None, meta: dict) -> bool:
     return False
 
 
+def _stack_evidence_summary(meta: dict) -> dict | None:
+    summary = meta.get("_stack_evidence")
+    if not isinstance(summary, dict):
+        return None
+    if summary.get("available") is False:
+        return None
+    if not isinstance(summary.get("buffers"), list):
+        return None
+    return summary
+
+
+def _function_matches_evidence_buffer(
+    function_info: dict | None, evidence_buffer: dict
+) -> bool:
+    if not isinstance(evidence_buffer, dict):
+        return False
+    expected_name = str(evidence_buffer.get("function") or "").strip()
+    expected_addr = _parse_int(evidence_buffer.get("function_addr"))
+    if not function_info:
+        return not expected_name and expected_addr is None
+    function_name = str(function_info.get("name") or "").strip()
+    function_addr = _parse_int(function_info.get("addr"))
+    if expected_name and function_name and expected_name == function_name:
+        return True
+    if (
+        expected_addr is not None
+        and function_addr is not None
+        and expected_addr == function_addr
+    ):
+        return True
+    return not expected_name and expected_addr is None
+
+
+def _evidence_buffers_for_function(
+    meta: dict, function_info: dict | None
+) -> list[dict]:
+    summary = _stack_evidence_summary(meta)
+    if summary is None:
+        return []
+    buffers = [item for item in summary.get("buffers", []) if isinstance(item, dict)]
+    matched = [
+        item
+        for item in buffers
+        if _function_matches_evidence_buffer(function_info, item)
+    ]
+    if matched:
+        return matched
+    if not function_info and len(buffers) == 1:
+        return buffers
+    return []
+
+
+def _evidence_slots_for_function(meta: dict, function_info: dict | None) -> list[dict]:
+    """All Evidence-scored slots for a function: probable_local, stack_argument,
+    register_argument, stack_slot, and buffer. Superset of `_evidence_buffers_for_function`,
+    used to type non-buffer slots (including rejected buffer candidates)."""
+    summary = _stack_evidence_summary(meta)
+    if summary is None:
+        return []
+    slots = [item for item in summary.get("slots", []) if isinstance(item, dict)]
+    matched = [
+        item for item in slots if _function_matches_evidence_buffer(function_info, item)
+    ]
+    if matched:
+        return matched
+    if not function_info and len(slots) == 1:
+        return slots
+    return []
+
+
 def _is_prologue_push_bp(instr_text: str) -> bool:
     """True when the instruction is `push rbp` / `push ebp`."""
     parts = instr_text.lower().split(None, 1)
@@ -283,6 +353,17 @@ def _is_prologue_mov_bp_sp(instr_text: str) -> bool:
         return False
     operand = parts[1].strip() if len(parts) > 1 else ""
     return operand in ("rbp, rsp", "ebp, esp")
+
+
+def _is_stack_alloc_instruction(instr_text: str) -> bool:
+    """True when the instruction reserves stack space for locals/buffers
+    (`sub rsp, N` / `sub esp, N`), regardless of the immediate value."""
+    parts = instr_text.lower().split(None, 1)
+    if not parts or parts[0] != "sub":
+        return False
+    operand = parts[1].strip() if len(parts) > 1 else ""
+    register = operand.split(",", 1)[0].strip()
+    return register in ("rsp", "esp")
 
 
 def _instruction_text(snapshot: dict) -> str:
@@ -599,6 +680,7 @@ def _region_entry(
     offset: int | None = None,
     size: int | None = None,
     confidence: float = 0.9,
+    size_exact: bool = True,
 ) -> dict:
     return {
         "start": start,
@@ -609,6 +691,7 @@ def _region_entry(
         "offset": offset,
         "size": size if size is not None else max(1, end - start),
         "confidence": confidence,
+        "size_exact": size_exact,
     }
 
 
@@ -651,6 +734,7 @@ def _guess_buffer_region(frame: dict, bp: int | None, meta: dict) -> dict | None
                 offset=buffer_offset,
                 size=buffer_size,
                 confidence=confidence,
+                size_exact=True,
             )
 
     best = None
@@ -671,6 +755,7 @@ def _guess_buffer_region(frame: dict, bp: int | None, meta: dict) -> dict | None
                 offset=offset,
                 size=size,
                 confidence=0.7,
+                size_exact=bool(entry.get("size_is_exact", True)),
             ),
         )
         if best is None or candidate > best:
@@ -678,49 +763,190 @@ def _guess_buffer_region(frame: dict, bp: int | None, meta: dict) -> dict | None
     return best[2] if best else None
 
 
+_EVIDENCE_CONFIDENCE_VALUES: dict[str, float] = {
+    "exact": 0.97,
+    "high": 0.85,
+    "medium": 0.7,
+    "low": 0.5,
+}
+
+
+def _evidence_confidence_value(confidence) -> float:
+    if isinstance(confidence, (int, float)) and not isinstance(confidence, bool):
+        return max(0.0, min(1.0, float(confidence)))
+    return _EVIDENCE_CONFIDENCE_VALUES.get(str(confidence or "").lower(), 0.5)
+
+
+# Evidence "kind" values that map onto an existing output role. Buffers are
+# deliberately excluded: buffer regions are only ever created by
+# `_evidence_buffer_regions` / `_guess_buffer_region`, never by this promotion.
+_EVIDENCE_KIND_ROLE: dict[str, str] = {
+    "probable_local": "local",
+    "stack_argument": "argument",
+}
+
+
+def _evidence_typed_regions(
+    bp: int | None,
+    meta: dict,
+    function_info: dict | None,
+    existing_regions: list[dict],
+) -> list[dict]:
+    """Promote evidence-only local/argument slots that the static frame analysis
+    missed (e.g. compiler-spilled or ASM-only stack slots) into real regions.
+
+    A slot already covered by an existing region (static var/arg, buffer, or
+    control) is left alone -- this only fills gaps, it never overrides or
+    duplicates a region that's already there. Evidence classified as a buffer
+    is skipped entirely: this function must never create a buffer role.
+    """
+    if bp is None:
+        return []
+    covered = [(region["start"], region["end"]) for region in existing_regions]
+    added: list[dict] = []
+    for item in _evidence_slots_for_function(meta, function_info):
+        if str(item.get("classification") or "") == "buffer":
+            continue
+        role = _EVIDENCE_KIND_ROLE.get(str(item.get("kind") or ""))
+        if role is None:
+            continue
+        if str(item.get("base") or "rbp").lower() != "rbp":
+            continue
+        offset = _parse_int(item.get("offset"))
+        if offset is None:
+            continue
+        size = _parse_int(item.get("size"))
+        size_exact = size is not None and size > 0
+        if not size_exact:
+            size = _parse_int(item.get("estimated_bound"))
+        if size is None or size <= 0:
+            continue
+        start = bp + offset
+        end = start + size
+        if any(_overlaps(start, end, cstart, cend) for cstart, cend in covered):
+            continue
+        label = f"local_{abs(offset):x}h" if role == "local" else f"arg_{offset:x}"
+        added.append(
+            _region_entry(
+                start=start,
+                end=end,
+                role=role,
+                label=label,
+                source="evidence",
+                offset=offset,
+                size=size,
+                confidence=_evidence_confidence_value(item.get("confidence")),
+                size_exact=size_exact,
+            )
+        )
+        covered.append((start, end))
+    return added
+
+
+def _evidence_buffer_regions(
+    bp: int | None, meta: dict, function_info: dict | None
+) -> list[dict]:
+    if bp is None:
+        return []
+    regions = []
+    for item in _evidence_buffers_for_function(meta, function_info):
+        if str(item.get("base") or "rbp").lower() != "rbp":
+            continue
+        offset = _parse_int(item.get("offset"))
+        if offset is None:
+            continue
+        size = _parse_int(item.get("size"))
+        size_exact = True
+        confidence = 0.9
+        if size is None or size <= 0:
+            # Buffer proven (call-argument sink / payload write), but no
+            # exact size (source/DWARF) pins its length. estimated_bound is
+            # an UPPER bound (distance to the next slot / saved rbp) -- the
+            # real object may be much smaller -- so it is used only to give
+            # the region *some* drawable extent, never presented as a size.
+            size = _parse_int(item.get("estimated_bound"))
+            if size is None or size <= 0:
+                continue
+            size_exact = False
+            confidence = 0.5
+        start = bp + offset
+        label = f"local_buf_{size:x}h" if size_exact else "local_buf_unknown"
+        regions.append(
+            _region_entry(
+                start=start,
+                end=start + size,
+                role="buffer",
+                label=label,
+                source="evidence",
+                offset=offset,
+                size=size,
+                confidence=confidence,
+                size_exact=size_exact,
+            )
+        )
+    return regions
+
+
 def _static_regions(
-    frame: dict, bp: int | None, word_size: int, meta: dict
+    frame: dict,
+    bp: int | None,
+    word_size: int,
+    meta: dict,
+    function_info: dict | None = None,
+    frame_allocated: bool = True,
 ) -> list[dict]:
     if bp is None:
         return []
     regions: list[dict] = []
-    for entry in frame.get("vars", []) if isinstance(frame.get("vars"), list) else []:
-        offset = _parse_int(entry.get("offset"))
-        size = _parse_int(entry.get("size")) or 1
-        if offset is None:
-            continue
-        role = "local"
-        label = _safe_name(str(entry.get("name") or ""), f"local_{abs(offset):x}h")
-        regions.append(
-            _region_entry(
-                start=bp + offset,
-                end=bp + offset + max(1, size),
-                role=role,
-                label=label,
-                source=str(entry.get("source") or "static"),
-                offset=offset,
-                size=size,
-                confidence=0.92 if entry.get("source") == "dwarf" else 0.85,
+    # Locals/args/buffer only exist once this invocation's own frame has
+    # actually reserved stack space for them (`sub rsp, N`). Before that,
+    # `bp` may be set up (or even still be the caller's) but nothing below
+    # it belongs to this call yet -- saved_bp/return_address stay
+    # unconditional below since they don't depend on allocation.
+    if frame_allocated:
+        for entry in (
+            frame.get("vars", []) if isinstance(frame.get("vars"), list) else []
+        ):
+            offset = _parse_int(entry.get("offset"))
+            size = _parse_int(entry.get("size")) or 1
+            if offset is None:
+                continue
+            role = "local"
+            label = _safe_name(str(entry.get("name") or ""), f"local_{abs(offset):x}h")
+            regions.append(
+                _region_entry(
+                    start=bp + offset,
+                    end=bp + offset + max(1, size),
+                    role=role,
+                    label=label,
+                    source=str(entry.get("source") or "static"),
+                    offset=offset,
+                    size=size,
+                    confidence=0.92 if entry.get("source") == "dwarf" else 0.85,
+                    size_exact=bool(entry.get("size_is_exact", True)),
+                )
             )
-        )
-    for entry in frame.get("args", []) if isinstance(frame.get("args"), list) else []:
-        offset = _parse_int(entry.get("offset"))
-        size = _parse_int(entry.get("size")) or word_size
-        if offset is None:
-            continue
-        label = _safe_name(str(entry.get("name") or ""), f"arg_{offset:x}")
-        regions.append(
-            _region_entry(
-                start=bp + offset,
-                end=bp + offset + max(1, size),
-                role="argument",
-                label=label,
-                source=str(entry.get("source") or "static"),
-                offset=offset,
-                size=size,
-                confidence=0.82,
+        for entry in (
+            frame.get("args", []) if isinstance(frame.get("args"), list) else []
+        ):
+            offset = _parse_int(entry.get("offset"))
+            size = _parse_int(entry.get("size")) or word_size
+            if offset is None:
+                continue
+            label = _safe_name(str(entry.get("name") or ""), f"arg_{offset:x}")
+            regions.append(
+                _region_entry(
+                    start=bp + offset,
+                    end=bp + offset + max(1, size),
+                    role="argument",
+                    label=label,
+                    source=str(entry.get("source") or "static"),
+                    offset=offset,
+                    size=size,
+                    confidence=0.82,
+                    size_exact=bool(entry.get("size_is_exact", True)),
+                )
             )
-        )
 
     regions.append(
         _region_entry(
@@ -747,9 +973,16 @@ def _static_regions(
         )
     )
 
-    buffer_region = _guess_buffer_region(frame, bp, meta)
-    if buffer_region is not None:
-        regions.append(buffer_region)
+    if frame_allocated:
+        evidence_regions = _evidence_buffer_regions(bp, meta, function_info)
+        if evidence_regions:
+            regions.extend(evidence_regions)
+        elif _stack_evidence_summary(meta) is None:
+            buffer_region = _guess_buffer_region(frame, bp, meta)
+            if buffer_region is not None:
+                regions.append(buffer_region)
+
+        regions.extend(_evidence_typed_regions(bp, meta, function_info, regions))
     return regions
 
 
@@ -758,8 +991,9 @@ def _runtime_buffer_region(
     bp: int | None,
     word_size: int,
     existing_buffer: dict | None,
+    frame_allocated: bool = True,
 ) -> dict | None:
-    if bp is None:
+    if bp is None or not frame_allocated:
         return existing_buffer
     writes = _access_list(snapshot, "writes")
     best = None
@@ -785,6 +1019,7 @@ def _runtime_buffer_region(
                 offset=addr - bp,
                 size=buffer_size,
                 confidence=0.76,
+                size_exact=False,
             ),
         )
         if best is None or candidate[0] > best[0]:
@@ -939,7 +1174,8 @@ def _slot_role_label(
     regions: list[dict],
     bp: int | None,
     buffer_region: dict | None,
-) -> tuple[str, str, int | None, float, str]:
+    frame_allocated: bool = True,
+) -> tuple[str | None, str, int | None, float, str, bool]:
     matches = [
         region
         for region in regions
@@ -965,22 +1201,44 @@ def _slot_role_label(
             best.get("offset"),
             float(best.get("confidence") or 0.75),
             best.get("source") or "static",
+            bool(best.get("size_exact", True)),
         )
 
+    # No known region covers this segment. Before the frame is fully
+    # allocated (`sub rsp, N` observed), this fallback is a pure guess about
+    # raw memory content -- `bp` may not even be this invocation's real
+    # frame base yet, so a "gap" found here is frequently just unrelated
+    # caller-frame content. A None role tells the caller to skip the slot
+    # entirely rather than manufacture unknown/argument/padding noise this
+    # early.
+    if not frame_allocated:
+        return None, "", None, 0.0, "unknown", False
+
+    # These are all heuristic guesses about a memory range with no static/
+    # evidence backing -- never claim size_exact here (reserved for source/
+    # DWARF/config-declared sizes).
     if bp is not None and start < bp:
         if buffer_region is not None and start >= buffer_region["end"]:
-            return "padding", f"padding_{bp - start:x}h", start - bp, 0.55, "heuristic"
-        return "unknown", f"stack_{bp - start:x}h", start - bp, 0.4, "heuristic"
+            return (
+                "padding",
+                f"padding_{bp - start:x}h",
+                start - bp,
+                0.55,
+                "heuristic",
+                False,
+            )
+        return "unknown", f"stack_{bp - start:x}h", start - bp, 0.4, "heuristic", False
     if bp is not None and start >= bp + (
         8 if any(region["size"] == 8 for region in regions) else 4
     ):
-        return "argument", f"arg_{start - bp:x}", start - bp, 0.45, "heuristic"
+        return "argument", f"arg_{start - bp:x}", start - bp, 0.45, "heuristic", False
     return (
         "unknown",
         f"slot_{start:x}",
         start - bp if bp is not None else None,
         0.25,
         "memory",
+        False,
     )
 
 
@@ -1020,6 +1278,7 @@ def _build_slots(
     resolver: StaticTraceResolver,
     function_info: dict | None,
     frame_bp: int | None = None,
+    frame_allocated: bool = True,
 ) -> dict:
     arch_bits = _parse_int(meta.get("arch_bits")) or 64
     word_size = _parse_int(meta.get("word_size")) or (8 if arch_bits == 64 else 4)
@@ -1034,7 +1293,14 @@ def _build_slots(
     func_addr = _parse_int(function_info.get("addr")) if function_info else None
     frame = resolver.frame_for_function(func_addr)
     convention = resolver.convention_for_function(func_addr) or {}
-    regions = _static_regions(frame, bp, word_size, meta)
+    regions = _static_regions(
+        frame,
+        bp,
+        word_size,
+        meta,
+        function_info=function_info,
+        frame_allocated=frame_allocated,
+    )
 
     # Validate heuristic buffer: only keep "buffer" role when there is real evidence.
     # Without evidence, reclassify as local to avoid misleading the user.
@@ -1052,7 +1318,9 @@ def _build_slots(
     buffer_region = next(
         (region for region in regions if region["role"] == "buffer"), None
     )
-    runtime_buffer = _runtime_buffer_region(snapshot, bp, word_size, buffer_region)
+    runtime_buffer = _runtime_buffer_region(
+        snapshot, bp, word_size, buffer_region, frame_allocated=frame_allocated
+    )
     if runtime_buffer is not None and runtime_buffer is not buffer_region:
         regions = [region for region in regions if region["role"] != "buffer"]
         regions.append(runtime_buffer)
@@ -1125,9 +1393,14 @@ def _build_slots(
         data = [curr_map.get(address, 0) for address in range(left, right)]
         if not data:
             continue
-        role, label, bp_offset, confidence, source = _slot_role_label(
-            left, right, regions, bp, buffer_region
+        role, label, bp_offset, confidence, source, size_exact = _slot_role_label(
+            left, right, regions, bp, buffer_region, frame_allocated=frame_allocated
         )
+        # No known region and the frame isn't allocated yet -- _slot_role_label
+        # refused to guess (see its own docstring); nothing to show here, not
+        # even as unknown/padding noise.
+        if role is None:
+            continue
         # Skip unknown/padding gaps that have no writes and no changes from the
         # previous step — they are just alignment filler with no signal value.
         if role in ("unknown", "padding"):
@@ -1162,6 +1435,7 @@ def _build_slots(
             "start": _hex(left),
             "end": _hex(right),
             "size": right - left,
+            "size_exact": size_exact,
             "role": role,
             "label": resolver.rename_for(left) or label,
             "source": source,
@@ -1238,6 +1512,7 @@ def _build_slots(
             "start": _hex(buffer_region["start"]),
             "end": _hex(buffer_region["end"]),
             "size": buffer_region["size"],
+            "size_exact": bool(buffer_region.get("size_exact", True)),
         }
         if buffer_region is not None
         else None,
@@ -1468,6 +1743,13 @@ def build_dynamic_analysis(
     resolver = StaticTraceResolver(binary_path, meta, disasm_lines or [])
     analysis_by_step: dict[str, dict] = {}
     stable_frame_bp_by_function: dict[str, int] = {}
+    # Frame-readiness state machine, per function invocation (function_key):
+    # frame_pointer_ready = mov rbp,rsp has executed (bp is this call's own).
+    # frame_allocated = frame_pointer_ready AND sub rsp,N has executed (locals/
+    # buffers actually reserved). Locals/buffers must wait for the latter;
+    # saved_bp/return_address never depend on either.
+    frame_pointer_ready_by_function: dict[str, bool] = {}
+    frame_allocated_by_function: dict[str, bool] = {}
 
     for index, snapshot in enumerate(snapshots):
         prev_snapshot = snapshots[index - 1] if index > 0 else None
@@ -1493,6 +1775,49 @@ def build_dynamic_analysis(
         if function_key and _is_plausible_frame_bp(frame_bp, snapshot, meta, word_size):
             stable_frame_bp_by_function[function_key] = int(frame_bp)
 
+        if function_key:
+            instr_text = _instruction_text(snapshot)
+            if function_key not in frame_pointer_ready_by_function:
+                function_addr = (
+                    _parse_int(function_info.get("addr"))
+                    if isinstance(function_info, dict)
+                    else None
+                )
+                normalized_ip = (
+                    ip - resolver.load_base
+                    if ip is not None
+                    and resolver.load_base > 0
+                    and ip >= resolver.load_base
+                    else ip
+                )
+                # True only when we can PROVE this is the function's entry
+                # instruction (address match) -- default to "not ready".
+                # Otherwise (unresolved, or trace genuinely starts mid-
+                # function) keep the historical permissive default so a
+                # trace that never observes a prologue still works.
+                is_function_entry_instruction = (
+                    function_addr is not None
+                    and normalized_ip is not None
+                    and normalized_ip == function_addr
+                )
+                default_ready = not is_function_entry_instruction
+                frame_pointer_ready_by_function[function_key] = default_ready
+                frame_allocated_by_function[function_key] = default_ready
+            if _is_prologue_push_bp(instr_text):
+                frame_pointer_ready_by_function[function_key] = False
+                frame_allocated_by_function[function_key] = False
+            elif _is_prologue_mov_bp_sp(instr_text):
+                frame_pointer_ready_by_function[function_key] = True
+            elif frame_pointer_ready_by_function.get(
+                function_key
+            ) and _is_stack_alloc_instruction(instr_text):
+                frame_allocated_by_function[function_key] = True
+        frame_allocated = (
+            frame_allocated_by_function.get(function_key, True)
+            if function_key
+            else True
+        )
+
         analysis = _build_slots(
             snapshot,
             prev_snapshot,
@@ -1500,6 +1825,7 @@ def build_dynamic_analysis(
             resolver,
             function_info,
             frame_bp=frame_bp,
+            frame_allocated=frame_allocated,
         )
         analysis["overflow"] = _overflow_summary(analysis)
         analysis["explanationBullets"] = _build_explanation(snapshot, analysis)

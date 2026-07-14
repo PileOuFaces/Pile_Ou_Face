@@ -5,7 +5,9 @@ function createLoaders({
   panel,
   analysisCtx,
   root,
+  storageDir,
   runPythonJson,
+  runPythonJsonViaFile,
   logChannel,
   fs,
   path,
@@ -32,14 +34,18 @@ function createLoaders({
     logLabel = null,
     isCacheUsable = () => true,
     compute,
+    useCache = true,
   }) => {
-    const cached = readCache(root, absPath, cacheKey, cacheOptions);
-    if (cached && isCacheUsable(cached)) {
-      if (logLabel) logChannel.appendLine(`[cache] ${logLabel} depuis cache`);
-      return cached;
+    const cacheRoot = storageDir;
+    if (useCache) {
+      const cached = readCache(cacheRoot, absPath, cacheKey, cacheOptions);
+      if (cached && isCacheUsable(cached)) {
+        if (logLabel) logChannel.appendLine(`[cache] ${logLabel} depuis cache`);
+        return cached;
+      }
     }
     const value = await compute();
-    writeCache(root, absPath, cacheKey, value, cacheOptions);
+    writeCache(cacheRoot, absPath, cacheKey, value, cacheOptions);
     return value;
   };
 
@@ -57,6 +63,7 @@ function createLoaders({
           absPath,
           cacheKey: 'symbols',
           logLabel: 'Symboles',
+          useCache: message.useCache !== false,
           compute: () => loadBinarySymbols(absPath),
         });
         hubPost('hubSymbols', { symbols });
@@ -75,20 +82,34 @@ function createLoaders({
         return;
       }
       try {
-        const opts = { minLen, encoding };
+        // Always extract and cache with BASE_MIN_LEN so switching minLen (4→8→4) never
+        // triggers a re-extraction — the full base set is cached once per (encoding, section)
+        // and minLen filtering is delegated to the frontend (renderStringsTable).
+        // Section filtering stays in Python (uses file-offset ranges, not VA — correct for PE RVA).
+        const BASE_MIN_LEN = 4;
+        const extractMinLen = Math.min(minLen, BASE_MIN_LEN);
+        const opts = { minLen: extractMinLen, encoding };
         if (section) opts.section = section;
-        const strings = await resolveCachedBinaryView({
+        const allStrings = await resolveCachedBinaryView({
           absPath,
           cacheKey: 'strings',
           cacheOptions: opts,
           logLabel: 'Strings',
+          useCache: message.useCache !== false,
+          isCacheUsable: (cached) => Array.isArray(cached) && cached.length > 0,
           compute: async () => {
-            const args = [getStringsScript(root), '--binary', absPath, '--min-len', String(minLen), '--encoding', encoding];
+            const scriptPath = getStringsScript(root);
+            const args = ['--binary', absPath, '--min-len', String(extractMinLen), '--encoding', encoding];
             if (section) args.push('--section', section);
-            return runPythonJson(args[0], args.slice(1));
+            const tmpFile = path.join(storageDir, `strings_${Date.now()}.json`);
+            return runPythonJsonViaFile(scriptPath, args, tmpFile);
           },
         });
-        hubPost('hubStrings', { strings });
+
+        // minLen filtering is the frontend's responsibility (renderStringsTable).
+        // The extension sends the full set for the requested (encoding, section) so that
+        // switching minLen never requires a round-trip.
+        hubPost('hubStrings', { strings: Array.isArray(allStrings) ? allStrings : [] });
       } catch (_) {
         hubPost('hubStrings', { strings: [] });
       }
@@ -119,15 +140,13 @@ function createLoaders({
           absPath,
           cacheKey: 'info',
           logLabel: 'Infos binaire',
+          useCache: message.useCache !== false,
           isCacheUsable: (cached) => !!(
             cached
             && cached.stripped
             && cached.stripped !== '—'
             && typeof cached.endianness === 'string'
             && cached.endianness
-            && typeof cached.packers === 'string'
-            && typeof cached.packer_analysis === 'object'
-            && cached.packer_analysis !== null
           ),
           compute: () => loadBinaryHeaders(absPath),
         });
@@ -173,6 +192,7 @@ function createLoaders({
           absPath,
           cacheKey: 'sections',
           logLabel: 'Sections',
+          useCache: message.useCache !== false,
           compute: async () => {
             const rawSections = await runPythonJson(getSectionsScript(root), ['--binary', absPath]);
             return Array.isArray(rawSections) ? rawSections : (rawSections.sections || []);

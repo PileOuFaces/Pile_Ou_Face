@@ -146,7 +146,7 @@ class TestOllamaBridgeHelpers(unittest.TestCase):
         self.assertTrue(_prompt_likely_needs_tools("Analyse demo_analysis.elf"))
         self.assertTrue(_prompt_likely_needs_tools("disassemble ce binaire"))
         self.assertTrue(
-            _prompt_likely_needs_tools("donne le code asm de vuln_demo.elf")
+            _prompt_likely_needs_tools("donne le code asm de sample_demo.elf")
         )
         self.assertFalse(_prompt_likely_needs_tools("dis moi bonjour"))
 
@@ -208,7 +208,7 @@ class TestOllamaBridgeHelpers(unittest.TestCase):
             "lines": [{"addr": "0x1000", "text": "ret"}],
         }
         client = self._FakeClient(payload)
-        out = _auto_tool_fallback(client, "Donne le code ASM de vuln_demo.elf")
+        out = _auto_tool_fallback(client, "Donne le code ASM de sample_demo.elf")
         assert out is not None
         self.assertIn("Désassemblage", out)
         self.assertEqual(client.calls[0][1]["name"], "disassemble")
@@ -224,7 +224,7 @@ class TestOllamaBridgeHelpers(unittest.TestCase):
                 }
             }
         )
-        out = _auto_tool_fallback(client, "le fichier c'est vul_demo.elf")
+        out = _auto_tool_fallback(client, "le fichier c'est sample_demo.elf")
         assert out is not None
         self.assertIn("Fichier pris en compte", out)
         self.assertEqual(client.calls[0][1]["name"], "get_binary_info")
@@ -233,21 +233,21 @@ class TestOllamaBridgeHelpers(unittest.TestCase):
         client = self._FakeFindClient(
             [
                 {
-                    "path": "/repo/examples/vuln_demo.elf",
-                    "relative_path": "examples/vuln_demo.elf",
+                    "path": "/repo/examples/sample_demo.elf",
+                    "relative_path": "examples/sample_demo.elf",
                 }
             ]
         )
-        out = _resolve_binary_from_prompt(client, "le fichier c'est vul_demo")
-        self.assertEqual(out, "/repo/examples/vuln_demo.elf")
+        out = _resolve_binary_from_prompt(client, "le fichier c'est sample_demo")
+        self.assertEqual(out, "/repo/examples/sample_demo.elf")
         self.assertEqual(client.calls[0][1]["name"], "find_files")
 
     def test_normalize_tool_call_arguments_adds_binary_and_default_max_lines(self):
         client = self._FakeFindClient(
             [
                 {
-                    "path": "/repo/examples/vuln_demo.elf",
-                    "relative_path": "examples/vuln_demo.elf",
+                    "path": "/repo/examples/sample_demo.elf",
+                    "relative_path": "examples/sample_demo.elf",
                 }
             ]
         )
@@ -255,9 +255,9 @@ class TestOllamaBridgeHelpers(unittest.TestCase):
             client,
             "disassemble",
             {"max_lines": "oops"},
-            "analyse vul_demo",
+            "analyse sample_demo",
         )
-        self.assertEqual(normalized["binary_path"], "/repo/examples/vuln_demo.elf")
+        self.assertEqual(normalized["binary_path"], "/repo/examples/sample_demo.elf")
         self.assertEqual(normalized["max_lines"], 120)
 
     def test_select_mcp_tools_for_prompt_disassemble_intent(self):
@@ -266,15 +266,15 @@ class TestOllamaBridgeHelpers(unittest.TestCase):
             {"name": "find_files"},
             {"name": "get_symbols"},
             {"name": "get_binary_info"},
-            {"name": "capa_scan"},
+            {"name": "demo_plugin_tool"},
         ]
         selected = _select_mcp_tools_for_prompt(
-            tools, "donne le code asm de vuln_demo.elf"
+            tools, "donne le code asm de sample_demo.elf"
         )
         names = {tool["name"] for tool in selected}
         self.assertIn("disassemble", names)
         self.assertIn("find_files", names)
-        self.assertNotIn("capa_scan", names)
+        self.assertNotIn("demo_plugin_tool", names)
 
     def test_select_mcp_tools_for_prompt_general_chat_returns_no_tools(self):
         tools = [{"name": "get_binary_info"}, {"name": "disassemble"}]
@@ -300,17 +300,17 @@ class TestOllamaBridgeHelpers(unittest.TestCase):
             "unknown_tool",
         )
 
-    def test_resolve_requested_tool_name_alias_prefers_dynamic_plugin_tool_when_builtin_missing(
+    def test_resolve_requested_tool_name_supports_dynamic_plugin_tool_short_name(
         self,
     ):
-        available = {"plugin.audit.vulns.run", "plugin.offensive.rop.run"}
+        available = {"plugin.demo_feature", "plugin.demo_extra"}
         self.assertEqual(
-            _resolve_requested_tool_name("vulns", available),
-            "plugin.audit.vulns.run",
+            _resolve_requested_tool_name("demo_feature", available),
+            "plugin.demo_feature",
         )
         self.assertEqual(
-            _resolve_requested_tool_name("rop", available),
-            "plugin.offensive.rop.run",
+            _resolve_requested_tool_name("missing_feature", available),
+            "missing_feature",
         )
 
     def test_build_system_prompt_appends_memory_context(self):

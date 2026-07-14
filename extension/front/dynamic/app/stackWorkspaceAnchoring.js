@@ -1,5 +1,6 @@
 import {
-  classifyObservationSeedKind
+  classifyObservationSeedKind,
+  resolveReliableBackendRole
 } from './stackWorkspaceClassification.js';
 
 import {
@@ -355,14 +356,19 @@ export function recoveredCandidateFromRange({ start, size, bpValue, externalSymb
   if (parsedStart === null || parsedSize === null || bpValue === null) return null;
   const offset = Number(parsedStart - bpValue);
   if (!Number.isFinite(offset) || offset >= 0) return null;
+  // This is a JS-only reconstruction from a raw write span or a call
+  // register (e.g. rdx for memcpy/read/strncpy) -- a requested/observed
+  // length is never proof of the object's declared size, so this can only
+  // ever be a fallback guess: never claim full confidence, and mark the
+  // source so it's never mistaken for backend evidence.
   return {
     offset,
     size: parsedSize,
     kind: 'buffer',
     label: deriveRecoveredObjectLabel(offset, externalSymbol),
     typeName: '',
-    source: 'derived',
-    confidence: 1,
+    source: 'js_fallback',
+    confidence: 0.5,
     symbol: clean(externalSymbol).toLowerCase()
   };
 }
@@ -472,7 +478,30 @@ export function scoreRecoveredSeedTarget(seed, recovered) {
 export function applyRecoveredExtentToSeed(seed, recovered, observations, wordSize) {
   if (!seed || !recovered) return;
   const recoveredSize = readPositiveInt(recovered?.size) ?? readPositiveInt(seed?.size) ?? wordSize;
-  if (isSourceAnchoredSeed(seed)) {
+
+  // A seed the backend already classified with one of its 5 real roles
+  // must never be silently promoted to 'buffer' -- or have any other role
+  // -- from a register-read/observed-write heuristic here. Deliberately
+  // NOT checking seed.kind: it is set by classification heuristics too and
+  // can't tell "backend said so" from "we guessed" -- only the more
+  // specific fields below are unambiguous "the backend said so".
+  const hasReliableBackendRole = Boolean(resolveReliableBackendRole({
+    role: seed?.role,
+    classification: seed?.classification,
+    evidenceClassification: seed?.evidenceClassification,
+    semanticRole: seed?.semanticRole
+  }));
+  // A seed whose size the backend already resolved -- exact (size_exact
+  // true), or explicitly not exact (size_exact false, with its own
+  // observed_write_size/estimated_bound) -- must keep that size. A call
+  // register (requested length) or a raw write span is not proof of the
+  // declared object size either, so it can never override it.
+  const hasBackendSizeInfo = seed?.size_exact === true
+    || seed?.size_exact === false
+    || seed?.observed_write_size !== undefined
+    || seed?.estimated_bound !== undefined;
+
+  if (isSourceAnchoredSeed(seed) || hasReliableBackendRole || hasBackendSizeInfo) {
     seed.seedContributors = mergeSeedContributors(seed?.seedContributors, [{
       offset: recovered.offset,
       size: recovered.size,
@@ -509,6 +538,9 @@ export function applyRecoveredExtentToSeed(seed, recovered, observations, wordSi
 }
 
 export function recoveredSeedToStaticSeed(recovered, bpAddress) {
+  // No existing seed overlapped this offset, so there is no backend role to
+  // protect -- this is the legitimate JS-only fallback. Mark it as such
+  // rather than presenting it as backend-confirmed: never full confidence.
   const offset = readNumeric(recovered?.offset);
   const size = readPositiveInt(recovered?.size);
   return {
@@ -516,11 +548,11 @@ export function recoveredSeedToStaticSeed(recovered, bpAddress) {
     size,
     kind: 'buffer',
     start: bpAddress !== null && offset !== null ? bpAddress + BigInt(offset) : null,
-    source: 'derived',
+    source: 'js_fallback',
     label: clean(recovered?.label),
-    nameSource: 'derived',
+    nameSource: 'js_fallback',
     typeName: '',
-    confidence: 1,
+    confidence: 0.5,
     isSynthetic: false
   };
 }

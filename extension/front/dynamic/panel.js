@@ -1,36 +1,8 @@
 
-// Dynamic: form submit
-form?.addEventListener('submit', (e) => {
-  e.preventDefault();
-  const binaryPath = binaryPathInput?.value?.trim() || '';
-  if (!binaryPath) {
-    setDynamicTraceStatus('Chemin binaire requis.');
-    return;
-  }
-
-  if (runBtn) runBtn.disabled = true;
-  setDynamicTraceStatus('Trace en cours...');
-  vscode.postMessage({
-    type: 'runTrace',
-    config: {
-      traceMode: 'dynamic',
-      useExistingBinary: true,
-      binaryPath,
-      sourcePath: dynamicSourcePathInput?.value?.trim() || '',
-      archBits: dynamicTraceInitState.archBits,
-      pie: dynamicTraceInitState.pie,
-      bufferOffset: String(dynamicTraceInitState.profile.bufferOffset ?? ''),
-      bufferSize: String(dynamicTraceInitState.profile.bufferSize ?? ''),
-      maxSteps: String(dynamicTraceInitState.profile.maxSteps ?? 800),
-      startSymbol: String(dynamicTraceInitState.profile.startSymbol || ''),
-      stopSymbol: String(dynamicTraceInitState.profile.stopSymbol || ''),
-      injectPayload: !!(argvPayloadInput?.value?.trim()),
-      payloadExpr: argvPayloadInput?.value?.trim() || '',
-      payloadTargetMode: getDynamicPayloadTargetMode(),
-      payloadTarget: getDynamicPayloadTargetMode(),
-    }
-  });
-});
+// Dynamic: form submit is handled by runTraceController.js
+// (initRunTraceController -> handleSubmit), wired from hub.js. Do not
+// attach a second listener to #traceForm here -- see
+// extension/front/dynamic/runTraceController.js.
 
 // Offset calculator — initialized by staticToolsWidgetsController.init() in hub.js
 function updateOffsetCalc() {
@@ -528,79 +500,6 @@ document.getElementById('btnRevertAll')?.addEventListener('click', function() {
 applyHexLayoutMode();
 updateHexSelectionButtons();
 
-document.getElementById('btnYaraBrowse')?.addEventListener('click', () => {
-  vscode.postMessage({ type: 'requestRulesSelection', target: 'manual' });
-});
-document.querySelectorAll('input[name="yaraRulesMode"]').forEach((input) => {
-  input.addEventListener('change', () => {
-    if (!input.checked) return;
-    setSelectedYaraMode(input.value);
-  });
-});
-document.getElementById('yaraRulesPath')?.addEventListener('input', () => {
-  _saveStorage({ yaraRulesPath: document.getElementById('yaraRulesPath')?.value || '' });
-  applyYaraModeUi();
-});
-document.getElementById('btnYaraScan')?.addEventListener('click', () => {
-  const bp = getStaticBinaryPath();
-  const rulesMode = getSelectedYaraMode();
-  const rules = document.getElementById('yaraRulesPath')?.value?.trim();
-  if (!bp) {
-    vscode.postMessage({ type: 'hubError', message: 'Indiquez un binaire.' });
-    return;
-  }
-  if (rulesMode === 'manual' && !rules) {
-    vscode.postMessage({ type: 'hubError', message: 'Choisissez un fichier .yar ou un dossier de règles.' });
-    return;
-  }
-  setStaticLoading('yaraContent', 'Scan YARA…');
-  detectionUiState.yaraError = '';
-  updateDetectionSummaries();
-  vscode.postMessage({ type: 'hubYaraScan', binaryPath: bp, rulesPath: rules, rulesMode });
-});
-document.getElementById('btnCapaScan')?.addEventListener('click', () => {
-  const bp = getStaticBinaryPath();
-  if (!bp) {
-    vscode.postMessage({ type: 'hubError', message: 'Indiquez un binaire.' });
-    return;
-  }
-  const unsupportedCapa = getCapaUnsupportedReason();
-  if (unsupportedCapa) {
-    renderCapaUnsupported(unsupportedCapa);
-    tabDataCache.detection = { binaryPath: bp };
-    return;
-  }
-  setStaticLoading('capaContent', 'Analyse Capa…');
-  detectionUiState.capaError = '';
-  updateDetectionSummaries();
-  vscode.postMessage({ type: 'hubCapaScan', binaryPath: bp });
-});
-
-document.getElementById('capaFilterInput')?.addEventListener('input', renderCapaResults);
-document.getElementById('capaNamespaceFilter')?.addEventListener('change', renderCapaResults);
-document.getElementById('yaraFilterInput')?.addEventListener('input', renderYaraResults);
-document.getElementById('btnCapaExportJson')?.addEventListener('click', () => {
-  downloadDetectionJson('capa-results.json', {
-    binaryPath: getStaticBinaryPath(),
-    capabilities: detectionUiState.capaCapabilities,
-    error: detectionUiState.capaError || null,
-  });
-});
-document.getElementById('btnYaraExportJson')?.addEventListener('click', () => {
-  downloadDetectionJson('yara-results.json', {
-    binaryPath: getStaticBinaryPath(),
-    rulesMode: getSelectedYaraMode(),
-    rulesPath: document.getElementById('yaraRulesPath')?.value?.trim() || '',
-    matches: detectionUiState.yaraMatches,
-    error: detectionUiState.yaraError || null,
-  });
-});
-setSelectedYaraMode(detectionUiState.yaraMode, { skipSave: true });
-const initialYaraPathInput = document.getElementById('yaraRulesPath');
-if (initialYaraPathInput && _loadStorage().yaraRulesPath) {
-  initialYaraPathInput.value = String(_loadStorage().yaraRulesPath || '');
-}
-applyYaraModeUi();
 
 // Décompilateur : auto-décompile quand on change de fonction
 document.getElementById('decompileAddrSelect')?.addEventListener('change', () => {

@@ -55,20 +55,24 @@ Le manifest et le format des hooks doivent rester stables.
 4. `No domain plugin logic in host`
 Le host integre, mais ne porte pas la logique commerciale.
 
-## Emplacements de recherche
+## Emplacement de recherche
 
-Le runtime scanne par defaut :
-
-```text
-.pile-ou-face/plugins/
-~/.pile-ou-face/plugins/
-```
-
-et peut etendre la recherche avec :
+Dans l'extension VS Code, les plugins sont installes et charges depuis le
+`storageUri` du workspace :
 
 ```text
-$POF_PLUGIN_PATH
+<workspaceStorage>/<workspace-id>/PileOuFaces.stack-visualizer/plugins/
 ```
+
+Le host public ne doit pas lire ni documenter un dossier de plugins sous
+`.pile-ou-face/plugins`. Le dossier `.pile-ou-face/` peut encore servir a des
+lancements CLI, MCP ou artefacts de developpement, mais les caches, plugins et
+licences utilises par l'extension vivent dans le stockage VS Code du workspace
+pour eviter de polluer le repository et pour permettre a deux workspaces
+differents d'avoir des plugins differents.
+
+Pour les tests CLI hors VS Code, la recherche peut etre forcee explicitement avec
+`$POF_PLUGIN_PATH`.
 
 ## Structure attendue d'un plugin installe
 
@@ -77,7 +81,7 @@ Aujourd'hui, le host public attend un plugin **deja extrait** dans un dossier.
 Exemple :
 
 ```text
-.pile-ou-face/plugins/
+<workspaceStorage>/<workspace-id>/PileOuFaces.stack-visualizer/plugins/
 └── acme.my-analysis-plugin/
     ├── manifest.json
     ├── python/
@@ -98,12 +102,13 @@ Points importants :
 Pour tester un plugin localement dans le host public :
 
 1. builder le plugin ;
-2. extraire son contenu dans `.pile-ou-face/plugins/<plugin-id>/` ou `~/.pile-ou-face/plugins/<plugin-id>/` ;
+2. installer le bundle via `Options > Plugins > Installer…` pour qu'il soit extrait dans `context.storageUri/plugins/<plugin-id>/` ;
 3. verifier qu'il contient bien `manifest.json` et `python/plugin_main.py` ;
 4. lancer :
 
 ```bash
-python -m backends.plugins.runtime list --attach
+BINHOST_PLUGIN_PATH="<workspaceStorage>/<workspace-id>/PileOuFaces.stack-visualizer/plugins" \
+  python -m backends.plugins.runtime list --attach
 ```
 
 Si tout va bien :
@@ -122,25 +127,68 @@ Flux :
 2. selectionner soit :
    - un bundle `.pofplug` ;
    - un dossier plugin deja extrait avec `manifest.json` ;
-3. laisser le host copier ou extraire le plugin dans `~/.pile-ou-face/plugins/` ;
-5. l'etat runtime est rafraichi automatiquement.
+3. laisser le host copier ou extraire le plugin dans `context.storageUri/plugins/` ;
+4. l'etat runtime est rafraichi automatiquement.
 
-Le bouton `Ouvrir dossier plugins` pointe lui aussi vers `~/.pile-ou-face/plugins/`.
+Le bouton `Ouvrir dossier plugins` pointe lui aussi vers `context.storageUri/plugins/`.
 
 Le host public sait aussi maintenant importer une licence depuis `Options > Plugins > Importer licence…`.
 Les fichiers de licence sont copies dans :
 
 ```text
-~/.pile-ou-face/licenses/
+<workspaceStorage>/<workspace-id>/PileOuFaces.stack-visualizer/licenses/
 ```
 
-Le dossier `.pile-ou-face/plugins/` du projet reste supporte cote runtime pour le developpement local et les tests internes, mais l'UI d'installation cible maintenant le dossier utilisateur global.
+Le runtime garde aussi `~/.pile-ou-face/licenses/` comme emplacement global
+compatible pour les usages CLI et les licences hors-ligne deja installees.
+
+Le front de l'extension scanne uniquement `context.storageUri/plugins/`. Pour un test runtime hors VS Code, utiliser `BINHOST_PLUGIN_PATH` vers le dossier de plugins a tester.
 
 Limitations actuelles :
 
 - pas encore de saisie manuelle d'une cle courte ;
 - pas encore de compilation/obfuscation dure cote host ;
 - pas encore de revocation ou activation en ligne.
+
+## Contrat dynamique host ↔ plugin
+
+Le host public ne doit pas contenir de logique metier premium ni appeler une
+feature premium par nom de domaine dans le code public. Le flux attendu est :
+
+1. le plugin declare ses commandes et metadonnees dans son manifest ;
+2. le runtime attache le plugin avec `register_plugin(context)` ;
+3. l'UI ou le MCP decouvre les commandes disponibles ;
+4. l'appel passe par le pont generique du host (`hubPluginInvoke`,
+   `plugin_invoke` ou un outil MCP dynamique `plugin.*`).
+
+Cette regle rend les plugins renommables et remplaçables : si un plugin change
+ses noms internes, le host doit continuer a fonctionner tant que le manifest et
+les commandes declarees restent coherents.
+
+Les noms de familles UI (`audit`, `malware`, `offensif`, ou une famille custom)
+servent uniquement a organiser l'interface. Ils ne doivent pas etre utilises
+comme substitut a une commande runtime.
+
+## Isolation CSS des webviews plugin
+
+Le HTML d'un plugin peut contenir un bloc `<style>`. Lors du chargement, le host :
+
+1. extrait les styles inline du `tab.html` ;
+2. les prefixe avec `data-plugin-scope="<slug>"` ;
+3. marque les panels du plugin avec ce meme scope ;
+4. injecte les styles scopes dans le hub.
+
+Objectif :
+
+- le CSS d'un plugin ne doit pas impacter le host public ;
+- le CSS d'un plugin ne doit pas impacter un autre plugin ;
+- le host garde seulement les variables de theme globales qui pourront etre
+  exposees plus tard.
+
+Un plugin doit donc eviter les selecteurs globaux non necessaires (`body`,
+`.btn`, `.static-panel` sans contexte metier). Si un style doit viser un element
+du plugin, il doit cibler une classe propre au plugin, par exemple
+`.my-plugin-result-card`.
 
 ## Manifest minimal
 
@@ -245,7 +293,9 @@ Usage :
 - `status` permet au plugin de remonter un etat comme `locked`, `unlocked`, `expired` ;
 - `message` permet d'afficher un diagnostic lisible dans l'UI du host.
 - `public_key` ou `public_key_path` fournit la cle publique servant a verifier la signature ;
-- `license_filename` permet de fixer le nom du fichier attendu dans `~/.pile-ou-face/licenses/` ;
+- `license_filename` permet de fixer le nom du fichier attendu dans
+  `context.storageUri/licenses/` ou dans le fallback global
+  `~/.pile-ou-face/licenses/` ;
 - `machine_bound` impose que la licence corresponde a l'identifiant machine courant.
 
 ## Ce que le host sait deja faire
@@ -256,10 +306,10 @@ Le host public sait deja :
 - lire `licensing.required`, `licensing.mode`, `licensing.status`, `licensing.message` ;
 - verifier une licence JSON signee avec une cle publique fournie par le plugin ;
 - installer un bundle `.pofplug` chiffre si la licence signee correspond a la machine ;
-- conserver le plugin chiffre au repos dans `~/.pile-ou-face/plugins/` ;
+- conserver le plugin chiffre au repos dans `context.storageUri/plugins/` ;
 - ne dechiffrer le payload du plugin qu'au moment de l'attachement runtime ;
 - bloquer l'attachement d'un plugin tant que la licence est absente, invalide, expiree ou liee a une autre machine ;
-- importer une licence depuis l'UI vers `~/.pile-ou-face/licenses/` ;
+- importer une licence depuis l'UI vers `context.storageUri/licenses/` ;
 - exposer l'identifiant machine courant via `python3 backends/plugins/runtime.py machine-id` ;
 - afficher ces informations dans `Options > Plugins` ;
 - compter les plugins verrouilles ;
@@ -297,7 +347,7 @@ backends/plugins/
 - attachement Python avec `register_plugin(context)` ;
 - contexte minimal avec `register_analysis_enricher`, `register_ui_panel`, `register_exporter`, `register_command` ;
 - CLI admin pour `list`, `inspect`, `validate`, `invoke`, `machine-id` ;
-- panneau `Options > Plugins` dans l'UI pour voir les plugins charges, les dossiers surveilles, installer un plugin, importer une licence et ouvrir les dossiers utilisateur ;
+- panneau `Options > Plugins` dans l'UI pour voir les plugins charges, les dossiers surveilles, installer un plugin, importer une licence et ouvrir les dossiers du `storageUri` ;
 - placeholders host pour l'etat `encrypted` / `license required` / `locked`, afin que le vrai deverrouillage par cle puisse etre branche plus tard sans changer l'UI publique ;
 - pont MCP generique vers les plugins actifs via `plugins_list` et `plugin_invoke`.
 
@@ -319,7 +369,7 @@ Le repo public expose maintenant un espace `Plugins` dans `Options` pour :
 - voir leur etat (`active`, `disabled`, `invalid`, etc.) ;
 - afficher leurs capabilities et commandes attachees ;
 - montrer les dossiers surveilles par le runtime ;
-- ouvrir rapidement `.pile-ou-face/plugins/` ou `~/.pile-ou-face/plugins/`.
+- ouvrir rapidement `context.storageUri/plugins/`.
 
 Cet espace sert aussi de zone de diagnostic pour verifier rapidement :
 

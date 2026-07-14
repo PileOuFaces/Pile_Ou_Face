@@ -37,6 +37,7 @@ Le serveur expose la matrice complete documentee dans `docs/mcp/modules.md`.
 - Nombre total d'outils exposes : `49`
 - Noms exposes : `annotations_*`, `cache_*`, `rules_*`, `disassemble`, `build_cfg*`, `build_call_graph`, `get_xrefs`, `get_symbols`, `extract_strings`, `get_binary_info`, `analyze_imports`, `decompile_*`, `plugins_list`, `plugin_invoke`, `find_files`, etc.
 - Les fonctions optionnelles ne sont plus exposees en natif par le serveur public. Quand un plugin est actif, ses commandes apparaissent dynamiquement dans `tools/list` sous la forme `plugin.<namespace>.<action>`.
+- Le serveur MCP ne doit pas coder en dur les noms de commandes premium. Un client doit appeler `tools/list` ou `plugins_list`, verifier les commandes exposees par les plugins actifs, puis appeler `plugin_invoke` ou l'outil dynamique correspondant.
 
 Verification rapide :
 

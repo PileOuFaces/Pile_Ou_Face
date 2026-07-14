@@ -113,7 +113,8 @@ def _fetch_models(name: str, api_key: str = "", base_url: str = "") -> list[str]
 
     if name == "gemini":
         req = urllib.request.Request(
-            f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}",
+            "https://generativelanguage.googleapis.com/v1beta/models",
+            headers={"x-goog-api-key": api_key},
         )
         with urllib.request.urlopen(req, timeout=8) as resp:
             models = json.loads(resp.read()).get("models", [])
@@ -441,14 +442,11 @@ def _gemini_complete(
         generation_config["maxOutputTokens"] = int(options["max_tokens"])
     if generation_config:
         payload["generationConfig"] = generation_config
+    method = "streamGenerateContent?alt=sse" if on_token else "generateContent"
     req = urllib.request.Request(
-        (
-            "https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{model}:{'streamGenerateContent?alt=sse&' if on_token else 'generateContent?'}"
-            f"key={api_key}"
-        ),
+        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:{method}",
         data=json.dumps(payload).encode(),
-        headers={"content-type": "application/json"},
+        headers={"content-type": "application/json", "x-goog-api-key": api_key},
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=60) as resp:

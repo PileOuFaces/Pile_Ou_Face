@@ -136,6 +136,11 @@ function registerSharedCommands(context, deps) {
   });
   subs.push(calculator);
 
+  const showLogsCmd = vscode.commands.registerCommand('pileOuFace.showLogs', () => {
+    logChannel.show(true);
+  });
+  subs.push(showLogsCmd);
+
   return subs;
 }
 

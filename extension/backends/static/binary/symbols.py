@@ -72,6 +72,15 @@ class Symbol:
     size: int | None = None
 
 
+def _format_pe_import_address(func) -> str:
+    """Return a stable hex address for LIEF PE import function variants."""
+    for attr in ("iat_address", "address", "value"):
+        value = getattr(func, attr, 0)
+        if isinstance(value, int) and value:
+            return f"0x{value:x}"
+    return "0x0"
+
+
 def extract_symbols(binary_path: str, defined_only: bool = True) -> list[dict]:
     """Extrait les symboles d'un binaire (ELF, Mach-O, PE).
 
@@ -199,7 +208,7 @@ def extract_symbols(binary_path: str, defined_only: bool = True) -> list[dict]:
                 if not name or name in seen:
                     continue
                 seen.add(name)
-                addr = f"0x{func.iat_address:x}" if func.iat_address else "0x0"
+                addr = _format_pe_import_address(func)
                 symbols.append(Symbol(name=name, addr=addr, type="U", size=None))
 
     symbols_sorted = sorted(symbols, key=lambda x: x.name)

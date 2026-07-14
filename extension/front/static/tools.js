@@ -754,7 +754,6 @@ function renderDecompilePayload(container, payload) {
   const metaSummary = document.createElement('div');
   metaSummary.className = 'decompile-frame-summary';
   [
-    _formatDecompileQualityLabel(decompileUiState.renderedQuality),
     qualityDetails?.selected_score != null ? `Score ${qualityDetails.selected_score}` : null,
     Array.isArray(qualityDetails?.backends) && qualityDetails.backends.length > 1 ? `Comparé ${qualityDetails.backends.length} backends` : null,
     annotationTargets.length ? `Annotations ${annotationTargets.length}` : null,
@@ -3097,20 +3096,6 @@ function initStaticToolsListeners() {
 // (payload.js peut être chargé avant ou après tools.js).
 if (typeof _buildGccCommand === 'function') _buildGccCommand();
 
-document.getElementById('btnYaraBrowse')?.addEventListener('click', () => {
-  vscode.postMessage({ type: 'requestRulesSelection', target: 'manual' });
-});
-document.querySelectorAll('input[name="yaraRulesMode"]').forEach((input) => {
-  input.addEventListener('change', () => {
-    if (!input.checked) return;
-    setSelectedYaraMode(input.value);
-  });
-});
-document.getElementById('yaraRulesPath')?.addEventListener('input', () => {
-  _saveStorage({ yaraRulesPath: document.getElementById('yaraRulesPath')?.value || '' });
-  applyYaraModeUi();
-});
-
 // Décompilateur : auto-décompile quand on change de fonction
 document.getElementById('decompileAddrSelect')?.addEventListener('change', () => {
   decompileUiState.selectionMode = 'manual';
@@ -3172,34 +3157,6 @@ document.getElementById('btnDecompileSearchNext')?.addEventListener('click', () 
 });
 updateDecompileHistoryControls();
 updateDecompileSearchUi();
-
-// Rules Manager — formulaire d'ajout
-['btnAddYaraRule', 'btnAddYaraGlobalRule', 'btnAddCapaRule', 'btnAddCapaGlobalRule'].forEach(function(btnId) {
-  var btn = document.getElementById(btnId);
-  if (!btn) return;
-  btn.addEventListener('click', function() {
-    var ruleType = btn.dataset.ruletype;
-    var ruleScope = btn.dataset.rulescope || 'project';
-    document.getElementById('rulesEditId').value = '';
-    document.getElementById('rulesAddType').value = ruleType;
-    document.getElementById('rulesAddScope').value = ruleScope;
-    document.getElementById('rulesAddFormTitle').textContent =
-      'Ajouter une règle ' + ruleType.toUpperCase() + (ruleScope === 'global' ? ' globale' : ' projet');
-    document.getElementById('rulesAddName').value = '';
-    document.getElementById('rulesAddContent').value = '';
-    document.getElementById('rulesAddName').placeholder =
-      ruleType === 'yara' ? 'ma_regle.yar' : 'ma_regle.yml';
-    document.getElementById('rulesAddForm').style.display = '';
-  });
-});
-
-var btnRulesAddCancel = document.getElementById('btnRulesAddCancel');
-if (btnRulesAddCancel) {
-  btnRulesAddCancel.addEventListener('click', function() {
-    document.getElementById('rulesAddForm').style.display = 'none';
-    document.getElementById('rulesEditId').value = '';
-  });
-}
 
 // ── Script panel ──────────────────────────────────────────────────
 (function initScriptPanel() {
@@ -3324,83 +3281,4 @@ document.getElementById('payloadHexResult')?.addEventListener('click', function 
   }
 });
 
-document.getElementById('btnYaraScan')?.addEventListener('click', () => {
-  const bp = getStaticBinaryPath();
-  const rulesMode = getSelectedYaraMode();
-  const rules = document.getElementById('yaraRulesPath')?.value?.trim();
-  if (!bp) {
-    vscode.postMessage({ type: 'hubError', message: 'Indiquez un binaire.' });
-    return;
-  }
-  if (rulesMode === 'manual' && !rules) {
-    vscode.postMessage({ type: 'hubError', message: 'Choisissez un fichier .yar ou un dossier de règles.' });
-    return;
-  }
-  setStaticLoading('yaraContent', 'Scan YARA…');
-  detectionUiState.yaraError = '';
-  updateDetectionSummaries();
-  vscode.postMessage({ type: 'hubYaraScan', binaryPath: bp, rulesPath: rules, rulesMode });
-});
-document.getElementById('btnCapaScan')?.addEventListener('click', () => {
-  const bp = getStaticBinaryPath();
-  if (!bp) {
-    vscode.postMessage({ type: 'hubError', message: 'Indiquez un binaire.' });
-    return;
-  }
-  const unsupportedCapa = getCapaUnsupportedReason();
-  if (unsupportedCapa) {
-    renderCapaUnsupported(unsupportedCapa);
-    tabDataCache.detection = { binaryPath: bp };
-    return;
-  }
-  setStaticLoading('capaContent', 'Analyse Capa…');
-  detectionUiState.capaError = '';
-  updateDetectionSummaries();
-  vscode.postMessage({ type: 'hubCapaScan', binaryPath: bp });
-});
-
-document.getElementById('capaFilterInput')?.addEventListener('input', renderCapaResults);
-document.getElementById('capaNamespaceFilter')?.addEventListener('change', renderCapaResults);
-document.getElementById('yaraFilterInput')?.addEventListener('input', renderYaraResults);
-document.getElementById('btnCapaExportJson')?.addEventListener('click', () => {
-  downloadDetectionJson('capa-results.json', {
-    binaryPath: getStaticBinaryPath(),
-    capabilities: detectionUiState.capaCapabilities,
-    error: detectionUiState.capaError || null,
-  });
-});
-document.getElementById('btnYaraExportJson')?.addEventListener('click', () => {
-  downloadDetectionJson('yara-results.json', {
-    binaryPath: getStaticBinaryPath(),
-    rulesMode: getSelectedYaraMode(),
-    rulesPath: document.getElementById('yaraRulesPath')?.value?.trim() || '',
-    matches: detectionUiState.yaraMatches,
-    error: detectionUiState.yaraError || null,
-  });
-});
-setSelectedYaraMode(detectionUiState.yaraMode, { skipSave: true });
-const initialYaraPathInput = document.getElementById('yaraRulesPath');
-if (initialYaraPathInput && _loadStorage().yaraRulesPath) {
-  initialYaraPathInput.value = String(_loadStorage().yaraRulesPath || '');
-}
-applyYaraModeUi();
-
-var btnRulesAddSave = document.getElementById('btnRulesAddSave');
-if (btnRulesAddSave) {
-  btnRulesAddSave.addEventListener('click', function() {
-    var editId = document.getElementById('rulesEditId').value || '';
-    var name = (document.getElementById('rulesAddName').value || '').trim();
-    var content = document.getElementById('rulesAddContent').value || '';
-    var ruleType = document.getElementById('rulesAddType').value;
-    var scope = document.getElementById('rulesAddScope').value || 'project';
-    if (!name) { alert('Veuillez saisir un nom de fichier.'); return; }
-    if (editId) {
-      vscode.postMessage({ type: 'hubUpdateUserRule', ruleId: editId, name: name, content: content });
-    } else {
-      vscode.postMessage({ type: 'hubAddUserRule', name: name, ruleType: ruleType, content: content, scope: scope });
-    }
-    document.getElementById('rulesAddForm').style.display = 'none';
-    document.getElementById('rulesEditId').value = '';
-  });
-}
 }

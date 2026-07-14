@@ -32,6 +32,7 @@ const {
   setExtensionPath,
   ensureStorageDir,
   getGlobalStorageDir,
+  logError,
 } = require('./shared/utils');
 const { readTraceJson, writeTraceJson, setViewMode, loadTraceFromWorkspace } = require('./shared/trace');
 const { payloadToHex, parseStdinExpression } = require('./shared/payload');
@@ -41,8 +42,41 @@ const { registerStaticCommands } = require('./static/commands');
 const { registerDecompilerCommands } = require('./static/decompilerCommands');
 const { AuthService } = require('./shared/authService');
 const { resolveAuthServerUrl } = require('./shared/authConfig');
+const logger = require('./shared/logger');
 
 const decorationTypes = new Map();
+
+// Filet de sécurité : capture les promesses rejetées non gérées et les logue
+// via le canal de l'extension au lieu de les laisser invisibles dans la
+// console Extension Host. Volontairement limité à unhandledRejection —
+// uncaughtException supprimerait le comportement par défaut de Node (qui
+// laisse l'extension continuer dans un état potentiellement incohérent après
+// une exception non catchée) pour un simple gain de visibilité ; le risque
+// sur la stabilité ne vaut pas le compromis.
+let _unhandledRejectionHandler = null;
+
+function _formatUnhandledError(prefix, err) {
+  const detail = err && err.stack ? err.stack : String(err);
+  return `[${prefix}] ${detail}`;
+}
+
+// Séparé de l'abonnement process.on(...) pour rester testable directement
+// (invoquer la logique sans dépendre du système d'événements réel de Node,
+// qui est aussi utilisé par le test runner lui-même).
+function _handleGlobalError(prefix, err) {
+  logError(_formatUnhandledError(prefix, err));
+}
+
+function _registerGlobalErrorHandlers() {
+  if (_unhandledRejectionHandler) return;
+  _unhandledRejectionHandler = (reason) => _handleGlobalError('unhandledRejection', reason);
+  process.on('unhandledRejection', _unhandledRejectionHandler);
+}
+
+function _unregisterGlobalErrorHandlers() {
+  if (_unhandledRejectionHandler) process.off('unhandledRejection', _unhandledRejectionHandler);
+  _unhandledRejectionHandler = null;
+}
 
 
 function _migrateFromLegacyPofDir(root, storageDir, globalDir) {
@@ -80,11 +114,6 @@ function _migrateFromLegacyPofDir(root, storageDir, globalDir) {
   copyDirIfExists(path.join(legacyDir, 'static_cache'),  path.join(storageDir, 'static_cache'));
   copyDirIfExists(path.join(legacyDir, 'licenses'), path.join(storageDir, 'licenses'));
 
-  // Plugins → globalDir
-  if (globalDir) {
-    copyDirIfExists(path.join(legacyDir, 'plugins'), path.join(globalDir, 'plugins'));
-  }
-
   logChannel.appendLine('[storage] Migration terminée. Le dossier .pile-ou-face peut être supprimé manuellement.');
 }
 
@@ -95,15 +124,27 @@ function _migrateFromLegacyPofDir(root, storageDir, globalDir) {
  */
 function activate(context) {
   setExtensionPath(context.extensionPath);
+  _registerGlobalErrorHandlers();
   const storageDir  = ensureStorageDir(context);
   const globalDir   = getGlobalStorageDir(context);
+
+  const applyLogLevelFromConfig = () => {
+    const level = vscode.workspace.getConfiguration('pileOuFace').get('logLevel', 'warning');
+    logger.setLevel(level);
+  };
+  applyLogLevelFromConfig();
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('pileOuFace.logLevel')) applyLogLevelFromConfig();
+    })
+  );
 
   // Ensure Python dependencies are installed at startup
   const folders = vscode.workspace.workspaceFolders;
   if (folders && folders.length > 0) {
     const root = resolveProjectRoot(folders[0].uri.fsPath);
     const pythonExe = detectPythonExecutable(root);
-    ensurePythonDependencies(pythonExe, root).catch((err) => {
+    ensurePythonDependencies(pythonExe, root, { quiet: true }).catch((err) => {
       logChannel.appendLine(`[Python setup] Warning: ${err.message}`);
     });
   }
@@ -198,6 +239,7 @@ function activate(context) {
  * @brief Desactive l'extension (hook VS Code).
  */
 function deactivate() {
+  _unregisterGlobalErrorHandlers();
   for (const deco of decorationTypes.values()) {
     deco.dispose();
   }
@@ -209,5 +251,9 @@ module.exports = {
   deactivate,
   loadTraceFromWorkspace,
   payloadToHex,
-  parseStdinExpression
+  parseStdinExpression,
+  _registerGlobalErrorHandlers,
+  _unregisterGlobalErrorHandlers,
+  _formatUnhandledError,
+  _handleGlobalError,
 };

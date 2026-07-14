@@ -42,20 +42,28 @@ Le pattern attendu est :
 
 ## annotations
 
-**Gestion des annotations persistantes** (commentaires, renames) liées à une adresse.
+**Gestion des annotations persistantes** (commentaires, renames, bookmarks, statut/notes
+de revue) liées à une adresse, dans une base SQLite dédiée
+(`~/.pile-ou-face/annotations.db`, home de l'utilisateur — indépendante de
+`context.storageUri`, résolue de la même façon par ce serveur MCP et par l'extension
+VS Code). Les annotations créées via le MCP et celles créées via l'UI Hub de
+l'extension pointent désormais vers la **même base** : un agent IA et l'utilisateur
+voient/modifient les mêmes données pour un même binaire.
 
 ```
 tool: annotations_list / annotations_save / annotations_delete
 ```
 
-### Fonctions
+Façade orientée session : `AnnotationStore(binary_path)` (`backends/static/annotations/annotations.py`),
+construite sur `annotation_db.AnnotationDb` (et non plus sur `DisasmCache`) — avec
+`.comment()`, `.rename()`, `.get()`, `.list()`, `.delete()`, `.set_review()`,
+`.get_review()`, `.set_bookmark()`, `.delete_bookmark()`, `.clear_bookmarks()`,
+`.list_bookmarks()`. Le binaire est identifié par le hash sha256 de son contenu (pas
+chemin+mtime).
 
-| Fonction | Signature | Description |
-|----------|-----------|-------------|
-| `load_annotations` | `(workspace, binary_sha256)` | Charge toutes les annotations d'un binaire |
-| `save_annotation` | `(workspace, binary_sha256, addr, note, color)` | Persiste une annotation |
-
-Façade orientée session : `AnnotationStore(binary_path)` avec `.comment()`, `.rename()`, `.get()`, `.list()`, `.delete()`.
+Les fonctions module-level historiques `load_annotations`/`save_annotation`
+(`(workspace, binary_sha256, ...)`) documentées précédemment ici ne sont **pas**
+utilisées par ces trois tools — elles sont du code mort résiduel, non appelé.
 
 ### Input MCP
 ```json
@@ -64,7 +72,7 @@ Façade orientée session : `AnnotationStore(binary_path)` avec `.comment()`, `.
 
 ### Output
 ```json
-[{ "addr": "0x401000", "kind": "comment|name", "value": "..." }]
+[{ "addr": "0x401000", "kind": "comment|name|review_status|review_notes|bookmark|bookmark_color", "value": "...", "updated_at": "..." }]
 ```
 
 ### Deps
