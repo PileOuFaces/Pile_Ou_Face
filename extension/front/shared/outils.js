@@ -1479,8 +1479,43 @@ function initDisasmUxState() {
   updateDisasmSessionSummary();
 }
 
-function resetStaticBinaryDerivedState() {
-  tabDataCache = {};
+function resetHexDerivedState() {
+  hexSelectionModel = {
+    startAddr: '',
+    endAddr: '',
+    activeAddr: '',
+    anchorAddr: '',
+    spanLength: 1,
+  };
+  resetHexPatchSessionState();
+}
+
+function resetStackAndDecompileDerivedState() {
+  stackFrameCache = {};
+  pendingStackFrameRequests.clear();
+  stackUiState.renderedAddr = '';
+  stackUiState.renderedBinaryPath = '';
+  stackUiState.activeEntryName = '';
+  stackUiState.pendingEntryName = '';
+  decompileUiState.selectedAddr = '';
+  decompileUiState.searchQuery = '';
+  decompileUiState.activeSearchHit = -1;
+  decompileUiState.activeStackEntryName = '';
+  decompileUiState.pendingStackEntryName = '';
+  clearDecompileCaches();
+  decompileUiState.renderedAddr = '';
+  decompileUiState.renderedBinaryPath = '';
+  decompileUiState.renderedQuality = _normalizeDecompileQuality(decompileUiState.quality || 'normal');
+}
+
+function resetTypedDataDerivedState() {
+  typedDataUiState.appliedStructName = '';
+  typedDataUiState.appliedStructOffset = '0x0';
+  typedDataUiState.appliedStructAddr = '';
+  typedDataUiState.hexStructPreview = null;
+}
+
+function resetGraphDerivedState() {
   stringsCache = [];
   stringsPage = 1;
   window.discoveredFunctionsCache = [];
@@ -1503,38 +1538,6 @@ function resetStaticBinaryDerivedState() {
       cgSearch: '',
     });
   }
-  currentArchSupport = null;
-  stackFrameCache = {};
-  window.sectionsCache = [];
-  resetHexPatchSessionState();
-  hexSelectionModel = {
-    startAddr: '',
-    endAddr: '',
-    activeAddr: '',
-    anchorAddr: '',
-    spanLength: 1,
-  };
-  pendingStackFrameRequests.clear();
-  stackUiState.renderedAddr = '';
-  stackUiState.renderedBinaryPath = '';
-  stackUiState.activeEntryName = '';
-  stackUiState.pendingEntryName = '';
-  decompileUiState.selectedAddr = '';
-  decompileUiState.searchQuery = '';
-  decompileUiState.activeSearchHit = -1;
-  decompileUiState.activeStackEntryName = '';
-  decompileUiState.pendingStackEntryName = '';
-  typedDataUiState.appliedStructName = '';
-  typedDataUiState.appliedStructOffset = '0x0';
-  typedDataUiState.appliedStructAddr = '';
-  typedDataUiState.hexStructPreview = null;
-  clearDecompileCaches();
-  window._lastDisasmAddr = '';
-  window.lastBinaryArch = '';
-  window._annotations = {};
-  decompileUiState.renderedAddr = '';
-  decompileUiState.renderedBinaryPath = '';
-  decompileUiState.renderedQuality = _normalizeDecompileQuality(decompileUiState.quality || 'normal');
   const cfgContent = document.getElementById('cfgContent');
   if (cfgContent) cfgContent.innerHTML = '';
   const stringsContent = document.getElementById('stringsContent');
@@ -1600,6 +1603,19 @@ function resetStaticBinaryDerivedState() {
   callGraphUiState.search = '';
   callGraphUiState.graphView = null;
   window._pendingCfgHighlightAddr = null;
+}
+
+function resetStaticBinaryDerivedState() {
+  tabDataCache = {};
+  currentArchSupport = null;
+  window.sectionsCache = [];
+  resetHexDerivedState();
+  resetStackAndDecompileDerivedState();
+  resetTypedDataDerivedState();
+  window._lastDisasmAddr = '';
+  window.lastBinaryArch = '';
+  window._annotations = {};
+  resetGraphDerivedState();
   updateActiveContextBars('');
   renderBookmarks();
   updateDisasmSessionSummary();

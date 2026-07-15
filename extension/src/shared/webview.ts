@@ -916,8 +916,8 @@ function _buildPluginSrcdoc(html, inlineJs, pluginCss, hostCss = '') {
   ].join('');
 }
 
-function loadPluginWebviews(root, options: { storageDir?: string; globalDir?: string; extensionFrontDir?: string; webviewResourceResolver?: (absPath: string) => string } = {}) {
-  const { storageDir = '', globalDir = '', extensionFrontDir = '', webviewResourceResolver } = options;
+function loadPluginWebviews(options: { storageDir?: string; globalDir?: string; extensionFrontDir?: string } = {}) {
+  const { storageDir = '', globalDir = '', extensionFrontDir = '' } = options;
   let groupStyles = '';
   const frames: { pluginId: string; pluginSlug: string; frameId: string; srcdoc: string }[] = [];
 
@@ -1030,13 +1030,13 @@ function getWebviewContent(webview, extensionUri) {
 }
 
 // static/hub — main static analysis hub (shell + fragments)
-function getHubContent(webview, extensionUri, initialPanel = 'dashboard', workspaceRoot = '', globalDir = '', storageDir = '') {
+function getHubContent(webview, extensionUri, initialPanel = 'dashboard', globalDir = '', storageDir = '') {
   const read = (...parts) => fs.readFileSync(
     vscode.Uri.joinPath(extensionUri, ...parts).fsPath, 'utf8'
   );
 
   const { groupStyles: pluginGroupStyles, framesHtml: pluginFrames } =
-    (storageDir || globalDir) ? loadPluginWebviews(workspaceRoot, {
+    (storageDir || globalDir) ? loadPluginWebviews({
       storageDir,
       globalDir,
       extensionFrontDir: vscode.Uri.joinPath(extensionUri, 'front').fsPath,

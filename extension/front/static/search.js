@@ -1453,7 +1453,7 @@ function setStaticLoading(containerId, msg) {
   el.innerHTML = '<div class="static-loading loading" role="status" aria-live="polite">'
     + '<span class="static-loading-spinner" aria-hidden="true"></span>'
     + `<span class="static-loading-text">${escapeHtml(msg)}</span>`
-    + '</div>'; // eslint-disable-line -- msg is escaped
+    + '</div>';
 }
 
 function applyHexLayoutMode() {

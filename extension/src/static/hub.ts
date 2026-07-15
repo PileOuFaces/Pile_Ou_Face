@@ -290,7 +290,9 @@ function createHub(config) {
         const timer = setTimeout(() => {
           try {
             proc.kill('SIGTERM');
-          } catch (_) {}
+          } catch (_) {
+            // Process may already have exited.
+          }
           const wrapped = new Error(`Timeout plugin runtime après ${timeout} ms`);
           wrapped.stderr = err;
           finish(reject, wrapped);
@@ -300,7 +302,9 @@ function createHub(config) {
           if (Buffer.byteLength(out, 'utf8') > maxBuffer) {
             try {
               proc.kill('SIGTERM');
-            } catch (_) {}
+            } catch (_) {
+              // Process may already have exited.
+            }
             finish(reject, new Error(`Plugin runtime stdout dépasse ${maxBuffer} octets`));
           }
         });
@@ -456,7 +460,7 @@ function createHub(config) {
     }, LICENSE_RECHECK_MS);
     panel.onDidDispose(() => { globalThis.clearInterval(licenseRecheckTimer); });
 
-    panel.webview.html = getHubContent(panel.webview, context.extensionUri, initialPanel, root, globalDir, storageDir);
+    panel.webview.html = getHubContent(panel.webview, context.extensionUri, initialPanel, globalDir, storageDir);
     panel.webview.postMessage({ type: 'hubPerfDiagnosticsConfig', enabled: perfDiagnosticsEnabled() });
     const handlerCtx = {
       root,

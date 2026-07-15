@@ -258,7 +258,7 @@ function normalizeRawProfile(profile) {
 
 /**
  * @brief Handlers partagés (getPlatform, requestBinarySelection, listGeneratedFiles, etc.).
- * @param {object} ctx - { root, panel, getTempDir, ensureTempDir, refreshSidebar }
+ * @param {object} ctx - { root, panel, getTempDir, refreshSidebar }
  */
 function sharedHandlers(ctx) {
   const {

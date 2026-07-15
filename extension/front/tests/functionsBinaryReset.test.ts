@@ -9,6 +9,14 @@ describe("Functions binary-change reset", () => {
     "utf8",
   );
 
+  function functionBody(source, name) {
+    const start = source.indexOf(`function ${name}(`);
+    expect(start, `${name} not found`).to.be.greaterThan(-1);
+    const next = source.indexOf("\nfunction ", start + 1);
+    expect(next, `${name} end not found`).to.be.greaterThan(start);
+    return source.slice(start, next);
+  }
+
   it("clears cached function rows and radar state when the selected binary changes", () => {
     const source = outilsSource();
     expect(source).to.include("window.discoveredFunctionsCache = [];");
@@ -27,10 +35,7 @@ describe("Functions binary-change reset", () => {
 
   it("clears persisted binary-scoped filters and selections on binary change", () => {
     const source = outilsSource();
-    const resetStart = source.indexOf("function resetStaticBinaryDerivedState()");
-    expect(resetStart).to.be.greaterThan(-1);
-    const resetEnd = source.indexOf("function applyStaticBinarySelectionUi", resetStart);
-    const resetBody = source.slice(resetStart, resetEnd);
+    const resetBody = functionBody(source, "resetGraphDerivedState");
 
     expect(resetBody).to.include("functionsSelectedAddr: ''");
     expect(resetBody).to.include("decompileAddr: ''");
@@ -41,15 +46,13 @@ describe("Functions binary-change reset", () => {
 
   it("resets binary-scoped decompile and graph UI state on binary change", () => {
     const source = outilsSource();
-    const resetStart = source.indexOf("function resetStaticBinaryDerivedState()");
-    expect(resetStart).to.be.greaterThan(-1);
-    const resetEnd = source.indexOf("function applyStaticBinarySelectionUi", resetStart);
-    const resetBody = source.slice(resetStart, resetEnd);
+    const stackDecompileBody = functionBody(source, "resetStackAndDecompileDerivedState");
+    const graphBody = functionBody(source, "resetGraphDerivedState");
 
-    expect(resetBody).to.include("decompileUiState.selectedAddr = '';");
-    expect(resetBody).to.include("decompileUiState.searchQuery = '';");
-    expect(resetBody).to.include("decompileUiState.activeSearchHit = -1;");
-    expect(resetBody).to.include("cfgUiState.search = '';");
-    expect(resetBody).to.include("callGraphUiState.search = '';");
+    expect(stackDecompileBody).to.include("decompileUiState.selectedAddr = '';");
+    expect(stackDecompileBody).to.include("decompileUiState.searchQuery = '';");
+    expect(stackDecompileBody).to.include("decompileUiState.activeSearchHit = -1;");
+    expect(graphBody).to.include("cfgUiState.search = '';");
+    expect(graphBody).to.include("callGraphUiState.search = '';");
   });
 });
