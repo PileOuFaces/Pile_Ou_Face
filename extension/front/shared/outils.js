@@ -1479,12 +1479,7 @@ function initDisasmUxState() {
   updateDisasmSessionSummary();
 }
 
-function resetStaticBinaryDerivedState() {
-  tabDataCache = {};
-  currentArchSupport = null;
-  stackFrameCache = {};
-  window.sectionsCache = [];
-  resetHexPatchSessionState();
+function resetHexDerivedState() {
   hexSelectionModel = {
     startAddr: '',
     endAddr: '',
@@ -1492,6 +1487,11 @@ function resetStaticBinaryDerivedState() {
     anchorAddr: '',
     spanLength: 1,
   };
+  resetHexPatchSessionState();
+}
+
+function resetStackAndDecompileDerivedState() {
+  stackFrameCache = {};
   pendingStackFrameRequests.clear();
   stackUiState.renderedAddr = '';
   stackUiState.renderedBinaryPath = '';
@@ -1499,17 +1499,20 @@ function resetStaticBinaryDerivedState() {
   stackUiState.pendingEntryName = '';
   decompileUiState.activeStackEntryName = '';
   decompileUiState.pendingStackEntryName = '';
+  clearDecompileCaches();
+  decompileUiState.renderedAddr = '';
+  decompileUiState.renderedBinaryPath = '';
+  decompileUiState.renderedQuality = _normalizeDecompileQuality(decompileUiState.quality || 'normal');
+}
+
+function resetTypedDataDerivedState() {
   typedDataUiState.appliedStructName = '';
   typedDataUiState.appliedStructOffset = '0x0';
   typedDataUiState.appliedStructAddr = '';
   typedDataUiState.hexStructPreview = null;
-  clearDecompileCaches();
-  window._lastDisasmAddr = '';
-  window.lastBinaryArch = '';
-  window._annotations = {};
-  decompileUiState.renderedAddr = '';
-  decompileUiState.renderedBinaryPath = '';
-  decompileUiState.renderedQuality = _normalizeDecompileQuality(decompileUiState.quality || 'normal');
+}
+
+function resetGraphDerivedState() {
   const cfgContent = document.getElementById('cfgContent');
   if (cfgContent) cfgContent.innerHTML = '';
   const cfgFuncSelect = document.getElementById('cfgFuncSelect');
@@ -1531,6 +1534,19 @@ function resetStaticBinaryDerivedState() {
   callGraphUiState.activeAddr = '';
   callGraphUiState.graphView = null;
   window._pendingCfgHighlightAddr = null;
+}
+
+function resetStaticBinaryDerivedState() {
+  tabDataCache = {};
+  currentArchSupport = null;
+  window.sectionsCache = [];
+  resetHexDerivedState();
+  resetStackAndDecompileDerivedState();
+  resetTypedDataDerivedState();
+  window._lastDisasmAddr = '';
+  window.lastBinaryArch = '';
+  window._annotations = {};
+  resetGraphDerivedState();
   updateActiveContextBars('');
   renderBookmarks();
   updateDisasmSessionSummary();
