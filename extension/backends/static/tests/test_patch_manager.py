@@ -57,6 +57,21 @@ class TestPatchManager(unittest.TestCase):
         self.assertEqual(result["patches"][0]["patched_bytes"], "90 90")
         self.assertEqual(result["patches"][0]["offset"], 0)
 
+    def test_apply_uses_existing_workspace_pile_ou_face_dir(self):
+        workspace = os.path.join(self.tmp, "workspace")
+        nested = os.path.join(workspace, "samples", "bin")
+        os.makedirs(os.path.join(workspace, ".pile-ou-face"))
+        os.makedirs(nested)
+        binary = os.path.join(nested, "nested.elf")
+        make_minimal_elf(binary)
+
+        run_pm(["apply", "--binary", binary, "--offset", "0", "--bytes", "90 90"])
+
+        patch_dir = os.path.join(workspace, ".pile-ou-face", "patches")
+        self.assertTrue(os.path.isdir(patch_dir))
+        self.assertEqual(len(os.listdir(patch_dir)), 1)
+        self.assertFalse(os.path.exists(os.path.join(nested, ".pile-ou-face")))
+
     def test_revert_restores_bytes(self):
         with open(self.binary, "rb") as f:
             original = f.read(2)
@@ -85,6 +100,26 @@ class TestPatchManager(unittest.TestCase):
         self.assertEqual(len(listed["patches"]), 1)
         self.assertEqual(listed["redo_patches"], [])
         self.assertNotEqual(redone, original)
+
+    def test_redo_can_reapply_a_specific_reverted_patch(self):
+        with open(self.binary, "rb") as f:
+            original = f.read(4)
+        run_pm(["apply", "--binary", self.binary, "--offset", "0", "--bytes", "90 90"])
+        run_pm(["apply", "--binary", self.binary, "--offset", "2", "--bytes", "cc cc"])
+        patches = run_pm(["list", "--binary", self.binary])["patches"]
+
+        run_pm(["revert", "--binary", self.binary, "--id", patches[0]["id"]])
+        run_pm(["revert", "--binary", self.binary, "--id", patches[1]["id"]])
+        run_pm(["redo", "--binary", self.binary, "--id", patches[0]["id"]])
+
+        with open(self.binary, "rb") as f:
+            redone_first = f.read(4)
+        self.assertEqual(redone_first[:2], bytes.fromhex("90 90"))
+        self.assertEqual(redone_first[2:], original[2:])
+
+        listed = run_pm(["list", "--binary", self.binary])
+        self.assertEqual([p["id"] for p in listed["patches"]], [patches[0]["id"]])
+        self.assertEqual([p["id"] for p in listed["redo_patches"]], [patches[1]["id"]])
 
     def test_apply_clears_redo_stack(self):
         run_pm(["apply", "--binary", self.binary, "--offset", "0", "--bytes", "90 90"])
