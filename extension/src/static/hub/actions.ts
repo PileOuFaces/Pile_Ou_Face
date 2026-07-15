@@ -9,6 +9,7 @@
 const crypto = require('crypto');
 const cp = require('child_process');
 const { readArchSupportFromMapping } = require('./archSupport');
+const { recordRuntimeEvent } = require('../../shared/runtimeAudit');
 
 function createActions({
   panel,
@@ -475,7 +476,9 @@ function createActions({
 
   return {
     hubModeChange: async (message) => {
-      if (setSidebarMode) setSidebarMode(message.mode || 'other');
+      const mode = message.mode || 'other';
+      if (setSidebarMode) setSidebarMode(mode);
+      recordRuntimeEvent('host_effect', 'hubModeChange', { source: 'hub.actions', effect: 'sidebar.mode', mode });
     },
 
     hubDebugLog: async (message) => {
@@ -488,6 +491,7 @@ function createActions({
         ? { ...details, extensionHostMemory: hostMemorySnapshot() }
         : details;
       logChannel.appendLine(`[${scope}] ${event} ${JSON.stringify(enriched)}`);
+      recordRuntimeEvent('host_effect', 'hubDebugLog', { source: 'hub.actions', effect: 'logChannel.appendLine', scope, event });
     },
 
     hubInstallDecompiler: async (message) => {

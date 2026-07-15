@@ -9,6 +9,7 @@ const vscode = require('vscode');
 const fs = require('fs');
 const { escapeHtml } = require('./utils');
 const { getRecentBinaries, describeRecentBinaryMeta } = require('./recentBinaries');
+const { recordRuntimeEvent } = require('./runtimeAudit');
 
 /**
  * @brief Enregistre les commandes partagées (open, goToAddress, calculator).
@@ -138,6 +139,7 @@ function registerSharedCommands(context, deps) {
 
   const showLogsCmd = vscode.commands.registerCommand('pileOuFace.showLogs', () => {
     logChannel.show(true);
+    recordRuntimeEvent('host_effect', 'pileOuFace.showLogs', { source: 'sharedCommands', effect: 'outputChannel.show' });
   });
   subs.push(showLogsCmd);
 

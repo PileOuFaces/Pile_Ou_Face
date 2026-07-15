@@ -12,6 +12,7 @@ const path = require('path');
 const cp = require('child_process');
 const { getDisasmScript, getXrefsScript } = require('../shared/paths');
 const { getExtensionPath } = require('../shared/utils');
+const { recordRuntimeEvent } = require('../shared/runtimeAudit');
 
 /**
  * @brief Enregistre les commandes statiques et retourne les subscriptions.
@@ -239,7 +240,10 @@ function registerStaticCommands(context, deps, providers) {
 
   const sidebarRefresh = vscode.commands.registerCommand('pileOuFace.sidebarRefresh', async () => {
     const binaryPath = await vscode.window.showInputBox({ prompt: 'Chemin du binaire', placeHolder: 'examples/stack3.elf' });
-    if (binaryPath && refreshSidebar) refreshSidebar(binaryPath);
+    if (binaryPath && refreshSidebar) {
+      refreshSidebar(binaryPath);
+      recordRuntimeEvent('host_effect', 'pileOuFace.sidebarRefresh', { source: 'staticCommands', effect: 'sidebar.refresh', binaryPath: path.basename(binaryPath) });
+    }
   });
   subs.push(sidebarRefresh);
 

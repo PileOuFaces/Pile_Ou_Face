@@ -278,6 +278,13 @@ function sharedHandlers(ctx) {
     getPythonExecutable: () => detectPythonExecutable(root),
     buildPythonEnv: () => buildRuntimeEnv(root, storageDir),
   });
+  const safePostMessage = (message) => {
+    try {
+      panel.webview.postMessage(message);
+    } catch (_) {
+      // The hub can be disposed while asynchronous provider probes are still returning.
+    }
+  };
 
   const buildAnnotationsMessage = (binaryPath, annotations) => ({
     type: 'hubAnnotations',
@@ -696,14 +703,14 @@ function sharedHandlers(ctx) {
       const script = path.join(getExtensionPath() || root, 'backends', 'mcp', 'ai_provider.py');
       cp.execFile(pythonExe, [script, 'list'], { encoding: 'utf8', cwd: root, timeout: 15000 }, (err, stdout) => {
         if (err) {
-          panel.webview.postMessage({ type: 'hubAiProvidersResult', data: { error: String(err.message || err) } });
+          safePostMessage({ type: 'hubAiProvidersResult', data: { error: String(err.message || err) } });
           return;
         }
         try {
           const result = JSON.parse(stdout || '{}');
-          panel.webview.postMessage({ type: 'hubAiProvidersResult', data: result });
+          safePostMessage({ type: 'hubAiProvidersResult', data: result });
         } catch (_) {
-          panel.webview.postMessage({ type: 'hubAiProvidersResult', data: { error: 'Parse error' } });
+          safePostMessage({ type: 'hubAiProvidersResult', data: { error: 'Parse error' } });
         }
       });
     },

@@ -3309,4 +3309,19 @@ window.addEventListener('message', (event) => {
     return;
   }
 });
+window.addEventListener('message', (event) => {
+  const msg = event.data;
+  if (!msg?.type || msg.type === 'hubUiConsumed') return;
+  const acknowledge = () => {
+    vscode.postMessage({
+      type: 'hubUiConsumed',
+      responseType: String(msg.type),
+    });
+  };
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(() => requestAnimationFrame(acknowledge));
+  } else {
+    setTimeout(acknowledge, 0);
+  }
+});
 }
