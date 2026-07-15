@@ -22,10 +22,10 @@ def _load_make_elf():
 make_minimal_elf = _load_make_elf().make_minimal_elf
 
 
-def run_pm(args):
+def run_pm(args, env_extra=None):
     import os
 
-    env = {**os.environ, "PYTHONPATH": ROOT}
+    env = {**os.environ, "PYTHONPATH": ROOT, **(env_extra or {})}
     r = subprocess.run(
         [sys.executable, "backends/static/patch/patch_manager.py"] + args,
         capture_output=True,
@@ -43,60 +43,84 @@ class TestPatchManager(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         self.binary = os.path.join(self.tmp, "test.elf")
+        self.storage = os.path.join(self.tmp, "storage")
         make_minimal_elf(self.binary)
 
+    def run_pm(self, args, *, storage=None):
+        return run_pm(
+            args,
+            {"POF_STORAGE_DIR": storage if storage is not None else self.storage},
+        )
+
     def test_list_empty(self):
-        result = run_pm(["list", "--binary", self.binary])
+        result = self.run_pm(["list", "--binary", self.binary])
         self.assertEqual(result["patches"], [])
         self.assertEqual(result["redo_patches"], [])
 
     def test_apply_and_list(self):
-        run_pm(["apply", "--binary", self.binary, "--offset", "0", "--bytes", "90 90"])
-        result = run_pm(["list", "--binary", self.binary])
+        self.run_pm(
+            ["apply", "--binary", self.binary, "--offset", "0", "--bytes", "90 90"]
+        )
+        result = self.run_pm(["list", "--binary", self.binary])
         self.assertEqual(len(result["patches"]), 1)
         self.assertEqual(result["patches"][0]["patched_bytes"], "90 90")
         self.assertEqual(result["patches"][0]["offset"], 0)
 
-    def test_apply_uses_existing_workspace_pile_ou_face_dir(self):
+    def test_apply_uses_storage_dir_patches_without_project_pof_dir(self):
         workspace = os.path.join(self.tmp, "workspace")
         nested = os.path.join(workspace, "samples", "bin")
-        os.makedirs(os.path.join(workspace, ".pile-ou-face"))
         os.makedirs(nested)
         binary = os.path.join(nested, "nested.elf")
         make_minimal_elf(binary)
 
-        run_pm(["apply", "--binary", binary, "--offset", "0", "--bytes", "90 90"])
+        self.run_pm(["apply", "--binary", binary, "--offset", "0", "--bytes", "90 90"])
 
-        patch_dir = os.path.join(workspace, ".pile-ou-face", "patches")
+        patch_dir = os.path.join(self.storage, "patches")
         self.assertTrue(os.path.isdir(patch_dir))
         self.assertEqual(len(os.listdir(patch_dir)), 1)
+        self.assertFalse(os.path.exists(os.path.join(workspace, ".pile-ou-face")))
         self.assertFalse(os.path.exists(os.path.join(nested, ".pile-ou-face")))
+
+    def test_apply_without_storage_env_uses_local_patches_dir(self):
+        run_pm(
+            ["apply", "--binary", self.binary, "--offset", "0", "--bytes", "90 90"],
+            {"POF_STORAGE_DIR": ""},
+        )
+
+        patch_dir = os.path.join(self.tmp, "patches")
+        self.assertTrue(os.path.isdir(patch_dir))
+        self.assertEqual(len(os.listdir(patch_dir)), 1)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, ".pile-ou-face")))
 
     def test_revert_restores_bytes(self):
         with open(self.binary, "rb") as f:
             original = f.read(2)
-        run_pm(["apply", "--binary", self.binary, "--offset", "0", "--bytes", "90 90"])
-        patches = run_pm(["list", "--binary", self.binary])["patches"]
+        self.run_pm(
+            ["apply", "--binary", self.binary, "--offset", "0", "--bytes", "90 90"]
+        )
+        patches = self.run_pm(["list", "--binary", self.binary])["patches"]
         patch_id = patches[0]["id"]
-        run_pm(["revert", "--binary", self.binary, "--id", patch_id])
+        self.run_pm(["revert", "--binary", self.binary, "--id", patch_id])
         with open(self.binary, "rb") as f:
             restored = f.read(2)
         self.assertEqual(original, restored)
-        listed = run_pm(["list", "--binary", self.binary])
+        listed = self.run_pm(["list", "--binary", self.binary])
         self.assertEqual(listed["patches"], [])
         self.assertEqual(len(listed["redo_patches"]), 1)
 
     def test_redo_reapplies_last_reverted_patch(self):
         with open(self.binary, "rb") as f:
             original = f.read(2)
-        run_pm(["apply", "--binary", self.binary, "--offset", "0", "--bytes", "90 90"])
-        patch_id = run_pm(["list", "--binary", self.binary])["patches"][0]["id"]
-        run_pm(["revert", "--binary", self.binary, "--id", patch_id])
-        run_pm(["redo", "--binary", self.binary])
+        self.run_pm(
+            ["apply", "--binary", self.binary, "--offset", "0", "--bytes", "90 90"]
+        )
+        patch_id = self.run_pm(["list", "--binary", self.binary])["patches"][0]["id"]
+        self.run_pm(["revert", "--binary", self.binary, "--id", patch_id])
+        self.run_pm(["redo", "--binary", self.binary])
         with open(self.binary, "rb") as f:
             redone = f.read(2)
         self.assertEqual(redone, bytes.fromhex("90 90"))
-        listed = run_pm(["list", "--binary", self.binary])
+        listed = self.run_pm(["list", "--binary", self.binary])
         self.assertEqual(len(listed["patches"]), 1)
         self.assertEqual(listed["redo_patches"], [])
         self.assertNotEqual(redone, original)
@@ -104,42 +128,54 @@ class TestPatchManager(unittest.TestCase):
     def test_redo_can_reapply_a_specific_reverted_patch(self):
         with open(self.binary, "rb") as f:
             original = f.read(4)
-        run_pm(["apply", "--binary", self.binary, "--offset", "0", "--bytes", "90 90"])
-        run_pm(["apply", "--binary", self.binary, "--offset", "2", "--bytes", "cc cc"])
-        patches = run_pm(["list", "--binary", self.binary])["patches"]
+        self.run_pm(
+            ["apply", "--binary", self.binary, "--offset", "0", "--bytes", "90 90"]
+        )
+        self.run_pm(
+            ["apply", "--binary", self.binary, "--offset", "2", "--bytes", "cc cc"]
+        )
+        patches = self.run_pm(["list", "--binary", self.binary])["patches"]
 
-        run_pm(["revert", "--binary", self.binary, "--id", patches[0]["id"]])
-        run_pm(["revert", "--binary", self.binary, "--id", patches[1]["id"]])
-        run_pm(["redo", "--binary", self.binary, "--id", patches[0]["id"]])
+        self.run_pm(["revert", "--binary", self.binary, "--id", patches[0]["id"]])
+        self.run_pm(["revert", "--binary", self.binary, "--id", patches[1]["id"]])
+        self.run_pm(["redo", "--binary", self.binary, "--id", patches[0]["id"]])
 
         with open(self.binary, "rb") as f:
             redone_first = f.read(4)
         self.assertEqual(redone_first[:2], bytes.fromhex("90 90"))
         self.assertEqual(redone_first[2:], original[2:])
 
-        listed = run_pm(["list", "--binary", self.binary])
+        listed = self.run_pm(["list", "--binary", self.binary])
         self.assertEqual([p["id"] for p in listed["patches"]], [patches[0]["id"]])
         self.assertEqual([p["id"] for p in listed["redo_patches"]], [patches[1]["id"]])
 
     def test_apply_clears_redo_stack(self):
-        run_pm(["apply", "--binary", self.binary, "--offset", "0", "--bytes", "90 90"])
-        patch_id = run_pm(["list", "--binary", self.binary])["patches"][0]["id"]
-        run_pm(["revert", "--binary", self.binary, "--id", patch_id])
-        run_pm(["apply", "--binary", self.binary, "--offset", "2", "--bytes", "cc cc"])
-        listed = run_pm(["list", "--binary", self.binary])
+        self.run_pm(
+            ["apply", "--binary", self.binary, "--offset", "0", "--bytes", "90 90"]
+        )
+        patch_id = self.run_pm(["list", "--binary", self.binary])["patches"][0]["id"]
+        self.run_pm(["revert", "--binary", self.binary, "--id", patch_id])
+        self.run_pm(
+            ["apply", "--binary", self.binary, "--offset", "2", "--bytes", "cc cc"]
+        )
+        listed = self.run_pm(["list", "--binary", self.binary])
         self.assertEqual(len(listed["patches"]), 1)
         self.assertEqual(listed["redo_patches"], [])
 
     def test_revert_all(self):
         with open(self.binary, "rb") as f:
             original = f.read(4)
-        run_pm(["apply", "--binary", self.binary, "--offset", "0", "--bytes", "90 90"])
-        run_pm(["apply", "--binary", self.binary, "--offset", "2", "--bytes", "cc cc"])
-        run_pm(["revert-all", "--binary", self.binary])
+        self.run_pm(
+            ["apply", "--binary", self.binary, "--offset", "0", "--bytes", "90 90"]
+        )
+        self.run_pm(
+            ["apply", "--binary", self.binary, "--offset", "2", "--bytes", "cc cc"]
+        )
+        self.run_pm(["revert-all", "--binary", self.binary])
         with open(self.binary, "rb") as f:
             restored = f.read(4)
         self.assertEqual(original, restored)
-        result = run_pm(["list", "--binary", self.binary])
+        result = self.run_pm(["list", "--binary", self.binary])
         self.assertEqual(result["patches"], [])
         self.assertEqual(len(result["redo_patches"]), 2)
 
