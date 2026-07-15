@@ -23,6 +23,7 @@ const {
   registerAiProcess,
 } = require('../shared/aiProcessRegistry');
 const { getKnownOciImagePlatform } = require('./decompilerCommands');
+const { recordRuntimeEvent } = require('../shared/runtimeAudit');
 
 const AUTH_STRICT_LICENSE_ENV = 'BINHOST_DISABLE_LICENSE_FALLBACK';
 const AUTH_CONTENT_KEYS_STDIN_ENV = 'BINHOST_CONTENT_KEYS_STDIN';
@@ -514,6 +515,7 @@ function staticHandlers(config) {
       const [scriptRelPath, ...rest] = argsWithScript;
       const scriptPath = path.join(extensionPath, scriptRelPath);
       const startedAt = Date.now();
+      recordRuntimeEvent('python', scriptRelPath, { source: 'staticHandlers.runPython', argc: rest.length });
       cp.execFile(getPythonExecutable(), [scriptPath, ...rest], {
         encoding: 'utf8', cwd: root, maxBuffer, timeout, env: buildPythonEnv(),
       }, (err, stdout, stderr) => {

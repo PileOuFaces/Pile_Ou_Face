@@ -20,6 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const cp = require('child_process');
 const { buildRuntimeEnv, resolveDockerExecutable, getExtensionPath } = require('../shared/utils');
+const { recordRuntimeEvent } = require('../shared/runtimeAudit');
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
@@ -1075,6 +1076,7 @@ function _findPythonExe(root) {
 
 function _runPythonDirect(pythonExe, args, root, timeout = 60000, storageDir = '') {
   return new Promise((resolve, reject) => {
+    recordRuntimeEvent('python', args?.[0] || '', { source: 'decompilerCommands._runPythonDirect', argc: Array.isArray(args) ? Math.max(0, args.length - 1) : 0 });
     cp.execFile(
       pythonExe, args,
       { encoding: 'utf8', cwd: root, timeout, maxBuffer: 8 * 1024 * 1024, env: buildRuntimeEnv(root, storageDir) },

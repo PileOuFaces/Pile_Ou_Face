@@ -12,6 +12,7 @@ const path = require('path');
 const cp = require('child_process');
 const crypto = require('crypto');
 const logger = require('./logger');
+const { recordRuntimeEvent } = require('./runtimeAudit');
 
 const logChannel = vscode.window.createOutputChannel('Pile ou Face');
 
@@ -277,6 +278,7 @@ function check32BitToolchain(output) {
 
 function runCommand(command, args, cwd, output, envOverrides = {}, streamHooks = {}) {
   const env = buildRuntimeEnv(cwd, '', envOverrides);
+  recordRuntimeEvent('process', command, { source: 'runCommand', argc: Array.isArray(args) ? args.length : 0 });
   output.appendLine(`[cmd] ${command} ${args.join(' ')}`);
   return new Promise((resolve, reject) => {
     let settled = false;
