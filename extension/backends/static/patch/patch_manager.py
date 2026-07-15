@@ -87,6 +87,30 @@ def _save(binary_path: str, data: dict) -> None:
         json.dump(data, fh, indent=2)
 
 
+def _decode_hex_bytes(
+    bytes_hex: str, error_prefix: str
+) -> tuple[bytes | None, str | None]:
+    try:
+        return bytes(int(b, 16) for b in bytes_hex.strip().split()), None
+    except ValueError as exc:
+        return None, f"{error_prefix}: {exc}"
+
+
+def _write_bytes(binary_path: str, offset: int, raw: bytes) -> None:
+    with open(binary_path, "r+b") as f:
+        f.seek(offset)
+        f.write(raw)
+
+
+def _replace_bytes(binary_path: str, offset: int, raw: bytes) -> bytes:
+    with open(binary_path, "r+b") as f:
+        f.seek(offset)
+        original_raw = f.read(len(raw))
+        f.seek(offset)
+        f.write(raw)
+    return original_raw
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -109,10 +133,10 @@ def apply_patch(
     if not os.path.isfile(binary_abs):
         return {"ok": False, "error": f"File not found: {binary_path}"}
 
-    try:
-        raw = bytes(int(b, 16) for b in bytes_hex.strip().split())
-    except ValueError as exc:
-        return {"ok": False, "error": f"Invalid hex bytes: {exc}"}
+    raw, error = _decode_hex_bytes(bytes_hex, "Invalid hex bytes")
+    if error:
+        return {"ok": False, "error": error}
+    assert raw is not None
 
     file_size = os.path.getsize(binary_abs)
     if offset < 0 or offset + len(raw) > file_size:
@@ -121,13 +145,7 @@ def apply_patch(
             "error": (f"Out of range: offset={offset} len={len(raw)} size={file_size}"),
         }
 
-    # Read original bytes before patching
-    with open(binary_abs, "r+b") as f:
-        f.seek(offset)
-        original_raw = f.read(len(raw))
-        f.seek(offset)
-        f.write(raw)
-
+    original_raw = _replace_bytes(binary_abs, offset, raw)
     original_hex = " ".join(f"{b:02x}" for b in original_raw)
 
     entry = {
@@ -161,14 +179,13 @@ def revert_patch(binary_path: str, patch_id: str) -> dict:
     if target is None:
         return {"ok": False, "error": f"Patch id not found: {patch_id}"}
 
-    try:
-        raw = bytes(int(b, 16) for b in target["original_bytes"].split())
-    except ValueError as exc:
-        return {"ok": False, "error": f"Invalid stored original_bytes: {exc}"}
-
-    with open(binary_abs, "r+b") as f:
-        f.seek(target["offset"])
-        f.write(raw)
+    raw, error = _decode_hex_bytes(
+        target["original_bytes"], "Invalid stored original_bytes"
+    )
+    if error:
+        return {"ok": False, "error": error}
+    assert raw is not None
+    _write_bytes(binary_abs, target["offset"], raw)
 
     data["patches"] = [p for p in data["patches"] if p["id"] != patch_id]
     data.setdefault("redo_patches", []).append(target)
@@ -199,14 +216,13 @@ def redo_patch(binary_path: str, patch_id: str | None = None) -> dict:
     if target is None:
         return {"ok": False, "error": f"Patch redo introuvable : {patch_id}"}
 
-    try:
-        raw = bytes(int(b, 16) for b in target["patched_bytes"].split())
-    except ValueError as exc:
-        return {"ok": False, "error": f"Invalid stored patched_bytes: {exc}"}
-
-    with open(binary_abs, "r+b") as f:
-        f.seek(target["offset"])
-        f.write(raw)
+    raw, error = _decode_hex_bytes(
+        target["patched_bytes"], "Invalid stored patched_bytes"
+    )
+    if error:
+        return {"ok": False, "error": error}
+    assert raw is not None
+    _write_bytes(binary_abs, target["offset"], raw)
 
     data["redo_patches"] = [p for p in redo_entries if p["id"] != target["id"]]
     data.setdefault("patches", []).append(target)
@@ -226,13 +242,13 @@ def revert_all(binary_path: str) -> dict:
     data = _load(binary_path)
 
     for patch in reversed(data["patches"]):
-        try:
-            raw = bytes(int(b, 16) for b in patch["original_bytes"].split())
-        except ValueError as exc:
-            return {"ok": False, "error": f"Invalid stored original_bytes: {exc}"}
-        with open(binary_abs, "r+b") as f:
-            f.seek(patch["offset"])
-            f.write(raw)
+        raw, error = _decode_hex_bytes(
+            patch["original_bytes"], "Invalid stored original_bytes"
+        )
+        if error:
+            return {"ok": False, "error": error}
+        assert raw is not None
+        _write_bytes(binary_abs, patch["offset"], raw)
         data.setdefault("redo_patches", []).append(patch)
 
     data["patches"] = []
