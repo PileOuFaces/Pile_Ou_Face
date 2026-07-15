@@ -2,6 +2,7 @@
 """Tests pour backends.static.rules.rules_manager."""
 
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -18,8 +19,15 @@ from backends.static.rules.rules_manager import RulesManager
 class TestRulesManager(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
+        self.storage = Path(self.tmpdir) / "storage"
+        self._old_storage_env = os.environ.get("POF_STORAGE_DIR")
+        os.environ["POF_STORAGE_DIR"] = str(self.storage)
 
     def tearDown(self):
+        if self._old_storage_env is None:
+            os.environ.pop("POF_STORAGE_DIR", None)
+        else:
+            os.environ["POF_STORAGE_DIR"] = self._old_storage_env
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def _mgr(self, global_cfg=None):
@@ -36,14 +44,26 @@ class TestRulesManager(unittest.TestCase):
             "test.yar", "rule Foo { condition: false }", "yara"
         )
         self.assertEqual(rule_id, "user:yara:test.yar")
-        f = Path(self.tmpdir) / ".pile-ou-face" / "rules" / "yara" / "test.yar"
+        f = self.storage / "rules" / "yara" / "test.yar"
         self.assertTrue(f.exists())
+        self.assertFalse((Path(self.tmpdir) / ".pile-ou-face").exists())
 
     def test_add_capa_rule_creates_file(self):
         rule_id = self._mgr().add_user_rule("my.yml", "name: x", "capa")
         self.assertEqual(rule_id, "user:capa:my.yml")
-        f = Path(self.tmpdir) / ".pile-ou-face" / "rules" / "capa" / "my.yml"
+        f = self.storage / "rules" / "capa" / "my.yml"
         self.assertTrue(f.exists())
+        self.assertFalse((Path(self.tmpdir) / ".pile-ou-face").exists())
+
+    def test_without_storage_env_uses_local_rules_dir(self):
+        os.environ["POF_STORAGE_DIR"] = ""
+        rule_id = self._mgr().add_user_rule(
+            "local.yar", "rule Local { condition: false }", "yara"
+        )
+
+        self.assertEqual(rule_id, "user:yara:local.yar")
+        self.assertTrue((Path(self.tmpdir) / "rules" / "yara" / "local.yar").exists())
+        self.assertFalse((Path(self.tmpdir) / ".pile-ou-face").exists())
 
     def test_add_rule_rejects_path_traversal_name(self):
         with self.assertRaises(ValueError):
