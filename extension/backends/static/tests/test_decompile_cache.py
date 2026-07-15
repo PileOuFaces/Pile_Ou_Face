@@ -96,6 +96,19 @@ class TestCacheHelpers(unittest.TestCase):
             k2 = _cache_key("/bin/ls", "0x401000", annotations_json=str(ann_path))
             self.assertNotEqual(k1, k2)
 
+    def test_cache_key_changes_with_sqlite_annotations_signature(self):
+        k1 = _cache_key(
+            "/bin/ls",
+            "0x401000",
+            annotations_signature="rename:0x401000:foo",
+        )
+        k2 = _cache_key(
+            "/bin/ls",
+            "0x401000",
+            annotations_signature="rename:0x401000:bar",
+        )
+        self.assertNotEqual(k1, k2)
+
     def test_cache_key_reuses_identical_binary_content_across_paths(self):
         with tempfile.TemporaryDirectory() as d:
             a = Path(d) / "a.bin"
@@ -229,7 +242,12 @@ class TestDecompileFunctionCache(unittest.TestCase):
                     return_value=self._empty_stack,
                 ),
             ):
-                result = decompile_function("/bin/ls", "0x401000", cache_dir=cache_dir)
+                result = decompile_function(
+                    "/bin/ls",
+                    "0x401000",
+                    cache_dir=cache_dir,
+                    annotations_db=None,
+                )
 
             self.assertEqual(run_called["n"], 0)
             self.assertEqual(result["code"], "/* cached */")
@@ -267,7 +285,12 @@ class TestDecompileFunctionCache(unittest.TestCase):
                     return_value=self._empty_stack,
                 ),
             ):
-                decompile_function("/bin/ls", "0x401000", cache_dir=cache_dir)
+                decompile_function(
+                    "/bin/ls",
+                    "0x401000",
+                    cache_dir=cache_dir,
+                    annotations_db=None,
+                )
 
             key = _cache_key(
                 "/bin/ls",
@@ -300,7 +323,12 @@ class TestDecompileFunctionCache(unittest.TestCase):
                     return_value=self._empty_stack,
                 ),
             ):
-                decompile_function("/bin/ls", "0x401000", cache_dir=cache_dir)
+                decompile_function(
+                    "/bin/ls",
+                    "0x401000",
+                    cache_dir=cache_dir,
+                    annotations_db=None,
+                )
 
             key = _cache_key(
                 "/bin/ls",
@@ -351,7 +379,12 @@ class TestDecompileFunctionCache(unittest.TestCase):
                     return_value=self._empty_stack,
                 ),
             ):
-                result = decompile_function("/bin/ls", "0x401000", cache_dir=cache_dir)
+                result = decompile_function(
+                    "/bin/ls",
+                    "0x401000",
+                    cache_dir=cache_dir,
+                    annotations_db=None,
+                )
 
             self.assertEqual(set(calls), {"retdec", "ghidra", "tool_a"})
             self.assertIn("addr", result)
@@ -399,7 +432,12 @@ class TestDecompileFunctionCache(unittest.TestCase):
                     return_value=self._empty_stack,
                 ),
             ):
-                result = decompile_function("/bin/ls", "0x401000", cache_dir=cache_dir)
+                result = decompile_function(
+                    "/bin/ls",
+                    "0x401000",
+                    cache_dir=cache_dir,
+                    annotations_db=None,
+                )
 
             self.assertIn("tool_a", calls)
             self.assertIn("addr", result)

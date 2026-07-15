@@ -65,6 +65,32 @@ function createActions({
       return false;
     }
   };
+  const normalizeHexAddress = (value) => {
+    const text = String(value || '').trim();
+    if (!text) return '';
+    const raw = text.startsWith('0x') || text.startsWith('0X') ? text.slice(2) : text;
+    if (!/^[0-9a-fA-F]+$/.test(raw)) return text.toLowerCase();
+    return `0x${raw.replace(/^0+/, '') || '0'}`.toLowerCase();
+  };
+  const readFunctionAddrsFromMapping = (mappingPath) => {
+    if (!mappingPath || !fs.existsSync(mappingPath)) return [];
+    try {
+      const mapping = JSON.parse(fs.readFileSync(mappingPath, 'utf8'));
+      const addrs = new Set();
+      for (const fn of Array.isArray(mapping?.functions) ? mapping.functions : []) {
+        const addr = normalizeHexAddress(fn?.addr);
+        if (addr) addrs.add(addr);
+      }
+      for (const line of Array.isArray(mapping?.lines) ? mapping.lines : []) {
+        const addr = normalizeHexAddress(line?.addr);
+        const functionAddr = normalizeHexAddress(line?.function_addr);
+        if (addr && functionAddr && addr === functionAddr) addrs.add(addr);
+      }
+      return Array.from(addrs).sort((a, b) => parseInt(a, 16) - parseInt(b, 16));
+    } catch (_) {
+      return [];
+    }
+  };
 
   const finalizeDisasmOpen = async ({
     disasmPath,
@@ -83,6 +109,7 @@ function createActions({
     }
     if (notifyWebview) {
       const archPayload = readArchSupportFromMapping(mappingPath, fs);
+      const functionAddrs = readFunctionAddrsFromMapping(mappingPath);
       panel.webview.postMessage({
         type: 'hubSetBinaryPath',
         binaryPath: pathForWebview,
@@ -93,6 +120,7 @@ function createActions({
         type: 'hubDisasmReady',
         binaryPath: pathForWebview,
         arch: archPayload,
+        functionAddrs,
       });
     }
     if (refreshSidebar) refreshSidebar(pathForWebview);

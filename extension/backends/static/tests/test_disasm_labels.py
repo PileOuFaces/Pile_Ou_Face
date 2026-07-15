@@ -15,6 +15,8 @@ ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from backends.static.annotations.annotation_db import AnnotationDb
+
 try:
     import capstone as _capstone
     import lief as _lief
@@ -86,6 +88,50 @@ class TestLabelsInline(unittest.TestCase):
             ann = make_ann(d, {addr_str: {"name": "my_func", "comment": ""}})
             _, asm2 = run_disasm(self.binary, ["--annotations-json", ann], self.tmp)
         self.assertIn("my_func:", asm2)
+
+    def test_sqlite_annotation_label_header_inserted(self):
+        """SQLite AnnotationStore renames are injected without legacy JSON."""
+        _, asm = run_disasm(self.binary, [], self.tmp)
+        lines = [l for l in asm.splitlines() if l.strip().startswith("0x")]
+        if not lines:
+            self.skipTest("No disasm lines found")
+        addr_str = lines[0].strip().split(":")[0].strip()
+        db_path = Path(self.tmp) / "annotations.db"
+        with AnnotationDb(db_path) as db:
+            db.save_annotation(self.binary, addr_str, "rename", "sqlite_func")
+            db.save_annotation(self.binary, addr_str, "comment", "sqlite comment")
+
+        _, asm2 = run_disasm(
+            self.binary,
+            ["--annotations-db", str(db_path)],
+            self.tmp,
+        )
+        self.assertIn("sqlite_func:", asm2)
+        self.assertIn("sqlite comment", asm2)
+
+    def test_function_and_instruction_renames_are_visually_distinct(self):
+        """Function-start renames and inner-address labels get distinct markers."""
+        _, asm = run_disasm(self.binary, [], self.tmp)
+        lines = [l for l in asm.splitlines() if l.strip().startswith("0x")]
+        if len(lines) < 2:
+            self.skipTest("Need at least two disasm lines")
+        fn_addr = lines[0].strip().split(":")[0].strip()
+        inner_addr = lines[1].strip().split(":")[0].strip()
+        db_path = Path(self.tmp) / "annotations.db"
+        with AnnotationDb(db_path) as db:
+            db.save_annotation(self.binary, fn_addr, "rename", "renamed_entry")
+            db.save_annotation(self.binary, inner_addr, "rename", "inner_note")
+
+        _, asm2 = run_disasm(
+            self.binary,
+            ["--annotations-db", str(db_path)],
+            self.tmp,
+        )
+
+        self.assertIn(f"; -- function rename @ {fn_addr} --", asm2)
+        self.assertIn("renamed_entry:", asm2)
+        self.assertIn(f"; -- annotation label @ {inner_addr} --", asm2)
+        self.assertIn("inner_note:", asm2)
 
     def test_call_operand_replaced(self):
         """call 0x<addr> becomes call <name> when name is known."""

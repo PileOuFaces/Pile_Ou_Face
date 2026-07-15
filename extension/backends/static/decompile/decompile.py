@@ -1299,6 +1299,7 @@ def _cache_key(
     func_name: str = "",
     decompiler: str = "",
     annotations_json: str | None = None,
+    annotations_signature: str = "",
     stack_signature: str = "",
     typed_structs_signature: str = "",
 ) -> str:
@@ -1313,6 +1314,7 @@ def _cache_key(
             _normalize_symbol_lookup_name(func_name),
             decompiler,
             ann_signature,
+            annotations_signature,
             stack_signature,
             typed_structs_signature,
         ]
@@ -1541,6 +1543,53 @@ def _load_annotations_payload(
         return names, comments
     except Exception:
         return {}, {}
+
+
+def _normalize_annotation_addr(value: str) -> str:
+    return str(value or "").lower().lstrip("0x").lstrip("0") or "0"
+
+
+def _load_sqlite_annotations_payload(
+    binary_path: str,
+    annotations_db: str | None = "auto",
+) -> tuple[dict[str, str], dict[str, str], str]:
+    if annotations_db is None:
+        return {}, {}, ""
+    try:
+        from backends.static.annotations.annotation_db import AnnotationDb
+
+        db_path = None if annotations_db in ("", "auto") else annotations_db
+        with AnnotationDb(db_path) as db:
+            rows = db.get_annotations(binary_path)
+    except Exception:
+        return {}, {}, ""
+
+    names: dict[str, str] = {}
+    comments: dict[str, str] = {}
+    signature_rows: list[dict[str, str]] = []
+    for row in rows:
+        addr_norm = _normalize_annotation_addr(row.get("addr", ""))
+        kind = str(row.get("kind") or "").strip()
+        value = str(row.get("value") or "").strip()
+        if not value:
+            continue
+        if kind == "rename":
+            names[addr_norm] = value
+        elif kind == "comment":
+            comments[addr_norm] = value
+        if kind in {"rename", "comment"}:
+            signature_rows.append({"addr": addr_norm, "kind": kind, "value": value})
+
+    if not signature_rows:
+        return names, comments, ""
+
+    signature_payload = json.dumps(
+        sorted(signature_rows, key=lambda item: (item["addr"], item["kind"])),
+        sort_keys=True,
+        ensure_ascii=True,
+    )
+    signature = hashlib.sha256(signature_payload.encode()).hexdigest()
+    return names, comments, signature
 
 
 def _load_typed_struct_annotation_payload(
@@ -2616,6 +2665,7 @@ def decompile_function(
     func_name: str = "",
     decompiler: str = "",
     annotations_json: str | None = None,
+    annotations_db: str | None = "auto",
     stack_vars: list[dict] | None = None,
     cache_dir: Path | None = None,
     provider: str = "auto",
@@ -2634,6 +2684,11 @@ def decompile_function(
         base["error"] = f"Fichier introuvable : {binary_path}"
         return base
     ann_map, annotation_comments = _load_annotations_payload(annotations_json)
+    sqlite_ann_map, sqlite_annotation_comments, annotations_signature = (
+        _load_sqlite_annotations_payload(binary_path, annotations_db)
+    )
+    ann_map.update(sqlite_ann_map)
+    annotation_comments.update(sqlite_annotation_comments)
     typed_struct_map, typed_struct_comments, typed_struct_note_catalog = (
         _load_typed_struct_annotation_payload(binary_path)
     )
@@ -2665,6 +2720,7 @@ def decompile_function(
         func_name=func_name,
         decompiler=decompiler,
         annotations_json=annotations_json,
+        annotations_signature=annotations_signature,
         stack_signature=_stack_signature(stack_frame_data, stack_vars),
         typed_structs_signature=typed_struct_signature(binary_path),
     )

@@ -167,30 +167,6 @@ class TestAnnotationStore(unittest.TestCase):
         self.assertEqual(bookmarks, [])
         self.assertEqual(comment, "kept")
 
-    def test_migrate_legacy_json_populates_store(self):
-        legacy = {
-            "0x401000": {
-                "comment": "old comment",
-                "name": "old_name",
-                "bookmark": True,
-                "bookmarkLabel": "b",
-                "bookmarkColor": "#111111",
-                "reviewStatus": "reviewed",
-                "reviewNotes": "notes",
-            },
-        }
-        with self._store() as store:
-            store.migrate_legacy_json(legacy)
-            self.assertEqual(store.get_comment("0x401000"), "old comment")
-            self.assertEqual(store.get_name("0x401000"), "old_name")
-            self.assertEqual(
-                store.get_review("0x401000"), {"status": "reviewed", "notes": "notes"}
-            )
-            bookmarks = store.list_bookmarks()
-        self.assertEqual(
-            bookmarks, [{"addr": "0x401000", "label": "b", "color": "#111111"}]
-        )
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,7 +8,6 @@
 
 const vscode = require('vscode');
 const cp = require('child_process');
-const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -1514,7 +1513,7 @@ function staticHandlers(config) {
       const { binaryPath, addr, funcName, full, decompiler, provider, useCache = true } = message;
       const decompilersJsonPath = storageDir ? path.join(storageDir, 'decompilers.json') : '';
 
-      // Build base args (annotation injection preserved)
+      // Build base args. Decompilers read annotations directly from AnnotationStore.
       const buildArgs = (targetDecompiler) => {
         const args = ['backends/static/decompile/decompile.py', '--binary', binaryPath];
         if (full) args.push('--full');
@@ -1522,14 +1521,6 @@ function staticHandlers(config) {
         if (targetDecompiler) args.push('--decompiler', targetDecompiler);
         if (provider && provider !== 'auto') args.push('--provider', provider);
         if (!useCache) args.push('--no-cache');
-        // annotation injection (keep existing logic)
-        const absPath = path.isAbsolute(binaryPath) ? binaryPath : path.join(root, binaryPath);
-        const annHash = crypto.createHash('sha256')
-          .update(absPath)
-          .update(fs.existsSync(absPath) ? String(fs.statSync(absPath).mtimeMs) : '')
-          .digest('hex').slice(0, 16);
-        const annPath = storageDir ? path.join(storageDir, 'annotations', `${annHash}.json`) : '';
-        if (annPath && fs.existsSync(annPath)) args.push('--annotations-json', annPath);
         return args;
       };
 

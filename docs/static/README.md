@@ -1166,9 +1166,6 @@ statut/notes de revue) sur les adresses d'un binaire.
   `review_status`, `review_notes`, `bookmark`, `bookmark_color`.
 - Binaire identifié par le **hash sha256 de son contenu** (pas chemin+mtime) — stable
   entre machines/recompilations, prépare le terrain pour la synchro multi-utilisateur.
-- Migration automatique et paresseuse des anciens fichiers JSON par binaire de l'UI Hub
-  (`{storageDir}/annotations/*.json`, système historique de l'extension) au premier
-  chargement — l'ancien fichier est renommé en `.migrated`, jamais supprimé.
 - `AnnotationStore` reste la façade haut niveau, maintenant construite sur
   `annotation_db.AnnotationDb` (et non plus `DisasmCache`).
 
@@ -1188,7 +1185,7 @@ with AnnotationStore("/path/to/binary.elf") as store:
 
 CLI unifié (utilisé en subprocess par l'extension, sortie JSON groupée par adresse) :
 `annotate` / `review` / `bookmark` / `delete-bookmark` / `clear-bookmarks` /
-`delete-annotation` / `migrate-legacy` / `list --grouped`.
+`delete-annotation` / `list --grouped`.
 
 **Interface Hub** :
 - **Ctrl+Clic** sur une adresse dans le désassemblage → popup de saisie de note

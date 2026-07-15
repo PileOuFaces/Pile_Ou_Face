@@ -23,6 +23,171 @@ function isStaleStaticBinaryResponse(msg, scope) {
   return true;
 }
 
+function refreshDisasmForAnnotations(binaryPath, annotations) {
+  const bp = String(binaryPath || (typeof getStaticBinaryPath === 'function' ? getStaticBinaryPath() : '') || '').trim();
+  if (!bp || !annotations || typeof annotations !== 'object') return;
+  const relevantEntries = Object.entries(annotations)
+    .filter(([, entry]) => entry && (entry.name || entry.comment));
+  if (!relevantEntries.length) return;
+  const signature = `${bp}\n${JSON.stringify(relevantEntries)}`;
+  if (window._lastAnnotationDisasmRefreshSignature === signature) return;
+  window._lastAnnotationDisasmRefreshSignature = signature;
+  vscode.postMessage({
+    type: 'hubOpenDisasm',
+    binaryPath: bp,
+    useCache: false,
+    openInEditor: false,
+  });
+}
+
+function isAnnotatedFunctionAddress(addr) {
+  const normalized = typeof normalizeHexAddress === 'function' ? normalizeHexAddress(addr) : String(addr || '').trim();
+  if (!normalized) return false;
+  if (window.annotationFunctionAddrs instanceof Set && window.annotationFunctionAddrs.has(normalized)) return true;
+  const decompileSelect = document.getElementById('decompileAddrSelect');
+  if (decompileSelect && Array.from(decompileSelect.options).some((opt) => opt.value === normalized)) return true;
+  if (typeof getFunctionRowByAddr === 'function' && getFunctionRowByAddr(normalized)) return true;
+  const knownFunctionSources = [
+    window.functionListCache || [],
+    window.discoveredFunctionsCache || [],
+    window.symbolsCache || [],
+  ];
+  return knownFunctionSources.some((source) => (Array.isArray(source) ? source : []).some((entry) => {
+    const entryAddr = typeof normalizeHexAddress === 'function' ? normalizeHexAddress(entry?.addr || '') : String(entry?.addr || '').trim();
+    return entryAddr === normalized;
+  }));
+}
+
+function focusAnnotationEditor(addr, annotation = null, options = {}) {
+  const normalized = typeof normalizeHexAddress === 'function' ? normalizeHexAddress(addr) : String(addr || '').trim();
+  if (!normalized) return;
+  const entry = annotation || window._annotations?.[normalized] || {};
+  const goInput = document.getElementById('goToAddrInput');
+  if (goInput) goInput.value = normalized;
+  const badge = document.getElementById('annotationAddrBadge');
+  if (badge) { badge.textContent = normalized; badge.dataset.addr = normalized; badge.classList.add('has-addr'); }
+  const btn = document.getElementById('btnAddAnnotation');
+  if (btn) {
+    btn.disabled = false;
+    btn.textContent = entry?.name || entry?.comment ? 'Modifier' : 'Annoter';
+    btn.title = entry?.name || entry?.comment ? 'Modifier cette annotation' : 'Annoter cette adresse';
+  }
+  const commentEl = document.getElementById('annotationComment');
+  if (commentEl) {
+    commentEl.value = entry?.comment || '';
+    if (options.focus !== false) {
+      commentEl.focus();
+      commentEl.select?.();
+    }
+  }
+  const nameEl = document.getElementById('annotationName');
+  if (nameEl) nameEl.value = entry?.name || '';
+}
+
+function renderAnnotationsList(annotations = window._annotations || {}) {
+  const listEl = document.getElementById('annotationsList');
+  if (!listEl) return false;
+  const entries = Object.entries(annotations).filter(([, v]) => v && (v.comment || v.name));
+  if (entries.length === 0) {
+    listEl.replaceChildren();
+    const p = document.createElement('p');
+    p.className = 'hint annotations-empty';
+    p.textContent = 'Aucune annotation.';
+    listEl.appendChild(p);
+    return true;
+  }
+  listEl.replaceChildren();
+  entries.forEach(([addr, v]) => {
+    const item = document.createElement('div');
+    const isFunctionAnnotation = isAnnotatedFunctionAddress(addr);
+    item.className = `annotation-item ${isFunctionAnnotation ? 'annotation-item-function' : 'annotation-item-note'}`;
+
+    const addrCode = document.createElement('code');
+    addrCode.className = 'addr-link';
+    addrCode.dataset.addr = addr;
+    addrCode.textContent = addr;
+    item.appendChild(addrCode);
+
+    const kindBadge = document.createElement('span');
+    kindBadge.className = `ann-kind ${isFunctionAnnotation ? 'ann-kind-function' : 'ann-kind-note'}`;
+    kindBadge.textContent = isFunctionAnnotation ? 'Fonction' : 'Annotation';
+    kindBadge.title = isFunctionAnnotation
+      ? 'Rename/commentaire posé sur une adresse de fonction'
+      : 'Annotation posée sur une instruction ou adresse interne';
+    item.appendChild(kindBadge);
+
+    const meta = document.createElement('div');
+    meta.className = 'ann-meta';
+    if (v.name) {
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'ann-name';
+      nameSpan.textContent = '→ ' + v.name;
+      meta.appendChild(nameSpan);
+    }
+    if (v.comment) {
+      const cmtSpan = document.createElement('span');
+      cmtSpan.className = 'ann-comment';
+      cmtSpan.textContent = v.comment.length > 80 ? v.comment.substring(0, 80) + '…' : v.comment;
+      cmtSpan.title = v.comment;
+      meta.appendChild(cmtSpan);
+    }
+    item.appendChild(meta);
+
+    const editBtn = document.createElement('button');
+    editBtn.className = 'btn btn-sm ann-edit';
+    editBtn.textContent = 'Modifier';
+    editBtn.title = 'Modifier cette annotation';
+    editBtn.dataset.addr = addr;
+    item.appendChild(editBtn);
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn btn-sm ann-delete';
+    delBtn.textContent = '×';
+    delBtn.title = 'Supprimer cette annotation';
+    delBtn.dataset.addr = addr;
+    item.appendChild(delBtn);
+
+    listEl.appendChild(item);
+  });
+
+  listEl.querySelectorAll('.addr-link').forEach((link) => {
+    link.style.cursor = 'pointer';
+    link.addEventListener('click', () => {
+      const a = link.dataset.addr;
+      const ann = annotations[a];
+      focusAnnotationEditor(a, ann, { focus: false });
+      vscode.postMessage({ type: 'hubGoToAddress', addr: a, binaryPath: getStaticBinaryPath() });
+    });
+  });
+
+  listEl.querySelectorAll('.ann-edit').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const a = btn.dataset.addr;
+      focusAnnotationEditor(a, annotations[a]);
+    });
+  });
+
+  listEl.querySelectorAll('.ann-delete').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      vscode.postMessage({ type: 'hubDeleteAnnotation', binaryPath: getStaticBinaryPath(), addr: btn.dataset.addr });
+    });
+  });
+
+  return true;
+}
+
+function mergeAnnotationFunctionAddrs(addrs) {
+  const target = window.annotationFunctionAddrs instanceof Set ? window.annotationFunctionAddrs : new Set();
+  (Array.isArray(addrs) ? addrs : []).forEach((addr) => {
+    const normalized = typeof normalizeHexAddress === 'function' ? normalizeHexAddress(addr) : String(addr || '').trim();
+    if (normalized) target.add(normalized);
+  });
+  window.annotationFunctionAddrs = target;
+  return target;
+}
+
 window.addEventListener('message', (event) => {
   const msg = event.data;
   if (!msg?.type) return;
@@ -319,85 +484,20 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubAnnotations') {
+    if (isStaleStaticBinaryResponse(msg, 'static-annotations')) return;
     const annotations = msg.annotations || {};
     window._annotations = annotations;
-    const listEl = document.getElementById('annotationsList');
-    if (!listEl) {
+    window.annotationFunctionAddrs = new Set();
+    mergeAnnotationFunctionAddrs(msg.functionAddrs);
+    refreshDisasmForAnnotations(msg.binaryPath, annotations);
+    if (typeof populateDecompileSelect === 'function') {
+      populateDecompileSelect(window.symbolsCache || []);
+    }
+    if (!renderAnnotationsList(annotations)) {
       renderBookmarks();
       updateActiveContextBars(window._lastDisasmAddr);
       updateDisasmSessionSummary();
       return;
-    }
-    const entries = Object.entries(annotations).filter(([, v]) => v && (v.comment || v.name));
-    if (entries.length === 0) {
-      listEl.replaceChildren();
-      const p = document.createElement('p');
-      p.className = 'hint annotations-empty';
-      p.textContent = 'Aucune annotation.';
-      listEl.appendChild(p);
-    } else {
-      listEl.replaceChildren();
-      entries.forEach(([addr, v]) => {
-        const item = document.createElement('div');
-        item.className = 'annotation-item';
-
-        const addrCode = document.createElement('code');
-        addrCode.className = 'addr-link';
-        addrCode.dataset.addr = addr;
-        addrCode.textContent = addr;
-        item.appendChild(addrCode);
-
-        const meta = document.createElement('div');
-        meta.className = 'ann-meta';
-        if (v.name) {
-          const nameSpan = document.createElement('span');
-          nameSpan.className = 'ann-name';
-          nameSpan.textContent = '→ ' + v.name;
-          meta.appendChild(nameSpan);
-        }
-        if (v.comment) {
-          const cmtSpan = document.createElement('span');
-          cmtSpan.className = 'ann-comment';
-          cmtSpan.textContent = v.comment.length > 80 ? v.comment.substring(0, 80) + '…' : v.comment;
-          cmtSpan.title = v.comment;
-          meta.appendChild(cmtSpan);
-        }
-        item.appendChild(meta);
-
-        const delBtn = document.createElement('button');
-        delBtn.className = 'btn btn-sm ann-delete';
-        delBtn.textContent = '×';
-        delBtn.title = 'Supprimer cette annotation';
-        delBtn.dataset.addr = addr;
-        item.appendChild(delBtn);
-
-        listEl.appendChild(item);
-      });
-
-      listEl.querySelectorAll('.addr-link').forEach((link) => {
-        link.style.cursor = 'pointer';
-        link.addEventListener('click', () => {
-          const a = link.dataset.addr;
-          document.getElementById('goToAddrInput').value = a;
-          const badge = document.getElementById('annotationAddrBadge');
-          if (badge) { badge.textContent = a; badge.dataset.addr = a; badge.classList.add('has-addr'); }
-          const btn = document.getElementById('btnAddAnnotation');
-          if (btn) btn.disabled = false;
-          const ann = annotations[a];
-          const commentEl = document.getElementById('annotationComment');
-          if (commentEl) commentEl.value = ann?.comment || '';
-          const nameEl = document.getElementById('annotationName');
-          if (nameEl) nameEl.value = ann?.name || '';
-          vscode.postMessage({ type: 'hubGoToAddress', addr: a, binaryPath: getStaticBinaryPath() });
-        });
-      });
-
-      listEl.querySelectorAll('.ann-delete').forEach((btn) => {
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          vscode.postMessage({ type: 'hubDeleteAnnotation', binaryPath: getStaticBinaryPath(), addr: btn.dataset.addr });
-        });
-      });
     }
     renderBookmarks();
     updateActiveContextBars(window._lastDisasmAddr);
@@ -409,6 +509,8 @@ window.addEventListener('message', (event) => {
     tabDataCache.disasm = { binaryPath: msg.binaryPath.trim() };
     tabDataCache.callgraph = null;
     tabDataCache.cfg = null;
+    mergeAnnotationFunctionAddrs(msg.functionAddrs);
+    renderAnnotationsList();
     if (msg.arch && typeof msg.arch === 'object') {
       currentArchSupport = msg.arch;
       // rAF : s'assure que showGroup (éventuel) a fini de reconstruire la barre
@@ -2044,6 +2146,7 @@ window.addEventListener('message', (event) => {
     const radar = buildFallbackFunctionsRadarFromRows(rows, { rawMode: true });
     window.discoveredFunctionsCache = rows;
     populateDecompileSelect(window.symbolsCache || []);
+    renderAnnotationsList();
     if (list.length === 0) {
       const bp = getStaticBinaryPath();
       let hint = msg.analyzed ? 'Aucune fonction supplémentaire trouvée (tous les prologues correspondent à des symboles connus).' : 'Ouvrez d\'abord le désassemblage.';
@@ -2083,6 +2186,7 @@ window.addEventListener('message', (event) => {
     const rows = buildFunctionsRowsFromRadarAndSymbols(symList, conventions, radarFunctions);
     populateDecompileSelect(window.symbolsCache || symList);
     renderFunctionsWorkspace(rows, radar || buildFallbackFunctionsRadarFromRows(rows));
+    renderAnnotationsList();
     if (typeof tabDataCache !== 'undefined') {
       tabDataCache['discovered'] = { binaryPath: getStaticBinaryPath() };
     }
@@ -2397,22 +2501,10 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubActiveAddr') {
-    const badge = document.getElementById('annotationAddrBadge');
-    if (badge) {
-      badge.textContent = msg.addr;
-      badge.dataset.addr = msg.addr;
-      badge.classList.add('has-addr');
-    }
     const spanLength = normalizeSpanLength(msg.spanLength || 1);
     setActiveAddressContext(msg.addr, spanLength);
-    const btn = document.getElementById('btnAddAnnotation');
-    if (btn) btn.disabled = false;
-    // Pre-fill form with existing annotation for this address
     const ann = window._annotations?.[msg.addr];
-    const nameEl = document.getElementById('annotationName');
-    const cmtEl = document.getElementById('annotationComment');
-    if (nameEl) nameEl.value = ann?.name || '';
-    if (cmtEl) cmtEl.value = ann?.comment || '';
+    focusAnnotationEditor(msg.addr, ann, { focus: false });
     const cfgBlockFound = syncCfgActiveAddress(msg.addr, {
       reveal: isStaticTabActive('cfg'),
       revealTable: isStaticTabActive('cfg') && document.querySelector('#cfgContent .cfg-table-view')?.style.display !== 'none',
@@ -2477,9 +2569,14 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubAnnotations') {
+    if (isStaleStaticBinaryResponse(msg, 'static-annotations')) return;
     // Annotations loaded — could highlight addresses
     window._annotations = msg.annotations || {};
+    refreshDisasmForAnnotations(msg.binaryPath, window._annotations);
     clearDecompileCaches();
+    if (typeof populateDecompileSelect === 'function') {
+      populateDecompileSelect(window.symbolsCache || []);
+    }
     renderBookmarks();
     renderCurrentFunctionsWorkspace();
     syncFunctionsSelectionFromContext(window._lastDisasmAddr || functionsUiState.selectedAddr);

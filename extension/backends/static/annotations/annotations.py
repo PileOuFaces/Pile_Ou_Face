@@ -207,26 +207,6 @@ class AnnotationStore:
             if "label" in v
         ]
 
-    def migrate_legacy_json(self, legacy_annotations: dict) -> None:
-        """Insère les entrées d'un ancien fichier JSON par binaire (système A)."""
-        for addr, entry in legacy_annotations.items():
-            if entry.get("comment"):
-                self.comment(addr, entry["comment"])
-            if entry.get("name"):
-                self.rename(addr, entry["name"])
-            if entry.get("reviewStatus") or entry.get("reviewNotes"):
-                self.set_review(
-                    addr,
-                    status=entry.get("reviewStatus", ""),
-                    notes=entry.get("reviewNotes", ""),
-                )
-            if entry.get("bookmark"):
-                self.set_bookmark(
-                    addr,
-                    label=entry.get("bookmarkLabel", addr),
-                    color=entry.get("bookmarkColor", "#4ec9b0"),
-                )
-
     def export_json(self) -> builtins.list[dict]:
         """Retourne toutes les annotations au format JSON-serializable."""
         return self._cache.get_annotations(self._binary_path)
@@ -344,14 +324,6 @@ def main() -> int:
     # clear-bookmarks
     sub.add_parser("clear-bookmarks", help="Clear all bookmarks")
 
-    # migrate-legacy
-    p_migrate = sub.add_parser(
-        "migrate-legacy", help="Migrate a legacy JSON blob into this store"
-    )
-    p_migrate.add_argument(
-        "--json", required=True, help="JSON-encoded legacy annotations dict"
-    )
-
     args = parser.parse_args()
     configure_logging()
 
@@ -413,86 +385,10 @@ def main() -> int:
             store.clear_bookmarks()
             print(json.dumps(_grouped_export(store), indent=2, ensure_ascii=False))
 
-        elif args.cmd == "migrate-legacy":
-            store.migrate_legacy_json(json.loads(args.json))
-            print(json.dumps(_grouped_export(store), indent=2, ensure_ascii=False))
-
     return 0
 
 
-import contextlib
-import json as _json
-import time as _time
-from pathlib import Path as _Path
-
-
-def get_annotations_path(workspace: str) -> _Path:
-    return _Path(workspace) / ".pof" / "annotations.json"
-
-
-def load_annotations(workspace: str, binary_sha256: str) -> dict:
-    """Load annotations for a specific binary from workspace storage."""
-    path = get_annotations_path(workspace)
-    if not path.exists():
-        return {}
-    try:
-        data = _json.loads(path.read_text())
-        return data.get(binary_sha256, {})
-    except Exception:
-        return {}
-
-
-def save_annotation(
-    workspace: str, binary_sha256: str, addr: str, note: str, color: str = "#4ec9b0"
-) -> None:
-    """Persist a note for a specific address in the workspace annotations file."""
-    path = get_annotations_path(workspace)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        data = _json.loads(path.read_text()) if path.exists() else {}
-    except Exception:
-        data = {}
-    if binary_sha256 not in data:
-        data[binary_sha256] = {}
-    data[binary_sha256][addr] = {
-        "note": note,
-        "color": color,
-        "timestamp": _time.time(),
-    }
-    path.write_text(_json.dumps(data, indent=2))
-
-
 if __name__ == "__main__":
-    import argparse as _argparse
-    import hashlib as _hashlib
     import sys
 
-    # If the first argument is --save or --load, use the new persistence CLI
-    if len(sys.argv) > 1 and sys.argv[1] in ("--save", "--load"):
-        parser = _argparse.ArgumentParser()
-        parser.add_argument("--save", action="store_true")
-        parser.add_argument("--load", action="store_true")
-        parser.add_argument("--workspace", required=True)
-        parser.add_argument("--binary", default=None)
-        parser.add_argument("--addr", default=None)
-        parser.add_argument("--note", default="")
-        parser.add_argument("--color", default="#4ec9b0")
-        args = parser.parse_args()
-
-        binary_sha256 = "unknown"
-        if args.binary:
-            with contextlib.suppress(Exception):
-                binary_sha256 = _hashlib.sha256(
-                    open(args.binary, "rb").read()
-                ).hexdigest()
-
-        if args.save and args.addr:
-            save_annotation(
-                args.workspace, binary_sha256, args.addr, args.note, args.color
-            )
-            print('{"saved": true}')
-        elif args.load:
-            result = load_annotations(args.workspace, binary_sha256)
-            print(_json.dumps(result))
-    else:
-        sys.exit(main())
+    sys.exit(main())
