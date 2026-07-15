@@ -32,24 +32,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 
 def _patches_dir(binary_path: str) -> Path:
-    """Walk up from binary's directory up to 6 levels looking for .pile-ou-face.
+    """Return the patch storage directory for a binary."""
+    storage_dir = os.environ.get("POF_STORAGE_DIR", "").strip()
+    if storage_dir:
+        return Path(storage_dir) / "patches"
 
-    If found, return <that_dir>/patches.
-    Fallback: dirname(binary)/.pile-ou-face/patches.
-    """
     binary_abs = os.path.abspath(binary_path)
     start = os.path.dirname(binary_abs)
-    current = start
-    for _ in range(7):  # start dir + up to 6 levels
-        candidate = os.path.join(current, ".pile-ou-face")
-        if os.path.isdir(candidate):
-            return Path(candidate) / "patches"
-        parent = os.path.dirname(current)
-        if parent == current:
-            break
-        current = parent
-    # Fallback: next to the binary
-    return Path(start) / ".pile-ou-face" / "patches"
+    return Path(start) / "patches"
 
 
 def _patch_file(binary_path: str) -> Path:

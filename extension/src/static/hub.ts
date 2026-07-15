@@ -240,7 +240,7 @@ function createHub(config) {
         env[AUTH_CONTENT_KEYS_STDIN_ENV] = '1';
       } else {
         // Pas de clés en ligne : vérifier la présence de fichiers licence offline signés.
-        const licenseDir = path.join(storageDir || path.join(root, '.pile-ou-face'), 'licenses');
+        const licenseDir = path.join(storageDir, 'licenses');
         let hasOfflineLicenses = false;
         try {
           const files = fs.readdirSync(licenseDir);
@@ -382,7 +382,6 @@ function createHub(config) {
     });
 
     // ── Watcher decompilers.json — actualisation automatique du panneau ─────────
-    const _decompilersConfigPath = path.join(storageDir || path.join(root, '.pile-ou-face'), 'decompilers.json');
     const _refreshDecompilerList = async () => {
       try {
         const { stdout } = await new Promise((resolve, reject) => {
@@ -403,7 +402,7 @@ function createHub(config) {
     // Watcher sur le fichier de config — debounce 600 ms pour éviter les doubles triggers
     let _decompilerWatchDebounce = null;
     const _decompilerConfigWatcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(vscode.Uri.file(storageDir || path.join(root, '.pile-ou-face')), 'decompilers.json'),
+      new vscode.RelativePattern(vscode.Uri.file(storageDir), 'decompilers.json'),
     );
     const _onDecompilerConfigChange = () => {
       globalThis.clearTimeout(_decompilerWatchDebounce);
@@ -996,7 +995,7 @@ function createHub(config) {
           .update(fs.existsSync(absPath) ? String(fs.statSync(absPath).mtimeMs) : '')
           .digest('hex')
           .slice(0, 16);
-        return path.join(storageDir || path.join(root, '.pile-ou-face'), 'annotations', `${hash}.json`);
+        return path.join(storageDir, 'annotations', `${hash}.json`);
       };
 
       const buildRunTraceInit = async (forcedBinaryPath = '', preset = null, forcedSourcePath = '', payloadTargetMode = 'auto') => {
