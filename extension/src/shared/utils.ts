@@ -7,8 +7,10 @@
 
 const vscode = require('vscode');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const cp = require('child_process');
+const crypto = require('crypto');
 const logger = require('./logger');
 
 const logChannel = vscode.window.createOutputChannel('Pile ou Face');
@@ -23,7 +25,7 @@ const logInfo = (message) => logAt('info', message);
 const logWarning = (message) => logAt('warning', message);
 const logError = (message) => logAt('error', message);
 
-const TEMP_DIR_NAME = '.pile-ou-face';
+const TEMP_DIR_NAME = 'pile-ou-face';
 
 // Singleton initialisé au démarrage avec context.extensionPath.
 // Sépare "où vivent les backends" (extensionPath) de "workspace utilisateur" (root).
@@ -73,7 +75,9 @@ function findGitRoot(dir) {
 }
 
 function getTempDir(root) {
-  return path.resolve(findGitRoot(resolveProjectRoot(root)), TEMP_DIR_NAME);
+  const projectRoot = path.resolve(findGitRoot(resolveProjectRoot(root)) || process.cwd());
+  const key = crypto.createHash('sha256').update(projectRoot).digest('hex').slice(0, 16);
+  return path.join(os.tmpdir(), TEMP_DIR_NAME, key);
 }
 
 function ensureTempDir(root) {

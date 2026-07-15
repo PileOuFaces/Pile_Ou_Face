@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Moteur de décompilation générique — aucun décompilateur n'est câblé en dur.
 
-Tous les outils sont déclarés dans .pile-ou-face/decompilers.json (ou via
-la variable d'environnement DECOMPILERS_CONFIG). Le moteur détecte ce qui
-est disponible localement (champ "detect") ou via Docker (champ "docker_image"),
-et route automatiquement vers le meilleur résultat.
+Tous les outils sont déclarés via la variable d'environnement DECOMPILERS_CONFIG
+ou dans POF_STORAGE_DIR/decompilers.json. Le moteur détecte ce qui est disponible
+localement (champ "detect") ou via Docker (champ "docker_image"), et route
+automatiquement vers le meilleur résultat.
 
 Ajouter un nouveau décompilateur = ajouter une entrée JSON + éventuellement
 un adapter dans son container. Zéro code Python à modifier dans ce fichier.
@@ -226,7 +226,7 @@ def _normalize_decompiler_id(value: str | None) -> str:
 def _load_decompilers(
     config_path: Path | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Charge tous les décompilateurs depuis .pile-ou-face/decompilers.json.
+    """Charge tous les décompilateurs depuis DECOMPILERS_CONFIG/POF_STORAGE_DIR.
 
     Chaque entrée peut déclarer :
       - "command" / "full_command"       : invocation locale
