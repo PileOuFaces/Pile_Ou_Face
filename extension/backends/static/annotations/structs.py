@@ -15,7 +15,7 @@ from typing import Any
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
-STRUCTS_REL_PATH = os.path.join(".pile-ou-face", "structs.json")
+STRUCTS_FILE_NAME = "structs.json"
 
 _COMPOUND_RE = re.compile(
     r"(?:(?:typedef)\s+)?(?P<kind>struct|union)(?:\s+(?P<tag>[A-Za-z_]\w*))?\s*\{(?P<body>.*?)\}\s*(?P<alias>[A-Za-z_]\w*)?\s*;",
@@ -73,9 +73,11 @@ _PRIMITIVE_TYPES = {
 
 
 def get_struct_store_path(workspace_root: str | None = None) -> str:
-    """Return the filesystem path where struct definitions are stored (.pile-ou-face/structs.json)."""
-    root = workspace_root or os.getcwd()
-    return os.path.join(root, STRUCTS_REL_PATH)
+    """Return the filesystem path where struct definitions are stored."""
+    root = (
+        workspace_root or os.environ.get("POF_STORAGE_DIR", "").strip() or os.getcwd()
+    )
+    return os.path.join(root, STRUCTS_FILE_NAME)
 
 
 def _strip_comments(source_text: str) -> str:
@@ -281,7 +283,7 @@ def parse_struct_definitions(source_text: str) -> dict[str, dict[str, Any]]:
 
 
 def load_struct_store(workspace_root: str | None = None) -> dict[str, Any]:
-    """Load the full struct store with all type definitions and source from .pile-ou-face/structs.json."""
+    """Load the full struct store with all type definitions and source."""
     store_path = get_struct_store_path(workspace_root)
     if not os.path.isfile(store_path):
         return {"source": "", "definitions": {}}
@@ -317,7 +319,7 @@ def list_struct_store(workspace_root: str | None = None) -> dict[str, Any]:
 def save_struct_source(
     source_text: str, workspace_root: str | None = None
 ) -> dict[str, Any]:
-    """Save C-style struct/union/enum definitions to .pile-ou-face/structs.json so they can be applied to binary data."""
+    """Save C-style struct/union/enum definitions so they can be applied to binary data."""
     definitions = parse_struct_definitions(source_text)
     store_path = get_struct_store_path(workspace_root)
     os.makedirs(os.path.dirname(store_path), exist_ok=True)

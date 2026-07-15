@@ -10,6 +10,7 @@ sys.path.insert(0, ROOT)
 
 from backends.static.annotations.structs import (
     compute_struct_layout,
+    get_struct_store_path,
     load_struct_store,
     parse_struct_definitions,
     save_struct_source,
@@ -47,6 +48,7 @@ class TestStructs(unittest.TestCase):
 
     def test_save_and_load_struct_store(self):
         with tempfile.TemporaryDirectory() as tmp:
+            storage = os.path.join(tmp, "storage")
             save_struct_source(
                 """
                 typedef struct Header {
@@ -54,11 +56,15 @@ class TestStructs(unittest.TestCase):
                   uint16_t count;
                 } Header;
                 """,
-                workspace_root=tmp,
+                workspace_root=storage,
             )
-            store = load_struct_store(tmp)
+            store = load_struct_store(storage)
             self.assertIn("Header", store["definitions"])
             self.assertIn("typedef struct Header", store["source"])
+            self.assertEqual(
+                get_struct_store_path(storage), os.path.join(storage, "structs.json")
+            )
+            self.assertFalse(os.path.exists(os.path.join(tmp, ".pile-ou-face")))
 
     def test_parse_enum_and_union_definitions(self):
         definitions = parse_struct_definitions(

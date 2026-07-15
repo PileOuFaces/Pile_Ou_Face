@@ -14,12 +14,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 from backends.shared.utils import normalize_addr as _normalize_addr
 
-TYPED_STRUCT_REFS_REL_PATH = os.path.join(".pile-ou-face", "typed_struct_refs.json")
+TYPED_STRUCT_REFS_FILE_NAME = "typed_struct_refs.json"
 
 
 def get_typed_struct_refs_path(workspace_root: str | None = None) -> str:
-    root = workspace_root or os.getcwd()
-    return os.path.join(root, TYPED_STRUCT_REFS_REL_PATH)
+    root = (
+        workspace_root or os.environ.get("POF_STORAGE_DIR", "").strip() or os.getcwd()
+    )
+    return os.path.join(root, TYPED_STRUCT_REFS_FILE_NAME)
 
 
 def _normalize_binary_key(binary_path: str | None) -> str:
