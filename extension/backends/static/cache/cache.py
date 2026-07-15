@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Cache SQLite pour les résultats d'analyse statique.
 
-Format : fichier `.pfdb` (SQLite) stocké sous `.pile-ou-face/pfdb/` ou chemin explicite.
+Format : fichier `.pfdb` (SQLite) stocké sous `POF_STORAGE_DIR/pfdb/` ou chemin explicite.
 Schéma : voir docs/static/BDD_FICHIERS_IDA_CUTTER.md
 
 Usage:
@@ -221,17 +221,6 @@ def compute_sha256(path: str) -> str:
         for chunk in iter(lambda: f.read(65536), b""):
             h.update(chunk)
     return h.hexdigest()
-
-
-def _find_pof_dir(start_dir: Path) -> Path | None:
-    current = start_dir.resolve()
-    while True:
-        candidate = current / ".pile-ou-face"
-        if candidate.is_dir():
-            return candidate
-        if current.parent == current:
-            return None
-        current = current.parent
 
 
 def _sanitize_cache_filename(name: str) -> str:
@@ -1174,16 +1163,16 @@ class DisasmCache:
 def default_cache_path(binary_path: str) -> str:
     """Retourne le chemin par défaut du fichier cache pour un binaire.
 
-    Place le cache dans `.pile-ou-face/pfdb/` pour éviter de polluer le
-    répertoire du binaire avec des fichiers générés.
+    Dans l'extension, `POF_STORAGE_DIR` place le cache dans `storageDir/pfdb/`.
+    Sans environnement VS Code, le CLI direct utilise `pfdb/` à côté du binaire.
 
     Exemple :
         `/workspace/examples/prog` →
-        `/workspace/.pile-ou-face/pfdb/prog.<hash>.pfdb`
+        `<storageDir>/pfdb/prog.<hash>.pfdb`
     """
     p = Path(binary_path).resolve()
-    pof_dir = _find_pof_dir(p.parent)
-    cache_dir = (pof_dir / "pfdb") if pof_dir else (p.parent / ".pile-ou-face" / "pfdb")
+    storage_dir = os.environ.get("POF_STORAGE_DIR", "").strip()
+    cache_dir = ((Path(storage_dir).resolve()) if storage_dir else p.parent) / "pfdb"
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     cache_key = hashlib.sha256(str(p).encode("utf-8")).hexdigest()[:16]

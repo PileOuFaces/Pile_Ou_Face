@@ -48,44 +48,41 @@ class TestComputeSha256(unittest.TestCase):
 
 
 class TestDefaultCachePath(unittest.TestCase):
-    def test_uses_workspace_cache_dir_when_available(self):
+    def test_uses_storage_dir_cache_dir_when_available(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            (root / ".pile-ou-face").mkdir()
+            storage_dir = root / "storage"
             examples_dir = root / "examples"
             examples_dir.mkdir()
             binary_path = examples_dir / "demo.elf"
             binary_path.write_bytes(b"\x7fELF" + b"\x00" * 32)
 
-            cache_path = Path(default_cache_path(str(binary_path)))
+            with mock.patch.dict("os.environ", {"POF_STORAGE_DIR": str(storage_dir)}):
+                cache_path = Path(default_cache_path(str(binary_path)))
 
             self.assertTrue(str(cache_path).endswith(".pfdb"))
-            self.assertEqual(
-                cache_path.parent, (root / ".pile-ou-face" / "pfdb").resolve()
-            )
+            self.assertEqual(cache_path.parent, (storage_dir / "pfdb").resolve())
             self.assertNotIn("/examples/.pfdb/", str(cache_path))
+            self.assertFalse((root / ".pile-ou-face").exists())
 
-    def test_falls_back_to_local_pof_dir_when_workspace_cache_missing(self):
+    def test_without_storage_env_uses_local_pfdb_dir(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             binary_path = root / "demo.elf"
             binary_path.write_bytes(b"\x7fELF" + b"\x00" * 32)
 
-            with mock.patch(
-                "backends.static.cache.cache._find_pof_dir", return_value=None
-            ):
+            with mock.patch.dict("os.environ", {"POF_STORAGE_DIR": ""}):
                 cache_path = Path(default_cache_path(str(binary_path)))
 
             self.assertTrue(str(cache_path).endswith(".pfdb"))
-            self.assertEqual(
-                cache_path.parent, (root / ".pile-ou-face" / "pfdb").resolve()
-            )
+            self.assertEqual(cache_path.parent, (root / "pfdb").resolve())
             self.assertTrue(cache_path.parent.exists())
+            self.assertFalse((root / ".pile-ou-face").exists())
 
     def test_uses_unique_cache_name_per_binary_path(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            (root / ".pile-ou-face").mkdir()
+            storage_dir = root / "storage"
             left = root / "a"
             right = root / "b"
             left.mkdir()
@@ -95,8 +92,9 @@ class TestDefaultCachePath(unittest.TestCase):
             binary_a.write_bytes(b"\x7fELF" + b"\x00" * 32)
             binary_b.write_bytes(b"\x7fELF" + b"\x01" * 32)
 
-            cache_a = default_cache_path(str(binary_a))
-            cache_b = default_cache_path(str(binary_b))
+            with mock.patch.dict("os.environ", {"POF_STORAGE_DIR": str(storage_dir)}):
+                cache_a = default_cache_path(str(binary_a))
+                cache_b = default_cache_path(str(binary_b))
 
             self.assertNotEqual(cache_a, cache_b)
 
