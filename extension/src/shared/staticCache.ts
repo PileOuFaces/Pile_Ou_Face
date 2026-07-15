@@ -61,10 +61,11 @@ function runCacheIndex(storageDir, args, { parseJson = true } = {}) {
     const extensionPath = getExtensionPath();
     const scriptPath = getCacheIndexScriptPath(extensionPath);
     if (!fs.existsSync(scriptPath)) return null;
+    const workspaceRoot = path.resolve(storageDir);
     const pythonExe = detectPythonExecutable(extensionPath);
     const result = cp.spawnSync(
       pythonExe,
-      [scriptPath, '--db', getCacheIndexDbPath(storageDir), ...args],
+      [scriptPath, '--db', getCacheIndexDbPath(storageDir), ...args, '--workspace-root', workspaceRoot],
       {
         cwd: storageDir,
         env: { ...process.env, PYTHONPATH: extensionPath || storageDir },

@@ -5,7 +5,18 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { readCache, writeCache, getCacheKey, getCacheDir, getCacheIndexDbPath, readMeta } = require('../shared/staticCache');
+const {
+  readCache,
+  writeCache,
+  getCacheKey,
+  getCacheDir,
+  getCacheIndexDbPath,
+  readMeta,
+  listIndexedCacheEntries,
+} = require('../shared/staticCache');
+const { setExtensionPath } = require('../shared/utils');
+
+setExtensionPath(path.resolve(__dirname, '../..'));
 
 function makeTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'pof-cache-test-'));
@@ -117,6 +128,18 @@ describe('staticCache — writeCache / readCache round-trip', () => {
     const dir = makeTmpDir();
     const result = readCache(dir, '/does/not/exist.bin', 'symbols');
     expect(result).to.equal(null);
+  });
+
+  it('records cache writes in the SQLite index', () => {
+    const dir = makeTmpDir();
+    const bin = makeBinary(dir);
+    writeCache(dir, bin, 'info', { arch: 'x86_64' });
+
+    const entries = listIndexedCacheEntries(dir);
+    expect(entries).to.be.an('array').with.length(1);
+    expect(entries[0].binaryPath).to.equal(path.resolve(bin));
+    expect(entries[0].cacheTypes).to.deep.equal(['info']);
+    expect(entries[0].status).to.equal('ok');
   });
 });
 
