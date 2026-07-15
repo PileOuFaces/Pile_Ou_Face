@@ -689,6 +689,9 @@ function renderDetailPanel(detailModel, { onCloseDetail, emptyText } = {}) {
   const article = document.createElement('article');
   article.className = 'stack-detail-card';
 
+  const header = document.createElement('div');
+  header.className = 'stack-detail-header';
+
   const titleWrap = document.createElement('div');
   titleWrap.className = 'stack-detail-heading';
 
@@ -735,6 +738,27 @@ function renderDetailPanel(detailModel, { onCloseDetail, emptyText } = {}) {
   header.appendChild(actions);
 
   article.appendChild(header);
+
+  const rows = document.createElement('div');
+  rows.className = 'stack-detail-rows';
+  (Array.isArray(detailModel.rows) ? detailModel.rows : []).forEach((row) => {
+    const item = document.createElement('div');
+    item.className = 'stack-detail-row';
+
+    const label = document.createElement('div');
+    label.className = 'stack-detail-label';
+    label.textContent = row.label;
+    item.appendChild(label);
+
+    const value = document.createElement('div');
+    value.className = 'stack-detail-value';
+    value.textContent = row.value;
+    item.appendChild(value);
+
+    rows.appendChild(item);
+  });
+  article.appendChild(rows);
+  dom.stackDetail.appendChild(article);
 }
 
 function renderDetailPlaceholder(emptyText = 'Cliquez sur un slot pour afficher plus de details.') {

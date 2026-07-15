@@ -4,7 +4,22 @@ import tseslint from 'typescript-eslint';
 
 export default [
   {
-    ignores: ['node_modules/', 'out/', '.c8_output/', 'coverage/', '*.vsix', 'webview/media/app/'],
+    ignores: [
+      'node_modules/',
+      'out/',
+      'dist/',
+      '.c8_output/',
+      'coverage/',
+      'htmlcov/',
+      '.pile-ou-face/',
+      '.pytest_cache/',
+      '.ruff_cache/',
+      'backends/.venv/',
+      'backends/**/__pycache__/',
+      'backends/**/*.pyc',
+      '*.vsix',
+      'webview/media/app/',
+    ],
   },
   js.configs.recommended,
   prettier,
@@ -52,7 +67,22 @@ export default [
     },
   },
   {
-    files: ['test/**/*.js'],
+    files: ['*.js', 'scripts/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 2020,
+      sourceType: 'commonjs',
+      globals: {
+        require: 'readonly',
+        module: 'readonly',
+        process: 'readonly',
+        console: 'readonly',
+        __dirname: 'readonly',
+        __filename: 'readonly',
+      },
+    },
+  },
+  {
+    files: ['test/**/*.js', 'front/tests/**/*.js'],
     languageOptions: {
       ecmaVersion: 2020,
       sourceType: 'commonjs',
@@ -80,7 +110,7 @@ export default [
     },
   },
   {
-    files: ['webview/**/*.js'],
+    files: ['webview/**/*.js', 'front/**/*.js'],
     languageOptions: {
       ecmaVersion: 2020,
       sourceType: 'module',
@@ -118,7 +148,12 @@ export default [
   },
   {
     // UMD bundles that reference `module` and `define` for CommonJS/AMD detection.
-    files: ['webview/shared/cfgHelpers.js', 'webview/shared/elk.bundled.js'],
+    files: [
+      'webview/shared/cfgHelpers.js',
+      'webview/shared/elk.bundled.js',
+      'front/shared/cfgHelpers.js',
+      'front/shared/elk.bundled.js',
+    ],
     languageOptions: {
       globals: {
         module: 'readonly',
@@ -143,6 +178,15 @@ export default [
       'webview/dynamic/runTraceController.js',
       'webview/dynamic/payloadHistoryController.js',
       'webview/dynamic/dynamicPayload.js',
+      'front/hub.js',
+      'front/shared/*.js',
+      'front/static/*.js',
+      'front/dynamic/panel.js',
+      'front/dynamic/dynamicPresetController.js',
+      'front/dynamic/dynamicVisualizerController.js',
+      'front/dynamic/runTraceController.js',
+      'front/dynamic/payloadHistoryController.js',
+      'front/dynamic/dynamicPayload.js',
     ],
     languageOptions: {
       ecmaVersion: 2020,
@@ -153,6 +197,19 @@ export default [
       'no-unused-vars': 'off',
       'no-control-regex': 'off',
       'no-empty': 'off',
+    },
+  },
+  {
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: {
+        console: 'readonly',
+        process: 'readonly',
+        URL: 'readonly',
+        URLSearchParams: 'readonly',
+      },
     },
   },
 ];
