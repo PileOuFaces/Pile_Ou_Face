@@ -323,7 +323,7 @@ compute_sha256(path) -> str
 ```
 
 ### Notes MCP
-- `default_cache_path(bp)` → `<workspace>/.pile-ou-face/pfdb/<binary_name>.<hash>.pfdb`
+- `default_cache_path(bp)` → `$POF_STORAGE_DIR/pfdb/<binary_name>.<hash>.pfdb` quand `POF_STORAGE_DIR` est defini, sinon `<binary_dir>/pfdb/<binary_name>.<hash>.pfdb` pour un lancement CLI direct
 - Les chemins sont normalisés en absolu (`os.path.abspath`) avant lookup
 - `invalidate` force le recalcul à la prochaine analyse
 
@@ -987,7 +987,7 @@ purge_binary(db_path: str, binary_path=None) -> int  # 0=all, int=deleted
 ### Output (stats)
 ```json
 {
-  "db_path": "/abs/path/.pile-ou-face/pfdb/binary.0123abcd4567ef89.pfdb",
+  "db_path": "/abs/storage/pfdb/binary.0123abcd4567ef89.pfdb",
   "size_bytes": 204800, "size_human": "200 KB",
   "binaries": 3, "total_disasm_lines": 12000
 }
