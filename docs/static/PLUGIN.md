@@ -65,11 +65,10 @@ Dans l'extension VS Code, les plugins sont installes et charges depuis le
 ```
 
 Le host public ne doit pas lire ni documenter un dossier de plugins sous
-`.pile-ou-face/plugins`. Le dossier `.pile-ou-face/` peut encore servir a des
-lancements CLI, MCP ou artefacts de developpement, mais les caches, plugins et
-licences utilises par l'extension vivent dans le stockage VS Code du workspace
-pour eviter de polluer le repository et pour permettre a deux workspaces
-differents d'avoir des plugins differents.
+`.pile-ou-face/plugins`. Ce dossier n'est pas migre ni charge par defaut par
+l'extension. Les caches, plugins et licences utilises par l'extension vivent
+dans le stockage VS Code du workspace pour eviter de polluer le repository et
+pour permettre a deux workspaces differents d'avoir des plugins differents.
 
 Pour les tests CLI hors VS Code, la recherche peut etre forcee explicitement avec
 `$POF_PLUGIN_PATH`.
