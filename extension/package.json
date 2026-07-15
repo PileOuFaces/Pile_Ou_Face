@@ -280,6 +280,11 @@
           "type": "boolean",
           "default": false,
           "description": "Active les snapshots de diagnostic performance webview/extension host dans les logs Pile ou Face. Désactivé par défaut pour les versions publiées."
+        },
+        "pileOuFace.runtimeUsageAudit": {
+          "type": "boolean",
+          "default": false,
+          "description": "Active l'audit runtime des commandes, messages webview et subprocess Python dans storageDir/audit-runtime-usage.jsonl. Désactivé par défaut."
         }
       }
     }

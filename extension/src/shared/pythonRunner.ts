@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 const cp = require('child_process');
 const path = require('path');
+const { recordRuntimeEvent } = require('./runtimeAudit');
 
 /**
  * Crée une fonction runPython(argsWithScript, opts) qui exécute un script Python en subprocess.
@@ -19,6 +20,7 @@ function makeRunPython({ root, extensionPath, getPythonExecutable, buildPythonEn
     new Promise((resolve, reject) => {
       const [scriptRelPath, ...rest] = argsWithScript;
       const scriptPath = path.join(extensionPath || root, scriptRelPath);
+      recordRuntimeEvent('python', scriptRelPath, { source: 'pythonRunner', argc: rest.length });
       cp.execFile(resolveExe(), [scriptPath, ...rest], {
         encoding: 'utf8', cwd: root, maxBuffer, timeout, env: resolveEnv(),
       }, (err, stdout, stderr) => {

@@ -47,6 +47,10 @@ const mock = {
   workspace: {
     workspaceFolders: undefined,
     createFileSystemWatcher: () => fileSystemWatcher,
+    getConfiguration: () => ({
+      get: (_key, fallback) => fallback,
+      inspect: () => ({}),
+    }),
   },
   window: {
     showErrorMessage: noop,

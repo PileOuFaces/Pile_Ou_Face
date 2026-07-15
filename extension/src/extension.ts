@@ -41,6 +41,7 @@ const { registerStaticCommands } = require('./static/commands');
 const { registerDecompilerCommands } = require('./static/decompilerCommands');
 const { AuthService } = require('./shared/authService');
 const { resolveAuthServerUrl } = require('./shared/authConfig');
+const { configureRuntimeAudit, recordRuntimeEvent, resetRuntimeAudit } = require('./shared/runtimeAudit');
 const logger = require('./shared/logger');
 
 const decorationTypes = new Map();
@@ -87,6 +88,8 @@ function activate(context) {
   _registerGlobalErrorHandlers();
   const storageDir  = ensureStorageDir(context);
   const globalDir   = getGlobalStorageDir(context);
+  const auditEnabled = vscode.workspace.getConfiguration('pileOuFace').get('runtimeUsageAudit', false);
+  configureRuntimeAudit({ storageDir, logChannel, vscode, enabled: auditEnabled === true });
 
   const applyLogLevelFromConfig = () => {
     const level = vscode.workspace.getConfiguration('pileOuFace').get('logLevel', 'warning');
@@ -172,6 +175,7 @@ function activate(context) {
     new Promise((resolve, reject) => {
       const [scriptRelPath, ...rest] = argsWithScript;
       const scriptPath = require('path').join(cwd || root, scriptRelPath);
+      recordRuntimeEvent('python', scriptRelPath, { source: 'extension.commands', argc: rest.length });
       cp.execFile(pythonExe, [scriptPath, ...rest], {
         encoding: 'utf8', cwd: cwd || root, maxBuffer, timeout,
         env: buildRuntimeEnv(cwd || root, storageDir),
@@ -189,6 +193,7 @@ function activate(context) {
  */
 function deactivate() {
   _unregisterGlobalErrorHandlers();
+  resetRuntimeAudit();
   for (const deco of decorationTypes.values()) {
     deco.dispose();
   }

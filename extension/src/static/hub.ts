@@ -76,6 +76,7 @@ const { createLoaders } = require('./hub/loaders');
 const { createTraceHistory } = require('./hub/traceHistory');
 const { createActions } = require('./hub/actions');
 const archSupport = require('./hub/archSupport');
+const { recordRuntimeEvent } = require('../shared/runtimeAudit');
 
 const AUTH_STRICT_LICENSE_ENV = 'BINHOST_DISABLE_LICENSE_FALLBACK';
 const AUTH_CONTENT_KEYS_STDIN_ENV = 'BINHOST_CONTENT_KEYS_STDIN';
@@ -500,12 +501,14 @@ function createHub(config) {
     }, 200);
 
     const runPythonJson = (scriptPath, args) => new Promise((resolve, reject) => {
+      recordRuntimeEvent('python', path.relative(root, scriptPath), { source: 'hub.runPythonJson', argc: args.length });
       cp.execFile(pythonExe, [scriptPath, ...args], { encoding: 'utf8', cwd: root, maxBuffer: 32 * 1024 * 1024, timeout: 60000, env: pythonEnv }, (err, stdout) => {
         if (err) { reject(err.message ? err : new Error(String(err))); return; }
         try { resolve(JSON.parse(stdout)); } catch (e) { reject(e); }
       });
     });
     const runPythonJsonViaFile = (scriptPath, args, tmpFile) => new Promise((resolve, reject) => {
+      recordRuntimeEvent('python', path.relative(root, scriptPath), { source: 'hub.runPythonJsonViaFile', argc: args.length });
       cp.execFile(pythonExe, [scriptPath, ...args, '--output', tmpFile], { cwd: root, timeout: 120000, env: pythonEnv }, (err) => {
         if (err) { reject(err.message ? err : new Error(String(err))); return; }
         try {
@@ -524,6 +527,7 @@ function createHub(config) {
       maxBuffer = 4 * 1024 * 1024,
       fallback = '{}',
     } = {}) => new Promise((resolve, reject) => {
+      recordRuntimeEvent('python', args?.[0] || '', { source: 'hub.runPythonJsonFile', argc: Array.isArray(args) ? Math.max(0, args.length - 1) : 0 });
       cp.execFile(
         pythonExe,
         args,
@@ -551,6 +555,7 @@ function createHub(config) {
       timeout = 30000,
       maxBuffer = 4 * 1024 * 1024,
     } = {}) => new Promise((resolve, reject) => {
+      recordRuntimeEvent('python', args?.[0] || '', { source: 'hub.runPythonTextFile', argc: Array.isArray(args) ? Math.max(0, args.length - 1) : 0 });
       cp.execFile(
         pythonExe,
         args,
@@ -829,6 +834,7 @@ function createHub(config) {
     };
     panel.webview.onDidReceiveMessage(async (message) => {
       if (!message || !message.type) return;
+      recordRuntimeEvent('webview_message', message.type, { source: 'hub' });
 
       const dispatchedHandler = hubDispatchMap[message.type];
       if (dispatchedHandler) {
