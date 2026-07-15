@@ -172,9 +172,8 @@ Code, le dossier de reference est `context.storageUri`, c'est-a-dire le
 <workspaceStorage>/<workspace-id>/PileOuFaces.stack-visualizer/
 ```
 
-Le dossier projet `.pile-ou-face/` reste un fallback de compatibilite pour
-certains lancements CLI, MCP ou artefacts de developpement ; ce n'est pas le
-stockage principal de l'extension.
+Le dossier projet `.pile-ou-face/` n'est pas un fallback de stockage pour
+l'extension et il n'est pas migre au demarrage.
 
 Elements persistants :
 

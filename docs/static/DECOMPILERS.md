@@ -14,8 +14,7 @@ Pile ou Face ne contient aucun décompilateur intégré. Tout passe par un fichi
 
 Dans l'extension VS Code, ce fichier est placé dans `context.storageUri` puis
 passé au backend via `DECOMPILERS_CONFIG`. Le dossier projet `.pile-ou-face/`
-peut encore exister pour des lancements CLI ou des migrations anciennes, mais ce
-n'est plus le chemin de référence de l'extension.
+n'est pas migre ni lu comme chemin de reference par l'extension.
 
 Le moteur (`backends/static/decompile/decompile.py`) lit ce fichier, détecte ce qui est disponible, exécute les outils, parse leur sortie, score le résultat, et choisit le meilleur en mode Auto.
 

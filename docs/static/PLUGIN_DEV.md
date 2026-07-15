@@ -394,9 +394,8 @@ plugin dans `context.storageUri/plugins/`, par exemple :
 
 Ne copiez pas de plugin dans `.pile-ou-face/plugins`. Ce chemin n'est pas le
 contrat de chargement de l'extension. Les plugins installes par VS Code vivent
-dans `context.storageUri/plugins/`. Le dossier `.pile-ou-face/` peut encore etre
-utilise par des tests CLI, MCP ou artefacts de developpement, mais il ne doit
-pas etre documente comme stockage principal de l'extension.
+dans `context.storageUri/plugins/`. Le dossier `.pile-ou-face/plugins/` n'est
+pas migre ni charge par defaut par l'extension.
 
 ### 2. Copier le plugin pour un test CLI
 
