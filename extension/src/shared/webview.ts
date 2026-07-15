@@ -144,6 +144,24 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
       banner.classList.remove('is-indeterminate');
     }, 650);
   }
+  function _normalizePluginBinaryPath(value) {
+    return String(value || '').trim().replace(/\\\\/g, '/');
+  }
+  function _isStalePluginBinaryMessage(msg, scope) {
+    var responseBinaryPath = String((msg && msg.binaryPath) || '').trim();
+    var currentBinaryPath = String(window._pofCurrentBinaryPath || '').trim();
+    if (!responseBinaryPath || !currentBinaryPath) return false;
+    if (_normalizePluginBinaryPath(responseBinaryPath) === _normalizePluginBinaryPath(currentBinaryPath)) return false;
+    try {
+      window.vscode.postMessage({
+        type: 'hubDebugLog',
+        scope: scope || 'plugin-iframe',
+        event: 'ignored-stale-response',
+        details: { currentBinaryPath: currentBinaryPath, responseBinaryPath: responseBinaryPath }
+      });
+    } catch (_) {}
+    return true;
+  }
   window.addEventListener('message', function (e) {
     if (!e.data || !e.data.__pof_host) return;
     var msg = e.data.payload;
@@ -154,14 +172,28 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
     if (msg && msg.type === 'showTab') {
       _activatePanel(msg.tabId);
     }
+    if (msg && msg.type === '__binaryPath' && typeof msg.binaryPath === 'string') {
+      window._pofCurrentBinaryPath = msg.binaryPath;
+    }
+    if (msg && msg.__pof_tabload) {
+      if (_isStalePluginBinaryMessage(msg, 'plugin-tabload')) {
+        if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+        return;
+      }
+    }
     if (msg && msg.type === 'hubPluginProgress') {
+      if (_isStalePluginBinaryMessage(msg, 'plugin-progress')) {
+        if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+        return;
+      }
       _showPluginProgress(msg);
     }
     if (msg && msg.type === 'hubPluginResult') {
+      if (_isStalePluginBinaryMessage(msg, 'plugin-result')) {
+        if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+        return;
+      }
       _hidePluginProgressSoon();
-    }
-    if (msg && msg.type === '__binaryPath' && typeof msg.binaryPath === 'string') {
-      window._pofCurrentBinaryPath = msg.binaryPath;
     }
     if (msg && msg.type === '__cssVars' && msg.vars && typeof msg.vars === 'object') {
       var keys = Object.keys(msg.vars);
@@ -207,6 +239,7 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
       _call('registerTabLoader', [tabId]);
       window.addEventListener('message', function (e) {
         if (e.data && e.data.__pof_host && e.data.payload && e.data.payload.__pof_tabload && e.data.payload.tabId === tabId) {
+          if (_isStalePluginBinaryMessage(e.data.payload, 'plugin-tabload')) return;
           if (e.data.payload.binaryPath) window._pofCurrentBinaryPath = e.data.payload.binaryPath;
           fn(e.data.payload.binaryPath);
         }

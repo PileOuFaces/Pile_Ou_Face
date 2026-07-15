@@ -216,6 +216,14 @@ function createTraceHistory({
         postDynamicTraceHistory();
         return;
       }
+      if (normalizeHistoryPath(requestedTracePath) === normalizeHistoryPath(_activeDynamicTracePath)) {
+        const revealed = typeof openVisualizerWebview?.revealCurrentTrace === 'function'
+          ? openVisualizerWebview.revealCurrentTrace()
+          : false;
+        if (revealed) {
+          return;
+        }
+      }
       const trace = readTraceJson(requestedTracePath);
       enrichTraceForVisualizer(trace, {
         jsonPath: requestedTracePath,

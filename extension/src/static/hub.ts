@@ -78,6 +78,13 @@ const { createActions } = require('./hub/actions');
 const archSupport = require('./hub/archSupport');
 
 const AUTH_STRICT_LICENSE_ENV = 'BINHOST_DISABLE_LICENSE_FALLBACK';
+const AUTH_CONTENT_KEYS_STDIN_ENV = 'BINHOST_CONTENT_KEYS_STDIN';
+
+function encodePluginRuntimeStdin(contentKeys) {
+  const entries = Object.entries(contentKeys || {}).filter(([, value]) => String(value || '').trim());
+  if (!entries.length) return '';
+  return `${JSON.stringify({ content_keys: Object.fromEntries(entries) })}\n`;
+}
 
 /**
  * @brief Crée la fonction openHub.
@@ -151,6 +158,36 @@ function createHub(config) {
   let hubHandlersRef = null;
   let pendingAiPrompt = '';
   let latestTraceRunId = 0;
+  const perfDiagnosticsEnabled = () => {
+    try {
+      return Boolean(vscode.workspace.getConfiguration?.('pileOuFace')?.get?.('perfDiagnostics', false));
+    } catch (_) {
+      return false;
+    }
+  };
+
+  context.subscriptions.push(vscode.commands.registerCommand('pileOuFace.perfSnapshot', () => {
+    if (!perfDiagnosticsEnabled()) {
+      vscode.window.showInformationMessage('Diagnostics performance Pile ou Face désactivés. Activez pileOuFace.perfDiagnostics pour capturer un snapshot.');
+      return;
+    }
+    const mem = process.memoryUsage();
+    logChannel.appendLine(`[perf.host] manual.snapshot ${JSON.stringify({
+      ts: new Date().toISOString(),
+      extensionHostMemory: {
+        rss: mem.rss,
+        heapUsed: mem.heapUsed,
+        heapTotal: mem.heapTotal,
+        external: mem.external,
+        arrayBuffers: mem.arrayBuffers,
+      },
+      hubPanelOpen: Boolean(hubPanelRef && !hubPanelRef.disposed),
+    })}`);
+    if (hubPanelRef && !hubPanelRef.disposed) {
+      hubPanelRef.webview.postMessage({ type: 'hubPerfSnapshotRequest', source: 'command' });
+    }
+    logChannel.show(true);
+  }));
 
   return function openHub(initialPanel = 'dashboard', options = {}) {
     if (options.aiPrompt) pendingAiPrompt = String(options.aiPrompt);
@@ -176,8 +213,9 @@ function createHub(config) {
         return resolveAuthServerUrl({ projectRoot: root });
       }
     };
-    const buildPluginRuntimeEnv = async () => {
+    const buildPluginRuntimeContext = async () => {
       const env = { ...pythonEnv };
+      const contentKeys = {};
       let hasOnlineKeys = false;
       try {
         const authSvc = AuthService.getInstance(
@@ -189,8 +227,7 @@ function createHub(config) {
         if (entries.length > 0) {
           hasOnlineKeys = true;
           for (const [pluginId, key] of entries) {
-            const varName = 'POF_CONTENT_KEY_' + String(pluginId).toUpperCase().replace(/-/g, '_').replace(/\./g, '_');
-            env[varName] = String(key);
+            contentKeys[String(pluginId)] = String(key);
           }
         }
       } catch (_e) {
@@ -200,6 +237,7 @@ function createHub(config) {
       if (hasOnlineKeys) {
         // MODE 1 — en ligne : bloquer les fichiers licence offline.
         env[AUTH_STRICT_LICENSE_ENV] = '1';
+        env[AUTH_CONTENT_KEYS_STDIN_ENV] = '1';
       } else {
         // Pas de clés en ligne : vérifier la présence de fichiers licence offline signés.
         const licenseDir = path.join(storageDir || path.join(root, '.pile-ou-face'), 'licenses');
@@ -219,7 +257,71 @@ function createHub(config) {
         // le runtime Python lira les fichiers .license.json signés.
       }
 
-      return env;
+      return { env, stdin: encodePluginRuntimeStdin(contentKeys) };
+    };
+    const runPluginRuntimeJson = async (runtimeArgs, {
+      timeout = 60000,
+      maxBuffer = 4 * 1024 * 1024,
+    } = {}) => {
+      const pluginRuntime = await buildPluginRuntimeContext();
+      const args = [
+        path.join(backendRoot, 'backends/plugins/runtime.py'),
+        ...runtimeArgs,
+      ];
+      const stdout = await new Promise((resolve, reject) => {
+        const proc = cp.spawn(pythonExe, args, {
+          cwd: root,
+          env: pluginRuntime.env,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+        if (pluginRuntime.stdin) {
+          proc.stdin?.write(pluginRuntime.stdin, 'utf8');
+        }
+        proc.stdin?.end();
+        let out = '';
+        let err = '';
+        let settled = false;
+        const finish = (fn, value) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          fn(value);
+        };
+        const timer = setTimeout(() => {
+          try {
+            proc.kill('SIGTERM');
+          } catch (_) {}
+          const wrapped = new Error(`Timeout plugin runtime après ${timeout} ms`);
+          wrapped.stderr = err;
+          finish(reject, wrapped);
+        }, timeout);
+        proc.stdout?.on('data', (chunk) => {
+          out += chunk.toString('utf8');
+          if (Buffer.byteLength(out, 'utf8') > maxBuffer) {
+            try {
+              proc.kill('SIGTERM');
+            } catch (_) {}
+            finish(reject, new Error(`Plugin runtime stdout dépasse ${maxBuffer} octets`));
+          }
+        });
+        proc.stderr?.on('data', (chunk) => {
+          err += chunk.toString('utf8');
+        });
+        proc.on('error', (error) => {
+          error.stderr = err;
+          finish(reject, error);
+        });
+        proc.on('close', (code) => {
+          if (code) {
+            const wrapped = new Error(err || `Plugin runtime exited with code ${code}`);
+            wrapped.stderr = err;
+            finish(reject, wrapped);
+            return;
+          }
+          finish(resolve, out);
+        });
+      });
+      return JSON.parse(stdout || '{}');
     };
     const runHubStartupAction = async (handlers) => {
       if (!handlers) return;
@@ -238,6 +340,7 @@ function createHub(config) {
 
     if (hubPanelRef && !hubPanelRef.disposed) {
       hubPanelRef.reveal(vscode.ViewColumn.Beside);
+      hubPanelRef.webview.postMessage({ type: 'hubPerfDiagnosticsConfig', enabled: perfDiagnosticsEnabled() });
       hubPanelRef.webview.postMessage({ type: 'showPanel', panel: initialPanel, focusGoToAddr: options.focusGoToAddr });
       if (pendingAiPrompt) {
         hubPanelRef.webview.postMessage({ type: 'hubPrefillAiPrompt', prompt: pendingAiPrompt });
@@ -345,18 +448,7 @@ function createHub(config) {
     const licenseRecheckTimer = globalThis.setInterval(async () => {
       if (!panel || !panel.visible) return;
       try {
-        const pluginEnv = await buildPluginRuntimeEnv();
-        const data = await new Promise((resolve, reject) => {
-          cp.execFile(
-            pythonExe,
-            [path.join(backendRoot, 'backends/plugins/runtime.py'), 'list', '--json'],
-            { encoding: 'utf8', cwd: root, timeout: 30000, maxBuffer: 4 * 1024 * 1024, env: pluginEnv },
-            (err, stdout, stderr) => {
-              if (err) { const w = err instanceof Error ? err : new Error(String(err)); w.stderr = stderr; reject(w); return; }
-              try { resolve(JSON.parse(stdout || '{}')); } catch (e) { reject(e); }
-            },
-          );
-        });
+        const data = await runPluginRuntimeJson(['list', '--json'], { timeout: 30000 });
         panel.webview.postMessage({ type: 'pluginStatusRefresh', payload: data });
       } catch (_err) {
         // Non-critical — next check will retry
@@ -365,6 +457,7 @@ function createHub(config) {
     panel.onDidDispose(() => { globalThis.clearInterval(licenseRecheckTimer); });
 
     panel.webview.html = getHubContent(panel.webview, context.extensionUri, initialPanel, globalDir, storageDir);
+    panel.webview.postMessage({ type: 'hubPerfDiagnosticsConfig', enabled: perfDiagnosticsEnabled() });
     const handlerCtx = {
       root,
       storageDir,
@@ -484,26 +577,14 @@ function createHub(config) {
       feature = featureId,
     } = {}) => {
       try {
-        const pluginEnv = await buildPluginRuntimeEnv();
-        const response = await new Promise((resolve, reject) => {
-          cp.execFile(
-            pythonExe,
-            [
-              path.join(backendRoot, 'backends/plugins/runtime.py'),
-              '--host-version', '0.1.0',
-              '--api-version', '1',
-              'invoke-feature',
-              featureId,
-              '--payload-json',
-              JSON.stringify(payload || {}),
-            ],
-            { encoding: 'utf8', cwd: root, timeout, maxBuffer: 4 * 1024 * 1024, env: pluginEnv },
-            (err, stdout, stderr) => {
-              if (err) { const w = err instanceof Error ? err : new Error(String(err)); w.stderr = stderr; reject(w); return; }
-              try { resolve(JSON.parse(stdout || '{}')); } catch (e) { reject(e); }
-            },
-          );
-        });
+        const response = await runPluginRuntimeJson([
+          '--host-version', '0.1.0',
+          '--api-version', '1',
+          'invoke-feature',
+          featureId,
+          '--payload-json',
+          JSON.stringify(payload || {}),
+        ], { timeout });
         if (response?.ok === true) return response.result ?? {};
         const available = Array.isArray(response?.available_commands) ? response.available_commands : [];
         if (pluginId && available.length === 0) {
@@ -737,6 +818,7 @@ function createHub(config) {
       deleteDynamicTraceHistory: traceHistoryHandlers.deleteDynamicTraceHistory,
       clearDynamicTraceHistory: traceHistoryHandlers.clearDynamicTraceHistory,
       hubReady: () => {
+        panel.webview.postMessage({ type: 'hubPerfDiagnosticsConfig', enabled: perfDiagnosticsEnabled() });
         if (!pendingAiPrompt) return;
         panel.webview.postMessage({ type: 'hubPrefillAiPrompt', prompt: pendingAiPrompt });
         pendingAiPrompt = '';
@@ -1268,6 +1350,7 @@ function createHub(config) {
           writeTraceJson(canonicalJsonPath, trace);
           panel.webview.postMessage({
             type: 'dynamicTraceReady',
+            binaryPath,
             traceRunId: (trace.meta?.trace_run_id !== undefined && trace.meta?.trace_run_id !== null)
               ? String(trace.meta.trace_run_id) : null,
             snapshots: Array.isArray(trace.snapshots) ? trace.snapshots : [],
@@ -1288,7 +1371,7 @@ function createHub(config) {
         vscode.window.showErrorMessage(`Trace failed: ${err.message || err}`);
       } finally {
         if (traceRunId === latestTraceRunId) {
-          panel.webview.postMessage({ type: 'runTraceDone' });
+          panel.webview.postMessage({ type: 'runTraceDone', binaryPath });
         }
       }
     });

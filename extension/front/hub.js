@@ -10,6 +10,60 @@ window.discoveredFunctionsCache = window.discoveredFunctionsCache || [];
 window.functionListCache = window.functionListCache || [];
 window.functionRadarCache = window.functionRadarCache || null;
 window.functionWorkspaceState = window.functionWorkspaceState || null;
+window.POF_PERF_DIAGNOSTICS_ENABLED = Boolean(window.POF_PERF_DIAGNOSTICS_ENABLED);
+
+const pofPerfLastByEvent = new Map();
+
+function getPofWebviewPerfSnapshot() {
+  const memory = performance && performance.memory ? {
+    usedJSHeapSize: Math.round(Number(performance.memory.usedJSHeapSize || 0)),
+    totalJSHeapSize: Math.round(Number(performance.memory.totalJSHeapSize || 0)),
+    jsHeapSizeLimit: Math.round(Number(performance.memory.jsHeapSizeLimit || 0)),
+  } : null;
+  return {
+    memory,
+    domNodes: document.getElementsByTagName('*').length,
+    iframes: document.querySelectorAll('iframe').length,
+    tables: document.querySelectorAll('table').length,
+    tableRows: document.querySelectorAll('tr').length,
+    activePanel: document.querySelector('.panel.active')?.id || '',
+    activeStaticTab: typeof getActiveStaticTab === 'function' ? getActiveStaticTab() : '',
+    hidden: document.hidden,
+    viewport: {
+      width: window.innerWidth,
+      height: window.innerHeight,
+      devicePixelRatio: window.devicePixelRatio || 1,
+    },
+  };
+}
+
+function reportPofWebviewPerf(event, details = {}, opts = {}) {
+  if (!window.POF_PERF_DIAGNOSTICS_ENABLED) return;
+  const name = String(event || 'snapshot').replace(/[^a-z0-9_.:-]/gi, '_');
+  const now = performance.now();
+  const last = pofPerfLastByEvent.get(name) || 0;
+  if (!opts.force && now - last < 1500) return;
+  pofPerfLastByEvent.set(name, now);
+  const send = () => {
+    vscode.postMessage({
+      type: 'hubDebugLog',
+      scope: 'perf.webview',
+      event: name,
+      details: {
+        ts: new Date().toISOString(),
+        ...getPofWebviewPerfSnapshot(),
+        ...details,
+      },
+    });
+  };
+  if (opts.afterPaint) requestAnimationFrame(send);
+  else send();
+}
+
+window.capturePofWebviewPerfSnapshot = (event = 'manual', details = {}) => {
+  reportPofWebviewPerf(event, details, { force: true, afterPaint: true });
+};
+window.reportPofWebviewPerf = reportPofWebviewPerf;
 
 // Correspondance tab → feature(s) dans la matrice de support arch
 // Tableau = on prend le niveau le plus bas parmi toutes les features
@@ -346,6 +400,7 @@ runtimeSessionController = runtimeSessionControllerFactory?.initRuntimeSessionCo
   document,
   postMessage: (message) => vscode.postMessage(message),
   showPanel,
+  getBinaryPath: () => String(binaryPathInput?.value || '').trim(),
   fallbackRenderer: window.POFHub?.runtimeFallbackRenderer || window.POFHubRuntimeFallbackRenderer,
 });
 
@@ -442,6 +497,7 @@ renderOllamaConversation();
 renderOllamaConversationHistory();
 requestOllamaModels();
 vscode.postMessage({ type: 'hubReady' });
+window.capturePofWebviewPerfSnapshot?.('hub.ready', { source: 'startup' });
 
 // Initialize plugin iframe router and register all plugin frames
 if (window.PluginIframeRouter) {

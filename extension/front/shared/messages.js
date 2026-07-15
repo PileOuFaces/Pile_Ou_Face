@@ -1,5 +1,193 @@
 // Messages from extension
 function initMessageHandler() {
+function reportStaticWebviewPerf(event, startedAt, details = {}) {
+  window.reportPofWebviewPerf?.(event, {
+    elapsedMs: Math.round((performance.now() - startedAt) * 10) / 10,
+    ...details,
+  }, { afterPaint: true });
+}
+
+function isStaleStaticBinaryResponse(msg, scope) {
+  const normalize = (value) => String(value || '').trim().replace(/\\/g, '/');
+  const currentBinaryPath = typeof getStaticBinaryPath === 'function' ? getStaticBinaryPath() : '';
+  const responseBinaryPath = String(msg?.binaryPath || '').trim();
+  if (!responseBinaryPath || !currentBinaryPath || normalize(responseBinaryPath) === normalize(currentBinaryPath)) {
+    return false;
+  }
+  vscode.postMessage({
+    type: 'hubDebugLog',
+    scope,
+    event: 'ignored-stale-response',
+    details: { currentBinaryPath, responseBinaryPath },
+  });
+  return true;
+}
+
+function refreshDisasmForAnnotations(binaryPath, annotations) {
+  const bp = String(binaryPath || (typeof getStaticBinaryPath === 'function' ? getStaticBinaryPath() : '') || '').trim();
+  if (!bp || !annotations || typeof annotations !== 'object') return;
+  const relevantEntries = Object.entries(annotations)
+    .filter(([, entry]) => entry && (entry.name || entry.comment));
+  if (!relevantEntries.length) return;
+  const signature = `${bp}\n${JSON.stringify(relevantEntries)}`;
+  if (window._lastAnnotationDisasmRefreshSignature === signature) return;
+  window._lastAnnotationDisasmRefreshSignature = signature;
+  vscode.postMessage({
+    type: 'hubOpenDisasm',
+    binaryPath: bp,
+    useCache: false,
+    openInEditor: false,
+  });
+}
+
+function isAnnotatedFunctionAddress(addr) {
+  const normalized = typeof normalizeHexAddress === 'function' ? normalizeHexAddress(addr) : String(addr || '').trim();
+  if (!normalized) return false;
+  if (window.annotationFunctionAddrs instanceof Set && window.annotationFunctionAddrs.has(normalized)) return true;
+  const decompileSelect = document.getElementById('decompileAddrSelect');
+  if (decompileSelect && Array.from(decompileSelect.options).some((opt) => opt.value === normalized)) return true;
+  if (typeof getFunctionRowByAddr === 'function' && getFunctionRowByAddr(normalized)) return true;
+  const knownFunctionSources = [
+    window.functionListCache || [],
+    window.discoveredFunctionsCache || [],
+    window.symbolsCache || [],
+  ];
+  return knownFunctionSources.some((source) => (Array.isArray(source) ? source : []).some((entry) => {
+    const entryAddr = typeof normalizeHexAddress === 'function' ? normalizeHexAddress(entry?.addr || '') : String(entry?.addr || '').trim();
+    return entryAddr === normalized;
+  }));
+}
+
+function focusAnnotationEditor(addr, annotation = null, options = {}) {
+  const normalized = typeof normalizeHexAddress === 'function' ? normalizeHexAddress(addr) : String(addr || '').trim();
+  if (!normalized) return;
+  const entry = annotation || window._annotations?.[normalized] || {};
+  const goInput = document.getElementById('goToAddrInput');
+  if (goInput) goInput.value = normalized;
+  const badge = document.getElementById('annotationAddrBadge');
+  if (badge) { badge.textContent = normalized; badge.dataset.addr = normalized; badge.classList.add('has-addr'); }
+  const btn = document.getElementById('btnAddAnnotation');
+  if (btn) {
+    btn.disabled = false;
+    btn.textContent = entry?.name || entry?.comment ? 'Modifier' : 'Annoter';
+    btn.title = entry?.name || entry?.comment ? 'Modifier cette annotation' : 'Annoter cette adresse';
+  }
+  const commentEl = document.getElementById('annotationComment');
+  if (commentEl) {
+    commentEl.value = entry?.comment || '';
+    if (options.focus !== false) {
+      commentEl.focus();
+      commentEl.select?.();
+    }
+  }
+  const nameEl = document.getElementById('annotationName');
+  if (nameEl) nameEl.value = entry?.name || '';
+}
+
+function renderAnnotationsList(annotations = window._annotations || {}) {
+  const listEl = document.getElementById('annotationsList');
+  if (!listEl) return false;
+  const entries = Object.entries(annotations).filter(([, v]) => v && (v.comment || v.name));
+  if (entries.length === 0) {
+    listEl.replaceChildren();
+    const p = document.createElement('p');
+    p.className = 'hint annotations-empty';
+    p.textContent = 'Aucune annotation.';
+    listEl.appendChild(p);
+    return true;
+  }
+  listEl.replaceChildren();
+  entries.forEach(([addr, v]) => {
+    const item = document.createElement('div');
+    const isFunctionAnnotation = isAnnotatedFunctionAddress(addr);
+    item.className = `annotation-item ${isFunctionAnnotation ? 'annotation-item-function' : 'annotation-item-note'}`;
+
+    const addrCode = document.createElement('code');
+    addrCode.className = 'addr-link';
+    addrCode.dataset.addr = addr;
+    addrCode.textContent = addr;
+    item.appendChild(addrCode);
+
+    const kindBadge = document.createElement('span');
+    kindBadge.className = `ann-kind ${isFunctionAnnotation ? 'ann-kind-function' : 'ann-kind-note'}`;
+    kindBadge.textContent = isFunctionAnnotation ? 'Fonction' : 'Annotation';
+    kindBadge.title = isFunctionAnnotation
+      ? 'Rename/commentaire posé sur une adresse de fonction'
+      : 'Annotation posée sur une instruction ou adresse interne';
+    item.appendChild(kindBadge);
+
+    const meta = document.createElement('div');
+    meta.className = 'ann-meta';
+    if (v.name) {
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'ann-name';
+      nameSpan.textContent = '→ ' + v.name;
+      meta.appendChild(nameSpan);
+    }
+    if (v.comment) {
+      const cmtSpan = document.createElement('span');
+      cmtSpan.className = 'ann-comment';
+      cmtSpan.textContent = v.comment.length > 80 ? v.comment.substring(0, 80) + '…' : v.comment;
+      cmtSpan.title = v.comment;
+      meta.appendChild(cmtSpan);
+    }
+    item.appendChild(meta);
+
+    const editBtn = document.createElement('button');
+    editBtn.className = 'btn btn-sm ann-edit';
+    editBtn.textContent = 'Modifier';
+    editBtn.title = 'Modifier cette annotation';
+    editBtn.dataset.addr = addr;
+    item.appendChild(editBtn);
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn btn-sm ann-delete';
+    delBtn.textContent = '×';
+    delBtn.title = 'Supprimer cette annotation';
+    delBtn.dataset.addr = addr;
+    item.appendChild(delBtn);
+
+    listEl.appendChild(item);
+  });
+
+  listEl.querySelectorAll('.addr-link').forEach((link) => {
+    link.style.cursor = 'pointer';
+    link.addEventListener('click', () => {
+      const a = link.dataset.addr;
+      const ann = annotations[a];
+      focusAnnotationEditor(a, ann, { focus: false });
+      vscode.postMessage({ type: 'hubGoToAddress', addr: a, binaryPath: getStaticBinaryPath() });
+    });
+  });
+
+  listEl.querySelectorAll('.ann-edit').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const a = btn.dataset.addr;
+      focusAnnotationEditor(a, annotations[a]);
+    });
+  });
+
+  listEl.querySelectorAll('.ann-delete').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      vscode.postMessage({ type: 'hubDeleteAnnotation', binaryPath: getStaticBinaryPath(), addr: btn.dataset.addr });
+    });
+  });
+
+  return true;
+}
+
+function mergeAnnotationFunctionAddrs(addrs) {
+  const target = window.annotationFunctionAddrs instanceof Set ? window.annotationFunctionAddrs : new Set();
+  (Array.isArray(addrs) ? addrs : []).forEach((addr) => {
+    const normalized = typeof normalizeHexAddress === 'function' ? normalizeHexAddress(addr) : String(addr || '').trim();
+    if (normalized) target.add(normalized);
+  });
+  window.annotationFunctionAddrs = target;
+  return target;
+}
+
 window.addEventListener('message', (event) => {
   const msg = event.data;
   if (!msg?.type) return;
@@ -37,6 +225,17 @@ window.addEventListener('message', (event) => {
     currentPlatform = msg.platform || currentPlatform;
     setOption32Availability(document.getElementById('archBits'), msg.platform);
     setOption32Availability(document.getElementById('gccArch'), msg.platform);
+    return;
+  }
+  if (msg.type === 'hubPerfDiagnosticsConfig') {
+    window.POF_PERF_DIAGNOSTICS_ENABLED = Boolean(msg.enabled);
+    return;
+  }
+  if (msg.type === 'hubPerfSnapshotRequest') {
+    if (!window.POF_PERF_DIAGNOSTICS_ENABLED) return;
+    window.capturePofWebviewPerfSnapshot?.('manual.snapshot', {
+      source: String(msg.source || 'host'),
+    });
     return;
   }
   if (msg.type === 'hubPluginState') {
@@ -285,85 +484,20 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubAnnotations') {
+    if (isStaleStaticBinaryResponse(msg, 'static-annotations')) return;
     const annotations = msg.annotations || {};
     window._annotations = annotations;
-    const listEl = document.getElementById('annotationsList');
-    if (!listEl) {
+    window.annotationFunctionAddrs = new Set();
+    mergeAnnotationFunctionAddrs(msg.functionAddrs);
+    refreshDisasmForAnnotations(msg.binaryPath, annotations);
+    if (typeof populateDecompileSelect === 'function') {
+      populateDecompileSelect(window.symbolsCache || []);
+    }
+    if (!renderAnnotationsList(annotations)) {
       renderBookmarks();
       updateActiveContextBars(window._lastDisasmAddr);
       updateDisasmSessionSummary();
       return;
-    }
-    const entries = Object.entries(annotations).filter(([, v]) => v && (v.comment || v.name));
-    if (entries.length === 0) {
-      listEl.replaceChildren();
-      const p = document.createElement('p');
-      p.className = 'hint annotations-empty';
-      p.textContent = 'Aucune annotation.';
-      listEl.appendChild(p);
-    } else {
-      listEl.replaceChildren();
-      entries.forEach(([addr, v]) => {
-        const item = document.createElement('div');
-        item.className = 'annotation-item';
-
-        const addrCode = document.createElement('code');
-        addrCode.className = 'addr-link';
-        addrCode.dataset.addr = addr;
-        addrCode.textContent = addr;
-        item.appendChild(addrCode);
-
-        const meta = document.createElement('div');
-        meta.className = 'ann-meta';
-        if (v.name) {
-          const nameSpan = document.createElement('span');
-          nameSpan.className = 'ann-name';
-          nameSpan.textContent = '→ ' + v.name;
-          meta.appendChild(nameSpan);
-        }
-        if (v.comment) {
-          const cmtSpan = document.createElement('span');
-          cmtSpan.className = 'ann-comment';
-          cmtSpan.textContent = v.comment.length > 80 ? v.comment.substring(0, 80) + '…' : v.comment;
-          cmtSpan.title = v.comment;
-          meta.appendChild(cmtSpan);
-        }
-        item.appendChild(meta);
-
-        const delBtn = document.createElement('button');
-        delBtn.className = 'btn btn-sm ann-delete';
-        delBtn.textContent = '×';
-        delBtn.title = 'Supprimer cette annotation';
-        delBtn.dataset.addr = addr;
-        item.appendChild(delBtn);
-
-        listEl.appendChild(item);
-      });
-
-      listEl.querySelectorAll('.addr-link').forEach((link) => {
-        link.style.cursor = 'pointer';
-        link.addEventListener('click', () => {
-          const a = link.dataset.addr;
-          document.getElementById('goToAddrInput').value = a;
-          const badge = document.getElementById('annotationAddrBadge');
-          if (badge) { badge.textContent = a; badge.dataset.addr = a; badge.classList.add('has-addr'); }
-          const btn = document.getElementById('btnAddAnnotation');
-          if (btn) btn.disabled = false;
-          const ann = annotations[a];
-          const commentEl = document.getElementById('annotationComment');
-          if (commentEl) commentEl.value = ann?.comment || '';
-          const nameEl = document.getElementById('annotationName');
-          if (nameEl) nameEl.value = ann?.name || '';
-          vscode.postMessage({ type: 'hubGoToAddress', addr: a, binaryPath: getStaticBinaryPath() });
-        });
-      });
-
-      listEl.querySelectorAll('.ann-delete').forEach((btn) => {
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          vscode.postMessage({ type: 'hubDeleteAnnotation', binaryPath: getStaticBinaryPath(), addr: btn.dataset.addr });
-        });
-      });
     }
     renderBookmarks();
     updateActiveContextBars(window._lastDisasmAddr);
@@ -371,9 +505,12 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubDisasmReady' && msg.binaryPath) {
+    if (isStaleStaticBinaryResponse(msg, 'static-disasm-ready')) return;
     tabDataCache.disasm = { binaryPath: msg.binaryPath.trim() };
     tabDataCache.callgraph = null;
     tabDataCache.cfg = null;
+    mergeAnnotationFunctionAddrs(msg.functionAddrs);
+    renderAnnotationsList();
     if (msg.arch && typeof msg.arch === 'object') {
       currentArchSupport = msg.arch;
       // rAF : s'assure que showGroup (éventuel) a fini de reconstruire la barre
@@ -457,6 +594,7 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'symbols') {
+    if (isStaleStaticBinaryResponse(msg, 'dynamic-symbols')) return;
     const sel = document.getElementById('startSymbol');
     if (!sel) return;
     const preferred = 'main';
@@ -728,6 +866,8 @@ window.addEventListener('message', (event) => {
   }
 
   if (msg.type === 'hubImportsDone') {
+    if (isStaleStaticBinaryResponse(msg, 'static-imports')) return;
+    const renderStarted = performance.now();
     tabDataCache.imports = { binaryPath: getStaticBinaryPath() };
     const container = document.getElementById('importsContent');
     if (!container) return;
@@ -737,6 +877,7 @@ window.addEventListener('message', (event) => {
       p.className = 'hint error';
       p.textContent = data.error;
       container.replaceChildren(p);
+      reportStaticWebviewPerf('imports.render', renderStarted, { error: true });
       return;
     }
 
@@ -775,6 +916,12 @@ window.addEventListener('message', (event) => {
       p.textContent = 'Aucun import détecté (binaire statiquement lié ou strippé).';
       root.appendChild(p);
       container.replaceChildren(root);
+      reportStaticWebviewPerf('imports.render', renderStarted, {
+        dlls: imports.length,
+        suspicious: suspicious.length,
+        functions: totalFns,
+        empty: true,
+      });
       return;
     }
 
@@ -850,9 +997,17 @@ window.addEventListener('message', (event) => {
     }
 
     container.replaceChildren(root);
+    reportStaticWebviewPerf('imports.render', renderStarted, {
+      dlls: imports.length,
+      suspicious: suspicious.length,
+      functions: totalFns,
+      score,
+    });
     return;
   }
   if (msg.type === 'hubExportsDone') {
+    if (isStaleStaticBinaryResponse(msg, 'static-exports')) return;
+    const renderStarted = performance.now();
     const container = document.getElementById('exportsContent');
     if (!container) return;
     const data = msg.data || {};
@@ -864,12 +1019,16 @@ window.addEventListener('message', (event) => {
     container.appendChild(hdr);
     if (data.error) {
       const p = document.createElement('p'); p.className = 'hint error'; p.textContent = data.error;
-      container.appendChild(p); return;
+      container.appendChild(p);
+      reportStaticWebviewPerf('exports.render', renderStarted, { error: true, count: Number(data.count || 0) });
+      return;
     }
     const exports = data.exports || [];
     if (exports.length === 0) {
       const p = document.createElement('p'); p.className = 'hint'; p.textContent = 'Aucun export trouvé.';
-      container.appendChild(p); return;
+      container.appendChild(p);
+      reportStaticWebviewPerf('exports.render', renderStarted, { count: 0, empty: true });
+      return;
     }
     const table = document.createElement('table');
     table.className = 'data-table';
@@ -922,14 +1081,18 @@ window.addEventListener('message', (event) => {
     }
     container.appendChild(table);
     updateActiveNavRows(window._lastDisasmAddr);
+    reportStaticWebviewPerf('exports.render', renderStarted, { count: exports.length });
     return;
   }
   if (msg.type === 'hubImportXrefsDone') {
+    if (isStaleStaticBinaryResponse(msg, 'static-import-xrefs')) return;
     const data = msg.data || {};
     _showImportXrefsPanel(data.function, data.callsites || [], data.error);
     return;
   }
   if (msg.type === 'hubSymbols') {
+    if (isStaleStaticBinaryResponse(msg, 'static-symbols')) return;
+    const renderStarted = performance.now();
     tabDataCache.symbols = { binaryPath: getStaticBinaryPath() };
     const syms = msg.symbols || [];
     window.symbolsCache = syms;
@@ -965,16 +1128,27 @@ window.addEventListener('message', (event) => {
       if ((decompileUiState.renderedAddr || '') !== selectedAddr) requestDecompileForCurrentSelection();
     }
     if (loadAllPending > 0) { loadAllPending--; if (loadAllPending <= 0) { const b = document.getElementById('btnLoadAll'); if (b) { b.disabled = false; b.classList.remove('loading'); } } }
+    reportStaticWebviewPerf('symbols.render', renderStarted, {
+      symbols: syms.length,
+      rowsRendered: container.querySelectorAll('tbody tr').length,
+    });
     return;
   }
   if (msg.type === 'hubStrings') {
-    tabDataCache.strings = { binaryPath: getStaticBinaryPath() };
+    if (isStaleStaticBinaryResponse(msg, 'static-strings')) return;
+    const currentBinaryPath = getStaticBinaryPath();
+    const responseBinaryPath = String(msg.binaryPath || '').trim();
+    tabDataCache.strings = { binaryPath: currentBinaryPath };
     const container = document.getElementById('stringsContent');
     if (!container) return;
     const allStrings = msg.strings || [];
     stringsCache = allStrings;
     stringsPage = 1;
     renderStringsTable(container, allStrings, '', false);
+    window.reportPofWebviewPerf?.('strings.message.received', {
+      strings: Array.isArray(allStrings) ? allStrings.length : 0,
+      binaryPath: responseBinaryPath || currentBinaryPath,
+    }, { afterPaint: true });
 
     if (loadAllPending > 0) { loadAllPending--; if (loadAllPending <= 0) { const b = document.getElementById('btnLoadAll'); if (b) { b.disabled = false; b.classList.remove('loading'); } } }
     return;
@@ -1041,6 +1215,8 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubXrefs') {
+    if (isStaleStaticBinaryResponse(msg, 'static-xrefs')) return;
+    const renderStarted = performance.now();
     if (msg.requestKey && typeof _pendingXrefRequests !== 'undefined' && _pendingXrefRequests.has(msg.requestKey)) {
       const pending = _pendingXrefRequests.get(msg.requestKey);
       _pendingXrefRequests.delete(msg.requestKey);
@@ -1186,9 +1362,18 @@ window.addEventListener('message', (event) => {
       }
     }
     el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    reportStaticWebviewPerf('xrefs.render', renderStarted, {
+      refs: refs.length,
+      targets: targets.length,
+      mode,
+      error: Boolean(hasError),
+      addr,
+    });
     return;
   }
   if (msg.type === 'hubBinaryInfo') {
+    if (isStaleStaticBinaryResponse(msg, 'static-info')) return;
+    const renderStarted = performance.now();
     tabDataCache.info = { binaryPath: getStaticBinaryPath() };
     const container = document.getElementById('infoContent');
     if (!container) return;
@@ -1216,9 +1401,16 @@ window.addEventListener('message', (event) => {
     }
     updateDisasmSessionSummary();
     if (loadAllPending > 0) { loadAllPending--; if (loadAllPending <= 0) { const b = document.getElementById('btnLoadAll'); if (b) { b.disabled = false; b.classList.remove('loading'); } } }
+    reportStaticWebviewPerf('binary.info.render', renderStarted, {
+      error: Boolean(info.error),
+      format: String(info.format || ''),
+      arch: String(info.arch || ''),
+    });
     return;
   }
   if (msg.type === 'hubSections') {
+    if (isStaleStaticBinaryResponse(msg, 'static-sections')) return;
+    const renderStarted = performance.now();
     tabDataCache.sections = { binaryPath: getStaticBinaryPath() };
     const container = document.getElementById('sectionsContent');
     const secs = msg.sections || [];
@@ -1254,27 +1446,19 @@ window.addEventListener('message', (event) => {
       });
     }
     if (loadAllPending > 0) { loadAllPending--; if (loadAllPending <= 0) { const b = document.getElementById('btnLoadAll'); if (b) { b.disabled = false; b.classList.remove('loading'); } } }
+    reportStaticWebviewPerf('sections.render', renderStarted, {
+      sections: secs.length,
+      error: Boolean(err),
+    });
     return;
   }
   if (msg.type === 'hubCfg') {
+    if (isStaleStaticBinaryResponse(msg, 'static-cfg')) return;
+    const renderStarted = performance.now();
     const container = document.getElementById('cfgContent');
     if (!container) return;
-    const normalizeCfgBinaryPath = (value) => String(value || '').trim().replace(/\\/g, '/');
     const currentBinaryPath = getStaticBinaryPath() || '';
     const responseBinaryPath = String(msg.binaryPath || '').trim();
-    if (
-      responseBinaryPath
-      && currentBinaryPath
-      && normalizeCfgBinaryPath(responseBinaryPath) !== normalizeCfgBinaryPath(currentBinaryPath)
-    ) {
-      vscode.postMessage({
-        type: 'hubDebugLog',
-        scope: 'static-cfg',
-        event: 'ignored-stale-response',
-        details: { currentBinaryPath, responseBinaryPath },
-      });
-      return;
-    }
     tabDataCache.cfg = { binaryPath: responseBinaryPath || currentBinaryPath };
     const cfgState = getGraphUiState('cfg', currentBinaryPath);
     const functions = Array.isArray(msg.functions) ? msg.functions : [];
@@ -1346,6 +1530,12 @@ window.addEventListener('message', (event) => {
         btnSel.addEventListener('click', () => vscode.postMessage({ type: 'requestBinarySelection' }));
         container.appendChild(btnSel);
       }
+      reportStaticWebviewPerf('cfg.render', renderStarted, {
+        blocks: 0,
+        edges: edges.length,
+        functions: functions.length,
+        empty: true,
+      });
       return;
     }
     const MAX_CFG_BLOCKS = 200;
@@ -1356,6 +1546,12 @@ window.addEventListener('message', (event) => {
       warnEl.className = 'hint';
       warnEl.textContent = `CFG trop large (${blocks.length} blocs). Sélectionnez une fonction dans le menu ci-dessus.`;
       container.appendChild(warnEl);
+      reportStaticWebviewPerf('cfg.render', renderStarted, {
+        blocks: blocks.length,
+        edges: edges.length,
+        functions: functions.length,
+        tooLarge: true,
+      });
       return;
     }
     // Table view — build with DOM API (no innerHTML with variables)
@@ -1645,27 +1841,24 @@ window.addEventListener('message', (event) => {
         requestAnimationFrame(() => setCfgActiveAddr(_pendingHighlight, { reveal: true, revealTable: tableEl.style.display !== 'none', instant: true }));
       });
     }
+    reportStaticWebviewPerf('cfg.render', renderStarted, {
+      blocks: blocks.length,
+      edges: edges.length,
+      graphBlocks: graphBlocks.length,
+      graphEdges: graphEdges.length,
+      functions: functions.length,
+      viewMode: cfgState.viewMode || '',
+      funcAddr: activeFuncAddr || '',
+    });
     return;
   }
   if (msg.type === 'hubCallGraph') {
+    if (isStaleStaticBinaryResponse(msg, 'static-callgraph')) return;
+    const renderStarted = performance.now();
     const container = document.getElementById('callgraphContent');
     if (!container) return;
-    const normalizeGraphBinaryPath = (value) => String(value || '').trim().replace(/\\/g, '/');
     const currentBinaryPath = getStaticBinaryPath() || '';
     const responseBinaryPath = String(msg.binaryPath || '').trim();
-    if (
-      responseBinaryPath
-      && currentBinaryPath
-      && normalizeGraphBinaryPath(responseBinaryPath) !== normalizeGraphBinaryPath(currentBinaryPath)
-    ) {
-      vscode.postMessage({
-        type: 'hubDebugLog',
-        scope: 'static-callgraph',
-        event: 'ignored-stale-response',
-        details: { currentBinaryPath, responseBinaryPath },
-      });
-      return;
-    }
     tabDataCache.callgraph = { binaryPath: responseBinaryPath || currentBinaryPath };
     const cgState = getGraphUiState('callgraph', currentBinaryPath);
     const cg = msg.callGraph || { nodes: [], edges: [] };
@@ -1690,6 +1883,11 @@ window.addEventListener('message', (event) => {
       document.getElementById('btnCgOpenDisasm')?.addEventListener('click', () => {
         if (bp) vscode.postMessage({ type: 'hubOpenDisasm', binaryPath: bp, useCache: true });
         else vscode.postMessage({ type: 'requestBinarySelection' });
+      });
+      reportStaticWebviewPerf('callgraph.render', renderStarted, {
+        nodes: cgNodes.length,
+        edges: cgEdges.length,
+        empty: true,
       });
       return;
     }
@@ -1929,9 +2127,16 @@ window.addEventListener('message', (event) => {
         requestAnimationFrame(() => setCallGraphActiveAddr(container._cgState.activeAddr, { reveal: isStaticTabActive('callgraph'), instant: true }));
       });
     }
+    reportStaticWebviewPerf('callgraph.render', renderStarted, {
+      nodes: cgNodes.length,
+      edges: cgEdges.length,
+      renderedNodes: Object.keys(nodeMap).length,
+      viewMode: cgState.viewMode || '',
+    });
     return;
   }
   if (msg.type === 'hubDiscoveredFunctions') {
+    if (isStaleStaticBinaryResponse(msg, 'static-functions-discovered')) return;
     tabDataCache.discovered = { binaryPath: getStaticBinaryPath() };
     const container = document.getElementById('functionsContent');
     const countEl = document.getElementById('functionsCount');
@@ -1941,6 +2146,7 @@ window.addEventListener('message', (event) => {
     const radar = buildFallbackFunctionsRadarFromRows(rows, { rawMode: true });
     window.discoveredFunctionsCache = rows;
     populateDecompileSelect(window.symbolsCache || []);
+    renderAnnotationsList();
     if (list.length === 0) {
       const bp = getStaticBinaryPath();
       let hint = msg.analyzed ? 'Aucune fonction supplémentaire trouvée (tous les prologues correspondent à des symboles connus).' : 'Ouvrez d\'abord le désassemblage.';
@@ -1959,6 +2165,7 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubFunctionsDone') {
+    if (isStaleStaticBinaryResponse(msg, 'static-functions')) return;
     tabDataCache.discovered = { binaryPath: getStaticBinaryPath() };
     const container = document.getElementById('functionsContent');
     const countEl = document.getElementById('functionsCount');
@@ -1979,6 +2186,7 @@ window.addEventListener('message', (event) => {
     const rows = buildFunctionsRowsFromRadarAndSymbols(symList, conventions, radarFunctions);
     populateDecompileSelect(window.symbolsCache || symList);
     renderFunctionsWorkspace(rows, radar || buildFallbackFunctionsRadarFromRows(rows));
+    renderAnnotationsList();
     if (typeof tabDataCache !== 'undefined') {
       tabDataCache['discovered'] = { binaryPath: getStaticBinaryPath() };
     }
@@ -2054,6 +2262,7 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubDecompile') {
+    const renderStarted = performance.now();
     const container = document.getElementById('decompileContent');
     if (!container) return;
     const responseQuality = _normalizeDecompileQuality(msg.quality || msg.result?.quality || decompileUiState.quality || 'normal');
@@ -2096,6 +2305,13 @@ window.addEventListener('message', (event) => {
       || (!currentFull && payload.addr !== currentSelection.addr);
     if (isStaleForCurrentSelection) {
       _refreshDecompilePills();
+      reportStaticWebviewPerf('decompile.render', renderStarted, {
+        rendered: false,
+        stale: true,
+        decompiler: payload.decompiler,
+        quality: payload.quality,
+        full: payload.full,
+      });
       return;
     }
     // Decide whether to render: auto mode renders first result + better results; forced mode renders matching decompiler only
@@ -2103,6 +2319,13 @@ window.addEventListener('message', (event) => {
       || (forced !== '' && forced === payload.decompiler);
     if (!shouldRender) {
       _refreshDecompilePills();
+      reportStaticWebviewPerf('decompile.render', renderStarted, {
+        rendered: false,
+        silent: Boolean(msg.isSilentUpdate),
+        decompiler: payload.decompiler,
+        quality: payload.quality,
+        full: payload.full,
+      });
       return;
     }
     if (msg.isSilentUpdate && forced === '') {
@@ -2112,13 +2335,31 @@ window.addEventListener('message', (event) => {
       void container.offsetWidth; // reflow
       container.classList.add('decompile-content--flash');
       _refreshDecompilePills();
+      reportStaticWebviewPerf('decompile.render', renderStarted, {
+        rendered: true,
+        silent: true,
+        decompiler: payload.decompiler,
+        quality: payload.quality,
+        full: payload.full,
+        textLength: String(payload.result?.code || payload.result?.text || '').length,
+      });
       return;
     }
     renderDecompilePayload(container, payload);
     _refreshDecompilePills();
+    reportStaticWebviewPerf('decompile.render', renderStarted, {
+      rendered: true,
+      silent: Boolean(msg.isSilentUpdate),
+      decompiler: payload.decompiler,
+      quality: payload.quality,
+      full: payload.full,
+      textLength: String(payload.result?.code || payload.result?.text || '').length,
+    });
     return;
   }
   if (msg.type === 'hubRecherche' || msg.type === 'hubSearchBinaryResult') {
+    if (isStaleStaticBinaryResponse(msg, 'static-search')) return;
+    const renderStarted = performance.now();
     const results = msg.results || [];
     const err = msg.error;
     const tbody = document.getElementById('searchResultsBody');
@@ -2157,10 +2398,12 @@ window.addEventListener('message', (event) => {
       if (!legacyContainer) return;
       if (err) {
         legacyContainer.innerHTML = `<div class="search-results-empty"><p class="search-results-empty-title">Erreur</p><p class="search-results-empty-desc">${escapeHtml(err)}</p></div>`;
+        reportStaticWebviewPerf('search.render', renderStarted, { error: true, results: results.length, legacy: true });
         return;
       }
       if (results.length === 0) {
         legacyContainer.innerHTML = `<div class="search-results-empty"><p class="search-results-empty-title">Aucune correspondance</p></div>`;
+        reportStaticWebviewPerf('search.render', renderStarted, { results: 0, empty: true, legacy: true });
         return;
       }
       const rows = results.map(r => {
@@ -2184,6 +2427,11 @@ window.addEventListener('message', (event) => {
           else goToSearchOffset(row);
         });
       });
+      reportStaticWebviewPerf('search.render', renderStarted, {
+        results: results.length,
+        rowsRendered: results.length,
+        legacy: true,
+      });
       return;
     }
 
@@ -2193,6 +2441,7 @@ window.addEventListener('message', (event) => {
       countEl.textContent = 'Erreur : ' + err;
       bar.hidden = false;
       container.hidden = true;
+      reportStaticWebviewPerf('search.render', renderStarted, { error: true, results: results.length });
       return;
     }
 
@@ -2244,25 +2493,18 @@ window.addEventListener('message', (event) => {
     container.hidden = false;
 
     window._searchResults = results;
+    reportStaticWebviewPerf('search.render', renderStarted, {
+      results: results.length,
+      rowsRendered: display.length,
+      truncated: results.length > display.length,
+    });
     return;
   }
   if (msg.type === 'hubActiveAddr') {
-    const badge = document.getElementById('annotationAddrBadge');
-    if (badge) {
-      badge.textContent = msg.addr;
-      badge.dataset.addr = msg.addr;
-      badge.classList.add('has-addr');
-    }
     const spanLength = normalizeSpanLength(msg.spanLength || 1);
     setActiveAddressContext(msg.addr, spanLength);
-    const btn = document.getElementById('btnAddAnnotation');
-    if (btn) btn.disabled = false;
-    // Pre-fill form with existing annotation for this address
     const ann = window._annotations?.[msg.addr];
-    const nameEl = document.getElementById('annotationName');
-    const cmtEl = document.getElementById('annotationComment');
-    if (nameEl) nameEl.value = ann?.name || '';
-    if (cmtEl) cmtEl.value = ann?.comment || '';
+    focusAnnotationEditor(msg.addr, ann, { focus: false });
     const cfgBlockFound = syncCfgActiveAddress(msg.addr, {
       reveal: isStaticTabActive('cfg'),
       revealTable: isStaticTabActive('cfg') && document.querySelector('#cfgContent .cfg-table-view')?.style.display !== 'none',
@@ -2327,9 +2569,14 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubAnnotations') {
+    if (isStaleStaticBinaryResponse(msg, 'static-annotations')) return;
     // Annotations loaded — could highlight addresses
     window._annotations = msg.annotations || {};
+    refreshDisasmForAnnotations(msg.binaryPath, window._annotations);
     clearDecompileCaches();
+    if (typeof populateDecompileSelect === 'function') {
+      populateDecompileSelect(window.symbolsCache || []);
+    }
     renderBookmarks();
     renderCurrentFunctionsWorkspace();
     syncFunctionsSelectionFromContext(window._lastDisasmAddr || functionsUiState.selectedAddr);
@@ -2343,6 +2590,8 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubHexView') {
+    if (isStaleStaticBinaryResponse(msg, 'static-hex')) return;
+    const renderStarted = performance.now();
     tabDataCache.hex = { binaryPath: getStaticBinaryPath() };
     const result = msg.result || {};
     const container = document.getElementById('hexContent');
@@ -2358,6 +2607,11 @@ window.addEventListener('message', (event) => {
       p.className = 'hint';
       p.textContent = result.error;
       container.appendChild(p);
+      reportStaticWebviewPerf('hex.render', renderStarted, {
+        error: true,
+        rows: 0,
+        sections: hexSections.length,
+      });
       return;
     }
     hexSections = result.sections || [];
@@ -2379,9 +2633,16 @@ window.addEventListener('message', (event) => {
     const nextBtn = document.getElementById('btnHexNext');
     if (prevBtn) prevBtn.disabled = hexCurrentOffset === 0;
     if (nextBtn) nextBtn.disabled = (result.rows?.length || 0) < Math.ceil(hexCurrentLength / 16);
+    reportStaticWebviewPerf('hex.render', renderStarted, {
+      rows: Array.isArray(result.rows) ? result.rows.length : 0,
+      sections: hexSections.length,
+      error: Boolean(result.error),
+      offset: hexCurrentOffset,
+    });
     return;
   }
   if (msg.type === 'hubPatchResult') {
+    if (isStaleStaticBinaryResponse(msg, 'static-patch')) return;
     const result = msg.result || {};
     const status = document.getElementById('hexPatchStatus');
     if (status) {
@@ -2397,6 +2658,7 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubPatchesDone') {
+    if (isStaleStaticBinaryResponse(msg, 'static-patches')) return;
     const patchList = document.getElementById('patchList');
     const revertAllBtn = document.getElementById('btnRevertAll');
     const patchSection = document.getElementById('patchManagerSection');
@@ -2471,6 +2733,7 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubRevertPatchDone') {
+    if (isStaleStaticBinaryResponse(msg, 'static-patch-revert')) return;
     const status = document.getElementById('hexPatchStatus');
     if (status) {
       status.className = 'hex-patch-status ' + (msg.ok ? 'ok' : 'error');
@@ -2486,6 +2749,7 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubRedoPatchDone') {
+    if (isStaleStaticBinaryResponse(msg, 'static-patch-redo')) return;
     const status = document.getElementById('hexPatchStatus');
     if (status) {
       status.className = 'hex-patch-status ' + (msg.ok ? 'ok' : 'error');
@@ -2540,6 +2804,7 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubScriptResult') {
+    if (isStaleStaticBinaryResponse(msg, 'static-script')) return;
     const r = msg.result || {};
     const output = document.getElementById('scriptOutput');
     const status = document.getElementById('scriptStatus');
@@ -2608,6 +2873,7 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubTypedStructPreviewDone') {
+    if (isStaleStaticBinaryResponse(msg, 'static-typed-struct-preview')) return;
     const data = msg.data || {};
     const request = msg.request || {};
     typedDataUiState.hexStructPreview = {
@@ -2621,6 +2887,7 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubTypedDataDone') {
+    if (isStaleStaticBinaryResponse(msg, 'static-typed-data')) return;
     const container = document.getElementById('typedDataContent');
     if (!container) return;
     const {
@@ -2810,18 +3077,22 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubExceptionHandlersDone') {
+    if (isStaleStaticBinaryResponse(msg, 'static-exceptions')) return;
+    const renderStarted = performance.now();
     const container = document.getElementById('exceptionsContent');
     const countEl = document.getElementById('exceptionsCount');
     if (!container) return;
     const { entries, error } = msg.data || {};
     if (error) {
       container.innerHTML = '<p class="hint">' + escapeHtml(error) + '</p>';
+      reportStaticWebviewPerf('exceptions.render', renderStarted, { error: true });
       return;
     }
     const list = entries || [];
     if (list.length === 0) {
       container.innerHTML = '<p class="hint">Aucun gestionnaire d\'exception dans ce binaire.</p>';
       if (countEl) countEl.textContent = '';
+      reportStaticWebviewPerf('exceptions.render', renderStarted, { entries: 0, empty: true });
       return;
     }
     const badgeClass = (t) =>
@@ -2851,6 +3122,11 @@ window.addEventListener('message', (event) => {
         el.addEventListener('click', () =>
           vscode.postMessage({ type: 'hubGoToAddress', addr: el.dataset.addr, binaryPath: getStaticBinaryPath() }));
       });
+      reportStaticWebviewPerf('exceptions.render', renderStarted, {
+        entries: list.length,
+        visible: visible.length,
+        filterTextLength: String(filterStr || '').length,
+      });
     }
     const searchEl = document.getElementById('exceptionsSearch');
     const currentSearch = searchEl ? searchEl.value : '';
@@ -2863,6 +3139,8 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubPeResourcesDone') {
+    if (isStaleStaticBinaryResponse(msg, 'static-pe-resources')) return;
+    const renderStarted = performance.now();
     const container = document.getElementById('peResourcesContent');
     if (!container) return;
     const { resources, error, applicable, message, format } = msg.data || {};
@@ -2871,6 +3149,7 @@ window.addEventListener('message', (event) => {
       p.className = 'hint';
       p.textContent = error;
       container.replaceChildren(p);
+      reportStaticWebviewPerf('pe.resources.render', renderStarted, { error: true });
       return;
     }
     if (applicable === false) {
@@ -2878,6 +3157,10 @@ window.addEventListener('message', (event) => {
       p.className = 'hint';
       p.textContent = message || `Cette vue s'applique uniquement aux binaires PE${format ? ` (${format})` : ''}.`;
       container.replaceChildren(p);
+      reportStaticWebviewPerf('pe.resources.render', renderStarted, {
+        applicable: false,
+        format: String(format || ''),
+      });
       return;
     }
     if (!resources || resources.length === 0) {
@@ -2885,6 +3168,7 @@ window.addEventListener('message', (event) => {
       p.className = 'hint';
       p.textContent = 'Aucune ressource dans ce binaire.';
       container.replaceChildren(p);
+      reportStaticWebviewPerf('pe.resources.render', renderStarted, { resources: 0, empty: true });
       return;
     }
     // Group by type
@@ -2983,6 +3267,10 @@ window.addEventListener('message', (event) => {
     buildResourceTree('');
     filterInput.addEventListener('input', () => buildResourceTree(filterInput.value));
     container.replaceChildren(layout);
+    reportStaticWebviewPerf('pe.resources.render', renderStarted, {
+      resources: resources.length,
+      groups: Object.keys(byType).length,
+    });
     return;
   }
 

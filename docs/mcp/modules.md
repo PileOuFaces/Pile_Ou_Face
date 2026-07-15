@@ -62,8 +62,9 @@ construite sur `annotation_db.AnnotationDb` (et non plus sur `DisasmCache`) — 
 chemin+mtime).
 
 Les fonctions module-level historiques `load_annotations`/`save_annotation`
-(`(workspace, binary_sha256, ...)`) documentées précédemment ici ne sont **pas**
-utilisées par ces trois tools — elles sont du code mort résiduel, non appelé.
+(`(workspace, binary_sha256, ...)`) et le CLI `--save`/`--load` qui écrivaient
+dans `.pof/annotations.json` ont été retirés : le chemin supporté est
+`AnnotationStore` + SQLite. Les anciens fichiers JSON webview ne sont plus migrés.
 
 ### Input MCP
 ```json

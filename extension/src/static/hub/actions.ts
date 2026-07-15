@@ -48,6 +48,49 @@ function createActions({
   // ── Internal helpers ────────────────────────────────────────────────────────
 
   const hubPost = (type, data) => panel.webview.postMessage(Object.assign({ type }, data || {}));
+  const hostMemorySnapshot = () => {
+    const mem = process.memoryUsage();
+    return {
+      rss: mem.rss,
+      heapUsed: mem.heapUsed,
+      heapTotal: mem.heapTotal,
+      external: mem.external,
+      arrayBuffers: mem.arrayBuffers,
+    };
+  };
+  const perfDiagnosticsEnabled = () => {
+    try {
+      return Boolean(vscode.workspace.getConfiguration?.('pileOuFace')?.get?.('perfDiagnostics', false));
+    } catch (_) {
+      return false;
+    }
+  };
+  const normalizeHexAddress = (value) => {
+    const text = String(value || '').trim();
+    if (!text) return '';
+    const raw = text.startsWith('0x') || text.startsWith('0X') ? text.slice(2) : text;
+    if (!/^[0-9a-fA-F]+$/.test(raw)) return text.toLowerCase();
+    return `0x${raw.replace(/^0+/, '') || '0'}`.toLowerCase();
+  };
+  const readFunctionAddrsFromMapping = (mappingPath) => {
+    if (!mappingPath || !fs.existsSync(mappingPath)) return [];
+    try {
+      const mapping = JSON.parse(fs.readFileSync(mappingPath, 'utf8'));
+      const addrs = new Set();
+      for (const fn of Array.isArray(mapping?.functions) ? mapping.functions : []) {
+        const addr = normalizeHexAddress(fn?.addr);
+        if (addr) addrs.add(addr);
+      }
+      for (const line of Array.isArray(mapping?.lines) ? mapping.lines : []) {
+        const addr = normalizeHexAddress(line?.addr);
+        const functionAddr = normalizeHexAddress(line?.function_addr);
+        if (addr && functionAddr && addr === functionAddr) addrs.add(addr);
+      }
+      return Array.from(addrs).sort((a, b) => parseInt(a, 16) - parseInt(b, 16));
+    } catch (_) {
+      return [];
+    }
+  };
 
   const finalizeDisasmOpen = async ({
     disasmPath,
@@ -66,6 +109,7 @@ function createActions({
     }
     if (notifyWebview) {
       const archPayload = readArchSupportFromMapping(mappingPath, fs);
+      const functionAddrs = readFunctionAddrsFromMapping(mappingPath);
       panel.webview.postMessage({
         type: 'hubSetBinaryPath',
         binaryPath: pathForWebview,
@@ -76,6 +120,7 @@ function createActions({
         type: 'hubDisasmReady',
         binaryPath: pathForWebview,
         arch: archPayload,
+        functionAddrs,
       });
     }
     if (refreshSidebar) refreshSidebar(pathForWebview);
@@ -434,10 +479,15 @@ function createActions({
     },
 
     hubDebugLog: async (message) => {
-      const scope = String(message.scope || 'webview').replace(/[^a-z0-9_-]/gi, '_');
+      const rawScope = String(message.scope || 'webview');
+      const scope = rawScope.replace(/[^a-z0-9_.:-]/gi, '_');
       const event = String(message.event || 'event').replace(/[^a-z0-9_.:-]/gi, '_');
       const details = message.details && typeof message.details === 'object' ? message.details : {};
-      logChannel.appendLine(`[${scope}] ${event} ${JSON.stringify(details)}`);
+      if (rawScope === 'perf.webview' && !perfDiagnosticsEnabled()) return;
+      const enriched = rawScope === 'perf.webview'
+        ? { ...details, extensionHostMemory: hostMemorySnapshot() }
+        : details;
+      logChannel.appendLine(`[${scope}] ${event} ${JSON.stringify(enriched)}`);
     },
 
     hubInstallDecompiler: async (message) => {
@@ -671,7 +721,7 @@ function createActions({
       const mode = message.mode || 'text';
       const section = (message.section || '').trim() || null;
       if (!exists || isDirectory || !pattern) {
-        hubPost('hubRecherche', { results: [], error: 'Binaire ou motif manquant.' });
+        hubPost('hubRecherche', { binaryPath: absPath, results: [], error: 'Binaire ou motif manquant.' });
         return;
       }
       const args = [getSearchScript(root), '--binary', absPath, '--pattern', pattern, '--mode', mode];
@@ -687,10 +737,10 @@ function createActions({
       try {
         const data = await runPythonJsonFile(args, { timeout: 30000, maxBuffer: 1024 * 1024, fallback: '[]' });
         const results = Array.isArray(data) ? data : (data.results || []);
-        hubPost('hubRecherche', { results });
+        hubPost('hubRecherche', { binaryPath: absPath, results });
       } catch (err) {
         const stderr = String(err.stderr || '').trim();
-        hubPost('hubRecherche', { results: [], error: stderr || err.message || 'Recherche échouée.' });
+        hubPost('hubRecherche', { binaryPath: absPath, results: [], error: stderr || err.message || 'Recherche échouée.' });
       }
     },
 

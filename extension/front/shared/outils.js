@@ -1497,6 +1497,9 @@ function resetStackAndDecompileDerivedState() {
   stackUiState.renderedBinaryPath = '';
   stackUiState.activeEntryName = '';
   stackUiState.pendingEntryName = '';
+  decompileUiState.selectedAddr = '';
+  decompileUiState.searchQuery = '';
+  decompileUiState.activeSearchHit = -1;
   decompileUiState.activeStackEntryName = '';
   decompileUiState.pendingStackEntryName = '';
   clearDecompileCaches();
@@ -1513,8 +1516,72 @@ function resetTypedDataDerivedState() {
 }
 
 function resetGraphDerivedState() {
+  stringsCache = [];
+  stringsPage = 1;
+  window.discoveredFunctionsCache = [];
+  window.functionListCache = [];
+  window.functionRadarCache = null;
+  window.functionWorkspaceState = null;
+  if (typeof functionsUiState !== 'undefined') {
+    functionsUiState.quickFilter = 'all';
+    functionsUiState.reviewFilter = 'all';
+    functionsUiState.signalFilter = 'all';
+    functionsUiState.selectedAddr = '';
+    _saveStorage({
+      functionsQuickFilter: 'all',
+      functionsReviewFilter: 'all',
+      functionsSignalFilter: 'all',
+      functionsSelectedAddr: '',
+      decompileAddr: '',
+      decompileSearch: '',
+      cfgSearch: '',
+      cgSearch: '',
+    });
+  }
   const cfgContent = document.getElementById('cfgContent');
   if (cfgContent) cfgContent.innerHTML = '';
+  const stringsContent = document.getElementById('stringsContent');
+  if (stringsContent) stringsContent.innerHTML = '';
+  const functionsCount = document.getElementById('functionsCount');
+  if (functionsCount) functionsCount.textContent = '';
+  const functionsSearch = document.getElementById('functionsSearch');
+  if (functionsSearch) functionsSearch.value = '';
+  const functionsFilterPills = document.getElementById('functionsFilterPills');
+  if (functionsFilterPills) {
+    functionsFilterPills.querySelectorAll('[data-functions-filter]').forEach((button) => {
+      button.classList.toggle('is-active', button.dataset.functionsFilter === 'all');
+    });
+  }
+  const functionsReviewFilter = document.getElementById('functionsReviewFilter');
+  if (functionsReviewFilter) functionsReviewFilter.value = 'all';
+  const functionsSignalFilter = document.getElementById('functionsSignalFilter');
+  if (functionsSignalFilter) functionsSignalFilter.value = 'all';
+  const functionsRadar = document.getElementById('functionsRadar');
+  if (functionsRadar) functionsRadar.innerHTML = '';
+  const functionsDetails = document.getElementById('functionsDetails');
+  if (functionsDetails) functionsDetails.innerHTML = '';
+  [
+    'importsContent',
+    'exportsContent',
+    'symbolsContent',
+    'infoContent',
+    'sectionsContent',
+    'functionsContent',
+    'hexContent',
+    'patchList',
+    'typedDataContent',
+    'exceptionsContent',
+    'peResourcesContent',
+    'xrefsResultContent',
+  ].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = '';
+  });
+  const xrefsResult = document.getElementById('xrefsResult');
+  if (xrefsResult) {
+    xrefsResult.style.display = 'none';
+    xrefsResult.classList.remove('xrefs-panel-visible');
+  }
   const cfgFuncSelect = document.getElementById('cfgFuncSelect');
   if (cfgFuncSelect) {
     cfgFuncSelect.replaceChildren();
@@ -1528,10 +1595,12 @@ function resetGraphDerivedState() {
   cfgUiState.funcAddr = '';
   cfgUiState.binaryPath = '';
   cfgUiState.activeAddr = '';
+  cfgUiState.search = '';
   cfgUiState.expandedAddrs = [];
   cfgUiState.graphView = null;
   callGraphUiState.binaryPath = '';
   callGraphUiState.activeAddr = '';
+  callGraphUiState.search = '';
   callGraphUiState.graphView = null;
   window._pendingCfgHighlightAddr = null;
 }

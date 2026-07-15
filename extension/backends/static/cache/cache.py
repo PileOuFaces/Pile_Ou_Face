@@ -467,6 +467,52 @@ class DisasmCache:
         ]
         return sorted(strings, key=lambda s: _addr_sort_key(s.get("addr")))
 
+    def get_strings_for_addresses(
+        self, binary_path: str, addresses: list[str] | set[str] | tuple[str, ...]
+    ) -> list[dict] | None:
+        """Charge uniquement les strings cachees aux adresses demandees.
+
+        Retourne None si le cache strings est absent/invalidé pour ce binaire.
+        Retourne [] si le cache existe mais qu'aucune adresse demandée ne matche.
+        """
+        row = self._get_valid_binary_row(binary_path)
+        if row is None:
+            return None
+        binary_id: int = row["id"]
+
+        cur = self._conn.execute(
+            "SELECT 1 FROM strings_data WHERE binary_id=? LIMIT 1",
+            (binary_id,),
+        )
+        if cur.fetchone() is None:
+            return None
+
+        normalized = sorted({str(addr or "").strip().lower() for addr in addresses})
+        normalized = [addr for addr in normalized if addr]
+        if not normalized:
+            return []
+
+        rows = []
+        # SQLite limite souvent les placeholders a 999 variables.
+        for idx in range(0, len(normalized), 900):
+            chunk = normalized[idx : idx + 900]
+            placeholders = ",".join("?" for _ in chunk)
+            cur = self._conn.execute(
+                f"""
+                SELECT addr, value, length
+                FROM strings_data
+                WHERE binary_id=? AND lower(addr) IN ({placeholders})
+                """,
+                (binary_id, *chunk),
+            )
+            rows.extend(cur.fetchall())
+
+        strings = [
+            {"addr": r["addr"], "value": r["value"], "length": r["length"]}
+            for r in rows
+        ]
+        return sorted(strings, key=lambda s: _addr_sort_key(s.get("addr")))
+
     def save_strings(self, binary_path: str, strings: list[dict]) -> int:
         """Sauvegarde les strings dans le cache.
 

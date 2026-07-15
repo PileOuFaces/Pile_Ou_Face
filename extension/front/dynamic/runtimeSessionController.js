@@ -7,13 +7,50 @@
  */
 (function initHubRuntimeSessionController(global) {
   function initRuntimeSessionController(deps) {
-    const { document, postMessage, showPanel, fallbackRenderer } = deps || {};
+    const { document, postMessage, showPanel, fallbackRenderer, getBinaryPath } = deps || {};
 
     var session = null;
     var currentStep = 1;
 
     function postMsg(msg) {
       if (typeof postMessage === 'function') postMessage(msg);
+    }
+
+    function normalizeBinaryPathForCompare(value) {
+      return String(value || '').trim().replace(/\\/g, '/');
+    }
+
+    function getCurrentBinaryPath() {
+      return typeof getBinaryPath === 'function' ? String(getBinaryPath() || '').trim() : '';
+    }
+
+    function getMessageBinaryPath(msg) {
+      return String(
+        msg?.binaryPath
+        || msg?.meta?.binaryPath
+        || msg?.meta?.binary_path
+        || msg?.meta?.binary
+        || ''
+      ).trim();
+    }
+
+    function isStaleRuntimeBinaryResponse(msg, scope) {
+      var responseBinaryPath = getMessageBinaryPath(msg);
+      var currentBinaryPath = getCurrentBinaryPath();
+      if (
+        !responseBinaryPath
+        || !currentBinaryPath
+        || normalizeBinaryPathForCompare(responseBinaryPath) === normalizeBinaryPathForCompare(currentBinaryPath)
+      ) {
+        return false;
+      }
+      postMsg({
+        type: 'hubDebugLog',
+        scope,
+        event: 'ignored-stale-response',
+        details: { currentBinaryPath, responseBinaryPath },
+      });
+      return true;
     }
 
     // --- Sidebar nav item ---
@@ -104,6 +141,7 @@
     function handleMessage(msg) {
       if (!msg || typeof msg !== 'object') return false;
       if (msg.type === 'dynamicTraceReady') {
+        if (isStaleRuntimeBinaryResponse(msg, 'dynamic-trace-ready')) return true;
         setSession(msg);
         return true;
       }

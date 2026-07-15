@@ -124,6 +124,11 @@
         "command": "pileOuFace.showLogs",
         "title": "Pile ou Face: Afficher les logs",
         "category": "Pile ou Face"
+      },
+      {
+        "command": "pileOuFace.perfSnapshot",
+        "title": "Pile ou Face: Snapshot performance",
+        "category": "Pile ou Face"
       }
     ],
     "menus": {
@@ -202,6 +207,10 @@
           "when": "true"
         },
         {
+          "command": "pileOuFace.perfSnapshot",
+          "when": "config.pileOuFace.perfDiagnostics == true"
+        },
+        {
           "command": "pileOuFace.decompilerTest",
           "when": "true"
         },
@@ -266,6 +275,11 @@
           ],
           "default": "warning",
           "description": "Niveau de log de l'extension et des backends Python qu'elle lance (propagé via BINHOST_LOG_LEVEL)."
+        },
+        "pileOuFace.perfDiagnostics": {
+          "type": "boolean",
+          "default": false,
+          "description": "Active les snapshots de diagnostic performance webview/extension host dans les logs Pile ou Face. Désactivé par défaut pour les versions publiées."
         }
       }
     }

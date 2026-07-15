@@ -8,7 +8,6 @@
 
 const vscode = require('vscode');
 const cp = require('child_process');
-const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -26,9 +25,16 @@ const {
 const { getKnownOciImagePlatform } = require('./decompilerCommands');
 
 const AUTH_STRICT_LICENSE_ENV = 'BINHOST_DISABLE_LICENSE_FALLBACK';
+const AUTH_CONTENT_KEYS_STDIN_ENV = 'BINHOST_CONTENT_KEYS_STDIN';
 const DOCKER_IMAGE_UPDATE_CACHE_TTL_MS = 10 * 60 * 1000;
 const _dockerImageUpdateCache = new Map();
 let _dockerRuntimeStatusCache = null;
+
+function encodePluginRuntimeStdin(contentKeys) {
+  const entries = Object.entries(contentKeys || {}).filter(([, value]) => String(value || '').trim());
+  if (!entries.length) return '';
+  return `${JSON.stringify({ content_keys: Object.fromEntries(entries) })}\n`;
+}
 
 function _collectProcessOutput(command, args, options = {}) {
   return new Promise((resolve) => {
@@ -472,19 +478,61 @@ function staticHandlers(config) {
     return existing || defaultRoot || root;
   };
 
+  const buildPythonMeta = (scriptRelPath, stdout, stderr, elapsedMs, err = null) => {
+    const stdoutText = typeof stdout === 'string' ? stdout : '';
+    const stderrText = typeof stderr === 'string' ? stderr : '';
+    const message = err && err.message ? String(err.message) : '';
+    return {
+      script: scriptRelPath,
+      elapsedMs,
+      stdoutBytes: Buffer.byteLength(stdoutText, 'utf8'),
+      stderrBytes: Buffer.byteLength(stderrText, 'utf8'),
+      stderrTail: stderrText.slice(-4000),
+      code: err && Object.prototype.hasOwnProperty.call(err, 'code') ? err.code : null,
+      signal: err && Object.prototype.hasOwnProperty.call(err, 'signal') ? err.signal : null,
+      killed: !!(err && err.killed),
+      timedOut: !!(err && err.killed && /timed out|timeout/i.test(message)),
+    };
+  };
+
+  const formatPythonFailure = (stepName, err) => {
+    const meta = (err && err.pythonMeta) || {};
+    const lines = [`${stepName}: ${err && err.message ? String(err.message) : String(err)}`];
+    if (meta.elapsedMs != null) lines.push(`elapsed=${meta.elapsedMs}ms`);
+    if (meta.code != null) lines.push(`code=${meta.code}`);
+    if (meta.signal) lines.push(`signal=${meta.signal}`);
+    if (meta.killed) lines.push('killed=true');
+    if (meta.timedOut) lines.push('timeout=true');
+    if (meta.stdoutBytes != null) lines.push(`stdout=${meta.stdoutBytes}B`);
+    if (meta.stderrBytes != null) lines.push(`stderr=${meta.stderrBytes}B`);
+    if (meta.stderrTail) lines.push(`stderr tail:\n${meta.stderrTail}`);
+    return lines.join('\n');
+  };
+
   const runPython = (argsWithScript, { timeout = 60000, maxBuffer = 4 * 1024 * 1024 } = {}) =>
     new Promise((resolve, reject) => {
       const [scriptRelPath, ...rest] = argsWithScript;
       const scriptPath = path.join(extensionPath, scriptRelPath);
+      const startedAt = Date.now();
       cp.execFile(getPythonExecutable(), [scriptPath, ...rest], {
         encoding: 'utf8', cwd: root, maxBuffer, timeout, env: buildPythonEnv(),
       }, (err, stdout, stderr) => {
-        if (err) { err.stderr = stderr; reject(err); } else resolve({ stdout });
+        const elapsedMs = Date.now() - startedAt;
+        const meta = buildPythonMeta(scriptRelPath, stdout, stderr, elapsedMs, err);
+        if (err) {
+          err.stderr = stderr;
+          err.stdout = stdout;
+          err.pythonMeta = meta;
+          reject(err);
+        } else {
+          resolve({ stdout, meta });
+        }
       });
     });
 
-  const buildPluginRuntimeEnv = async () => {
+  const buildPluginRuntimeContext = async () => {
     const base = buildPythonEnv();
+    const contentKeys = {};
     // Injecter le dossier plugins du workspace storage pour que Python le découvre.
     if (storageDir) {
       base['BINHOST_PLUGIN_PATH'] = path.join(storageDir, 'plugins');
@@ -504,8 +552,7 @@ function staticHandlers(config) {
       if (entries.length > 0) {
         hasOnlineKeys = true;
         for (const [pluginId, key] of entries) {
-          const varName = 'POF_CONTENT_KEY_' + String(pluginId).toUpperCase().replace(/-/g, '_').replace(/\./g, '_');
-          base[varName] = String(key);
+          contentKeys[String(pluginId)] = String(key);
         }
       }
     } catch (_e) {
@@ -515,6 +562,7 @@ function staticHandlers(config) {
     if (hasOnlineKeys) {
       // MODE 1 — en ligne : bloquer les fichiers licence offline.
       base[AUTH_STRICT_LICENSE_ENV] = '1';
+      base[AUTH_CONTENT_KEYS_STDIN_ENV] = '1';
     } else {
       // Pas de clés en ligne : vérifier la présence de fichiers licence offline signés.
       // On cherche dans storageDir/licenses ET dans ~/.pile-ou-face/licenses (même
@@ -545,7 +593,7 @@ function staticHandlers(config) {
       // le runtime Python lira les fichiers .license.json signés.
     }
 
-    return base;
+    return { env: base, stdin: encodePluginRuntimeStdin(contentKeys) };
   };
 
   const buildAccountStatePayload = async ({ email = '', fallbackError = '' } = {}) => {
@@ -615,7 +663,7 @@ function staticHandlers(config) {
 
   const runPluginRuntimeStreaming = async (runtimeArgs, options = {}) => {
     if (typeof cp.spawn !== 'function') return runPluginRuntime(runtimeArgs, options);
-    const pluginEnv = await buildPluginRuntimeEnv();
+    const pluginRuntime = await buildPluginRuntimeContext();
     const {
       timeout = 60000,
       maxBuffer = 4 * 1024 * 1024,
@@ -648,9 +696,13 @@ function staticHandlers(config) {
       let settled = false;
       const proc = cp.spawn(getPythonExecutable(), args, {
         cwd: root,
-        env: pluginEnv,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        env: pluginRuntime.env,
+        stdio: ['pipe', 'pipe', 'pipe'],
       });
+      if (pluginRuntime.stdin) {
+        proc.stdin?.write(pluginRuntime.stdin, 'utf8');
+      }
+      proc.stdin?.end();
       const finish = (fn, value) => {
         if (settled) return;
         settled = true;
@@ -695,7 +747,8 @@ function staticHandlers(config) {
   };
 
   const runPluginRuntime = async (runtimeArgs, options = {}) => {
-    const pluginEnv = await buildPluginRuntimeEnv();
+    if (typeof cp.spawn === 'function') return runPluginRuntimeStreaming(runtimeArgs, options);
+    const pluginRuntime = await buildPluginRuntimeContext();
     const { timeout = 60000, maxBuffer = 4 * 1024 * 1024 } = options;
     const scriptPath = path.join(extensionPath, 'backends/plugins/runtime.py');
     const { stdout } = await new Promise((resolve, reject) => {
@@ -705,7 +758,7 @@ function staticHandlers(config) {
         '--api-version', '1',
         ...runtimeArgs,
       ], {
-        encoding: 'utf8', cwd: root, maxBuffer, timeout, env: pluginEnv,
+        encoding: 'utf8', cwd: root, maxBuffer, timeout, env: pluginRuntime.env,
       }, (err, stdout, stderr) => {
         if (err) { err.stderr = stderr; reject(err); } else resolve({ stdout });
       });
@@ -876,6 +929,7 @@ function staticHandlers(config) {
       if (message.binaryPath && payload.binaryPath == null && payload.binary_path == null) {
         payload.binaryPath = message.binaryPath;
       }
+      const responseBinaryPath = String(message.binaryPath || payload.binaryPath || payload.binary_path || '').trim();
       // Inject workspace context so plugins (yara_scan, capa_scan) can locate rules via RulesManager
       if (payload.workspaceRoot == null) payload.workspaceRoot = root;
       if (payload.globalConfigPath == null) {
@@ -904,6 +958,7 @@ function staticHandlers(config) {
           type: 'hubPluginProgress',
           requestId,
           feature,
+          binaryPath: responseBinaryPath,
           percent: nextPercent,
           message: messageText,
         });
@@ -929,6 +984,7 @@ function staticHandlers(config) {
         type: 'hubPluginResult',
         requestId,
         feature,
+        binaryPath: responseBinaryPath,
         plugin_id: pluginId,
         result,
       });
@@ -1457,7 +1513,7 @@ function staticHandlers(config) {
       const { binaryPath, addr, funcName, full, decompiler, provider, useCache = true } = message;
       const decompilersJsonPath = storageDir ? path.join(storageDir, 'decompilers.json') : '';
 
-      // Build base args (annotation injection preserved)
+      // Build base args. Decompilers read annotations directly from AnnotationStore.
       const buildArgs = (targetDecompiler) => {
         const args = ['backends/static/decompile/decompile.py', '--binary', binaryPath];
         if (full) args.push('--full');
@@ -1465,14 +1521,6 @@ function staticHandlers(config) {
         if (targetDecompiler) args.push('--decompiler', targetDecompiler);
         if (provider && provider !== 'auto') args.push('--provider', provider);
         if (!useCache) args.push('--no-cache');
-        // annotation injection (keep existing logic)
-        const absPath = path.isAbsolute(binaryPath) ? binaryPath : path.join(root, binaryPath);
-        const annHash = crypto.createHash('sha256')
-          .update(absPath)
-          .update(fs.existsSync(absPath) ? String(fs.statSync(absPath).mtimeMs) : '')
-          .digest('hex').slice(0, 16);
-        const annPath = storageDir ? path.join(storageDir, 'annotations', `${annHash}.json`) : '';
-        if (annPath && fs.existsSync(annPath)) args.push('--annotations-json', annPath);
         return args;
       };
 
@@ -1604,27 +1652,27 @@ function staticHandlers(config) {
       const { binaryPath } = message;
       try {
         const { stdout } = await runPython(['backends/static/binary/imports_analysis.py', '--binary', binaryPath]);
-        panel.webview.postMessage({ type: 'hubImportsDone', data: JSON.parse(stdout) });
+        panel.webview.postMessage({ type: 'hubImportsDone', binaryPath, data: JSON.parse(stdout) });
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubImportsDone', data: { error: String(e) } });
+        panel.webview.postMessage({ type: 'hubImportsDone', binaryPath, data: { error: String(e) } });
       }
     },
     hubLoadExports: async (message) => {
       const { binaryPath } = message;
       try {
         const { stdout } = await runPython(['backends/static/binary/binary_exports.py', '--binary', binaryPath]);
-        panel.webview.postMessage({ type: 'hubExportsDone', data: JSON.parse(stdout) });
+        panel.webview.postMessage({ type: 'hubExportsDone', binaryPath, data: JSON.parse(stdout) });
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubExportsDone', data: { error: String(e) } });
+        panel.webview.postMessage({ type: 'hubExportsDone', binaryPath, data: { error: String(e) } });
       }
     },
     hubLoadImportXrefs: async (message) => {
       const { binaryPath, fnName } = message;
       try {
         const { stdout } = await runPython(['backends/static/disasm/import_xrefs.py', '--binary', binaryPath, '--function', fnName]);
-        panel.webview.postMessage({ type: 'hubImportXrefsDone', data: JSON.parse(stdout) });
+        panel.webview.postMessage({ type: 'hubImportXrefsDone', binaryPath, data: JSON.parse(stdout) });
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubImportXrefsDone', data: { function: fnName, callsites: [], error: String(e) } });
+        panel.webview.postMessage({ type: 'hubImportXrefsDone', binaryPath, data: { function: fnName, callsites: [], error: String(e) } });
       }
     },
     hubLoadHexView: async (message) => {
@@ -1643,10 +1691,11 @@ function staticHandlers(config) {
         if (rawArch) args.push('--raw-arch', String(rawArch));
         if (rawEndian) args.push('--raw-endian', String(rawEndian));
         const { stdout } = await runPython(args);
-        panel.webview.postMessage({ type: 'hubHexView', result: JSON.parse(stdout) });
+        panel.webview.postMessage({ type: 'hubHexView', binaryPath, result: JSON.parse(stdout) });
       } catch (e) {
         panel.webview.postMessage({
           type: 'hubHexView',
+          binaryPath,
           result: { error: String(e), rows: [], sections: [] },
         });
       }
@@ -1662,6 +1711,7 @@ function staticHandlers(config) {
         // Map to the shape the webview expects for hubPatchResult
         panel.webview.postMessage({
           type: 'hubPatchResult',
+          binaryPath,
           result: {
             ok: result.ok,
             written: result.patch ? result.patch.patched_bytes.split(' ').length : 0,
@@ -1672,19 +1722,19 @@ function staticHandlers(config) {
         });
         if (result.ok) {
           const { stdout: ls } = await runPython(['backends/static/patch/patch_manager.py', 'list', '--binary', binaryPath]);
-          panel.webview.postMessage({ type: 'hubPatchesDone', data: JSON.parse(ls) });
+          panel.webview.postMessage({ type: 'hubPatchesDone', binaryPath, data: JSON.parse(ls) });
         }
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubPatchResult', result: { ok: false, error: String(e) } });
+        panel.webview.postMessage({ type: 'hubPatchResult', binaryPath, result: { ok: false, error: String(e) } });
       }
     },
     hubLoadPatches: async (message) => {
       const { binaryPath } = message;
       try {
         const { stdout } = await runPython(['backends/static/patch/patch_manager.py', 'list', '--binary', binaryPath]);
-        panel.webview.postMessage({ type: 'hubPatchesDone', data: JSON.parse(stdout) });
+        panel.webview.postMessage({ type: 'hubPatchesDone', binaryPath, data: JSON.parse(stdout) });
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubPatchesDone', data: { patches: [], error: String(e) } });
+        panel.webview.postMessage({ type: 'hubPatchesDone', binaryPath, data: { patches: [], error: String(e) } });
       }
     },
     hubRevertPatch: async (message) => {
@@ -1693,10 +1743,10 @@ function staticHandlers(config) {
         const { stdout } = await runPython(['backends/static/patch/patch_manager.py', 'revert', '--binary', binaryPath, '--id', patchId]);
         const result = JSON.parse(stdout);
         const { stdout: ls } = await runPython(['backends/static/patch/patch_manager.py', 'list', '--binary', binaryPath]);
-        panel.webview.postMessage({ type: 'hubPatchesDone', data: JSON.parse(ls) });
-        panel.webview.postMessage({ type: 'hubRevertPatchDone', ok: true, patch: result.patch || null });
+        panel.webview.postMessage({ type: 'hubPatchesDone', binaryPath, data: JSON.parse(ls) });
+        panel.webview.postMessage({ type: 'hubRevertPatchDone', binaryPath, ok: true, patch: result.patch || null });
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubRevertPatchDone', ok: false, error: String(e) });
+        panel.webview.postMessage({ type: 'hubRevertPatchDone', binaryPath, ok: false, error: String(e) });
       }
     },
     hubRedoPatch: async (message) => {
@@ -1707,10 +1757,10 @@ function staticHandlers(config) {
         const { stdout } = await runPython(args);
         const result = JSON.parse(stdout);
         const { stdout: ls } = await runPython(['backends/static/patch/patch_manager.py', 'list', '--binary', binaryPath]);
-        panel.webview.postMessage({ type: 'hubPatchesDone', data: JSON.parse(ls) });
-        panel.webview.postMessage({ type: 'hubRedoPatchDone', ok: true, patch: result.patch || null });
+        panel.webview.postMessage({ type: 'hubPatchesDone', binaryPath, data: JSON.parse(ls) });
+        panel.webview.postMessage({ type: 'hubRedoPatchDone', binaryPath, ok: true, patch: result.patch || null });
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubRedoPatchDone', ok: false, error: String(e) });
+        panel.webview.postMessage({ type: 'hubRedoPatchDone', binaryPath, ok: false, error: String(e) });
       }
     },
     hubRevertAllPatches: async (message) => {
@@ -1718,10 +1768,10 @@ function staticHandlers(config) {
       try {
         await runPython(['backends/static/patch/patch_manager.py', 'revert-all', '--binary', binaryPath]);
         const { stdout: ls } = await runPython(['backends/static/patch/patch_manager.py', 'list', '--binary', binaryPath]);
-        panel.webview.postMessage({ type: 'hubPatchesDone', data: JSON.parse(ls) });
-        panel.webview.postMessage({ type: 'hubRevertPatchDone', ok: true });
+        panel.webview.postMessage({ type: 'hubPatchesDone', binaryPath, data: JSON.parse(ls) });
+        panel.webview.postMessage({ type: 'hubRevertPatchDone', binaryPath, ok: true });
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubRevertPatchDone', ok: false, error: String(e) });
+        panel.webview.postMessage({ type: 'hubRevertPatchDone', binaryPath, ok: false, error: String(e) });
       }
     },
     hubLoadStackFrame: async (message) => {
@@ -1755,11 +1805,12 @@ function staticHandlers(config) {
           '--code', code,
           '--binary', binaryPath || '',
         ]);
-        panel.webview.postMessage({ type: 'hubScriptResult', result: JSON.parse(stdout) });
+        panel.webview.postMessage({ type: 'hubScriptResult', binaryPath, result: JSON.parse(stdout) });
       } catch (e) {
         const stderr = e.stderr || String(e);
         panel.webview.postMessage({
           type: 'hubScriptResult',
+          binaryPath,
           result: { ok: false, stdout: '', stderr, duration_ms: 0 },
         });
       }
@@ -1767,44 +1818,72 @@ function staticHandlers(config) {
     hubLoadFunctions: async (message) => {
       const { binaryPath } = message;
       try {
-        const [symRes, ccRes, radarRes] = await Promise.all([
-          runPython(['backends/static/binary/symbols.py', '--binary', binaryPath, '--all']),
-          runPython(['backends/static/disasm/calling_convention.py', '--binary', binaryPath]),
-          runPython(['backends/static/analysis/function_radar.py', '--binary', binaryPath]),
-        ]);
+        const functionSteps = [
+          { name: 'symbols', args: ['backends/static/binary/symbols.py', '--binary', binaryPath, '--all'] },
+          { name: 'calling_convention', args: ['backends/static/disasm/calling_convention.py', '--binary', binaryPath] },
+          { name: 'function_radar', args: ['backends/static/analysis/function_radar.py', '--binary', binaryPath] },
+        ];
+        const settled = await Promise.all(functionSteps.map((step) =>
+          runPython(step.args).then((res) => ({ ...step, ok: true, res })).catch((err) => ({ ...step, ok: false, err }))
+        ));
+        const diagnostics = settled.map((step) => ({
+          name: step.name,
+          ok: step.ok,
+          ...(step.ok ? step.res.meta : ((step.err && step.err.pythonMeta) || {})),
+        }));
+        const failed = settled.find((step) => !step.ok);
+        if (failed) {
+          panel.webview.postMessage({
+            type: 'hubFunctionsDone',
+            binaryPath,
+            data: {
+              error: formatPythonFailure(failed.name, failed.err),
+              diagnostics,
+            },
+          });
+          return;
+        }
+        const [symRes, ccRes, radarRes] = settled.map((step) => step.res);
         const symbols = JSON.parse(symRes.stdout);
         const cc = JSON.parse(ccRes.stdout);
         const radar = JSON.parse(radarRes.stdout);
-        panel.webview.postMessage({ type: 'hubFunctionsDone', data: { symbols, cc, radar } });
+        panel.webview.postMessage({ type: 'hubFunctionsDone', binaryPath, data: { symbols, cc, radar, diagnostics } });
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubFunctionsDone', data: { error: String(e) } });
+        panel.webview.postMessage({
+          type: 'hubFunctionsDone',
+          binaryPath,
+          data: {
+            error: e && e.message ? String(e.message) : String(e),
+            diagnostics: e && e.pythonMeta ? [e.pythonMeta] : [],
+          },
+        });
       }
     },
     hubLoadPeResources: async (message) => {
       const { binaryPath } = message;
       try {
         const { stdout } = await runPython(['backends/static/binary/pe_resources.py', '--binary', binaryPath]);
-        panel.webview.postMessage({ type: 'hubPeResourcesDone', data: JSON.parse(stdout) });
+        panel.webview.postMessage({ type: 'hubPeResourcesDone', binaryPath, data: JSON.parse(stdout) });
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubPeResourcesDone', data: { error: String(e), resources: [], count: 0 } });
+        panel.webview.postMessage({ type: 'hubPeResourcesDone', binaryPath, data: { error: String(e), resources: [], count: 0 } });
       }
     },
     hubLoadExceptionHandlers: async (message) => {
       const { binaryPath } = message;
       try {
         const { stdout } = await runPython(['backends/static/exception_handlers.py', '--binary', binaryPath]);
-        panel.webview.postMessage({ type: 'hubExceptionHandlersDone', data: JSON.parse(stdout) });
+        panel.webview.postMessage({ type: 'hubExceptionHandlersDone', binaryPath, data: JSON.parse(stdout) });
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubExceptionHandlersDone', data: { error: String(e), entries: [], count: 0 } });
+        panel.webview.postMessage({ type: 'hubExceptionHandlersDone', binaryPath, data: { error: String(e), entries: [], count: 0 } });
       }
     },
     hubLoadTypedData: async (message) => {
       const args = buildTypedDataArgs(message);
       try {
         const { stdout } = await runPython(args);
-        panel.webview.postMessage({ type: 'hubTypedDataDone', data: JSON.parse(stdout) });
+        panel.webview.postMessage({ type: 'hubTypedDataDone', binaryPath: message.binaryPath || '', data: JSON.parse(stdout) });
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubTypedDataDone', data: { error: String(e), entries: [], sections: [] } });
+        panel.webview.postMessage({ type: 'hubTypedDataDone', binaryPath: message.binaryPath || '', data: { error: String(e), entries: [], sections: [] } });
       }
     },
     hubPreviewTypedStruct: async (message) => {
@@ -1813,6 +1892,7 @@ function staticHandlers(config) {
         const { stdout } = await runPython(args);
         panel.webview.postMessage({
           type: 'hubTypedStructPreviewDone',
+          binaryPath: message.binaryPath || '',
           data: JSON.parse(stdout),
           request: {
             structName: message.structName || '',
@@ -1823,6 +1903,7 @@ function staticHandlers(config) {
       } catch (e) {
         panel.webview.postMessage({
           type: 'hubTypedStructPreviewDone',
+          binaryPath: message.binaryPath || '',
           data: { error: String(e), entries: [], sections: [] },
           request: {
             structName: message.structName || '',
