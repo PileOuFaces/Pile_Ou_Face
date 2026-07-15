@@ -49,8 +49,11 @@ describe('runtimeAudit', () => {
 
     expect(state.enabled).to.equal(true);
     const lines = fs.readFileSync(path.join(tempRoot, AUDIT_FILE), 'utf8').trim().split('\n');
-    expect(lines).to.have.length(1);
-    const event = JSON.parse(lines[0]);
+    expect(lines).to.have.length(2);
+    const startEvent = JSON.parse(lines[0]);
+    expect(startEvent.kind).to.equal('audit');
+    expect(startEvent.name).to.equal('audit_start');
+    const event = JSON.parse(lines[1]);
     expect(event.kind).to.equal('webview_message');
     expect(event.name).to.equal('hubLoadAnnotations');
     expect(event.source).to.equal('test');
@@ -63,7 +66,8 @@ describe('runtimeAudit', () => {
     recordRuntimeEvent('command', 'pileOuFace.open');
 
     expect(state.enabled).to.equal(true);
-    const event = JSON.parse(fs.readFileSync(path.join(tempRoot, AUDIT_FILE), 'utf8').trim());
+    const lines = fs.readFileSync(path.join(tempRoot, AUDIT_FILE), 'utf8').trim().split('\n');
+    const event = JSON.parse(lines[1]);
     expect(event.kind).to.equal('command');
     expect(event.name).to.equal('pileOuFace.open');
   });
@@ -85,7 +89,8 @@ describe('runtimeAudit', () => {
 
     expect(await registeredHandler('arg1')).to.equal('ok');
 
-    const event = JSON.parse(fs.readFileSync(path.join(tempRoot, AUDIT_FILE), 'utf8').trim());
+    const lines = fs.readFileSync(path.join(tempRoot, AUDIT_FILE), 'utf8').trim().split('\n');
+    const event = JSON.parse(lines[1]);
     expect(event.kind).to.equal('command');
     expect(event.name).to.equal('pileOuFace.testCommand');
     expect(event.argc).to.equal(1);

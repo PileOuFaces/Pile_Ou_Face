@@ -47,6 +47,7 @@ function configureRuntimeAudit({ storageDir = '', logChannel = null, vscode = nu
     try {
       fs.mkdirSync(storageDir, { recursive: true });
       _logChannel?.appendLine?.(`[audit] Runtime usage audit enabled: ${_auditPath}`);
+      recordRuntimeEvent('audit', 'audit_start', { source: 'configureRuntimeAudit' });
     } catch (err) {
       _enabled = false;
       _auditPath = '';
