@@ -364,7 +364,7 @@ function createHub(config) {
     }, LICENSE_RECHECK_MS);
     panel.onDidDispose(() => { globalThis.clearInterval(licenseRecheckTimer); });
 
-    panel.webview.html = getHubContent(panel.webview, context.extensionUri, initialPanel, root, globalDir, storageDir);
+    panel.webview.html = getHubContent(panel.webview, context.extensionUri, initialPanel, globalDir, storageDir);
     const handlerCtx = {
       root,
       storageDir,

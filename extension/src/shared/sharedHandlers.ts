@@ -234,7 +234,7 @@ function readAnnotationsFile(filePath) {
 
 /**
  * @brief Handlers partagés (getPlatform, requestBinarySelection, listGeneratedFiles, etc.).
- * @param {object} ctx - { root, panel, getTempDir, ensureTempDir, refreshSidebar }
+ * @param {object} ctx - { root, panel, refreshSidebar }
  */
 function sharedHandlers(ctx) {
   const {
@@ -242,7 +242,6 @@ function sharedHandlers(ctx) {
     storageDir,
     panel,
     context,
-    getTempDir,
     refreshSidebar,
     getRawProfile,
     setRawProfile,

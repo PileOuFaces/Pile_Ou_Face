@@ -10,11 +10,11 @@ describe('loadPluginWebviews', () => {
   afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
 
   const storageDir = () => path.join(tmpDir, 'workspaceStorage', 'PileOuFaces.stack-visualizer');
-  const loadFromStorage = () => loadPluginWebviews(tmpDir, { storageDir: storageDir() });
+  const loadFromStorage = () => loadPluginWebviews({ storageDir: storageDir() });
   const pluginDir = (name) => path.join(storageDir(), 'plugins', name);
 
   it('returns empty strings when no plugins', () => {
-    const result = loadPluginWebviews(tmpDir);
+    const result = loadPluginWebviews();
     expect(result.groupStyles).to.equal('');
     expect(result.frames).to.deep.equal([]);
     expect(result.framesHtml).to.equal('');
@@ -97,7 +97,7 @@ describe('loadPluginWebviews', () => {
     expect(result.groupStyles).to.equal('');
   });
 
-  it('inlines script content even when a resolver is provided', () => {
+  it('inlines script content into the iframe srcdoc', () => {
     const dir = pluginDir('my-plugin');
     const webviewDir = path.join(dir, 'webview');
     fs.mkdirSync(webviewDir, { recursive: true });
@@ -109,9 +109,8 @@ describe('loadPluginWebviews', () => {
     fs.writeFileSync(path.join(webviewDir, 'tab.html'), '<div id="myPanel">content</div>');
     fs.writeFileSync(path.join(webviewDir, 'tab.js'), 'window.pluginLoaded = true;');
 
-    const result = loadPluginWebviews(tmpDir, {
+    const result = loadPluginWebviews({
       storageDir: storageDir(),
-      webviewResourceResolver: (filePath) => `vscode-resource:${path.basename(filePath)}`,
     });
     // srcdoc always inlines
     expect(result.framesHtml).to.include('window.pluginLoaded = true;');
@@ -166,7 +165,7 @@ describe('loadPluginWebviews', () => {
     }));
     // webview/ dir intentionally absent
 
-    expect(() => loadPluginWebviews(tmpDir)).not.to.throw();
+    expect(() => loadPluginWebviews()).not.to.throw();
     const result = loadFromStorage();
     expect(result.frames).to.deep.equal([]);
     expect(result.framesHtml).to.equal('');
