@@ -446,25 +446,6 @@ function listAll(storageDir) {
 }
 
 /**
- * Nettoie les artifacts (fichiers à la racine de storageDir/).
- * Ne touche pas au cache.
- */
-function cleanupArtifacts(storageDir) {
-  const baseDir = getBaseDir(storageDir);
-  if (!fs.existsSync(baseDir)) return { removed: 0 };
-  let removed = 0;
-  for (const name of fs.readdirSync(baseDir)) {
-    if (PROTECTED_NAMES.has(name)) continue;
-    const fullPath = path.join(baseDir, name);
-    if (fs.statSync(fullPath).isFile()) {
-      removeRecursive(fullPath);
-      removed++;
-    }
-  }
-  return { removed };
-}
-
-/**
  * Purge le cache obsolète (binaires qui n'existent plus).
  * storageDir: répertoire de stockage des artifacts.
  * root: racine du workspace (pour calculer les fingerprints des fichiers workspace).
@@ -566,7 +547,6 @@ module.exports = {
   listArtifacts,
   listCacheEntries,
   listAll,
-  cleanupArtifacts,
   purgeStaleCache,
   cleanupAll,
   cleanupForBinary,
