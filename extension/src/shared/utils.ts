@@ -220,20 +220,11 @@ function resolveDockerExecutable() {
 
 /**
  * Build the runtime env for Python/Docker processes.
- * Accepts two call patterns (backward-compatible):
- *   buildRuntimeEnv(root, storageDir)           — new style: storageDir is a string path
- *   buildRuntimeEnv(root, extraEnv)             — legacy: extraEnv is a plain object
- *   buildRuntimeEnv(root, storageDir, extraEnv) — new style with extra overrides
+ * Accepts buildRuntimeEnv(root, storageDir, extraEnv).
  * When storageDir is provided, injects POF_STORAGE_DIR, DECOMPILERS_CONFIG, COMPILERS_CONFIG.
  */
-function buildRuntimeEnv(root, storageDirOrExtra, extraEnv = {}) {
-  let storageDir = '';
-  let mergedExtra = extraEnv;
-  if (typeof storageDirOrExtra === 'string') {
-    storageDir = storageDirOrExtra;
-  } else if (storageDirOrExtra && typeof storageDirOrExtra === 'object') {
-    mergedExtra = { ...storageDirOrExtra, ...extraEnv };
-  }
+function buildRuntimeEnv(root, storageDir = '', extraEnv = {}) {
+  const mergedExtra = extraEnv && typeof extraEnv === 'object' ? extraEnv : {};
   const backendBase = _extensionPath || path.resolve(String(root || '').trim());
   const env = { ...process.env, ...mergedExtra };
   if (!mergedExtra.BINHOST_LOG_LEVEL) {
@@ -285,7 +276,7 @@ function check32BitToolchain(output) {
 }
 
 function runCommand(command, args, cwd, output, envOverrides = {}, streamHooks = {}) {
-  const env = buildRuntimeEnv(cwd, envOverrides);
+  const env = buildRuntimeEnv(cwd, '', envOverrides);
   output.appendLine(`[cmd] ${command} ${args.join(' ')}`);
   return new Promise((resolve, reject) => {
     let settled = false;
