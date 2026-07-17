@@ -1076,11 +1076,21 @@ function _findPythonExe(root) {
 
 function _runPythonDirect(pythonExe, args, root, timeout = 60000, storageDir = '') {
   return new Promise((resolve, reject) => {
-    recordRuntimeEvent('python', args?.[0] || '', { source: 'decompilerCommands._runPythonDirect', argc: Array.isArray(args) ? Math.max(0, args.length - 1) : 0 });
+    const startedAt = Date.now();
+    const auditName = args?.[0] || '';
+    const auditArgc = Array.isArray(args) ? Math.max(0, args.length - 1) : 0;
     cp.execFile(
       pythonExe, args,
       { encoding: 'utf8', cwd: root, timeout, maxBuffer: 8 * 1024 * 1024, env: buildRuntimeEnv(root, storageDir) },
       (err, stdout, stderr) => {
+        recordRuntimeEvent('python', auditName, {
+          source: 'decompilerCommands._runPythonDirect',
+          argc: auditArgc,
+          durationMs: Date.now() - startedAt,
+          ok: !err || Boolean(stdout),
+          stdoutBytes: Buffer.byteLength(String(stdout || ''), 'utf8'),
+          stderrBytes: Buffer.byteLength(String(stderr || ''), 'utf8'),
+        });
         if (err && !stdout) { err.stderr = stderr; reject(err); return; }
         try {
           resolve(JSON.parse(stdout.trim()));

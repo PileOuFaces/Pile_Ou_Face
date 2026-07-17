@@ -175,11 +175,19 @@ function activate(context) {
     new Promise((resolve, reject) => {
       const [scriptRelPath, ...rest] = argsWithScript;
       const scriptPath = require('path').join(cwd || root, scriptRelPath);
-      recordRuntimeEvent('python', scriptRelPath, { source: 'extension.commands', argc: rest.length });
+      const startedAt = Date.now();
       cp.execFile(pythonExe, [scriptPath, ...rest], {
         encoding: 'utf8', cwd: cwd || root, maxBuffer, timeout,
         env: buildRuntimeEnv(cwd || root, storageDir),
       }, (err, stdout, stderr) => {
+        recordRuntimeEvent('python', scriptRelPath, {
+          source: 'extension.commands',
+          argc: rest.length,
+          durationMs: Date.now() - startedAt,
+          ok: !err,
+          stdoutBytes: Buffer.byteLength(String(stdout || ''), 'utf8'),
+          stderrBytes: Buffer.byteLength(String(stderr || ''), 'utf8'),
+        });
         if (err) { err.stderr = stderr; reject(err); } else resolve({ stdout });
       });
     });

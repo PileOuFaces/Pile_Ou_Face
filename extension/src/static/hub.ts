@@ -563,15 +563,30 @@ function createHub(config) {
     }, 200);
 
     const runPythonJson = (scriptPath, args) => new Promise((resolve, reject) => {
-      recordRuntimeEvent('python', path.relative(root, scriptPath), { source: 'hub.runPythonJson', argc: args.length });
+      const startedAt = Date.now();
+      const auditName = path.relative(root, scriptPath);
       cp.execFile(pythonExe, [scriptPath, ...args], { encoding: 'utf8', cwd: root, maxBuffer: 32 * 1024 * 1024, timeout: 60000, env: pythonEnv }, (err, stdout) => {
+        recordRuntimeEvent('python', auditName, {
+          source: 'hub.runPythonJson',
+          argc: args.length,
+          durationMs: Date.now() - startedAt,
+          ok: !err,
+          stdoutBytes: Buffer.byteLength(String(stdout || ''), 'utf8'),
+        });
         if (err) { reject(err.message ? err : new Error(String(err))); return; }
         try { resolve(JSON.parse(stdout)); } catch (e) { reject(e); }
       });
     });
     const runPythonJsonViaFile = (scriptPath, args, tmpFile) => new Promise((resolve, reject) => {
-      recordRuntimeEvent('python', path.relative(root, scriptPath), { source: 'hub.runPythonJsonViaFile', argc: args.length });
+      const startedAt = Date.now();
+      const auditName = path.relative(root, scriptPath);
       cp.execFile(pythonExe, [scriptPath, ...args, '--output', tmpFile], { cwd: root, timeout: 120000, env: pythonEnv }, (err) => {
+        recordRuntimeEvent('python', auditName, {
+          source: 'hub.runPythonJsonViaFile',
+          argc: args.length,
+          durationMs: Date.now() - startedAt,
+          ok: !err,
+        });
         if (err) { reject(err.message ? err : new Error(String(err))); return; }
         try {
           const data = fs.readFileSync(tmpFile, 'utf8');
@@ -589,12 +604,22 @@ function createHub(config) {
       maxBuffer = 4 * 1024 * 1024,
       fallback = '{}',
     } = {}) => new Promise((resolve, reject) => {
-      recordRuntimeEvent('python', args?.[0] || '', { source: 'hub.runPythonJsonFile', argc: Array.isArray(args) ? Math.max(0, args.length - 1) : 0 });
+      const startedAt = Date.now();
+      const auditName = args?.[0] || '';
+      const auditArgc = Array.isArray(args) ? Math.max(0, args.length - 1) : 0;
       cp.execFile(
         pythonExe,
         args,
         { encoding: 'utf8', cwd: root, timeout, maxBuffer, env: pythonEnv },
         (err, stdout, stderr) => {
+          recordRuntimeEvent('python', auditName, {
+            source: 'hub.runPythonJsonFile',
+            argc: auditArgc,
+            durationMs: Date.now() - startedAt,
+            ok: !err,
+            stdoutBytes: Buffer.byteLength(String(stdout || ''), 'utf8'),
+            stderrBytes: Buffer.byteLength(String(stderr || ''), 'utf8'),
+          });
           if (err) {
             const wrapped = err instanceof Error ? err : new Error(String(err || 'Commande Python échouée.'));
             wrapped.stderr = stderr;
@@ -617,12 +642,22 @@ function createHub(config) {
       timeout = 30000,
       maxBuffer = 4 * 1024 * 1024,
     } = {}) => new Promise((resolve, reject) => {
-      recordRuntimeEvent('python', args?.[0] || '', { source: 'hub.runPythonTextFile', argc: Array.isArray(args) ? Math.max(0, args.length - 1) : 0 });
+      const startedAt = Date.now();
+      const auditName = args?.[0] || '';
+      const auditArgc = Array.isArray(args) ? Math.max(0, args.length - 1) : 0;
       cp.execFile(
         pythonExe,
         args,
         { encoding: 'utf8', cwd: root, timeout, maxBuffer, env: pythonEnv },
         (err, stdout, stderr) => {
+          recordRuntimeEvent('python', auditName, {
+            source: 'hub.runPythonTextFile',
+            argc: auditArgc,
+            durationMs: Date.now() - startedAt,
+            ok: !err,
+            stdoutBytes: Buffer.byteLength(String(stdout || ''), 'utf8'),
+            stderrBytes: Buffer.byteLength(String(stderr || ''), 'utf8'),
+          });
           if (err) {
             const wrapped = err instanceof Error ? err : new Error(String(err || 'Commande Python échouée.'));
             wrapped.stderr = stderr;

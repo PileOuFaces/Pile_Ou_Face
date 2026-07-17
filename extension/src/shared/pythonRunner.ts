@@ -20,10 +20,18 @@ function makeRunPython({ root, extensionPath, getPythonExecutable, buildPythonEn
     new Promise((resolve, reject) => {
       const [scriptRelPath, ...rest] = argsWithScript;
       const scriptPath = path.join(extensionPath || root, scriptRelPath);
-      recordRuntimeEvent('python', scriptRelPath, { source: 'pythonRunner', argc: rest.length });
+      const startedAt = Date.now();
       cp.execFile(resolveExe(), [scriptPath, ...rest], {
         encoding: 'utf8', cwd: root, maxBuffer, timeout, env: resolveEnv(),
       }, (err, stdout, stderr) => {
+        recordRuntimeEvent('python', scriptRelPath, {
+          source: 'pythonRunner',
+          argc: rest.length,
+          durationMs: Date.now() - startedAt,
+          ok: !err,
+          stdoutBytes: Buffer.byteLength(String(stdout || ''), 'utf8'),
+          stderrBytes: Buffer.byteLength(String(stderr || ''), 'utf8'),
+        });
         if (err) { err.stderr = stderr; reject(err); } else resolve({ stdout });
       });
     });

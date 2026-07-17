@@ -515,11 +515,18 @@ function staticHandlers(config) {
       const [scriptRelPath, ...rest] = argsWithScript;
       const scriptPath = path.join(extensionPath, scriptRelPath);
       const startedAt = Date.now();
-      recordRuntimeEvent('python', scriptRelPath, { source: 'staticHandlers.runPython', argc: rest.length });
       cp.execFile(getPythonExecutable(), [scriptPath, ...rest], {
         encoding: 'utf8', cwd: root, maxBuffer, timeout, env: buildPythonEnv(),
       }, (err, stdout, stderr) => {
         const elapsedMs = Date.now() - startedAt;
+        recordRuntimeEvent('python', scriptRelPath, {
+          source: 'staticHandlers.runPython',
+          argc: rest.length,
+          durationMs: elapsedMs,
+          ok: !err,
+          stdoutBytes: Buffer.byteLength(String(stdout || ''), 'utf8'),
+          stderrBytes: Buffer.byteLength(String(stderr || ''), 'utf8'),
+        });
         const meta = buildPythonMeta(scriptRelPath, stdout, stderr, elapsedMs, err);
         if (err) {
           err.stderr = stderr;
