@@ -278,14 +278,30 @@ function check32BitToolchain(output) {
 
 function runCommand(command, args, cwd, output, envOverrides = {}, streamHooks = {}) {
   const env = buildRuntimeEnv(cwd, '', envOverrides);
-  recordRuntimeEvent('process', command, { source: 'runCommand', argc: Array.isArray(args) ? args.length : 0 });
+  const startedAt = Date.now();
+  let stdoutBytes = 0;
+  let stderrBytes = 0;
   output.appendLine(`[cmd] ${command} ${args.join(' ')}`);
   return new Promise((resolve, reject) => {
     let settled = false;
     let cancelled = false;
+    let processAuditRecorded = false;
     let cancelSubscription = null;
     let forceKillTimer = null;
     const child = cp.spawn(command, args, { cwd, env });
+    const recordProcessAudit = ({ ok, exitCode = -1 } = {}) => {
+      if (processAuditRecorded) return;
+      processAuditRecorded = true;
+      recordRuntimeEvent('process', command, {
+        source: 'runCommand',
+        argc: Array.isArray(args) ? args.length : 0,
+        durationMs: Date.now() - startedAt,
+        ok,
+        exitCode,
+        stdoutBytes,
+        stderrBytes,
+      });
+    };
     const cleanup = () => {
       if (forceKillTimer) {
         clearTimeout(forceKillTimer);
@@ -326,7 +342,9 @@ function runCommand(command, args, cwd, output, envOverrides = {}, streamHooks =
     } else if (typeof token?.onCancellationRequested === 'function') {
       cancelSubscription = token.onCancellationRequested(cancel);
     }
-    const handleChunk = (hook, chunk) => {
+    const handleChunk = (hook, chunk, streamName) => {
+      if (streamName === 'stdout') stdoutBytes += chunk.length || 0;
+      if (streamName === 'stderr') stderrBytes += chunk.length || 0;
       const text = chunk.toString();
       if (typeof hook !== 'function') {
         output.append(text);
@@ -344,10 +362,14 @@ function runCommand(command, args, cwd, output, envOverrides = {}, streamHooks =
       }
       output.append(text);
     };
-    child.stdout.on('data', (d) => handleChunk(streamHooks.onStdoutData, d));
-    child.stderr.on('data', (d) => handleChunk(streamHooks.onStderrData, d));
-    child.on('error', (err) => finish(err));
+    child.stdout.on('data', (d) => handleChunk(streamHooks.onStdoutData, d, 'stdout'));
+    child.stderr.on('data', (d) => handleChunk(streamHooks.onStderrData, d, 'stderr'));
+    child.on('error', (err) => {
+      recordProcessAudit({ ok: false });
+      finish(err);
+    });
     child.on('close', (code) => {
+      recordProcessAudit({ ok: !cancelled && code === 0, exitCode: Number.isFinite(code) ? code : -1 });
       if (cancelled) {
         finish(new Error(`${command} cancelled`));
         return;

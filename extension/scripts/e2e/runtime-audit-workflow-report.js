@@ -592,14 +592,40 @@ function buildBackendSummary(auditEvents) {
     if (!['python', 'process'].includes(event.kind) || !event.name) continue;
     const name = normalizeBackendName(event.name);
     const key = `${event.kind}:${name}`;
-    const current = counts.get(key) || { kind: event.kind, name, count: 0, sources: new Set() };
+    const current = counts.get(key) || {
+      kind: event.kind,
+      name,
+      count: 0,
+      failed: 0,
+      totalDurationMs: 0,
+      maxDurationMs: 0,
+      maxStdoutBytes: 0,
+      maxStderrBytes: 0,
+      sources: new Set(),
+    };
+    const durationMs = Math.max(0, Number(event.durationMs || 0));
     current.count += 1;
+    current.failed += event.ok === false ? 1 : 0;
+    current.totalDurationMs += durationMs;
+    current.maxDurationMs = Math.max(current.maxDurationMs, durationMs);
+    current.maxStdoutBytes = Math.max(current.maxStdoutBytes, Number(event.stdoutBytes || 0));
+    current.maxStderrBytes = Math.max(current.maxStderrBytes, Number(event.stderrBytes || 0));
     if (event.source) current.sources.add(event.source);
     counts.set(key, current);
   }
   return [...counts.values()]
-    .map((entry) => ({ ...entry, sources: [...entry.sources].sort() }))
-    .sort((left, right) => right.count - left.count || left.name.localeCompare(right.name));
+    .map((entry) => ({
+      ...entry,
+      avgDurationMs: Math.round(entry.totalDurationMs / Math.max(1, entry.count)),
+      totalDurationMs: Math.round(entry.totalDurationMs),
+      sources: [...entry.sources].sort(),
+    }))
+    .sort((left, right) => (
+      right.totalDurationMs - left.totalDurationMs
+      || right.maxDurationMs - left.maxDurationMs
+      || right.count - left.count
+      || left.name.localeCompare(right.name)
+    ));
 }
 
 function buildPayloadSignalSummary(auditEvents) {
@@ -1201,7 +1227,14 @@ function markdownForReport(report) {
     lines.push('- <none>');
   } else {
     for (const item of report.backendActivity.slice(0, 20)) {
-      lines.push(`- \`${item.kind}:${item.name}\` ${item.count} event(s)${item.sources.length ? ` via ${item.sources.join(', ')}` : ''}`);
+      const duration = item.totalDurationMs
+        ? `, total=${item.totalDurationMs} ms, max=${item.maxDurationMs} ms, avg=${item.avgDurationMs} ms`
+        : '';
+      const outputs = item.maxStdoutBytes || item.maxStderrBytes
+        ? `, stdout<=${item.maxStdoutBytes}B, stderr<=${item.maxStderrBytes}B`
+        : '';
+      const failures = item.failed ? `, failed=${item.failed}` : '';
+      lines.push(`- \`${item.kind}:${item.name}\` ${item.count} event(s)${duration}${failures}${outputs}${item.sources.length ? ` via ${item.sources.join(', ')}` : ''}`);
     }
   }
 
