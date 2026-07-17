@@ -338,6 +338,67 @@ function buildPerfStepBreakdown(auditEvents, spans) {
   ));
 }
 
+function buildBackendScenarioHotspots(auditEvents, spans) {
+  const backendEvents = auditEvents
+    .filter((event) => ['python', 'process'].includes(event.kind) && event.name)
+    .map((event) => ({
+      ...event,
+      tsMs: toMs(event.ts),
+      durationMs: Math.max(0, Number(event.durationMs || 0)),
+      normalizedName: normalizeBackendName(event.name),
+    }))
+    .filter((event) => event.tsMs > 0);
+  if (!backendEvents.length || !spans.length) return [];
+
+  const rows = [];
+  for (const span of spans) {
+    const startMs = toMs(span.startTs);
+    const stopMs = toMs(span.stopTs);
+    if (!startMs || !stopMs || stopMs < startMs) continue;
+    const events = backendEvents.filter((event) => event.tsMs >= startMs && event.tsMs <= stopMs);
+    if (!events.length) continue;
+    const byBackend = new Map();
+    for (const event of events) {
+      const key = `${event.kind}:${event.normalizedName}`;
+      const current = byBackend.get(key) || {
+        scenario: span.scenario,
+        target: span.target,
+        kind: event.kind,
+        name: event.normalizedName,
+        count: 0,
+        failed: 0,
+        totalDurationMs: 0,
+        maxDurationMs: 0,
+        maxStdoutBytes: 0,
+        maxStderrBytes: 0,
+        sources: new Set(),
+      };
+      current.count += 1;
+      current.failed += event.ok === false ? 1 : 0;
+      current.totalDurationMs += event.durationMs;
+      current.maxDurationMs = Math.max(current.maxDurationMs, event.durationMs);
+      current.maxStdoutBytes = Math.max(current.maxStdoutBytes, Number(event.stdoutBytes || 0));
+      current.maxStderrBytes = Math.max(current.maxStderrBytes, Number(event.stderrBytes || 0));
+      if (event.source) current.sources.add(event.source);
+      byBackend.set(key, current);
+    }
+    rows.push(...[...byBackend.values()].map((entry) => ({
+      ...entry,
+      avgDurationMs: Math.round(entry.totalDurationMs / Math.max(1, entry.count)),
+      totalDurationMs: Math.round(entry.totalDurationMs),
+      sources: [...entry.sources].sort(),
+    })));
+  }
+
+  return rows.sort((left, right) => (
+    right.totalDurationMs - left.totalDurationMs
+    || right.maxDurationMs - left.maxDurationMs
+    || right.count - left.count
+    || left.scenario.localeCompare(right.scenario)
+    || left.name.localeCompare(right.name)
+  ));
+}
+
 function deltaKind(delta, kind) {
   return Number(delta?.byKind?.[kind] || 0);
 }
@@ -954,6 +1015,7 @@ function buildReport() {
   const runtimeOperationHotspots = buildRuntimeOperationHotspots(spans);
   const perfPriorities = buildPerfPriorities(runtimeOperationHotspots, optimizationCandidates);
   const perfStepBreakdown = buildPerfStepBreakdown(auditEvents, spans);
+  const backendScenarioHotspots = buildBackendScenarioHotspots(auditEvents, spans);
   const rawDepthGaps = buildDepthGaps(coverageReport, targetSummaries);
   const hostObservabilityGaps = rawDepthGaps
     .filter((gap) => HOST_OBSERVABILITY_GAP_NOTES[gap.target])
@@ -1006,6 +1068,7 @@ function buildReport() {
       runtimeOperationHotspots: runtimeOperationHotspots.length,
       perfPriorities: perfPriorities.length,
       perfStepBreakdown: perfStepBreakdown.length,
+      backendScenarioHotspots: backendScenarioHotspots.length,
       topPerfPriority: perfPriorities[0]?.priority || '',
       depthGaps: depthGaps.length,
       hostObservabilityGaps: hostObservabilityGaps.length,
@@ -1018,6 +1081,7 @@ function buildReport() {
     payloadSignals,
     perfPriorities,
     perfStepBreakdown,
+    backendScenarioHotspots,
     optimizationCandidates,
     runtimeOperationHotspots,
     depthGaps,
@@ -1059,6 +1123,7 @@ function markdownForReport(report) {
     `- Runtime operation hotspots: ${report.summary.runtimeOperationHotspots}`,
     `- Perf priorities: ${report.summary.perfPriorities}${report.summary.topPerfPriority ? ` (top ${report.summary.topPerfPriority})` : ''}`,
     `- Perf step breakdown rows: ${report.summary.perfStepBreakdown}`,
+    `- Backend scenario hotspots: ${report.summary.backendScenarioHotspots}`,
     `- Depth gaps: ${report.summary.depthGaps}`,
     `- Host observability gaps: ${report.summary.hostObservabilityGaps}`,
     '',
@@ -1201,6 +1266,22 @@ function markdownForReport(report) {
         item.stripped ? 'stripped' : '',
       ].filter(Boolean).join(', ');
       lines.push(`- \`${item.fixture}\`: ${formatBytes(item.sizeBytes)}${tags ? ` (${tags})` : ''}, scenario \`${item.scenario}\``);
+    }
+  }
+
+  lines.push('', '## Backend Scenario Hotspots', '');
+  if (!report.backendScenarioHotspots.length) {
+    lines.push('- <none>');
+  } else {
+    for (const item of report.backendScenarioHotspots.slice(0, 30)) {
+      const duration = item.totalDurationMs
+        ? `total=${item.totalDurationMs} ms, max=${item.maxDurationMs} ms, avg=${item.avgDurationMs} ms`
+        : 'duration=n/a';
+      const outputs = item.maxStdoutBytes || item.maxStderrBytes
+        ? `, stdout<=${item.maxStdoutBytes}B, stderr<=${item.maxStderrBytes}B`
+        : '';
+      const failures = item.failed ? `, failed=${item.failed}` : '';
+      lines.push(`- \`${item.scenario}\` -> \`${item.kind}:${item.name}\`: ${item.count} call(s), ${duration}${failures}${outputs}${item.sources.length ? ` via ${item.sources.join(', ')}` : ''}`);
     }
   }
 
