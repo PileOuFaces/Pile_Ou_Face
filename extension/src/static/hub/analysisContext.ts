@@ -310,20 +310,18 @@ function createAnalysisContext({
         await _disasmInFlight.get(inflightKey);
       } else {
         const runDisasm = async () => {
-          let disasmArch = null;
-          if (artifacts.binaryMeta.kind !== 'raw') {
-            try {
-              const info = await loadBinaryHeaders(absPath);
-              disasmArch = (info.arch || '').trim() || null;
-            } catch (_) { /* fallback */ }
-          }
+          // disasm.py auto-détecte l'architecture via lief (--arch est ignoré) :
+          // ne pas bloquer le désassemblage sur headers.py, juste réchauffer le
+          // cache d'infos binaire en parallèle pour les consommateurs suivants.
+          const warmHeaders = artifacts.binaryMeta.kind !== 'raw'
+            ? loadBinaryHeaders(absPath).catch(() => null)
+            : null;
           const args = buildDisasmArgs({
             binaryPath: absPath,
             disasmPath: artifacts.disasmPath,
             mappingPath: artifacts.mappingPath,
             syntax,
             section,
-            arch: disasmArch,
             rawArch: artifacts.binaryMeta.rawConfig?.arch || null,
             rawBaseAddr: artifacts.binaryMeta.rawConfig?.baseAddr || null,
             rawEndian: artifacts.binaryMeta.rawConfig?.endian || null,
@@ -341,6 +339,7 @@ function createAnalysisContext({
           } else {
             await runCommand(pythonExe, args, root, logChannel, { PYTHONPATH: getExtensionPath() || root });
           }
+          if (warmHeaders) await warmHeaders;
         };
         const promise = runDisasm().finally(() => { _disasmInFlight.delete(inflightKey); });
         _disasmInFlight.set(inflightKey, promise);
