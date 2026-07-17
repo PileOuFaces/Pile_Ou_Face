@@ -608,7 +608,30 @@ function perfPriorityForScore(score) {
   return 'P3';
 }
 
-function perfBottleneckFor({ hotspot, candidate }) {
+function capPerfPriority(priority, cap) {
+  if (!cap) return priority;
+  return PERF_PRIORITY_RANK[priority] < PERF_PRIORITY_RANK[cap] ? cap : priority;
+}
+
+function annotationRebuildForScenario(perfStepBreakdown, scenario) {
+  return (perfStepBreakdown || []).find((entry) => (
+    entry.scenario === scenario
+    && entry.step === 'hubOpenDisasm.ensureDisasmArtifacts'
+    && Array.isArray(entry.rebuildReasons)
+    && entry.rebuildReasons.includes('annotation-overlay')
+  )) || null;
+}
+
+function perfBottleneckFor({ hotspot, candidate, perfStepBreakdown = [] }) {
+  const annotationRebuild = annotationRebuildForScenario(perfStepBreakdown, hotspot.scenario);
+  if (annotationRebuild) {
+    return {
+      category: 'annotation-sensitive-rebuild',
+      evidence: `${annotationRebuild.totalDurationMs} ms disasm rebuild with annotation-overlay`,
+      recommendation: 'This rebuild is required because annotations are injected into generated disassembly. Optimize only by changing the architecture so annotation overlays are applied outside the generated .disasm artifact.',
+      priorityCap: 'P2',
+    };
+  }
   const repeatedBackend = (hotspot.repeatedNames || [])
     .filter((entry) => ['python', 'process'].includes(entry.kind) && entry.count >= 2)
     .sort((left, right) => right.count - left.count);
@@ -691,17 +714,17 @@ function perfBottleneckFor({ hotspot, candidate }) {
   };
 }
 
-function buildPerfPriorities(runtimeOperationHotspots, optimizationCandidates) {
+function buildPerfPriorities(runtimeOperationHotspots, optimizationCandidates, perfStepBreakdown = []) {
   const candidatesByScenario = new Map(optimizationCandidates.map((item) => [item.scenario, item]));
   return runtimeOperationHotspots
     .map((hotspot) => {
       const candidate = candidatesByScenario.get(hotspot.scenario) || null;
-      const bottleneck = perfBottleneckFor({ hotspot, candidate });
+      const bottleneck = perfBottleneckFor({ hotspot, candidate, perfStepBreakdown });
       const memoryMb = candidate ? Math.max(candidate.rssPeakDelta, candidate.heapPeakDelta) / 1024 / 1024 : 0;
       const durationScore = Math.round((hotspot.durationMs || 0) / 50);
       const memoryScore = Math.round(memoryMb * 2);
       const priorityScore = hotspot.score + durationScore + memoryScore + (candidate ? 10 : 0);
-      const priority = perfPriorityForScore(priorityScore);
+      const priority = capPerfPriority(perfPriorityForScore(priorityScore), bottleneck.priorityCap);
       return {
         priority,
         priorityScore,
@@ -1141,8 +1164,8 @@ function buildReport() {
   const failedSpans = spans.filter((span) => !span.ok);
   const optimizationCandidates = buildOptimizationCandidates(spans);
   const runtimeOperationHotspots = buildRuntimeOperationHotspots(spans);
-  const perfPriorities = buildPerfPriorities(runtimeOperationHotspots, optimizationCandidates);
   const perfStepBreakdown = buildPerfStepBreakdown(auditEvents, spans);
+  const perfPriorities = buildPerfPriorities(runtimeOperationHotspots, optimizationCandidates, perfStepBreakdown);
   const annotationDisasmRebuilds = countAnnotationDisasmRebuilds(perfStepBreakdown);
   const backendScenarioHotspots = buildBackendScenarioHotspots(auditEvents, spans);
   const rawDepthGaps = buildDepthGaps(coverageReport, targetSummaries);
@@ -1515,6 +1538,7 @@ module.exports = {
   buildFeatureAssertionMatrix,
   buildPayloadSignalSummary,
   buildPerfStepBreakdown,
+  buildPerfPriorities,
   countAnnotationDisasmRebuilds,
   markdownForReport,
   summarizePerf,

@@ -2,6 +2,7 @@ const { expect } = require('chai');
 
 const {
   buildPerfStepBreakdown,
+  buildPerfPriorities,
   countAnnotationDisasmRebuilds,
   markdownForReport,
 } = require('../../scripts/e2e/runtime-audit-workflow-report');
@@ -29,6 +30,49 @@ describe('runtime audit workflow report', () => {
     expect(breakdown).to.have.length(1);
     expect(breakdown[0].rebuildReasons).to.deep.equal(['annotation-overlay']);
     expect(countAnnotationDisasmRebuilds(breakdown)).to.equal(1);
+  });
+
+  it('caps annotation-sensitive rebuild hotspots below immediate optimization priority', () => {
+    const priorities = buildPerfPriorities(
+      [{
+        scenario: 'hub-handler:hubSaveAnnotation',
+        target: 'hubSaveAnnotation',
+        durationMs: 1249,
+        score: 56,
+        totalEvents: 48,
+        scoredEvents: 39,
+        pythonCalls: 2,
+        processCalls: 1,
+        uiAckCalls: 9,
+        webviewInbound: 20,
+        webviewOutbound: 9,
+        maxRepeated: 5,
+        repeatedNames: [],
+        topNames: [],
+      }],
+      [{
+        scenario: 'hub-handler:hubSaveAnnotation',
+        target: 'hubSaveAnnotation',
+        durationMs: 1249,
+        rssPeakDelta: 48 * 1024,
+        heapPeakDelta: 8 * 1024 * 1024,
+        reasons: ['duration', 'heap'],
+      }],
+      [{
+        scenario: 'hub-handler:hubSaveAnnotation',
+        step: 'hubOpenDisasm.ensureDisasmArtifacts',
+        totalDurationMs: 325,
+        count: 1,
+        rebuildReasons: ['annotation-overlay'],
+      }],
+    );
+
+    expect(priorities).to.have.length(1);
+    expect(priorities[0]).to.include({
+      priority: 'P2',
+      category: 'annotation-sensitive-rebuild',
+    });
+    expect(priorities[0].evidence).to.include('annotation-overlay');
   });
 
   it('prints annotation-sensitive disasm rebuilds in the markdown summary and breakdown', () => {
