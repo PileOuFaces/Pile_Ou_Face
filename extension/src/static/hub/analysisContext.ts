@@ -272,7 +272,16 @@ function createAnalysisContext({
     );
   };
 
-  const loadBinaryHeaders = async (binaryPath) => runPythonJson(getHeadersScript(root), ['--binary', binaryPath]);
+  const loadBinaryHeaders = async (binaryPath, { useCache = true } = {}) => {
+    const cached = readAnalysisCacheEntry(binaryPath, useCache, 'info');
+    if (cached && typeof cached === 'object') {
+      logChannel?.appendLine?.('[cache] Infos binaire depuis cache');
+      return cached;
+    }
+    const info = await runPythonJson(getHeadersScript(root), ['--binary', binaryPath]);
+    writeAnalysisCacheEntry(binaryPath, useCache, 'info', info);
+    return info;
+  };
 
   const ensureDisasmArtifacts = async ({
     binaryPath,
@@ -563,11 +572,19 @@ function createAnalysisContext({
     return path.join(effectiveDir, 'annotations', `${hash}.json`);
   };
 
-  const loadBinarySymbols = async (binaryPath, { includeAll = false } = {}) => {
+  const loadBinarySymbols = async (binaryPath, { includeAll = false, useCache = true } = {}) => {
+    const cacheKey = includeAll ? 'symbols_all' : 'symbols';
+    const cached = readAnalysisCacheEntry(binaryPath, useCache, cacheKey);
+    if (Array.isArray(cached)) {
+      logChannel?.appendLine?.(`[cache] Symboles depuis cache (${includeAll ? 'all' : 'default'})`);
+      return cached;
+    }
     const args = ['--binary', binaryPath];
     if (includeAll) args.push('--all');
     const rawSymbols = await runPythonJson(getSymbolsScript(root), args).catch(() => []);
-    return Array.isArray(rawSymbols) ? rawSymbols : (rawSymbols.symbols || []);
+    const symbols = Array.isArray(rawSymbols) ? rawSymbols : (rawSymbols.symbols || []);
+    writeAnalysisCacheEntry(binaryPath, useCache, cacheKey, symbols);
+    return symbols;
   };
 
   const collectSymbolNames = (symbols) => {
