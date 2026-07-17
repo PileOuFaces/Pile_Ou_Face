@@ -112,13 +112,23 @@ describe("static stale response guards", () => {
     expect(helper).to.include("setTimeout(acknowledge, 250)");
   });
 
-  it("refreshes disassembly without cache after annotation saves", () => {
+  it("only refreshes disassembly after annotation saves when the overlay changed", () => {
     const source = messagesSource();
     const handler = handlerFor(source, "hubAnnotationSaved", "hubAnnotations");
-    expect(handler).to.include("type: 'hubOpenDisasm'");
-    expect(handler).to.include("useCache: false");
-    expect(handler).to.include("openInEditor: false");
-    expect(handler).to.include("refreshReason: 'annotation-overlay'");
+    expect(handler).to.include("refreshDisasmForAnnotations(bp, window._annotations)");
+    expect(handler).to.include("clearDecompileCaches()");
+    expect(handler).to.not.include("type: 'hubOpenDisasm'");
+  });
+
+  it("adopts the annotation signature after a fresh disasm build instead of rebuilding", () => {
+    const source = messagesSource();
+    expect(handlerFor(source, "hubDisasmReady", "hubStaticCompileDone"))
+      .to.include("window._adoptAnnotationDisasmSignatureFor = msg.binaryPath.trim()");
+    const start = source.indexOf("function refreshDisasmForAnnotations");
+    const end = source.indexOf("window.addEventListener", start);
+    const helper = source.slice(start, end);
+    expect(helper).to.include("window._adoptAnnotationDisasmSignatureFor === bp");
+    expect(helper).to.include("previousSameBinary");
   });
 
   it("renders annotation kind badges and edit actions", () => {

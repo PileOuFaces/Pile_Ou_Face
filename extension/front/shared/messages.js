@@ -25,13 +25,24 @@ function isStaleStaticBinaryResponse(msg, scope) {
 
 function refreshDisasmForAnnotations(binaryPath, annotations) {
   const bp = String(binaryPath || (typeof getStaticBinaryPath === 'function' ? getStaticBinaryPath() : '') || '').trim();
-  if (!bp || !annotations || typeof annotations !== 'object') return;
+  if (!bp || !annotations || typeof annotations !== 'object') return false;
   const relevantEntries = Object.entries(annotations)
     .filter(([, entry]) => entry && (entry.name || entry.comment));
-  if (!relevantEntries.length) return;
   const signature = `${bp}\n${JSON.stringify(relevantEntries)}`;
-  if (window._lastAnnotationDisasmRefreshSignature === signature) return;
+  const previous = window._lastAnnotationDisasmRefreshSignature;
+  if (window._adoptAnnotationDisasmSignatureFor === bp) {
+    // Le .asm vient d'être régénéré : disasm.py a déjà baké l'état courant
+    // des annotations (SQLite), adopter la signature sans relancer de build.
+    window._adoptAnnotationDisasmSignatureFor = null;
+    window._lastAnnotationDisasmRefreshSignature = signature;
+    return false;
+  }
+  if (previous === signature) return false;
   window._lastAnnotationDisasmRefreshSignature = signature;
+  // Ne rebuild sur liste vide que si ce binaire avait un overlay baké
+  // (suppression de la dernière annotation) — pas au premier chargement.
+  const previousSameBinary = typeof previous === 'string' && previous.startsWith(`${bp}\n`);
+  if (!relevantEntries.length && !previousSameBinary) return false;
   vscode.postMessage({
     type: 'hubOpenDisasm',
     binaryPath: bp,
@@ -39,6 +50,7 @@ function refreshDisasmForAnnotations(binaryPath, annotations) {
     openInEditor: false,
     refreshReason: 'annotation-overlay',
   });
+  return true;
 }
 
 function isAnnotatedFunctionAddress(addr) {
@@ -507,6 +519,10 @@ window.addEventListener('message', (event) => {
   }
   if (msg.type === 'hubDisasmReady' && msg.binaryPath) {
     if (isStaleStaticBinaryResponse(msg, 'static-disasm-ready')) return;
+    // Ce build a baké l'état courant des annotations : le prochain
+    // hubAnnotations (toujours rechargé après hubSetBinaryPath) adoptera la
+    // signature au lieu de déclencher un rebuild annotation-overlay inutile.
+    window._adoptAnnotationDisasmSignatureFor = msg.binaryPath.trim();
     tabDataCache.disasm = { binaryPath: msg.binaryPath.trim() };
     tabDataCache.callgraph = null;
     tabDataCache.cfg = null;
@@ -2560,18 +2576,14 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubAnnotationSaved') {
+    // Filet de sécurité : hubAnnotations (envoyé juste avant) fait déjà le
+    // refresh gardé par signature ; ne rebuild ici que si l'overlay du .asm
+    // (name/comment) a réellement changé — jamais pour bookmarks/reviews.
     const bp = msg.binaryPath;
-    clearDecompileCaches();
-    if (bp) {
+    if (bp && refreshDisasmForAnnotations(bp, window._annotations)) {
+      clearDecompileCaches();
       tabDataCache.cfg = null;
       tabDataCache.callgraph = null;
-      vscode.postMessage({
-        type: 'hubOpenDisasm',
-        binaryPath: bp,
-        useCache: false,
-        openInEditor: false,
-        refreshReason: 'annotation-overlay',
-      });
     }
     return;
   }
