@@ -13,6 +13,7 @@ const readline = require('readline');
 const fileManager = require('./fileManager');
 const { detectPythonExecutable, getExtensionPath, buildRuntimeEnv } = require('./utils');
 const { makeAnnotationsBridge } = require('./annotationsBridge');
+const { applyAnnotationOverlayMutation } = require('./annotationOverlayPatch');
 const {
   cancelAiProcess,
   clearAiProcess,
@@ -286,18 +287,32 @@ function sharedHandlers(ctx) {
     }
   };
 
-  const buildAnnotationsMessage = (binaryPath, annotations) => ({
+  const buildAnnotationsMessage = (binaryPath, annotations, overlay = '') => ({
     type: 'hubAnnotations',
     binaryPath,
     annotations,
+    ...(overlay ? { overlay } : {}),
     functionAddrs: binaryPath
       ? loadFunctionAddrsFromDisasmMapping(binaryPath, { root, storageDir, getTempDir })
       : [],
   });
 
-  const notifyAnnotations = (binaryPath, annotations) => {
-    panel.webview.postMessage(buildAnnotationsMessage(binaryPath, annotations));
+  const notifyAnnotations = (binaryPath, annotations, overlay = '') => {
+    panel.webview.postMessage(buildAnnotationsMessage(binaryPath, annotations, overlay));
     panel.webview.postMessage({ type: 'hubAnnotationSaved', binaryPath });
+  };
+
+  // Arbitre la fraîcheur du .asm côté host : patch en place pour un simple
+  // changement de commentaire, rebuild uniquement quand un label change.
+  const applyOverlayMutation = (binaryPath, mutation) => {
+    try {
+      return applyAnnotationOverlayMutation({
+        mappingPath: getDisasmMappingPathForBinary(binaryPath, { root, storageDir, getTempDir }),
+        ...mutation,
+      });
+    } catch (_) {
+      return 'rebuild-required';
+    }
   };
 
   const forgetRecentBinary = (binaryPath) => {
@@ -632,7 +647,8 @@ function sharedHandlers(ctx) {
       const normAddr = addr.startsWith('0x') ? addr : '0x' + addr;
       try {
         const annotations = await annotationsBridge.saveAnnotation(binaryPath, normAddr, { comment, name });
-        notifyAnnotations(binaryPath, annotations);
+        const overlay = applyOverlayMutation(binaryPath, { addr: normAddr, name, comment });
+        notifyAnnotations(binaryPath, annotations, overlay);
         vscode.window.showInformationMessage(`Annotation enregistrée pour ${normAddr}`);
       } catch (err) {
         vscode.window.showErrorMessage(`Impossible d'enregistrer l'annotation : ${err?.message || err}`);
@@ -644,7 +660,7 @@ function sharedHandlers(ctx) {
       const normAddr = addr.startsWith('0x') ? addr : '0x' + addr;
       try {
         const annotations = await annotationsBridge.saveFunctionReview(binaryPath, normAddr, { reviewStatus, reviewNotes });
-        notifyAnnotations(binaryPath, annotations);
+        notifyAnnotations(binaryPath, annotations, 'unchanged');
       } catch (err) {
         vscode.window.showErrorMessage(`Impossible d'enregistrer la revue : ${err?.message || err}`);
       }
@@ -658,7 +674,7 @@ function sharedHandlers(ctx) {
         const resolvedLabel = label || existing.bookmarkLabel || existing.name || normAddr;
         const resolvedColor = color || existing.bookmarkColor || '#4ec9b0';
         const annotations = await annotationsBridge.saveBookmark(binaryPath, normAddr, { label: resolvedLabel, color: resolvedColor });
-        notifyAnnotations(binaryPath, annotations);
+        notifyAnnotations(binaryPath, annotations, 'unchanged');
       } catch (err) {
         vscode.window.showErrorMessage(`Impossible d'enregistrer le bookmark : ${err?.message || err}`);
       }
@@ -669,7 +685,7 @@ function sharedHandlers(ctx) {
       const normAddr = addr.startsWith('0x') ? addr : '0x' + addr;
       try {
         const annotations = await annotationsBridge.deleteBookmark(binaryPath, normAddr);
-        notifyAnnotations(binaryPath, annotations);
+        notifyAnnotations(binaryPath, annotations, 'unchanged');
       } catch (err) {
         vscode.window.showErrorMessage(`Impossible de supprimer le bookmark : ${err?.message || err}`);
       }
@@ -679,7 +695,7 @@ function sharedHandlers(ctx) {
       if (!binaryPath) return;
       try {
         const annotations = await annotationsBridge.clearBookmarks(binaryPath);
-        notifyAnnotations(binaryPath, annotations);
+        notifyAnnotations(binaryPath, annotations, 'unchanged');
       } catch (err) {
         vscode.window.showErrorMessage(`Impossible d'effacer les bookmarks : ${err?.message || err}`);
       }
@@ -690,7 +706,8 @@ function sharedHandlers(ctx) {
       const normAddr = addr.startsWith('0x') ? addr : '0x' + addr;
       try {
         const annotations = await annotationsBridge.deleteAnnotation(binaryPath, normAddr);
-        notifyAnnotations(binaryPath, annotations);
+        const overlay = applyOverlayMutation(binaryPath, { addr: normAddr, deleted: true });
+        notifyAnnotations(binaryPath, annotations, overlay);
       } catch (err) {
         vscode.window.showErrorMessage(`Impossible de supprimer l'annotation : ${err?.message || err}`);
       }
