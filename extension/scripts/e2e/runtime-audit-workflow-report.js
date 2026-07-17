@@ -50,6 +50,17 @@ const HOST_OBSERVABILITY_GAP_NOTES = {
 };
 
 const PERF_PRIORITY_RANK = { P0: 0, P1: 1, P2: 2, P3: 3 };
+const PERFORMANCE_BUDGETS = {
+  scenarioDurationWarnMs: 1500,
+  scenarioDurationFailCandidateMs: 3000,
+  scenarioHeapWarnBytes: 16 * 1024 * 1024,
+  scenarioHeapFailCandidateBytes: 32 * 1024 * 1024,
+  backendScenarioTotalWarnMs: 500,
+  backendScenarioTotalFailCandidateMs: 1200,
+  backendScenarioRepeatedCallWarn: 3,
+  backendGlobalTotalWarnMs: 4000,
+  backendGlobalTotalFailCandidateMs: 8000,
+};
 
 function readJsonl(filePath) {
   if (!filePath || !fs.existsSync(filePath)) return [];
@@ -397,6 +408,109 @@ function buildBackendScenarioHotspots(auditEvents, spans) {
     || left.scenario.localeCompare(right.scenario)
     || left.name.localeCompare(right.name)
   ));
+}
+
+function buildPerformanceBudgetSignals({ spans, backendScenarioHotspots, backendActivity }) {
+  const signals = [];
+  const push = (signal) => signals.push(signal);
+
+  for (const span of spans.filter((item) => item.ok)) {
+    if (span.durationMs >= PERFORMANCE_BUDGETS.scenarioDurationWarnMs) {
+      push({
+        severity: span.durationMs >= PERFORMANCE_BUDGETS.scenarioDurationFailCandidateMs ? 'fail-candidate' : 'warn',
+        budget: 'scenario-duration',
+        scenario: span.scenario,
+        target: span.target,
+        value: span.durationMs,
+        limit: span.durationMs >= PERFORMANCE_BUDGETS.scenarioDurationFailCandidateMs
+          ? PERFORMANCE_BUDGETS.scenarioDurationFailCandidateMs
+          : PERFORMANCE_BUDGETS.scenarioDurationWarnMs,
+        limitLabel: `${span.durationMs >= PERFORMANCE_BUDGETS.scenarioDurationFailCandidateMs
+          ? PERFORMANCE_BUDGETS.scenarioDurationFailCandidateMs
+          : PERFORMANCE_BUDGETS.scenarioDurationWarnMs} ms`,
+        details: `${span.durationMs} ms`,
+        nextStep: 'Inspect perfPriority, perfStepBreakdown, and backendScenarioHotspots for this scenario before changing product behavior.',
+      });
+    }
+    if (span.heapPeakDelta >= PERFORMANCE_BUDGETS.scenarioHeapWarnBytes) {
+      push({
+        severity: span.heapPeakDelta >= PERFORMANCE_BUDGETS.scenarioHeapFailCandidateBytes ? 'fail-candidate' : 'warn',
+        budget: 'scenario-heap-peak',
+        scenario: span.scenario,
+        target: span.target,
+        value: span.heapPeakDelta,
+        limit: span.heapPeakDelta >= PERFORMANCE_BUDGETS.scenarioHeapFailCandidateBytes
+          ? PERFORMANCE_BUDGETS.scenarioHeapFailCandidateBytes
+          : PERFORMANCE_BUDGETS.scenarioHeapWarnBytes,
+        limitLabel: formatBytes(span.heapPeakDelta >= PERFORMANCE_BUDGETS.scenarioHeapFailCandidateBytes
+          ? PERFORMANCE_BUDGETS.scenarioHeapFailCandidateBytes
+          : PERFORMANCE_BUDGETS.scenarioHeapWarnBytes),
+        details: `heap peak +${formatBytes(span.heapPeakDelta)}`,
+        nextStep: 'Check payload size and retained state for this scenario.',
+      });
+    }
+  }
+
+  for (const item of backendScenarioHotspots) {
+    if (item.totalDurationMs >= PERFORMANCE_BUDGETS.backendScenarioTotalWarnMs) {
+      push({
+        severity: item.totalDurationMs >= PERFORMANCE_BUDGETS.backendScenarioTotalFailCandidateMs ? 'fail-candidate' : 'warn',
+        budget: 'backend-scenario-total',
+        scenario: item.scenario,
+        target: item.target,
+        backend: `${item.kind}:${item.name}`,
+        value: item.totalDurationMs,
+        limit: item.totalDurationMs >= PERFORMANCE_BUDGETS.backendScenarioTotalFailCandidateMs
+          ? PERFORMANCE_BUDGETS.backendScenarioTotalFailCandidateMs
+          : PERFORMANCE_BUDGETS.backendScenarioTotalWarnMs,
+        limitLabel: `${item.totalDurationMs >= PERFORMANCE_BUDGETS.backendScenarioTotalFailCandidateMs
+          ? PERFORMANCE_BUDGETS.backendScenarioTotalFailCandidateMs
+          : PERFORMANCE_BUDGETS.backendScenarioTotalWarnMs} ms`,
+        details: `${item.count} call(s), total=${item.totalDurationMs} ms, max=${item.maxDurationMs} ms`,
+        nextStep: 'Check whether this scenario should call this backend fewer times or reuse cached results.',
+      });
+    } else if (item.count >= PERFORMANCE_BUDGETS.backendScenarioRepeatedCallWarn) {
+      push({
+        severity: 'warn',
+        budget: 'backend-scenario-repeat',
+        scenario: item.scenario,
+        target: item.target,
+        backend: `${item.kind}:${item.name}`,
+        value: item.count,
+        limit: PERFORMANCE_BUDGETS.backendScenarioRepeatedCallWarn,
+        limitLabel: `${PERFORMANCE_BUDGETS.backendScenarioRepeatedCallWarn} call(s)`,
+        details: `${item.count} call(s), total=${item.totalDurationMs} ms`,
+        nextStep: 'Trace fan-out for repeated backend calls in this scenario.',
+      });
+    }
+  }
+
+  for (const item of backendActivity) {
+    if (item.totalDurationMs >= PERFORMANCE_BUDGETS.backendGlobalTotalWarnMs) {
+      push({
+        severity: item.totalDurationMs >= PERFORMANCE_BUDGETS.backendGlobalTotalFailCandidateMs ? 'fail-candidate' : 'warn',
+        budget: 'backend-global-total',
+        backend: `${item.kind}:${item.name}`,
+        value: item.totalDurationMs,
+        limit: item.totalDurationMs >= PERFORMANCE_BUDGETS.backendGlobalTotalFailCandidateMs
+          ? PERFORMANCE_BUDGETS.backendGlobalTotalFailCandidateMs
+          : PERFORMANCE_BUDGETS.backendGlobalTotalWarnMs,
+        limitLabel: `${item.totalDurationMs >= PERFORMANCE_BUDGETS.backendGlobalTotalFailCandidateMs
+          ? PERFORMANCE_BUDGETS.backendGlobalTotalFailCandidateMs
+          : PERFORMANCE_BUDGETS.backendGlobalTotalWarnMs} ms`,
+        details: `${item.count} event(s), total=${item.totalDurationMs} ms, max=${item.maxDurationMs} ms`,
+        nextStep: 'Use Backend Scenario Hotspots to identify the workflows that drive this backend cost.',
+      });
+    }
+  }
+
+  return signals.sort((left, right) => {
+    const severityRank = { 'fail-candidate': 0, warn: 1 };
+    return (severityRank[left.severity] ?? 9) - (severityRank[right.severity] ?? 9)
+      || Number(right.value || 0) - Number(left.value || 0)
+      || String(left.scenario || '').localeCompare(String(right.scenario || ''))
+      || String(left.backend || '').localeCompare(String(right.backend || ''));
+  });
 }
 
 function deltaKind(delta, kind) {
@@ -1025,6 +1139,11 @@ function buildReport() {
     }));
   const depthGaps = rawDepthGaps.filter((gap) => !HOST_OBSERVABILITY_GAP_NOTES[gap.target]);
   const backendActivity = buildBackendSummary(auditEvents);
+  const performanceBudgetSignals = buildPerformanceBudgetSignals({
+    spans,
+    backendScenarioHotspots,
+    backendActivity,
+  });
   const readiness = buildAuditReadiness({
     coverageReport,
     spans,
@@ -1069,6 +1188,8 @@ function buildReport() {
       perfPriorities: perfPriorities.length,
       perfStepBreakdown: perfStepBreakdown.length,
       backendScenarioHotspots: backendScenarioHotspots.length,
+      performanceBudgetSignals: performanceBudgetSignals.length,
+      performanceBudgetFailCandidates: performanceBudgetSignals.filter((entry) => entry.severity === 'fail-candidate').length,
       topPerfPriority: perfPriorities[0]?.priority || '',
       depthGaps: depthGaps.length,
       hostObservabilityGaps: hostObservabilityGaps.length,
@@ -1082,6 +1203,7 @@ function buildReport() {
     perfPriorities,
     perfStepBreakdown,
     backendScenarioHotspots,
+    performanceBudgetSignals,
     optimizationCandidates,
     runtimeOperationHotspots,
     depthGaps,
@@ -1124,6 +1246,7 @@ function markdownForReport(report) {
     `- Perf priorities: ${report.summary.perfPriorities}${report.summary.topPerfPriority ? ` (top ${report.summary.topPerfPriority})` : ''}`,
     `- Perf step breakdown rows: ${report.summary.perfStepBreakdown}`,
     `- Backend scenario hotspots: ${report.summary.backendScenarioHotspots}`,
+    `- Performance budget signals: ${report.summary.performanceBudgetSignals} (${report.summary.performanceBudgetFailCandidates} fail-candidate)`,
     `- Depth gaps: ${report.summary.depthGaps}`,
     `- Host observability gaps: ${report.summary.hostObservabilityGaps}`,
     '',
@@ -1169,6 +1292,18 @@ function markdownForReport(report) {
       lines.push(`- ${item.priority} \`${item.scenario}\` [${item.category}] priority=${item.priorityScore}, runtime=${item.runtimeScore}, duration=${item.durationMs} ms${reasons}`);
       lines.push(`  Evidence: ${item.evidence}; events=${item.totalEvents}, scored-events=${item.scoredEvents}, uiAck=${item.uiAckCalls}, python=${item.pythonCalls}, process=${item.processCalls}, webview in/out=${item.webviewInbound}/${item.webviewOutbound}, max-repeat=${item.maxRepeated}${repeats ? `, repeats=[${repeats}]` : ''}`);
       lines.push(`  Next: ${item.recommendation}`);
+    }
+  }
+
+  lines.push('', '## Performance Budget Signals', '');
+  if (!report.performanceBudgetSignals.length) {
+    lines.push('- <none>');
+  } else {
+    for (const item of report.performanceBudgetSignals.slice(0, 30)) {
+      const subject = item.scenario
+        ? `\`${item.scenario}\`${item.backend ? ` -> \`${item.backend}\`` : ''}`
+        : `\`${item.backend || item.target || item.budget}\``;
+      lines.push(`- ${item.severity} [${item.budget}] ${subject}: ${item.details}, limit=${item.limitLabel || item.limit}. Next: ${item.nextStep}`);
     }
   }
 
