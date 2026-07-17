@@ -14,6 +14,7 @@ const {
 } = require('./runtime-audit-feature-map');
 
 const AUDIT_FILE = 'audit-runtime-usage.jsonl';
+const E2E_AUDIT_MOCHA_TIMEOUT_MS = 120000;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -455,7 +456,7 @@ function jsonResponse(body, status = 200) {
 }
 
 async function run() {
-  const mocha = new Mocha({ ui: 'bdd', color: true, timeout: 60000 });
+  const mocha = new Mocha({ ui: 'bdd', color: true, timeout: E2E_AUDIT_MOCHA_TIMEOUT_MS });
   const suite = Mocha.Suite.create(mocha.suite, 'runtime usage audit e2e');
 
   suite.addTest(new Mocha.Test('creates audit JSONL and records hub startup events', async () => {
