@@ -163,8 +163,9 @@ function registerStaticCommands(context, deps, providers) {
       const binaryPath = readMappingBinary(mappingPath);
       const xrefsArgs = [getXrefsScript(r), '--mapping', mappingPath, '--addr', addr, '--mode', 'to'];
       if (binaryPath) xrefsArgs.push('--binary', binaryPath);
+      const backendRoot = getExtensionPath() || r;
       const out = await new Promise((resolve, reject) => {
-        cp.execFile(pythonExe, xrefsArgs, { encoding: 'utf8', cwd: r, maxBuffer: 4 * 1024 * 1024, timeout: 30000, env: { ...process.env, PYTHONPATH: r } }, (err, stdout) => {
+        cp.execFile(pythonExe, xrefsArgs, { encoding: 'utf8', cwd: r, maxBuffer: 4 * 1024 * 1024, timeout: 30000, env: { ...process.env, PYTHONPATH: backendRoot } }, (err, stdout) => {
           if (err) reject(err); else resolve(stdout);
         });
       });
@@ -220,8 +221,9 @@ function registerStaticCommands(context, deps, providers) {
       const binaryPath = readMappingBinary(mappingPath);
       const xrefsArgs = [getXrefsScript(r), '--mapping', mappingPath, '--addr', addr, '--mode', 'from'];
       if (binaryPath) xrefsArgs.push('--binary', binaryPath);
+      const backendRoot = getExtensionPath() || r;
       const out = await new Promise((resolve, reject) => {
-        cp.execFile(pythonExe, xrefsArgs, { encoding: 'utf8', cwd: r, maxBuffer: 4 * 1024 * 1024, timeout: 30000, env: { ...process.env, PYTHONPATH: r } }, (err, stdout) => {
+        cp.execFile(pythonExe, xrefsArgs, { encoding: 'utf8', cwd: r, maxBuffer: 4 * 1024 * 1024, timeout: 30000, env: { ...process.env, PYTHONPATH: backendRoot } }, (err, stdout) => {
           if (err) reject(err); else resolve(stdout);
         });
       });
