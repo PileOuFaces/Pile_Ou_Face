@@ -360,6 +360,7 @@ function listArtifacts(storageDir) {
       let type = 'artifact';
       if (name.endsWith('.disasm.asm')) type = 'disasm';
       else if (name.endsWith('.disasm.mapping.json')) type = 'mapping';
+      else if (name.endsWith('.disasm.mapping.db')) type = 'mapping';
       else if (name.endsWith('.symbols.json')) type = 'symbols';
       else if (name === 'output.json') type = 'trace';
       else if (name === 'input.asm') type = 'input';

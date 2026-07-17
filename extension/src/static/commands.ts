@@ -12,6 +12,9 @@ const path = require('path');
 const cp = require('child_process');
 const { getDisasmScript, getXrefsScript } = require('../shared/paths');
 const { getExtensionPath } = require('../shared/utils');
+const { makeMappingStore } = require('../shared/mappingStore');
+
+const mappingStore = makeMappingStore();
 const { recordRuntimeEvent } = require('../shared/runtimeAudit');
 
 /**
@@ -281,9 +284,7 @@ function registerStaticCommands(context, deps, providers) {
       );
     }
     if (fs.existsSync(disasmPath)) {
-      const mapping = JSON.parse(fs.readFileSync(mappingPath, 'utf8'));
-      const addrVal = parseInt(addr, 16);
-      const entry = (mapping.lines || []).find(l => l.addr && parseInt(l.addr, 16) === addrVal);
+      const entry = await mappingStore.findEntryByAddr(mappingPath, addr);
       if (entry) {
         const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(disasmPath));
         const editor = await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.One, preview: false });

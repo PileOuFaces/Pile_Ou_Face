@@ -112,7 +112,7 @@ describe("annotationsBridge", () => {
     try {
       await bridge.saveAnnotation(binaryPath, "0x401000", { comment: "c", name: "n" });
       await bridge.saveBookmark(binaryPath, "0x401000", { label: "L", color: "#123456" });
-      const result = await bridge.deleteAnnotation(binaryPath, "0x401000");
+      const { annotations: result } = await bridge.deleteAnnotation(binaryPath, "0x401000");
 
       expect(result["0x401000"].comment).to.equal(undefined);
       expect(result["0x401000"].name).to.equal(undefined);

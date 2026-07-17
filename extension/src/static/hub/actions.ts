@@ -9,7 +9,10 @@
 const crypto = require('crypto');
 const cp = require('child_process');
 const { readArchSupportFromMapping } = require('./archSupport');
+const { makeMappingStore } = require('../../shared/mappingStore');
 const { recordRuntimeEvent } = require('../../shared/runtimeAudit');
+
+const functionAddrsStore = makeMappingStore();
 
 function createActions({
   panel,
@@ -81,22 +84,8 @@ function createActions({
   };
   const readFunctionAddrsFromMapping = (mappingPath) => {
     if (!mappingPath || !fs.existsSync(mappingPath)) return [];
-    try {
-      const mapping = JSON.parse(fs.readFileSync(mappingPath, 'utf8'));
-      const addrs = new Set();
-      for (const fn of Array.isArray(mapping?.functions) ? mapping.functions : []) {
-        const addr = normalizeHexAddress(fn?.addr);
-        if (addr) addrs.add(addr);
-      }
-      for (const line of Array.isArray(mapping?.lines) ? mapping.lines : []) {
-        const addr = normalizeHexAddress(line?.addr);
-        const functionAddr = normalizeHexAddress(line?.function_addr);
-        if (addr && functionAddr && addr === functionAddr) addrs.add(addr);
-      }
-      return Array.from(addrs).sort((a, b) => parseInt(a, 16) - parseInt(b, 16));
-    } catch (_) {
-      return [];
-    }
+    // En-tête allégé (function_addrs précalculé) ; repli legacy dans mappingStore.
+    return functionAddrsStore.getFunctionAddrs(mappingPath);
   };
 
   const finalizeDisasmOpen = async ({
@@ -190,14 +179,6 @@ function createActions({
     };
   };
 
-  const ensureMappingForBinary = async (binaryPath, binaryMeta = null) => {
-    const { mapping } = await resolveDisasmMappingContext({
-      binaryPath,
-      binaryMeta,
-      logPrefix: 'Mapping',
-    });
-    return mapping;
-  };
 
   // ── Rules helpers ────────────────────────────────────────────────────────────
 
@@ -675,8 +656,16 @@ function createActions({
         return;
       }
       try {
-        const mapping = await ensureMappingForBinary(binaryPath);
-        const suggestion = buildCmpPayloadSuggestion(mapping.lines || [], cmpAddr);
+        const { mapping, mappingPath } = await resolveDisasmMappingContext({
+          binaryPath,
+          logPrefix: 'AutoFromCmp',
+        });
+        // Fenêtre centrée sur l'adresse CMP : le back-tracking de registres
+        // remonte au plus 90 lignes, 256 couvrent large.
+        const lines = Array.isArray(mapping?.lines) && mapping.lines.length
+          ? mapping.lines
+          : await analysisCtx.queryMappingWindow(mappingPath, cmpAddr, 256);
+        const suggestion = buildCmpPayloadSuggestion(lines || [], cmpAddr);
         hubPost('hubAutoFromCmpResult', suggestion);
       } catch (err) {
         hubPost('hubAutoFromCmpResult', { error: err.message || String(err) });
