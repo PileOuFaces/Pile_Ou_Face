@@ -131,6 +131,23 @@ function readCurrentAuditEvents(userDataDir) {
   return events;
 }
 
+async function waitForAuditQuiet(userDataDir, { quietMs = 100, timeoutMs = 1000, pollMs = 50 } = {}) {
+  const startedAt = Date.now();
+  let lastCount = readCurrentAuditEvents(userDataDir).length;
+  let stableSince = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    await sleep(pollMs);
+    const currentCount = readCurrentAuditEvents(userDataDir).length;
+    if (currentCount !== lastCount) {
+      lastCount = currentCount;
+      stableSince = Date.now();
+      continue;
+    }
+    if (Date.now() - stableSince >= quietMs) return { eventCount: currentCount, quietMs };
+  }
+  return { eventCount: lastCount, quietMs: Date.now() - stableSince, timedOut: true };
+}
+
 function eventKey(event) {
   return `${event.kind || 'unknown'}:${event.name || '<unnamed>'}`;
 }
@@ -1008,11 +1025,13 @@ async function run() {
             const payloadAssertions = payloadAssertionsForMessage(message.type);
             const infoCountBefore = infoMessages.length;
             const errorCountBefore = errorMessages.length;
+            const quietBefore = await waitForAuditQuiet(userDataDir);
             const stopPerf = startPerfSampler(`hub-handler:${message.type}`, {
               binaryPath: message.binaryPath ? path.basename(message.binaryPath) : '',
               responseTypes,
               requireUiConsumed,
               payloadAssertions: payloadAssertions.map((assertion) => assertion.responseType),
+              quietBeforeTimedOut: quietBefore.timedOut === true,
             });
             const auditEventsBefore = readCurrentAuditEvents(userDataDir);
             try {
@@ -1054,12 +1073,15 @@ async function run() {
                 );
                 stateValidated = true;
               }
+              const quietAfter = await waitForAuditQuiet(userDataDir);
               stopPerf({
                 ok: true,
                 responseTypes,
                 uiConsumed: requireUiConsumed,
                 payloadValidated: payloadAssertions.length > 0,
                 stateValidated,
+                quietBefore,
+                quietAfter,
                 auditDelta: summarizeAuditDelta(auditEventsBefore, readCurrentAuditEvents(userDataDir)),
               });
             } catch (error) {

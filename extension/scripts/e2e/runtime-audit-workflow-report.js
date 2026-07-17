@@ -307,21 +307,30 @@ function buildRuntimeOperationHotspots(spans) {
       const processCalls = deltaKind(span.auditDelta, 'process');
       const webviewInbound = deltaKind(span.auditDelta, 'webview_message');
       const webviewOutbound = deltaKind(span.auditDelta, 'webview_post_message');
+      const uiAckCalls = Array.isArray(span.auditDelta.topNames)
+        ? span.auditDelta.topNames
+          .filter((entry) => entry?.kind === 'webview_message' && entry?.name === 'hubUiConsumed')
+          .reduce((total, entry) => total + Number(entry.count || 0), 0)
+        : 0;
       const repeatedNames = Array.isArray(span.auditDelta.repeatedNames)
         ? span.auditDelta.repeatedNames.map(normalizeOperationEntry)
         : [];
       const topNames = Array.isArray(span.auditDelta.topNames)
         ? span.auditDelta.topNames.map(normalizeOperationEntry)
         : [];
-      const maxRepeated = repeatedNames.reduce((max, item) => Math.max(max, Number(item.count || 0)), 0);
-      const score = (pythonCalls * 4) + (processCalls * 3) + (maxRepeated * 2) + Math.max(0, Number(span.auditDelta.totalEvents || 0) - 4);
+      const scoringRepeatedNames = repeatedNames.filter((entry) => !(entry.kind === 'webview_message' && entry.name === 'hubUiConsumed'));
+      const maxRepeated = scoringRepeatedNames.reduce((max, item) => Math.max(max, Number(item.count || 0)), 0);
+      const scoredEvents = Math.max(0, Number(span.auditDelta.totalEvents || 0) - uiAckCalls);
+      const score = (pythonCalls * 4) + (processCalls * 3) + (maxRepeated * 2) + Math.max(0, scoredEvents - 4);
       return {
         scenario: span.scenario,
         target: span.target,
         durationMs: span.durationMs,
         totalEvents: Number(span.auditDelta.totalEvents || 0),
+        scoredEvents,
         pythonCalls,
         processCalls,
+        uiAckCalls,
         webviewInbound,
         webviewOutbound,
         maxRepeated,
@@ -366,19 +375,36 @@ function perfBottleneckFor({ hotspot, candidate }) {
       recommendation: `Trace why ${repeatedBackend[0].name} runs ${repeatedBackend[0].count} times in one workflow; check cache reuse and nested refresh fan-out before optimizing implementation code.`,
     };
   }
+  const topNames = hotspot.topNames || [];
+  const hasAnnotationRefreshFanout = [
+    'hubSaveBookmark',
+    'hubDeleteBookmark',
+    'hubDeleteAnnotation',
+    'hubSaveFunctionReview',
+    'hubClearBookmarks',
+  ].includes(hotspot.target)
+    && topNames.some((entry) => entry.kind === 'webview_message' && ['getSymbols', 'requestRunTraceInit'].includes(entry.name))
+    && topNames.some((entry) => entry.kind === 'python' && ['backends/static/binary/headers.py', 'backends/static/binary/symbols.py'].includes(entry.name));
+  if (hasAnnotationRefreshFanout) {
+    const evidence = topNames
+      .filter((entry) => (
+        (entry.kind === 'webview_message' && ['getSymbols', 'requestRunTraceInit'].includes(entry.name))
+        || (entry.kind === 'python' && ['backends/static/binary/headers.py', 'backends/static/binary/symbols.py'].includes(entry.name))
+      ))
+      .slice(0, 4)
+      .map(operationLabel)
+      .join(', ');
+    return {
+      category: 'annotation-autoload-fanout',
+      evidence,
+      recommendation: 'Annotation/bookmark save emits hubAnnotationSaved; the webview then refreshes disassembly and dynamic trace init. Decide in a separate optimization PR whether that refresh fan-out is required for this workflow.',
+    };
+  }
   if (hotspot.pythonCalls >= 6 || hotspot.processCalls >= 2) {
     return {
       category: 'backend-fanout',
       evidence: `python=${hotspot.pythonCalls}, process=${hotspot.processCalls}`,
       recommendation: 'Inspect the handler fan-out and backend cache boundaries; confirm whether repeated backend calls are expected for this single user workflow.',
-    };
-  }
-  const uiAck = (hotspot.repeatedNames || []).find((entry) => entry.kind === 'webview_message' && entry.name === 'hubUiConsumed');
-  if (uiAck && uiAck.count >= 8) {
-    return {
-      category: 'ui-ack-churn',
-      evidence: operationLabel(uiAck),
-      recommendation: 'Check whether UI-consumed acknowledgements are emitted once per expected response or amplified by repeated render/update loops.',
     };
   }
   const repeatedPost = (hotspot.repeatedNames || [])
@@ -443,8 +469,10 @@ function buildPerfPriorities(runtimeOperationHotspots, optimizationCandidates) {
         durationMs: hotspot.durationMs,
         runtimeScore: hotspot.score,
         totalEvents: hotspot.totalEvents,
+        scoredEvents: hotspot.scoredEvents,
         pythonCalls: hotspot.pythonCalls,
         processCalls: hotspot.processCalls,
+        uiAckCalls: hotspot.uiAckCalls,
         webviewInbound: hotspot.webviewInbound,
         webviewOutbound: hotspot.webviewOutbound,
         maxRepeated: hotspot.maxRepeated,
@@ -980,7 +1008,7 @@ function markdownForReport(report) {
         .join(', ');
       const reasons = item.optimizationReasons.length ? `, candidate=${item.optimizationReasons.join('+')}` : '';
       lines.push(`- ${item.priority} \`${item.scenario}\` [${item.category}] priority=${item.priorityScore}, runtime=${item.runtimeScore}, duration=${item.durationMs} ms${reasons}`);
-      lines.push(`  Evidence: ${item.evidence}; events=${item.totalEvents}, python=${item.pythonCalls}, process=${item.processCalls}, webview in/out=${item.webviewInbound}/${item.webviewOutbound}, max-repeat=${item.maxRepeated}${repeats ? `, repeats=[${repeats}]` : ''}`);
+      lines.push(`  Evidence: ${item.evidence}; events=${item.totalEvents}, scored-events=${item.scoredEvents}, uiAck=${item.uiAckCalls}, python=${item.pythonCalls}, process=${item.processCalls}, webview in/out=${item.webviewInbound}/${item.webviewOutbound}, max-repeat=${item.maxRepeated}${repeats ? `, repeats=[${repeats}]` : ''}`);
       lines.push(`  Next: ${item.recommendation}`);
     }
   }
@@ -1014,7 +1042,7 @@ function markdownForReport(report) {
         .slice(0, 3)
         .map((entry) => `${entry.kind}:${entry.name} x${entry.count}`)
         .join(', ');
-      lines.push(`- \`${item.scenario}\`: score=${item.score}, total=${item.totalEvents}, python=${item.pythonCalls}, process=${item.processCalls}, webview in/out=${item.webviewInbound}/${item.webviewOutbound}, max-repeat=${item.maxRepeated}, ${repeats ? `repeats=[${repeats}]` : `top=[${top}]`}`);
+      lines.push(`- \`${item.scenario}\`: score=${item.score}, total=${item.totalEvents}, scored=${item.scoredEvents}, uiAck=${item.uiAckCalls}, python=${item.pythonCalls}, process=${item.processCalls}, webview in/out=${item.webviewInbound}/${item.webviewOutbound}, max-repeat=${item.maxRepeated}, ${repeats ? `repeats=[${repeats}]` : `top=[${top}]`}`);
     }
   }
 
