@@ -114,10 +114,19 @@ describe("static stale response guards", () => {
 
   it("only refreshes disassembly after annotation saves when the overlay changed", () => {
     const source = messagesSource();
-    const handler = handlerFor(source, "hubAnnotationSaved", "hubAnnotations");
+    const handler = handlerFor(source, "hubAnnotationSaved", "hubSyncHexToAddr");
     expect(handler).to.include("refreshDisasmForAnnotations(bp, window._annotations)");
     expect(handler).to.include("clearDecompileCaches()");
     expect(handler).to.not.include("type: 'hubOpenDisasm'");
+  });
+
+  it("obeys the host overlay verdict on annotation mutations", () => {
+    const source = messagesSource();
+    const handler = handlerFor(source, "hubAnnotations", "hubDisasmReady");
+    expect(handler).to.include("msg.overlay === 'patched'");
+    expect(handler).to.include("msg.overlay === 'rebuild-required'");
+    expect(handler).to.include("refreshReason: 'annotation-overlay-patched'");
+    expect(handler).to.include("useCache: true");
   });
 
   it("adopts the annotation signature after a fresh disasm build instead of rebuilding", () => {

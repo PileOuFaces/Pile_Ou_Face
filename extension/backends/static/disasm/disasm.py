@@ -1230,91 +1230,53 @@ def _write_disasm_outputs(
         return _find_function_context(function_ranges, addr_int)
 
     lines_with_line_num = []
-    if label_map:
-        addr_to_line: dict[str, int] = {}
-        for physical_lineno, out_line in enumerate(asm_output, start=1):
-            stripped = out_line.strip()
-            if stripped.startswith("0x") and ":" in stripped:
-                addr = stripped.split(":")[0].strip()
-                if addr not in addr_to_line:
-                    addr_to_line[addr] = physical_lineno
-        for line in lines:
-            addr_int = _addr_to_int(line.get("addr"))
-            current_function = _resolve_function(addr_int)
-            function_addr = (
-                _normalize_addr(current_function.get("addr", ""))
-                if current_function
-                else ""
-            )
-            function_name = ""
-            if current_function:
-                function_name = str(
-                    current_function.get("name") or label_map.get(addr_int or -1) or ""
-                ).strip()
-            stack_hints = _extract_stack_hints_from_frame(
-                line.get("operands", ""),
-                stack_frames.get(function_addr) if function_addr else None,
-            )
-            typed_struct_hints = _extract_typed_struct_hints(
-                line.get("text", ""), typed_struct_index
-            )
-            lines_with_line_num.append(
-                {
-                    "addr": line["addr"],
-                    "text": line["text"],
-                    "line": addr_to_line.get(line["addr"], 0),
-                    "bytes": line.get("bytes", ""),
-                    "mnemonic": line.get("mnemonic", ""),
-                    "operands": line.get("operands", ""),
-                    "label": label_map.get(addr_int) if addr_int is not None else None,
-                    "comment": comment_map.get(addr_int)
-                    if addr_int is not None
-                    else None,
-                    "function_addr": function_addr or None,
-                    "function_name": function_name or None,
-                    "stack_hints": stack_hints,
-                    "typed_struct_hints": typed_struct_hints,
-                }
-            )
-    else:
-        for idx, line in enumerate(lines, start=1):
-            addr_int = _addr_to_int(line.get("addr"))
-            current_function = _resolve_function(addr_int)
-            function_addr = (
-                _normalize_addr(current_function.get("addr", ""))
-                if current_function
-                else ""
-            )
-            function_name = ""
-            if current_function:
-                function_name = str(
-                    current_function.get("name") or label_map.get(addr_int or -1) or ""
-                ).strip()
-            stack_hints = _extract_stack_hints_from_frame(
-                line.get("operands", ""),
-                stack_frames.get(function_addr) if function_addr else None,
-            )
-            typed_struct_hints = _extract_typed_struct_hints(
-                line.get("text", ""), typed_struct_index
-            )
-            lines_with_line_num.append(
-                {
-                    "addr": line["addr"],
-                    "text": line["text"],
-                    "line": idx,
-                    "bytes": line.get("bytes", ""),
-                    "mnemonic": line.get("mnemonic", ""),
-                    "operands": line.get("operands", ""),
-                    "label": label_map.get(addr_int) if addr_int is not None else None,
-                    "comment": comment_map.get(addr_int)
-                    if addr_int is not None
-                    else None,
-                    "function_addr": function_addr or None,
-                    "function_name": function_name or None,
-                    "stack_hints": stack_hints,
-                    "typed_struct_hints": typed_struct_hints,
-                }
-            )
+    # Toujours résoudre les numéros de ligne physiques depuis la sortie ASM :
+    # les bannières de fonctions et labels insèrent des lignes même quand
+    # label_map est vide, et le patch in-place des annotations (host) dépend
+    # de l'exactitude de mapping.line.
+    addr_to_line: dict[str, int] = {}
+    for physical_lineno, out_line in enumerate(asm_output, start=1):
+        stripped = out_line.strip()
+        if stripped.startswith("0x") and ":" in stripped:
+            addr = stripped.split(":")[0].strip()
+            if addr not in addr_to_line:
+                addr_to_line[addr] = physical_lineno
+    for line in lines:
+        addr_int = _addr_to_int(line.get("addr"))
+        current_function = _resolve_function(addr_int)
+        function_addr = (
+            _normalize_addr(current_function.get("addr", ""))
+            if current_function
+            else ""
+        )
+        function_name = ""
+        if current_function:
+            function_name = str(
+                current_function.get("name") or label_map.get(addr_int or -1) or ""
+            ).strip()
+        stack_hints = _extract_stack_hints_from_frame(
+            line.get("operands", ""),
+            stack_frames.get(function_addr) if function_addr else None,
+        )
+        typed_struct_hints = _extract_typed_struct_hints(
+            line.get("text", ""), typed_struct_index
+        )
+        lines_with_line_num.append(
+            {
+                "addr": line["addr"],
+                "text": line["text"],
+                "line": addr_to_line.get(line["addr"], 0),
+                "bytes": line.get("bytes", ""),
+                "mnemonic": line.get("mnemonic", ""),
+                "operands": line.get("operands", ""),
+                "label": label_map.get(addr_int) if addr_int is not None else None,
+                "comment": comment_map.get(addr_int) if addr_int is not None else None,
+                "function_addr": function_addr or None,
+                "function_name": function_name or None,
+                "stack_hints": stack_hints,
+                "typed_struct_hints": typed_struct_hints,
+            }
+        )
 
     mapping = {
         "meta": make_meta("disasm"),

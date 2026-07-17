@@ -502,7 +502,43 @@ window.addEventListener('message', (event) => {
     window._annotations = annotations;
     window.annotationFunctionAddrs = new Set();
     mergeAnnotationFunctionAddrs(msg.functionAddrs);
-    refreshDisasmForAnnotations(msg.binaryPath, annotations);
+    const overlayBp = String(msg.binaryPath || '').trim();
+    if (msg.overlay === 'patched' || msg.overlay === 'unchanged') {
+      // Le host a déjà arbitré la fraîcheur du .asm (patch en place ou
+      // mutation sans effet sur l'overlay) : adopter la signature, pas de
+      // rebuild. Après un patch, recharger la vue via le cache (0 spawn).
+      window._adoptAnnotationDisasmSignatureFor = overlayBp;
+      refreshDisasmForAnnotations(overlayBp, annotations);
+      if (msg.overlay === 'patched' && overlayBp) {
+        clearDecompileCaches();
+        tabDataCache.cfg = null;
+        tabDataCache.callgraph = null;
+        vscode.postMessage({
+          type: 'hubOpenDisasm',
+          binaryPath: overlayBp,
+          useCache: true,
+          openInEditor: false,
+          refreshReason: 'annotation-overlay-patched',
+        });
+      }
+    } else if (msg.overlay === 'rebuild-required') {
+      clearDecompileCaches();
+      tabDataCache.cfg = null;
+      tabDataCache.callgraph = null;
+      if (!refreshDisasmForAnnotations(overlayBp, annotations) && overlayBp) {
+        // Le garde par signature n'a rien émis (état déjà adopté) mais le
+        // host sait que le .asm est périmé : forcer le rebuild.
+        vscode.postMessage({
+          type: 'hubOpenDisasm',
+          binaryPath: overlayBp,
+          useCache: false,
+          openInEditor: false,
+          refreshReason: 'annotation-overlay',
+        });
+      }
+    } else {
+      refreshDisasmForAnnotations(msg.binaryPath, annotations);
+    }
     if (typeof populateDecompileSelect === 'function') {
       populateDecompileSelect(window.symbolsCache || []);
     }
@@ -2585,21 +2621,6 @@ window.addEventListener('message', (event) => {
       tabDataCache.cfg = null;
       tabDataCache.callgraph = null;
     }
-    return;
-  }
-  if (msg.type === 'hubAnnotations') {
-    if (isStaleStaticBinaryResponse(msg, 'static-annotations')) return;
-    // Annotations loaded — could highlight addresses
-    window._annotations = msg.annotations || {};
-    refreshDisasmForAnnotations(msg.binaryPath, window._annotations);
-    clearDecompileCaches();
-    if (typeof populateDecompileSelect === 'function') {
-      populateDecompileSelect(window.symbolsCache || []);
-    }
-    renderBookmarks();
-    renderCurrentFunctionsWorkspace();
-    syncFunctionsSelectionFromContext(window._lastDisasmAddr || functionsUiState.selectedAddr);
-    updateActiveContextBars(window._lastDisasmAddr);
     return;
   }
   if (msg.type === 'hubSyncHexToAddr') {

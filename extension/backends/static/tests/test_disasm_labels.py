@@ -153,5 +153,47 @@ class TestLabelsInline(unittest.TestCase):
         self.assertIn("encrypt_payload", asm2)
 
 
+@unittest.skipUnless(_DISASM_AVAILABLE, "lief/capstone not installed")
+class TestMappingLineNumbers(unittest.TestCase):
+    """mapping.line doit pointer la ligne physique du .asm même sans label."""
+
+    def test_mapping_lines_match_asm_with_function_banners_and_no_labels(self):
+        from backends.static.disasm.disasm import _write_disasm_outputs
+
+        lines = [
+            {
+                "addr": "0x1000",
+                "text": "push rbp",
+                "mnemonic": "push",
+                "operands": "rbp",
+            },
+            {"addr": "0x1001", "text": "ret", "mnemonic": "ret", "operands": ""},
+        ]
+        function_ranges: list[tuple[int, int | None, dict]] = [
+            (0x1000, None, {"addr": "0x1000", "name": "fn_a"})
+        ]
+        with tempfile.TemporaryDirectory() as d:
+            asm_path = os.path.join(d, "out.asm")
+            mapping_path = os.path.join(d, "out.mapping.json")
+            _write_disasm_outputs(
+                lines,
+                "/bin/fake",
+                asm_path,
+                mapping_path,
+                label_map={},
+                comment_map={},
+                function_ranges=function_ranges,
+            )
+            asm_lines = Path(asm_path).read_text().split("\n")
+            mapping = json.loads(Path(mapping_path).read_text())
+        by_addr = {entry["addr"]: entry["line"] for entry in mapping["lines"]}
+        for addr, lineno in by_addr.items():
+            self.assertGreater(lineno, 0, f"{addr} sans numéro de ligne")
+            self.assertTrue(
+                asm_lines[lineno - 1].strip().startswith(addr),
+                f"{addr}: mapping.line={lineno} pointe sur {asm_lines[lineno - 1]!r}",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
