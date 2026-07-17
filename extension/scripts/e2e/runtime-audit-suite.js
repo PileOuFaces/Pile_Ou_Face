@@ -186,6 +186,15 @@ function summarizeAuditDelta(beforeEvents, afterEvents) {
   };
 }
 
+const ANNOTATION_AUTOLOAD_FANOUT_MESSAGES = new Set([
+  'hubSaveAnnotation',
+  'hubSaveBookmark',
+  'hubSaveFunctionReview',
+  'hubDeleteBookmark',
+  'hubClearBookmarks',
+  'hubDeleteAnnotation',
+]);
+
 function payloadAssertionMatchesEvent(event, assertion) {
   if (!event || event.kind !== 'webview_post_message') return false;
   if (event.name !== assertion.responseType) return false;
@@ -1073,7 +1082,9 @@ async function run() {
                 );
                 stateValidated = true;
               }
-              const quietAfter = await waitForAuditQuiet(userDataDir);
+              const quietAfter = await waitForAuditQuiet(userDataDir, ANNOTATION_AUTOLOAD_FANOUT_MESSAGES.has(message.type)
+                ? { quietMs: 500, timeoutMs: 5000 }
+                : {});
               stopPerf({
                 ok: true,
                 responseTypes,
