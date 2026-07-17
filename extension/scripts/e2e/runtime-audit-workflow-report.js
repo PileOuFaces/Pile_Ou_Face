@@ -326,12 +326,14 @@ function buildPerfStepBreakdown(auditEvents, spans) {
         maxDurationMs: 0,
         sources: new Set(),
         binaryNames: new Set(),
+        rebuildReasons: new Set(),
       };
       current.count += 1;
       current.totalDurationMs += step.durationMs;
       current.maxDurationMs = Math.max(current.maxDurationMs, step.durationMs);
       if (step.source) current.sources.add(step.source);
       if (step.binaryName) current.binaryNames.add(step.binaryName);
+      if (step.rebuildReason) current.rebuildReasons.add(step.rebuildReason);
       byStep.set(step.name, current);
     }
     rows.push(...[...byStep.values()].map((entry) => ({
@@ -340,6 +342,7 @@ function buildPerfStepBreakdown(auditEvents, spans) {
       totalDurationMs: Math.round(entry.totalDurationMs),
       sources: [...entry.sources].sort(),
       binaryNames: [...entry.binaryNames].sort(),
+      rebuildReasons: [...entry.rebuildReasons].sort(),
     })));
   }
   return rows.sort((left, right) => (
@@ -348,6 +351,16 @@ function buildPerfStepBreakdown(auditEvents, spans) {
     || left.scenario.localeCompare(right.scenario)
     || left.step.localeCompare(right.step)
   ));
+}
+
+function countAnnotationDisasmRebuilds(perfStepBreakdown) {
+  return perfStepBreakdown
+    .filter((entry) => (
+      entry.step === 'hubOpenDisasm.ensureDisasmArtifacts'
+      && Array.isArray(entry.rebuildReasons)
+      && entry.rebuildReasons.includes('annotation-overlay')
+    ))
+    .reduce((total, entry) => total + Number(entry.count || 0), 0);
 }
 
 function buildBackendScenarioHotspots(auditEvents, spans) {
@@ -1130,6 +1143,7 @@ function buildReport() {
   const runtimeOperationHotspots = buildRuntimeOperationHotspots(spans);
   const perfPriorities = buildPerfPriorities(runtimeOperationHotspots, optimizationCandidates);
   const perfStepBreakdown = buildPerfStepBreakdown(auditEvents, spans);
+  const annotationDisasmRebuilds = countAnnotationDisasmRebuilds(perfStepBreakdown);
   const backendScenarioHotspots = buildBackendScenarioHotspots(auditEvents, spans);
   const rawDepthGaps = buildDepthGaps(coverageReport, targetSummaries);
   const hostObservabilityGaps = rawDepthGaps
@@ -1188,6 +1202,7 @@ function buildReport() {
       runtimeOperationHotspots: runtimeOperationHotspots.length,
       perfPriorities: perfPriorities.length,
       perfStepBreakdown: perfStepBreakdown.length,
+      annotationDisasmRebuilds,
       backendScenarioHotspots: backendScenarioHotspots.length,
       performanceBudgetSignals: performanceBudgetSignals.length,
       performanceBudgetFailCandidates: performanceBudgetSignals.filter((entry) => entry.severity === 'fail-candidate').length,
@@ -1246,6 +1261,7 @@ function markdownForReport(report) {
     `- Runtime operation hotspots: ${report.summary.runtimeOperationHotspots}`,
     `- Perf priorities: ${report.summary.perfPriorities}${report.summary.topPerfPriority ? ` (top ${report.summary.topPerfPriority})` : ''}`,
     `- Perf step breakdown rows: ${report.summary.perfStepBreakdown}`,
+    `- Annotation-sensitive disasm rebuilds: ${report.summary.annotationDisasmRebuilds}`,
     `- Backend scenario hotspots: ${report.summary.backendScenarioHotspots}`,
     `- Performance budget signals: ${report.summary.performanceBudgetSignals} (${report.summary.performanceBudgetFailCandidates} fail-candidate)`,
     `- Depth gaps: ${report.summary.depthGaps}`,
@@ -1315,7 +1331,8 @@ function markdownForReport(report) {
   } else {
     for (const item of perfSteps) {
       const binaries = item.binaryNames.length ? `, binaries=[${item.binaryNames.slice(0, 3).join(', ')}]` : '';
-      lines.push(`- \`${item.scenario}\` / \`${item.step}\`: max ${item.maxDurationMs} ms, avg ${item.avgDurationMs} ms, total ${item.totalDurationMs} ms, count=${item.count}${binaries}`);
+      const rebuildReasons = item.rebuildReasons?.length ? `, rebuildReasons=[${item.rebuildReasons.join(', ')}]` : '';
+      lines.push(`- \`${item.scenario}\` / \`${item.step}\`: max ${item.maxDurationMs} ms, avg ${item.avgDurationMs} ms, total ${item.totalDurationMs} ms, count=${item.count}${binaries}${rebuildReasons}`);
     }
   }
 
@@ -1497,5 +1514,8 @@ module.exports = {
   buildReport,
   buildFeatureAssertionMatrix,
   buildPayloadSignalSummary,
+  buildPerfStepBreakdown,
+  countAnnotationDisasmRebuilds,
+  markdownForReport,
   summarizePerf,
 };
