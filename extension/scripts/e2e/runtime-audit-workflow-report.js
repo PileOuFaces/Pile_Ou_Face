@@ -159,6 +159,8 @@ function summarizePerf(perfEvents) {
       spans.push({
         scenario: event.scenario,
         target: targetForScenario(event.scenario),
+        startTs: current.start.ts,
+        stopTs: event.ts,
         workflow: classification.workflow,
         depth: promotedDepth(classification.depth, {
           responseValidated,
@@ -281,6 +283,59 @@ function buildOptimizationCandidates(spans) {
       || right.rssPeakDelta - left.rssPeakDelta
       || right.heapPeakDelta - left.heapPeakDelta
     ));
+}
+
+function buildPerfStepBreakdown(auditEvents, spans) {
+  const perfSteps = auditEvents
+    .filter((event) => event.kind === 'perf_step' && event.name)
+    .map((event) => ({
+      ...event,
+      tsMs: toMs(event.ts),
+      durationMs: Math.max(0, Number(event.durationMs || 0)),
+    }))
+    .filter((event) => event.tsMs > 0);
+  if (!perfSteps.length || !spans.length) return [];
+
+  const rows = [];
+  for (const span of spans) {
+    const startMs = toMs(span.startTs);
+    const stopMs = toMs(span.stopTs);
+    if (!startMs || !stopMs || stopMs < startMs) continue;
+    const steps = perfSteps.filter((event) => event.tsMs >= startMs && event.tsMs <= stopMs);
+    if (!steps.length) continue;
+    const byStep = new Map();
+    for (const step of steps) {
+      const current = byStep.get(step.name) || {
+        scenario: span.scenario,
+        target: span.target,
+        step: step.name,
+        count: 0,
+        totalDurationMs: 0,
+        maxDurationMs: 0,
+        sources: new Set(),
+        binaryNames: new Set(),
+      };
+      current.count += 1;
+      current.totalDurationMs += step.durationMs;
+      current.maxDurationMs = Math.max(current.maxDurationMs, step.durationMs);
+      if (step.source) current.sources.add(step.source);
+      if (step.binaryName) current.binaryNames.add(step.binaryName);
+      byStep.set(step.name, current);
+    }
+    rows.push(...[...byStep.values()].map((entry) => ({
+      ...entry,
+      avgDurationMs: Math.round(entry.totalDurationMs / Math.max(1, entry.count)),
+      totalDurationMs: Math.round(entry.totalDurationMs),
+      sources: [...entry.sources].sort(),
+      binaryNames: [...entry.binaryNames].sort(),
+    })));
+  }
+  return rows.sort((left, right) => (
+    right.maxDurationMs - left.maxDurationMs
+    || right.totalDurationMs - left.totalDurationMs
+    || left.scenario.localeCompare(right.scenario)
+    || left.step.localeCompare(right.step)
+  ));
 }
 
 function deltaKind(delta, kind) {
@@ -776,6 +831,13 @@ function buildAuditReadiness({
 }
 
 function scenarioRecipeForBacklogItem(item) {
+  if (item.reason === 'perf-hotspot') {
+    return {
+      scenario: item.scenario || `hub-handler:${item.target}`,
+      file: '.pile-ou-face/test-artifacts/e2e-runtime-audit/runtime-audit-workflow-report.md',
+      sketch: 'Use perfPriority, runtimeOperationHotspots, and perfStepBreakdown for this existing workflow before deciding on a product optimization.',
+    };
+  }
   if (item.kind === 'webview_message') {
     return {
       scenario: `hub-handler:${item.target}`,
@@ -839,6 +901,7 @@ function buildNextScenarioBacklog({ featureAssertions, depthGaps, hostObservabil
       reason: 'perf-hotspot',
       target: hotspot.target,
       kind: hotspot.scenario.startsWith('hub-handler:') ? 'webview_message' : 'command',
+      scenario: hotspot.scenario,
       currentDepth: 'observed',
       nextStep: `${hotspot.category}: ${hotspot.evidence}. ${hotspot.recommendation}`,
     });
@@ -864,6 +927,7 @@ function buildReport() {
   const optimizationCandidates = buildOptimizationCandidates(spans);
   const runtimeOperationHotspots = buildRuntimeOperationHotspots(spans);
   const perfPriorities = buildPerfPriorities(runtimeOperationHotspots, optimizationCandidates);
+  const perfStepBreakdown = buildPerfStepBreakdown(auditEvents, spans);
   const rawDepthGaps = buildDepthGaps(coverageReport, targetSummaries);
   const hostObservabilityGaps = rawDepthGaps
     .filter((gap) => HOST_OBSERVABILITY_GAP_NOTES[gap.target])
@@ -915,6 +979,7 @@ function buildReport() {
       optimizationCandidates: optimizationCandidates.length,
       runtimeOperationHotspots: runtimeOperationHotspots.length,
       perfPriorities: perfPriorities.length,
+      perfStepBreakdown: perfStepBreakdown.length,
       topPerfPriority: perfPriorities[0]?.priority || '',
       depthGaps: depthGaps.length,
       hostObservabilityGaps: hostObservabilityGaps.length,
@@ -926,6 +991,7 @@ function buildReport() {
     featureAssertions,
     payloadSignals,
     perfPriorities,
+    perfStepBreakdown,
     optimizationCandidates,
     runtimeOperationHotspots,
     depthGaps,
@@ -966,6 +1032,7 @@ function markdownForReport(report) {
     `- Optimization candidates: ${report.summary.optimizationCandidates}`,
     `- Runtime operation hotspots: ${report.summary.runtimeOperationHotspots}`,
     `- Perf priorities: ${report.summary.perfPriorities}${report.summary.topPerfPriority ? ` (top ${report.summary.topPerfPriority})` : ''}`,
+    `- Perf step breakdown rows: ${report.summary.perfStepBreakdown}`,
     `- Depth gaps: ${report.summary.depthGaps}`,
     `- Host observability gaps: ${report.summary.hostObservabilityGaps}`,
     '',
@@ -987,7 +1054,8 @@ function markdownForReport(report) {
   } else {
     for (const item of report.nextScenarioBacklog.slice(0, 30)) {
       lines.push(`- ${item.priority} \`${item.target}\` (${item.reason}, ${item.currentDepth}): ${item.nextStep}`);
-      lines.push(`  - Add \`${item.recipe.scenario}\` in \`${item.recipe.file}\`: ${item.recipe.sketch}`);
+      const action = item.reason === 'perf-hotspot' ? 'Inspect' : 'Add';
+      lines.push(`  - ${action} \`${item.recipe.scenario}\` in \`${item.recipe.file}\`: ${item.recipe.sketch}`);
     }
   }
 
@@ -1010,6 +1078,17 @@ function markdownForReport(report) {
       lines.push(`- ${item.priority} \`${item.scenario}\` [${item.category}] priority=${item.priorityScore}, runtime=${item.runtimeScore}, duration=${item.durationMs} ms${reasons}`);
       lines.push(`  Evidence: ${item.evidence}; events=${item.totalEvents}, scored-events=${item.scoredEvents}, uiAck=${item.uiAckCalls}, python=${item.pythonCalls}, process=${item.processCalls}, webview in/out=${item.webviewInbound}/${item.webviewOutbound}, max-repeat=${item.maxRepeated}${repeats ? `, repeats=[${repeats}]` : ''}`);
       lines.push(`  Next: ${item.recommendation}`);
+    }
+  }
+
+  lines.push('', '## Perf Step Breakdown', '');
+  const perfSteps = report.perfStepBreakdown.slice(0, 25);
+  if (!perfSteps.length) {
+    lines.push('- <none>');
+  } else {
+    for (const item of perfSteps) {
+      const binaries = item.binaryNames.length ? `, binaries=[${item.binaryNames.slice(0, 3).join(', ')}]` : '';
+      lines.push(`- \`${item.scenario}\` / \`${item.step}\`: max ${item.maxDurationMs} ms, avg ${item.avgDurationMs} ms, total ${item.totalDurationMs} ms, count=${item.count}${binaries}`);
     }
   }
 

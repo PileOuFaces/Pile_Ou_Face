@@ -49,6 +49,12 @@ function createActions({
   // ── Internal helpers ────────────────────────────────────────────────────────
 
   const hubPost = (type, data) => panel.webview.postMessage(Object.assign({ type }, data || {}));
+  const auditPerfStep = (name, durationMs, details = {}) => {
+    recordRuntimeEvent('perf_step', name, {
+      durationMs: Math.max(0, Math.round(durationMs || 0)),
+      ...details,
+    });
+  };
   const hostMemorySnapshot = () => {
     const mem = process.memoryUsage();
     return {
@@ -100,31 +106,55 @@ function createActions({
     mappingPath = null,
     openInEditor = true,
     notifyWebview = true,
+    auditPrefix = 'finalizeDisasmOpen',
+    auditDetails = {},
   }) => {
+    let stepStart = Date.now();
     if (!fs.existsSync(disasmPath)) {
       throw new Error(`Le backend n'a pas généré ${path.basename(disasmPath)}.`);
     }
+    auditPerfStep(`${auditPrefix}.validateArtifact`, Date.now() - stepStart, auditDetails);
     if (openInEditor) {
+      stepStart = Date.now();
       const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(disasmPath));
+      auditPerfStep(`${auditPrefix}.openTextDocument`, Date.now() - stepStart, auditDetails);
+      stepStart = Date.now();
       await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.One, preview: false });
+      auditPerfStep(`${auditPrefix}.showTextDocument`, Date.now() - stepStart, auditDetails);
     }
     if (notifyWebview) {
+      stepStart = Date.now();
       const archPayload = readArchSupportFromMapping(mappingPath, fs);
       const functionAddrs = readFunctionAddrsFromMapping(mappingPath);
+      auditPerfStep(`${auditPrefix}.readUiMetadata`, Date.now() - stepStart, {
+        ...auditDetails,
+        functionCount: functionAddrs.length,
+      });
+      stepStart = Date.now();
       panel.webview.postMessage({
         type: 'hubSetBinaryPath',
         binaryPath: pathForWebview,
         binaryMeta,
         skipAutoLoad: true,
       });
+      auditPerfStep(`${auditPrefix}.postHubSetBinaryPath`, Date.now() - stepStart, auditDetails);
+      stepStart = Date.now();
       panel.webview.postMessage({
         type: 'hubDisasmReady',
         binaryPath: pathForWebview,
         arch: archPayload,
         functionAddrs,
       });
+      auditPerfStep(`${auditPrefix}.postHubDisasmReady`, Date.now() - stepStart, {
+        ...auditDetails,
+        functionCount: functionAddrs.length,
+      });
     }
-    if (refreshSidebar) refreshSidebar(pathForWebview);
+    if (refreshSidebar) {
+      stepStart = Date.now();
+      refreshSidebar(pathForWebview);
+      auditPerfStep(`${auditPrefix}.refreshSidebar`, Date.now() - stepStart, auditDetails);
+    }
   };
 
   const resolveDisasmMappingContext = async ({
@@ -654,6 +684,8 @@ function createActions({
     },
 
     hubOpenDisasm: async (message) => {
+      const totalStart = Date.now();
+      let stepStart = Date.now();
       const {
         binaryPath,
         absPath,
@@ -661,12 +693,25 @@ function createActions({
         isDirectory,
         binaryMeta,
       } = analysisCtx.resolveBinaryInputContext(message.binaryPath, message.binaryMeta || null);
+      const auditCommon = {
+        source: 'hubOpenDisasm',
+        binaryName: path.basename(absPath || binaryPath || ''),
+        section: String(message.section || '').trim(),
+        openInEditor: message.openInEditor !== false,
+      };
+      auditPerfStep('hubOpenDisasm.resolveInput', Date.now() - stepStart, {
+        ...auditCommon,
+        exists,
+        isDirectory,
+      });
       if (!exists || isDirectory) {
+        auditPerfStep('hubOpenDisasm.invalidInput', Date.now() - totalStart, auditCommon);
         vscode.window.showErrorMessage(`Binaire introuvable: ${absPath}`);
         return;
       }
       try {
         const section = (message.section || '').trim();
+        stepStart = Date.now();
         const artifacts = analysisCtx.getArtifactPaths({
           binaryPath: absPath,
           section,
@@ -680,8 +725,18 @@ function createActions({
           && (message.syntax || 'intel') === 'intel'
           && !requestedArch;
         const cacheValid = useCache && cacheEligible && fs.existsSync(disasmPath) && fs.existsSync(mappingPath);
+        const auditContext = {
+          ...auditCommon,
+          section,
+          useCache,
+          cacheEligible,
+          cacheValid,
+          binaryKind: artifacts.binaryMeta.kind,
+        };
+        auditPerfStep('hubOpenDisasm.resolveArtifacts', Date.now() - stepStart, auditContext);
         if (!cacheValid) {
           const annotationsJsonPath = analysisCtx.getBinaryAnnotationsJsonPath(absPath);
+          stepStart = Date.now();
           await analysisCtx.ensureDisasmArtifacts({
             binaryPath: absPath,
             binaryMeta: artifacts.binaryMeta,
@@ -695,10 +750,15 @@ function createActions({
             cacheWriteOnly: !useCache,
             forceRebuild: !useCache,
           });
+          auditPerfStep('hubOpenDisasm.ensureDisasmArtifacts', Date.now() - stepStart, auditContext);
         } else {
           logChannel.appendLine(`[cache] Réutilisation de ${disasmPath}`);
+          auditPerfStep('hubOpenDisasm.cacheReuse', 0, auditContext);
         }
+        stepStart = Date.now();
         const pathForWebview = path.relative(root, absPath).startsWith('..') ? absPath : path.relative(root, absPath);
+        auditPerfStep('hubOpenDisasm.pathForWebview', Date.now() - stepStart, auditContext);
+        stepStart = Date.now();
         await finalizeDisasmOpen({
           disasmPath,
           pathForWebview,
@@ -706,8 +766,16 @@ function createActions({
           mappingPath: artifacts.mappingPath,
           openInEditor: message.openInEditor !== false,
           notifyWebview: !section,
+          auditPrefix: 'hubOpenDisasm.finalize',
+          auditDetails: auditContext,
         });
+        auditPerfStep('hubOpenDisasm.finalizeTotal', Date.now() - stepStart, auditContext);
+        auditPerfStep('hubOpenDisasm.total', Date.now() - totalStart, auditContext);
       } catch (err) {
+        auditPerfStep('hubOpenDisasm.error', Date.now() - totalStart, {
+          ...auditCommon,
+          error: err.message || String(err),
+        });
         vscode.window.showErrorMessage(`Désassemblage: ${err.message}`);
       }
     },
