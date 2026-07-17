@@ -64,7 +64,7 @@ function createLoaders({
           cacheKey: 'symbols',
           logLabel: 'Symboles',
           useCache: message.useCache !== false,
-          compute: () => loadBinarySymbols(absPath),
+          compute: () => loadBinarySymbols(absPath, { useCache: false }),
         });
         hubPost('hubSymbols', { binaryPath: absPath, symbols });
       } catch (_) {
@@ -148,7 +148,7 @@ function createLoaders({
             && typeof cached.endianness === 'string'
             && cached.endianness
           ),
-          compute: () => loadBinaryHeaders(absPath),
+          compute: () => loadBinaryHeaders(absPath, { useCache: false }),
         });
         hubPost('hubBinaryInfo', { binaryPath: absPath, info });
       } catch (err) {
