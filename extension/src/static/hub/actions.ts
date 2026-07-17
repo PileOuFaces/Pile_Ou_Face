@@ -698,6 +698,7 @@ function createActions({
         binaryName: path.basename(absPath || binaryPath || ''),
         section: String(message.section || '').trim(),
         openInEditor: message.openInEditor !== false,
+        refreshReason: typeof message.refreshReason === 'string' ? message.refreshReason : '',
       };
       auditPerfStep('hubOpenDisasm.resolveInput', Date.now() - stepStart, {
         ...auditCommon,
@@ -724,25 +725,46 @@ function createActions({
           && !section
           && (message.syntax || 'intel') === 'intel'
           && !requestedArch;
-        const cacheValid = useCache && cacheEligible && fs.existsSync(disasmPath) && fs.existsSync(mappingPath);
+        const disasmExists = fs.existsSync(disasmPath);
+        const mappingExists = fs.existsSync(mappingPath);
+        const cacheValid = useCache && cacheEligible && disasmExists && mappingExists;
+        const annotationsJsonPath = analysisCtx.getBinaryAnnotationsJsonPath(absPath);
+        const annotationsJsonPresent = fs.existsSync(annotationsJsonPath);
+        const annotationOverlayRefresh = auditCommon.refreshReason === 'annotation-overlay';
+        let rebuildReason = 'cache-valid';
+        if (!cacheValid) {
+          if (!useCache) {
+            rebuildReason = annotationOverlayRefresh ? 'annotation-overlay' : 'cache-disabled';
+          } else if (!cacheEligible) {
+            rebuildReason = 'cache-ineligible';
+          } else if (!disasmExists) {
+            rebuildReason = 'missing-disasm';
+          } else if (!mappingExists) {
+            rebuildReason = 'missing-mapping';
+          } else {
+            rebuildReason = 'unknown';
+          }
+        }
         const auditContext = {
           ...auditCommon,
           section,
           useCache,
           cacheEligible,
           cacheValid,
+          rebuildReason,
+          annotationOverlayRefresh,
+          annotationsJsonPresent,
           binaryKind: artifacts.binaryMeta.kind,
         };
         auditPerfStep('hubOpenDisasm.resolveArtifacts', Date.now() - stepStart, auditContext);
         if (!cacheValid) {
-          const annotationsJsonPath = analysisCtx.getBinaryAnnotationsJsonPath(absPath);
           stepStart = Date.now();
           await analysisCtx.ensureDisasmArtifacts({
             binaryPath: absPath,
             binaryMeta: artifacts.binaryMeta,
             section,
             syntax: message.syntax || 'intel',
-            annotationsJson: fs.existsSync(annotationsJsonPath) ? annotationsJsonPath : null,
+            annotationsJson: annotationsJsonPresent ? annotationsJsonPath : null,
             dwarfLines: artifacts.binaryMeta.kind !== 'raw',
             emitProgress: true,
             progressTitle: `Désassemblage de ${path.basename(absPath)}`,

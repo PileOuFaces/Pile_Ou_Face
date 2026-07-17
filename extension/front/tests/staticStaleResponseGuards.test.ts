@@ -78,7 +78,7 @@ describe("static stale response guards", () => {
     expect(guardedHandlers).to.be.greaterThan(0);
   });
 
-  it("refreshes disassembly silently when annotations include names or comments", () => {
+  it("refreshes disassembly silently without cache when annotations include names or comments", () => {
     const source = messagesSource();
     const start = source.indexOf("function refreshDisasmForAnnotations");
     expect(start).to.be.greaterThan(-1);
@@ -89,6 +89,7 @@ describe("static stale response guards", () => {
     expect(helper).to.include("type: 'hubOpenDisasm'");
     expect(helper).to.include("useCache: false");
     expect(helper).to.include("openInEditor: false");
+    expect(helper).to.include("refreshReason: 'annotation-overlay'");
     expect(handlerFor(source, "hubAnnotations", "hubDisasmReady"))
       .to.include("refreshDisasmForAnnotations(msg.binaryPath, annotations)");
   });
@@ -97,6 +98,27 @@ describe("static stale response guards", () => {
     const source = messagesSource();
     expect(handlerFor(source, "hubAnnotations", "hubDisasmReady"))
       .to.include("populateDecompileSelect(window.symbolsCache || [])");
+  });
+
+  it("keeps hubUiConsumed acknowledgements from depending only on animation frames", () => {
+    const source = messagesSource();
+    const start = source.indexOf("if (!msg?.type || msg.type === 'hubUiConsumed') return;");
+    expect(start).to.be.greaterThan(-1);
+    const helper = source.slice(start, start + 700);
+
+    expect(helper).to.include("let consumed = false");
+    expect(helper).to.include("if (consumed) return");
+    expect(helper).to.include("requestAnimationFrame(() => requestAnimationFrame(acknowledge))");
+    expect(helper).to.include("setTimeout(acknowledge, 250)");
+  });
+
+  it("refreshes disassembly without cache after annotation saves", () => {
+    const source = messagesSource();
+    const handler = handlerFor(source, "hubAnnotationSaved", "hubAnnotations");
+    expect(handler).to.include("type: 'hubOpenDisasm'");
+    expect(handler).to.include("useCache: false");
+    expect(handler).to.include("openInEditor: false");
+    expect(handler).to.include("refreshReason: 'annotation-overlay'");
   });
 
   it("renders annotation kind badges and edit actions", () => {

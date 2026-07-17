@@ -37,6 +37,7 @@ function refreshDisasmForAnnotations(binaryPath, annotations) {
     binaryPath: bp,
     useCache: false,
     openInEditor: false,
+    refreshReason: 'annotation-overlay',
   });
 }
 
@@ -2564,7 +2565,13 @@ window.addEventListener('message', (event) => {
     if (bp) {
       tabDataCache.cfg = null;
       tabDataCache.callgraph = null;
-      vscode.postMessage({ type: 'hubOpenDisasm', binaryPath: bp, useCache: false, openInEditor: false });
+      vscode.postMessage({
+        type: 'hubOpenDisasm',
+        binaryPath: bp,
+        useCache: false,
+        openInEditor: false,
+        refreshReason: 'annotation-overlay',
+      });
     }
     return;
   }
@@ -3312,7 +3319,10 @@ window.addEventListener('message', (event) => {
 window.addEventListener('message', (event) => {
   const msg = event.data;
   if (!msg?.type || msg.type === 'hubUiConsumed') return;
+  let consumed = false;
   const acknowledge = () => {
+    if (consumed) return;
+    consumed = true;
     vscode.postMessage({
       type: 'hubUiConsumed',
       responseType: String(msg.type),
@@ -3320,6 +3330,7 @@ window.addEventListener('message', (event) => {
   };
   if (typeof requestAnimationFrame === 'function') {
     requestAnimationFrame(() => requestAnimationFrame(acknowledge));
+    setTimeout(acknowledge, 250);
   } else {
     setTimeout(acknowledge, 0);
   }
