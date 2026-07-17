@@ -76,10 +76,35 @@ const { createLoaders } = require('./hub/loaders');
 const { createTraceHistory } = require('./hub/traceHistory');
 const { createActions } = require('./hub/actions');
 const archSupport = require('./hub/archSupport');
-const { recordRuntimeEvent } = require('../shared/runtimeAudit');
+const { getRuntimeAuditState, recordRuntimeEvent } = require('../shared/runtimeAudit');
 
 const AUTH_STRICT_LICENSE_ENV = 'BINHOST_DISABLE_LICENSE_FALLBACK';
 const AUTH_CONTENT_KEYS_STDIN_ENV = 'BINHOST_CONTENT_KEYS_STDIN';
+
+function summarizeWebviewPostMessageForAudit(message) {
+  if (!message || typeof message !== 'object') return {};
+  const summary = {
+    source: 'hub',
+    keys: Object.keys(message).filter((key) => key !== 'type').slice(0, 20),
+  };
+  if (typeof message.binaryPath === 'string') summary.binaryPath = path.basename(message.binaryPath);
+  if (typeof message.ok === 'boolean') summary.ok = message.ok;
+  if (typeof message.loggedIn === 'boolean') summary.loggedIn = message.loggedIn;
+  if (typeof message.error === 'string' && message.error) summary.hasError = true;
+  if (message.result && typeof message.result === 'object') {
+    if (typeof message.result.ok === 'boolean') summary.resultOk = message.result.ok;
+    if (typeof message.result.error === 'string' && message.result.error) summary.hasResultError = true;
+  }
+  for (const [key, value] of Object.entries(message)) {
+    if (Array.isArray(value)) summary[`${key}Count`] = value.length;
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      for (const [nestedKey, nestedValue] of Object.entries(value)) {
+        if (Array.isArray(nestedValue)) summary[`${key}.${nestedKey}Count`] = nestedValue.length;
+      }
+    }
+  }
+  return summary;
+}
 
 function encodePluginRuntimeStdin(contentKeys) {
   const entries = Object.entries(contentKeys || {}).filter(([, value]) => String(value || '').trim());
@@ -157,6 +182,8 @@ function createHub(config) {
 
   let hubPanelRef = null;
   let hubHandlersRef = null;
+  let hubDispatchRef = null;
+  let hubWebviewDispatchRef = null;
   let pendingAiPrompt = '';
   let latestTraceRunId = 0;
   const perfDiagnosticsEnabled = () => {
@@ -188,6 +215,30 @@ function createHub(config) {
       hubPanelRef.webview.postMessage({ type: 'hubPerfSnapshotRequest', source: 'command' });
     }
     logChannel.show(true);
+  }));
+  context.subscriptions.push(vscode.commands.registerCommand('pileOuFace.e2eDispatchHubMessage', async (message = {}) => {
+    if (!getRuntimeAuditState().enabled) throw new Error('pileOuFace.e2eDispatchHubMessage requires runtime audit to be enabled');
+    if (!hubPanelRef || hubPanelRef.disposed || !hubHandlersRef || !hubDispatchRef) {
+      throw new Error('pileOuFace.e2eDispatchHubMessage requires an open hub panel');
+    }
+    if (!message || !message.type) throw new Error('pileOuFace.e2eDispatchHubMessage requires a message.type');
+    const dispatchedHandler = hubDispatchRef[message.type];
+    if (dispatchedHandler) {
+      recordRuntimeEvent('webview_message', message.type, { source: 'hub.e2e' });
+      await dispatchedHandler(message);
+      return;
+    }
+    const sharedHandler = hubHandlersRef[message.type];
+    if (sharedHandler) {
+      recordRuntimeEvent('webview_message', message.type, { source: 'hub.e2e' });
+      await sharedHandler(message);
+      return;
+    }
+    if (message.type === 'runTrace' && hubWebviewDispatchRef) {
+      await hubWebviewDispatchRef(message, 'hub.e2e');
+      return;
+    }
+    throw new Error(`No E2E-dispatchable hub handler for ${message.type}`);
   }));
 
   return function openHub(initialPanel = 'dashboard', options = {}) {
@@ -376,10 +427,21 @@ function createHub(config) {
         ],
       }
     );
+    if (getRuntimeAuditState().enabled) {
+      const originalPostMessage = panel.webview.postMessage.bind(panel.webview);
+      panel.webview.postMessage = ((message) => {
+        if (message && typeof message === 'object' && message.type) {
+          recordRuntimeEvent('webview_post_message', String(message.type), summarizeWebviewPostMessageForAudit(message));
+        }
+        return originalPostMessage(message);
+      }) as typeof panel.webview.postMessage;
+    }
     hubPanelRef = panel;
     panel.onDidDispose(() => {
       hubPanelRef = null;
       hubHandlersRef = null;
+      hubDispatchRef = null;
+      hubWebviewDispatchRef = null;
     });
 
     // ── Watcher decompilers.json — actualisation automatique du panneau ─────────
@@ -832,9 +894,14 @@ function createHub(config) {
         pendingAiPrompt = '';
       },
     };
-    panel.webview.onDidReceiveMessage(async (message) => {
+    hubDispatchRef = hubDispatchMap;
+    const dispatchHubWebviewMessage = async (message, auditSource = 'hub') => {
       if (!message || !message.type) return;
-      recordRuntimeEvent('webview_message', message.type, { source: 'hub' });
+      const auditDetails = { source: auditSource } as Record<string, unknown>;
+      if (message.type === 'hubUiConsumed' && typeof message.responseType === 'string') {
+        auditDetails.responseType = message.responseType;
+      }
+      recordRuntimeEvent('webview_message', message.type, auditDetails);
 
       const dispatchedHandler = hubDispatchMap[message.type];
       if (dispatchedHandler) {
@@ -1383,7 +1450,9 @@ function createHub(config) {
           panel.webview.postMessage({ type: 'runTraceDone', binaryPath });
         }
       }
-    });
+    };
+    hubWebviewDispatchRef = dispatchHubWebviewMessage;
+    panel.webview.onDidReceiveMessage(dispatchHubWebviewMessage);
     if (pendingAiPrompt) {
       globalThis.setTimeout(() => {
         if (!pendingAiPrompt || !hubPanelRef || hubPanelRef.disposed) return;
