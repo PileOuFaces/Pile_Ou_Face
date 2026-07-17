@@ -14,6 +14,7 @@ const {
 } = require('./runtime-audit-feature-map');
 
 const AUDIT_FILE = 'audit-runtime-usage.jsonl';
+const E2E_AUDIT_MOCHA_TIMEOUT_MS = 120000;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -186,13 +187,14 @@ function summarizeAuditDelta(beforeEvents, afterEvents) {
   };
 }
 
-const ANNOTATION_AUTOLOAD_FANOUT_MESSAGES = new Set([
+const AUTOLOAD_FANOUT_MESSAGES = new Set([
   'hubSaveAnnotation',
   'hubSaveBookmark',
   'hubSaveFunctionReview',
   'hubDeleteBookmark',
   'hubClearBookmarks',
   'hubDeleteAnnotation',
+  'hubUseBinaryPath',
 ]);
 
 function payloadAssertionMatchesEvent(event, assertion) {
@@ -455,7 +457,7 @@ function jsonResponse(body, status = 200) {
 }
 
 async function run() {
-  const mocha = new Mocha({ ui: 'bdd', color: true, timeout: 60000 });
+  const mocha = new Mocha({ ui: 'bdd', color: true, timeout: E2E_AUDIT_MOCHA_TIMEOUT_MS });
   const suite = Mocha.Suite.create(mocha.suite, 'runtime usage audit e2e');
 
   suite.addTest(new Mocha.Test('creates audit JSONL and records hub startup events', async () => {
@@ -643,8 +645,13 @@ async function run() {
       'pileOuFace.xrefsTo',
     ];
 
+    const errorMessages = [];
     await withWindowMocks({
       activeTextEditor: editor,
+      showErrorMessage: async (message, ...items) => {
+        errorMessages.push(String(message || ''));
+        return items[0];
+      },
       showWarningMessage: async (message, ...items) => {
         assert.ok(
           !String(message || '').includes('Ouvrez un fichier de désassemblage'),
@@ -658,6 +665,7 @@ async function run() {
         try {
           await vscode.commands.executeCommand(commandId);
           await waitForCommandAudit(userDataDir, commandId);
+          assert.deepStrictEqual(errorMessages, [], `${commandId} should not show error notifications`);
           stopPerf({ ok: true });
         } catch (error) {
           stopPerf({ ok: false, error: String(error && error.message ? error.message : error) });
@@ -678,7 +686,20 @@ async function run() {
     const disasmEditor = await vscode.window.showTextDocument(disasmDocument, { preview: false });
 
     const exportPath = path.join(process.env.POF_E2E_WORKSPACE_DIR || path.dirname(fixture.path), 'e2e-exported.disasm.txt');
+    const fakeDecompilerPath = path.join(process.env.POF_E2E_WORKSPACE_DIR || path.dirname(fixture.path), 'e2e-fake-decompiler.py');
+    const fakeDecompilerPython = process.env.PYTHON || 'python3';
+    fs.writeFileSync(fakeDecompilerPath, [
+      'import argparse',
+      'import json',
+      'parser = argparse.ArgumentParser()',
+      'parser.add_argument("--binary")',
+      'parser.add_argument("--addr", default="0x0")',
+      'args = parser.parse_args()',
+      'print(json.dumps({"addr": args.addr, "code": "int e2e_fake(void) { return 0; }", "functions": []}))',
+      '',
+    ].join('\n'), 'utf8');
     const capturedWebviews = [];
+    const errorMessages = [];
     await withWindowMocks({
       activeTextEditor: disasmEditor,
       createWebviewPanel: (viewType, title, showOptions, options) => {
@@ -707,13 +728,17 @@ async function run() {
         if (prompt.includes('binaire')) return fixture.path;
         if (prompt.includes('identifiant')) return 'e2e-tool';
         if (prompt.includes('nom affich')) return 'E2E Tool';
-        if (prompt.includes('commande locale')) return 'python --version';
+        if (prompt.includes('commande locale')) return `"${fakeDecompilerPython}" "${fakeDecompilerPath}" --binary {binary} --addr {addr}`;
         if (prompt.includes('binaire complet')) return '';
         return '0x40';
       },
       showSaveDialog: async () => vscode.Uri.file(exportPath),
       showOpenDialog: async () => [vscode.Uri.file(fixture.path)],
       showInformationMessage: async () => 'OK',
+      showErrorMessage: async (message, ...items) => {
+        errorMessages.push(String(message || ''));
+        return items[0];
+      },
       showWarningMessage: async (message, ...items) => {
         if (String(message || '').includes('Supprimer')) return items.find((item) => item === 'Supprimer') || 'Supprimer';
         return items.find((item) => item === 'OK') || undefined;
@@ -758,7 +783,7 @@ async function run() {
           } else if (commandId === 'pileOuFace.decompilerAdd') {
             const config = readDecompilerConfigFromOpenDocument();
             assert.ok(config?.decompilers?.['e2e-tool'], 'decompilerAdd should write e2e-tool to decompilers.json');
-            assert.deepStrictEqual(config.decompilers['e2e-tool'].command, ['python', '--version']);
+            assert.deepStrictEqual(config.decompilers['e2e-tool'].command, [fakeDecompilerPython, fakeDecompilerPath, '--binary', '{binary}', '--addr', '{addr}']);
             stateValidated = true;
           } else if (commandId === 'pileOuFace.decompilerEdit') {
             const config = readDecompilerConfigFromOpenDocument();
@@ -770,6 +795,7 @@ async function run() {
             assert.ok(config && !config.decompilers?.['e2e-tool'], 'decompilerRemove should remove e2e-tool from decompilers.json');
             stateValidated = true;
           }
+          assert.deepStrictEqual(errorMessages, [], `${commandId} should not show error notifications`);
           stopPerf({
             ok: true,
             stateValidated,
@@ -1082,7 +1108,7 @@ async function run() {
                 );
                 stateValidated = true;
               }
-              const quietAfter = await waitForAuditQuiet(userDataDir, ANNOTATION_AUTOLOAD_FANOUT_MESSAGES.has(message.type)
+              const quietAfter = await waitForAuditQuiet(userDataDir, AUTOLOAD_FANOUT_MESSAGES.has(message.type)
                 ? { quietMs: 500, timeoutMs: 5000 }
                 : {});
               stopPerf({

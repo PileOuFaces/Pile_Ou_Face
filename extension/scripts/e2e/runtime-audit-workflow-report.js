@@ -61,6 +61,7 @@ const PERFORMANCE_BUDGETS = {
   backendGlobalTotalWarnMs: 4000,
   backendGlobalTotalFailCandidateMs: 8000,
 };
+const TRUE_VALUES = new Set(['1', 'true', 'yes', 'on']);
 
 function readJsonl(filePath) {
   if (!filePath || !fs.existsSync(filePath)) return [];
@@ -1462,6 +1463,7 @@ function markdownForReport(report) {
     '2. Open this report first for optimization and missing-depth decisions.',
     '3. Open `runtime-audit-feature-coverage.md` for the raw command/handler inventory.',
     '4. Add missing or shallow flows in `scripts/e2e/runtime-audit-suite.js`, then rerun the audit.',
+    '5. Set `POF_E2E_ENFORCE_PERF_BUDGETS=1` to fail report generation when a budget reaches `fail-candidate` severity.',
     ''
   );
 
@@ -1475,6 +1477,16 @@ function main() {
   fs.writeFileSync(markdownPath, markdownForReport(report));
   console.log(`Workflow audit report: ${markdownPath}`);
   console.log(`Workflow audit scenarios: ${report.summary.scenarios}, targets: ${report.summary.auditedTargets}, optimization candidates: ${report.summary.optimizationCandidates}`);
+  const enforcePerfBudgets = TRUE_VALUES.has(String(process.env.POF_E2E_ENFORCE_PERF_BUDGETS || '').trim().toLowerCase());
+  if (enforcePerfBudgets && report.summary.performanceBudgetFailCandidates > 0) {
+    const top = report.performanceBudgetSignals
+      .filter((entry) => entry.severity === 'fail-candidate')
+      .slice(0, 5)
+      .map((entry) => `${entry.budget}:${entry.scenario || entry.backend || entry.target || '<unknown>'} ${entry.details}`)
+      .join('; ');
+    console.error(`Runtime audit performance budget failed: ${report.summary.performanceBudgetFailCandidates} fail-candidate signal(s). ${top}`);
+    process.exitCode = 1;
+  }
 }
 
 if (require.main === module) {
