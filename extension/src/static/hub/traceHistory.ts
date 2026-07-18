@@ -14,6 +14,7 @@ function createTraceHistory({
   payloadTargetLabel,
   normalizePayloadTargetMode,
   openVisualizerWebview,
+  toWebviewPath,
   vscode,
   fs,
   path,
@@ -152,6 +153,40 @@ function createTraceHistory({
     });
   };
 
+  // Builds and posts the same 'dynamicTraceReady' message the runTrace handler
+  // sends on a fresh run, so a fresh run and a historical trace both drive the
+  // Hub's embedded Runtime tab through one mechanism (no standalone panel).
+  const postDynamicTraceReady = (trace, { binaryPath = '', tracePath = '' } = {}) => {
+    panel.webview.postMessage({
+      type: 'dynamicTraceReady',
+      binaryPath,
+      traceRunId: (trace?.meta?.trace_run_id !== undefined && trace?.meta?.trace_run_id !== null)
+        ? String(trace.meta.trace_run_id) : null,
+      snapshots: Array.isArray(trace?.snapshots) ? trace.snapshots : [],
+      meta: trace?.meta && typeof trace.meta === 'object' ? trace.meta : {},
+      crash: trace?.crash && typeof trace.crash === 'object' ? trace.crash : null,
+      diagnostics: Array.isArray(trace?.diagnostics) ? trace.diagnostics : [],
+      risks: Array.isArray(trace?.risks) ? trace.risks : [],
+      // Same field the standalone visualizer's 'init' message carries
+      // (visualizer.ts::sendInitToWebview) -- the embedded Hub Runtime
+      // view must see the same per-step Evidence, not just snapshots.
+      analysisByStep: trace?.analysisByStep && typeof trace.analysisByStep === 'object' ? trace.analysisByStep : {},
+      enrichment: trace?.enrichment && typeof trace.enrichment === 'object' ? trace.enrichment : {},
+      tracePath,
+    });
+  };
+
+  // trace.meta.binary is stored by the Python pipeline relative to the
+  // workspace root when possible (see run_pipeline._normalize_path), so it
+  // must be resolved to an absolute path before being converted back to the
+  // webview-relative form the Hub's binary field expects.
+  const toDynamicTraceBinaryWebviewPath = (rawBinaryPath) => {
+    const raw = String(rawBinaryPath || '').trim();
+    if (!raw) return '';
+    const absolute = path.isAbsolute(raw) ? raw : path.join(root, raw);
+    return toWebviewPath(absolute);
+  };
+
   const notifyDynamicTraceCleared = (tracePath = '', reason = 'cleared') => {
     panel.webview.postMessage({
       type: 'dynamicTraceCleared',
@@ -204,6 +239,7 @@ function createTraceHistory({
     buildTraceRunArtifacts,
     buildDynamicTraceHistoryItems,
     postDynamicTraceHistory,
+    postDynamicTraceReady,
     deleteDynamicTraceArtifacts,
     // Message handlers (for dispatcher map)
     requestDynamicTraceHistory: async (_msg) => {
@@ -231,7 +267,21 @@ function createTraceHistory({
       });
       _activeDynamicTracePath = requestedTracePath;
       writeTraceJson(requestedTracePath, trace);
-      openVisualizerWebview(trace);
+      if (trace?.meta?.view_mode === 'static') {
+        openVisualizerWebview(trace);
+      } else {
+        const binaryPath = toDynamicTraceBinaryWebviewPath(trace?.meta?.binary);
+        // Sync the Hub's active binary field first and wait for it to be
+        // queued before sending dynamicTraceReady, so the front-end's
+        // stale-binary guard (runtimeSessionController.js) sees a matching
+        // binaryPath instead of dropping the message as a race.
+        await panel.webview.postMessage({
+          type: 'hubSetBinaryPath',
+          binaryPath,
+          binaryMeta: trace?.meta?.binary_metadata || null,
+        });
+        postDynamicTraceReady(trace, { binaryPath, tracePath: requestedTracePath });
+      }
       postDynamicTraceHistory();
     },
     deleteDynamicTraceHistory: async (message) => {

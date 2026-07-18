@@ -895,7 +895,7 @@ function createHub(config) {
     const traceHistoryHandlers = createTraceHistory({
       panel, root, storageDir, globalDir, ensureTempDir, readTraceJson, writeTraceJson, setViewMode,
       buildSourceEnrichmentMeta, attachTraceAddressEnrichment,
-      payloadTargetLabel, normalizePayloadTargetMode, openVisualizerWebview,
+      payloadTargetLabel, normalizePayloadTargetMode, openVisualizerWebview, toWebviewPath,
       vscode, fs, path, crypto,
     });
     const actionsHandlers = createActions({
@@ -1459,23 +1459,7 @@ function createHub(config) {
           writeTraceJson(isolatedJsonPath, trace);
           traceHistoryHandlers.setActiveDynamicTracePath(isolatedJsonPath);
           writeTraceJson(canonicalJsonPath, trace);
-          panel.webview.postMessage({
-            type: 'dynamicTraceReady',
-            binaryPath,
-            traceRunId: (trace.meta?.trace_run_id !== undefined && trace.meta?.trace_run_id !== null)
-              ? String(trace.meta.trace_run_id) : null,
-            snapshots: Array.isArray(trace.snapshots) ? trace.snapshots : [],
-            meta: trace.meta && typeof trace.meta === 'object' ? trace.meta : {},
-            crash: trace.crash && typeof trace.crash === 'object' ? trace.crash : null,
-            diagnostics: Array.isArray(trace.diagnostics) ? trace.diagnostics : [],
-            risks: Array.isArray(trace.risks) ? trace.risks : [],
-            // Same field the standalone visualizer's 'init' message carries
-            // (visualizer.ts::sendInitToWebview) -- the embedded Hub Runtime
-            // view must see the same per-step Evidence, not just snapshots.
-            analysisByStep: trace.analysisByStep && typeof trace.analysisByStep === 'object' ? trace.analysisByStep : {},
-            enrichment: trace.enrichment && typeof trace.enrichment === 'object' ? trace.enrichment : {},
-            tracePath: isolatedJsonPath,
-          });
+          traceHistoryHandlers.postDynamicTraceReady(trace, { binaryPath, tracePath: isolatedJsonPath });
           traceHistoryHandlers.postDynamicTraceHistory();
         }
       } catch (err) {

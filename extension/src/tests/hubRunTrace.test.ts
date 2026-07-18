@@ -993,7 +993,99 @@ describe('hub runTrace isolation', () => {
     expect(unlinkSyncStub.neverCalledWith('/tmp/pof/output.json')).to.equal(true);
   });
 
-  it('reveals the active historical trace instead of reopening it', async () => {
+  it('opens a historical dynamic trace through the embedded Hub Runtime tab, not the standalone visualizer', async () => {
+    // A dynamic trace never opens the standalone panel, so revealCurrentTrace
+    // behaves as it does in production when no such panel exists: it returns
+    // false and the handler falls through to re-sending dynamicTraceReady.
+    const revealCurrentTrace = sinon.stub().returns(false);
+    openVisualizerWebview = Object.assign(sinon.spy(), { revealCurrentTrace });
+    const tracePath = '/tmp/pof/output.run-1-a.json';
+    const openHub = createHub({
+      context: {
+        extensionUri: {},
+        subscriptions: [],
+        workspaceState: { get: () => ({}), update: async () => {} },
+        globalState: { get: () => ({}), update: async () => {} }
+      },
+      storageDir: '/tmp/pof',
+      logChannel: { appendLine: () => {}, append: () => {} },
+      getTempDir: () => '/tmp/pof',
+      ensureTempDir: () => '/tmp/pof',
+      runCommand,
+      detectPythonExecutable: () => '/usr/bin/python3',
+      ensureStaticAsm,
+      readTraceJson,
+      writeTraceJson,
+      setViewMode: () => {},
+      payloadToHex: () => '',
+      parseStdinExpression: () => '',
+      check32BitToolchain: () => ({ ok: true }),
+      openVisualizerWebview
+    });
+
+    outputPaths.add(tracePath);
+    outputPaths.add('/tmp/pof/output.run-1-a.disasm.asm');
+    readdirSyncStub.returns(['output.run-1-a.json']);
+    readTraceJson.callsFake((targetPath) => ({
+      snapshots: [{ step: 1, func: 'main' }],
+      risks: [],
+      meta: {
+        output_path: targetPath,
+        trace_run_id: 1,
+        view_mode: 'dynamic',
+        binary: '/repo/examples/stack3_strcpy..elf',
+        start_symbol: 'main'
+      }
+    }));
+
+    openHub();
+
+    await onMessage({ type: 'openDynamicTraceHistory', tracePath });
+    expect(openVisualizerWebview.notCalled).to.equal(true);
+    expect(readTraceJson.calledWithExactly(tracePath)).to.equal(true);
+    expect(writeTraceJson.calledOnce).to.equal(true);
+    // createWebviewPanel is only ever called once, to create the Hub panel
+    // itself -- opening a dynamic history trace must not create another one.
+    expect(vscode.window.createWebviewPanel.calledOnce).to.equal(true);
+
+    const setBinaryMessages = panel.webview.postMessage.getCalls()
+      .map((call) => call.args[0])
+      .filter((message) => message?.type === 'hubSetBinaryPath');
+    expect(setBinaryMessages).to.have.length(1);
+    expect(setBinaryMessages[0].binaryPath).to.equal('examples/stack3_strcpy..elf');
+
+    const readyMessages = panel.webview.postMessage.getCalls()
+      .map((call) => call.args[0])
+      .filter((message) => message?.type === 'dynamicTraceReady');
+    expect(readyMessages).to.have.length(1);
+    expect(readyMessages[0].tracePath).to.equal(tracePath);
+    expect(readyMessages[0].binaryPath).to.equal('examples/stack3_strcpy..elf');
+    expect(readyMessages[0].traceRunId).to.equal('1');
+
+    readTraceJson.resetHistory();
+    writeTraceJson.resetHistory();
+    panel.webview.postMessage.resetHistory();
+
+    // Reopening the already-active trace still funnels through the same
+    // mechanism (no standalone panel ever created) and re-focuses the tab.
+    await onMessage({ type: 'openDynamicTraceHistory', tracePath });
+
+    expect(revealCurrentTrace.calledOnce).to.equal(true);
+    expect(openVisualizerWebview.notCalled).to.equal(true);
+    // createWebviewPanel is only ever called once, to create the Hub panel
+    // itself -- opening a dynamic history trace must not create another one.
+    expect(vscode.window.createWebviewPanel.calledOnce).to.equal(true);
+    const secondReadyMessages = panel.webview.postMessage.getCalls()
+      .map((call) => call.args[0])
+      .filter((message) => message?.type === 'dynamicTraceReady');
+    expect(secondReadyMessages).to.have.length(1);
+    const historyMessages = panel.webview.postMessage.getCalls()
+      .map((call) => call.args[0])
+      .filter((message) => message?.type === 'dynamicTraceHistory');
+    expect(historyMessages[historyMessages.length - 1].activeTracePath).to.equal(tracePath);
+  });
+
+  it('still opens a historical static trace in the standalone visualizer, and reveals it if already active', async () => {
     const revealCurrentTrace = sinon.stub().returns(true);
     openVisualizerWebview = Object.assign(sinon.spy(), { revealCurrentTrace });
     const tracePath = '/tmp/pof/output.run-1-a.json';
@@ -1029,6 +1121,7 @@ describe('hub runTrace isolation', () => {
       meta: {
         output_path: targetPath,
         trace_run_id: 1,
+        view_mode: 'static',
         binary: '/repo/examples/stack3_strcpy..elf',
         start_symbol: 'main'
       }
@@ -1040,6 +1133,10 @@ describe('hub runTrace isolation', () => {
     expect(openVisualizerWebview.calledOnce).to.equal(true);
     expect(readTraceJson.calledWithExactly(tracePath)).to.equal(true);
     expect(writeTraceJson.calledOnce).to.equal(true);
+    const readyMessages = panel.webview.postMessage.getCalls()
+      .map((call) => call.args[0])
+      .filter((message) => message?.type === 'dynamicTraceReady');
+    expect(readyMessages).to.have.length(0);
 
     readTraceJson.resetHistory();
     writeTraceJson.resetHistory();
@@ -1051,9 +1148,5 @@ describe('hub runTrace isolation', () => {
     expect(openVisualizerWebview.notCalled).to.equal(true);
     expect(readTraceJson.notCalled).to.equal(true);
     expect(writeTraceJson.notCalled).to.equal(true);
-    const historyMessages = panel.webview.postMessage.getCalls()
-      .map((call) => call.args[0])
-      .filter((message) => message?.type === 'dynamicTraceHistory');
-    expect(historyMessages[historyMessages.length - 1].activeTracePath).to.equal(tracePath);
   });
 });
