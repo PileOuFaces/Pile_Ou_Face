@@ -19,36 +19,36 @@ function makeInMemoryBridge() {
         ...(name !== undefined ? { name } : {}),
         updated: new Date().toISOString(),
       };
-      return { ...b };
+      return { annotations: { ...b }, overlay: 'unchanged' };
     },
     saveFunctionReview: async (binaryPath, addr, { reviewStatus, reviewNotes } = {}) => {
       const b = bucket(binaryPath);
       b[addr] = { ...b[addr], reviewStatus, reviewNotes, reviewUpdated: new Date().toISOString() };
-      return { ...b };
+      return { annotations: { ...b }, overlay: 'unchanged' };
     },
     saveBookmark: async (binaryPath, addr, { label, color } = {}) => {
       const b = bucket(binaryPath);
       b[addr] = { ...b[addr], bookmark: true, bookmarkLabel: label, bookmarkColor: color, bookmarkUpdated: new Date().toISOString() };
-      return { ...b };
+      return { annotations: { ...b }, overlay: 'unchanged' };
     },
     deleteBookmark: async (binaryPath, addr) => {
       const b = bucket(binaryPath);
       if (b[addr]) {
         delete b[addr].bookmark; delete b[addr].bookmarkLabel; delete b[addr].bookmarkColor; delete b[addr].bookmarkUpdated;
       }
-      return { ...b };
+      return { annotations: { ...b }, overlay: 'unchanged' };
     },
     clearBookmarks: async (binaryPath) => {
       const b = bucket(binaryPath);
       Object.values(b).forEach((entry) => {
         delete entry.bookmark; delete entry.bookmarkLabel; delete entry.bookmarkColor; delete entry.bookmarkUpdated;
       });
-      return { ...b };
+      return { annotations: { ...b }, overlay: 'unchanged' };
     },
     deleteAnnotation: async (binaryPath, addr) => {
       const b = bucket(binaryPath);
       if (b[addr]) { delete b[addr].comment; delete b[addr].name; delete b[addr].updated; }
-      return { ...b };
+      return { annotations: { ...b }, overlay: 'unchanged' };
     },
   };
 }

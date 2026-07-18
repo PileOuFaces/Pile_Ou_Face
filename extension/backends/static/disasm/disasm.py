@@ -36,6 +36,7 @@ from backends.static.binary.arch import (
     iter_supported_adapters,
 )
 from backends.static.binary.symbols import extract_symbols
+from backends.static.disasm import mapping_db
 
 logger = get_logger(__name__)
 
@@ -1304,8 +1305,26 @@ def _write_disasm_outputs(
         mapping["raw"] = raw_profile
     if output_mapping:
         _emit_progress(progress_callback, "write", "Écriture du mapping", percent=98)
+        # Les lignes (une par instruction) vont dans un SQLite requêtable par
+        # adresse ; le JSON ne garde qu'un en-tête borné par le nombre de
+        # fonctions — jamais de JSON à un enregistrement par instruction.
+        db_path = mapping_db.mapping_db_path_for(output_mapping)
+        mapping_db.write_mapping_db(db_path, mapping)
+        function_addr_keys = {
+            mapping_db.normalize_addr_key(fn.get("addr")) for fn in mapping["functions"]
+        }
+        function_addr_keys.discard("")
+        for entry in lines_with_line_num:
+            addr_key = mapping_db.normalize_addr_key(entry.get("addr"))
+            fn_key = mapping_db.normalize_addr_key(entry.get("function_addr"))
+            if addr_key and fn_key and addr_key == fn_key:
+                function_addr_keys.add(addr_key)
+        slim = {key: value for key, value in mapping.items() if key != "lines"}
+        slim["function_addrs"] = sorted(function_addr_keys, key=lambda a: int(a, 16))
+        slim["line_count"] = len(lines_with_line_num)
+        slim["lines_db"] = os.path.basename(db_path)
         with open(output_mapping, "w", encoding="utf-8") as f:
-            json.dump(mapping, f, indent=2)
+            json.dump(slim, f, indent=2)
 
     _emit_progress(progress_callback, "done", "Désassemblage prêt", percent=100)
     return mapping

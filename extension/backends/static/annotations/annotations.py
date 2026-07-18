@@ -24,6 +24,7 @@ from __future__ import annotations
 import builtins
 
 from backends.shared.log import configure_logging, get_logger
+from backends.static.annotations import overlay_patch
 from backends.static.annotations.annotation_db import AnnotationDb
 
 logger = get_logger(__name__)
@@ -257,6 +258,15 @@ def main() -> int:
     )
     parser.add_argument("--binary", required=True, help="Binary path")
     parser.add_argument("--cache-db", help="Cache DB path (default: auto)")
+    parser.add_argument(
+        "--overlay-mapping",
+        help=(
+            "Chemin du mapping JSON allégé du désassemblage. Si fourni, les "
+            "commandes de mutation arbitrent l'overlay du .asm (patch en "
+            "place des commentaires) et la sortie devient "
+            '{"annotations": ..., "overlay": verdict}.'
+        ),
+    )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     # list
@@ -360,32 +370,69 @@ def main() -> int:
         elif args.cmd == "delete-annotation":
             store.delete(args.addr, kind=KIND_COMMENT)
             store.delete(args.addr, kind=KIND_RENAME)
-            print(json.dumps(_grouped_export(store), indent=2, ensure_ascii=False))
+            _print_grouped(store, args, overlay_mutation={"deleted": True})
 
         elif args.cmd == "annotate":
             if args.comment is not None:
                 store.comment(args.addr, args.comment)
             if args.name is not None:
                 store.rename(args.addr, args.name)
-            print(json.dumps(_grouped_export(store), indent=2, ensure_ascii=False))
+            _print_grouped(
+                store,
+                args,
+                overlay_mutation={"name": args.name, "comment": args.comment},
+            )
 
         elif args.cmd == "review":
             store.set_review(args.addr, status=args.status, notes=args.notes)
-            print(json.dumps(_grouped_export(store), indent=2, ensure_ascii=False))
+            _print_grouped(store, args, overlay_mutation=None)
 
         elif args.cmd == "bookmark":
             store.set_bookmark(args.addr, label=args.label, color=args.color)
-            print(json.dumps(_grouped_export(store), indent=2, ensure_ascii=False))
+            _print_grouped(store, args, overlay_mutation=None)
 
         elif args.cmd == "delete-bookmark":
             store.delete_bookmark(args.addr)
-            print(json.dumps(_grouped_export(store), indent=2, ensure_ascii=False))
+            _print_grouped(store, args, overlay_mutation=None)
 
         elif args.cmd == "clear-bookmarks":
             store.clear_bookmarks()
-            print(json.dumps(_grouped_export(store), indent=2, ensure_ascii=False))
+            _print_grouped(store, args, overlay_mutation=None)
 
     return 0
+
+
+def _print_grouped(store, args, *, overlay_mutation: dict | None) -> None:
+    """Sortie des commandes de mutation.
+
+    Sans --overlay-mapping : export groupé brut (compat historique). Avec :
+    enveloppe {"annotations", "overlay"} — les mutations sans effet sur le
+    .asm (review/bookmark) portent le verdict 'unchanged' sans rien tenter.
+    """
+    import json
+
+    grouped = _grouped_export(store)
+    mapping_path = getattr(args, "overlay_mapping", None)
+    if not mapping_path:
+        print(json.dumps(grouped, indent=2, ensure_ascii=False))
+        return
+    if overlay_mutation is None:
+        verdict = overlay_patch.VERDICT_UNCHANGED
+    else:
+        verdict = overlay_patch.apply_overlay_mutation(
+            mapping_path,
+            args.addr,
+            name=overlay_mutation.get("name"),
+            comment=overlay_mutation.get("comment"),
+            deleted=bool(overlay_mutation.get("deleted")),
+        )
+    print(
+        json.dumps(
+            {"annotations": grouped, "overlay": verdict},
+            indent=2,
+            ensure_ascii=False,
+        )
+    )
 
 
 if __name__ == "__main__":

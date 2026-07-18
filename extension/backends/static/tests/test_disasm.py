@@ -21,6 +21,7 @@ from backends.static.disasm.disasm import (
     disassemble,
     disassemble_with_capstone,
 )
+from backends.static.disasm.mapping_db import query_window
 from backends.static.tests.util import compile_minimal_elf
 
 try:
@@ -33,6 +34,12 @@ except ImportError:
 
 
 @unittest.skipUnless(_LIEF_AVAILABLE, "lief/capstone not installed")
+def _db_lines(out_map):
+    """Lit les lignes du mapping depuis le SQLite associé au JSON allégé."""
+    lines, _total = query_window(str(out_map)[: -len(".json")] + ".db", None, 100000)
+    return lines
+
+
 class TestDisassembleWithCapstone(unittest.TestCase):
     """Tests de disassemble_with_capstone."""
 
@@ -339,15 +346,15 @@ class TestDisasmEnrichmentFormatting(unittest.TestCase):
             )
 
             asm = out_asm.read_text(encoding="utf-8")
-            saved = json.loads(out_map.read_text(encoding="utf-8"))
+            saved_lines = _db_lines(out_map)
 
             self.assertIn("; ===== Function entry_main @ 0x401000 =====", asm)
             self.assertIn("entry_main:", asm)
             self.assertIn("bootstrap", asm)
             self.assertIn("var saved_tmp @ [rsp+0x18]", asm)
             self.assertEqual(mapping["functions"][0]["name"], "entry_main")
-            first_line = saved["lines"][0]
-            second_line = saved["lines"][1]
+            first_line = saved_lines[0]
+            second_line = saved_lines[1]
             self.assertEqual(first_line["function_name"], "entry_main")
             self.assertEqual(second_line["function_addr"], "0x401000")
             self.assertEqual(second_line["stack_hints"][0]["name"], "saved_tmp")
@@ -392,11 +399,11 @@ class TestDisasmEnrichmentFormatting(unittest.TestCase):
             )
 
             asm = out_asm.read_text(encoding="utf-8")
-            saved = json.loads(out_map.read_text(encoding="utf-8"))
+            saved_lines = _db_lines(out_map)
 
             self.assertIn("arg arg_rdi @ rdi", asm)
-            self.assertEqual(saved["lines"][0]["stack_hints"][0]["name"], "arg_rdi")
-            self.assertEqual(saved["lines"][0]["stack_hints"][0]["kind"], "arg")
+            self.assertEqual(saved_lines[0]["stack_hints"][0]["name"], "arg_rdi")
+            self.assertEqual(saved_lines[0]["stack_hints"][0]["kind"], "arg")
 
     def test_generic_macho_header_symbol_falls_back_to_discovered_functions(self):
         lines = [
@@ -485,10 +492,10 @@ class TestDisasmEnrichmentFormatting(unittest.TestCase):
             )
 
             asm = out_asm.read_text(encoding="utf-8")
-            saved = json.loads(out_map.read_text(encoding="utf-8"))
+            saved_lines = _db_lines(out_map)
             self.assertIn("struct Demo.magic", asm)
             self.assertEqual(
-                saved["lines"][0]["typed_struct_hints"][0]["label"], "Demo.magic"
+                saved_lines[0]["typed_struct_hints"][0]["label"], "Demo.magic"
             )
 
     def test_write_outputs_match_arm_memory_stack_hints(self):
@@ -553,12 +560,12 @@ class TestDisasmEnrichmentFormatting(unittest.TestCase):
             )
 
             asm = out_asm.read_text(encoding="utf-8")
-            saved = json.loads(out_map.read_text(encoding="utf-8"))
+            saved_lines = _db_lines(out_map)
 
             self.assertIn("arg arg_saved @ [x29+0x10]", asm)
             self.assertIn("arg arg_fp @ [r11+0x8]", asm)
-            self.assertEqual(saved["lines"][0]["stack_hints"][0]["name"], "arg_saved")
-            self.assertEqual(saved["lines"][1]["stack_hints"][0]["name"], "arg_fp")
+            self.assertEqual(saved_lines[0]["stack_hints"][0]["name"], "arg_saved")
+            self.assertEqual(saved_lines[1]["stack_hints"][0]["name"], "arg_fp")
 
     def test_write_outputs_replaces_non_x86_branch_targets(self):
         with tempfile.TemporaryDirectory() as tmp:

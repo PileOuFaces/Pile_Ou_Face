@@ -185,8 +185,14 @@ class TestMappingLineNumbers(unittest.TestCase):
                 function_ranges=function_ranges,
             )
             asm_lines = Path(asm_path).read_text().split("\n")
-            mapping = json.loads(Path(mapping_path).read_text())
-        by_addr = {entry["addr"]: entry["line"] for entry in mapping["lines"]}
+            from backends.static.disasm.mapping_db import query_window
+
+            db_path = mapping_path[: -len(".json")] + ".db"
+            db_lines, _total = query_window(db_path, None, 1000)
+            slim = json.loads(Path(mapping_path).read_text())
+        self.assertNotIn("lines", slim, "le JSON de mapping doit rester allégé")
+        self.assertEqual(slim["line_count"], len(db_lines))
+        by_addr = {entry["addr"]: entry["line"] for entry in db_lines}
         for addr, lineno in by_addr.items():
             self.assertGreater(lineno, 0, f"{addr} sans numéro de ligne")
             self.assertTrue(

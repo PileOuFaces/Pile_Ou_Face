@@ -1321,8 +1321,10 @@ def main() -> int:
         logger.error("Mapping file not found: %s", args.mapping)
         return 1
 
-    with open(args.mapping, encoding="utf-8") as f:
-        data = json.load(f)
+    # JSON allégé : les lignes vivent dans le SQLite associé.
+    from backends.static.disasm.mapping_db import load_mapping_with_lines
+
+    data = load_mapping_with_lines(args.mapping)
 
     lines = data.get("lines", [])
     known_addrs = set()

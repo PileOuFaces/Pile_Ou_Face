@@ -979,47 +979,31 @@ def _disassemble_for_mcp(
             "error": "Disassembly failed: mapping file was not produced",
         }
 
+    # Les lignes vivent dans le SQLite associé : requête paginée, jamais de
+    # chargement du mapping complet en mémoire.
+    from backends.static.disasm import mapping_db
+
+    normalized_max = max(1, min(int(max_lines), 5000))
+    db_path = mapping_db.mapping_db_path_for(out_map)
     try:
-        with open(out_map, encoding="utf-8") as f:
-            mapping = json.load(f)
+        selected, total = mapping_db.query_window(
+            db_path,
+            addr if isinstance(addr, str) and addr.strip() else None,
+            normalized_max,
+        )
     except Exception as exc:
         return {
             "ok": False,
             "error": f"Disassembly failed: cannot read mapping ({exc})",
         }
 
-    lines = mapping.get("lines", [])
-    if not isinstance(lines, list):
-        lines = []
-
-    normalized_max = max(1, min(int(max_lines), 5000))
-    selected = lines
-    addr_value = _parse_int_addr(addr)
-    if addr_value is not None and lines:
-        idx = None
-        for i, line in enumerate(lines):
-            line_addr = _parse_int_addr(str(line.get("addr", "")))
-            if line_addr is None:
-                continue
-            if line_addr >= addr_value:
-                idx = i
-                break
-        if idx is None:
-            idx = max(0, len(lines) - 1)
-        half = max(1, normalized_max // 2)
-        start = max(0, idx - half)
-        end = min(len(lines), start + normalized_max)
-        selected = lines[start:end]
-    elif len(lines) > normalized_max:
-        selected = lines[:normalized_max]
-
     return {
         "ok": True,
         "binary_path": binary_path,
         "asm_path": out_asm,
         "mapping_path": out_map,
-        "count": len(lines),
-        "truncated": len(selected) < len(lines),
+        "count": total,
+        "truncated": len(selected) < total,
         "addr_filter": addr if isinstance(addr, str) and addr.strip() else None,
         "lines": selected,
     }

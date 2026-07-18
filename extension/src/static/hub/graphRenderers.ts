@@ -2,6 +2,7 @@
 // @ts-nocheck
 
 const { logDebug, logWarning } = require('../../shared/utils');
+const { getFunctionInstrCounts } = require('../../shared/mappingStore');
 
 function createGraphRenderers({
   panel,
@@ -51,10 +52,10 @@ function createGraphRenderers({
     try {
       const mappingData = JSON.parse(fs.readFileSync(mappingPath, 'utf8'));
       const rawFunctions = mappingData.functions || [];
-      const instrCount = new Map<string, number>();
-      (mappingData.lines || []).forEach((line: any) => {
-        if (line.function_addr) instrCount.set(line.function_addr, (instrCount.get(line.function_addr) || 0) + 1);
-      });
+      // JSON allégé : compter les instructions par fonction via le SQLite ;
+      // artefact legacy : depuis le tableau lines encore présent. Sans les
+      // deux, le tri par taille dégrade proprement (instrCount = 0).
+      const instrCount = getFunctionInstrCounts(mappingPath, mappingData);
       functions = rawFunctions
         .map((fn: any) => ({ ...fn, instrCount: instrCount.get(fn.addr) || 0 }))
         .sort((a: any, b: any) => b.instrCount - a.instrCount);

@@ -19,6 +19,7 @@ function createNavigation({
     ensureAnalysisMappingArtifacts,
     loadDisasmMapping,
     findDisasmMappingEntryByAddress,
+    findMappingEntryByAddr,
     getMappingEntrySpanLength,
     openDisasmAtLine,
     resolveBinaryInputContext,
@@ -73,12 +74,16 @@ function createNavigation({
     if (!normalized) {
       throw new Error('Adresse invalide.');
     }
-    const { mapping, disasmPath } = await resolveDisasmMappingContext({
+    const { mapping, mappingPath, disasmPath } = await resolveDisasmMappingContext({
       binaryPath,
       binaryMeta,
       logPrefix,
     });
-    const entry = findDisasmMappingEntryByAddress(mapping.lines, normalized.norm);
+    // Mapping allégé : requête SQLite par adresse ; artefact legacy (avant
+    // migration) : recherche dans le tableau lines encore présent.
+    const entry = Array.isArray(mapping?.lines) && mapping.lines.length
+      ? findDisasmMappingEntryByAddress(mapping.lines, normalized.norm)
+      : await findMappingEntryByAddr(mappingPath, normalized.norm);
     if (!entry || typeof entry.line !== 'number') {
       throw new Error(`Adresse ${normalized.norm} introuvable dans le désassemblage.`);
     }

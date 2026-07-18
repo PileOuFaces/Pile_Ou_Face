@@ -2,6 +2,7 @@
 // @ts-nocheck
 
 const { getExtensionPath } = require('../../shared/utils');
+const { makeMappingStore } = require('../../shared/mappingStore');
 
 function createAnalysisContext({
   root,
@@ -512,8 +513,13 @@ function createAnalysisContext({
     if (!mappingPath || !fs.existsSync(mappingPath)) {
       throw new Error('Mapping désassemblage introuvable.');
     }
+    // En-tête allégé : les lignes vivent dans le SQLite associé et se
+    // requêtent via mappingStore. Un artefact legacy (avant migration)
+    // porte encore `lines` — toléré tel quel.
     const mapping = JSON.parse(fs.readFileSync(mappingPath, 'utf8'));
-    if (!Array.isArray(mapping?.lines) || mapping.lines.length === 0) {
+    const legacyCount = Array.isArray(mapping?.lines) ? mapping.lines.length : 0;
+    const lineCount = Number(mapping?.line_count || 0) || legacyCount;
+    if (lineCount <= 0) {
       throw new Error('Mapping désassemblage vide.');
     }
     return mapping;
@@ -543,6 +549,15 @@ function createAnalysisContext({
     if (!target) return null;
     return lines.find((line) => normalizeAddress(line?.addr || '')?.value === target.value) || null;
   };
+
+  const mappingStore = makeMappingStore({ runPythonJson });
+
+  // Requêtes du mapping SQLite (node:sqlite, repli Python) — jamais de
+  // chargement du mapping complet dans l'extension host.
+  const findMappingEntryByAddr = (mappingPath, addr) =>
+    mappingStore.findEntryByAddr(mappingPath, addr);
+  const queryMappingWindow = (mappingPath, addr, limit) =>
+    mappingStore.queryWindow(mappingPath, addr, limit);
 
   const openDisasmAtLine = async (disasmPath, lineNumber) => {
     if (!disasmPath || !fs.existsSync(disasmPath)) {
@@ -708,6 +723,8 @@ function createAnalysisContext({
     buildDisasmArgs,
     ensureDisasmArtifacts,
     loadDisasmMapping,
+    findMappingEntryByAddr,
+    queryMappingWindow,
     getMappingEntrySpanLength,
     findDisasmMappingEntryByAddress,
     openDisasmAtLine,
