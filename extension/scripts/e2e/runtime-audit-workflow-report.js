@@ -50,16 +50,26 @@ const HOST_OBSERVABILITY_GAP_NOTES = {
 };
 
 const PERF_PRIORITY_RANK = { P0: 0, P1: 1, P2: 2, P3: 3 };
+// Chaque seuil est surchargeable via POF_E2E_BUDGET_<NOM_SNAKE_CASE> pour
+// que la CI puisse relâcher les budgets de durée (runners lents) tout en
+// gardant les budgets mémoire stricts sur les gros fixtures.
+function budgetFromEnv(envName, fallback) {
+  const raw = Number(process.env[`POF_E2E_BUDGET_${envName}`]);
+  return Number.isFinite(raw) && raw > 0 ? raw : fallback;
+}
+
 const PERFORMANCE_BUDGETS = {
-  scenarioDurationWarnMs: 1500,
-  scenarioDurationFailCandidateMs: 3000,
-  scenarioHeapWarnBytes: 16 * 1024 * 1024,
-  scenarioHeapFailCandidateBytes: 32 * 1024 * 1024,
-  backendScenarioTotalWarnMs: 500,
-  backendScenarioTotalFailCandidateMs: 1200,
-  backendScenarioRepeatedCallWarn: 3,
-  backendGlobalTotalWarnMs: 4000,
-  backendGlobalTotalFailCandidateMs: 8000,
+  scenarioDurationWarnMs: budgetFromEnv('SCENARIO_DURATION_WARN_MS', 1500),
+  scenarioDurationFailCandidateMs: budgetFromEnv('SCENARIO_DURATION_FAIL_MS', 3000),
+  scenarioHeapWarnBytes: budgetFromEnv('SCENARIO_HEAP_WARN_BYTES', 16 * 1024 * 1024),
+  scenarioHeapFailCandidateBytes: budgetFromEnv('SCENARIO_HEAP_FAIL_BYTES', 32 * 1024 * 1024),
+  scenarioRssWarnBytes: budgetFromEnv('SCENARIO_RSS_WARN_BYTES', 64 * 1024 * 1024),
+  scenarioRssFailCandidateBytes: budgetFromEnv('SCENARIO_RSS_FAIL_BYTES', 128 * 1024 * 1024),
+  backendScenarioTotalWarnMs: budgetFromEnv('BACKEND_SCENARIO_TOTAL_WARN_MS', 500),
+  backendScenarioTotalFailCandidateMs: budgetFromEnv('BACKEND_SCENARIO_TOTAL_FAIL_MS', 1200),
+  backendScenarioRepeatedCallWarn: budgetFromEnv('BACKEND_SCENARIO_REPEAT_WARN', 3),
+  backendGlobalTotalWarnMs: budgetFromEnv('BACKEND_GLOBAL_TOTAL_WARN_MS', 4000),
+  backendGlobalTotalFailCandidateMs: budgetFromEnv('BACKEND_GLOBAL_TOTAL_FAIL_MS', 8000),
 };
 const TRUE_VALUES = new Set(['1', 'true', 'yes', 'on']);
 
@@ -461,6 +471,25 @@ function buildPerformanceBudgetSignals({ spans, backendScenarioHotspots, backend
           : PERFORMANCE_BUDGETS.scenarioHeapWarnBytes),
         details: `heap peak +${formatBytes(span.heapPeakDelta)}`,
         nextStep: 'Check payload size and retained state for this scenario.',
+      });
+    }
+    // Le RSS est le signal anti-crash : c'est lui qui reflète la pression
+    // mémoire réelle de l'extension host (buffers natifs inclus), pas le heap.
+    if (span.rssPeakDelta >= PERFORMANCE_BUDGETS.scenarioRssWarnBytes) {
+      push({
+        severity: span.rssPeakDelta >= PERFORMANCE_BUDGETS.scenarioRssFailCandidateBytes ? 'fail-candidate' : 'warn',
+        budget: 'scenario-rss-peak',
+        scenario: span.scenario,
+        target: span.target,
+        value: span.rssPeakDelta,
+        limit: span.rssPeakDelta >= PERFORMANCE_BUDGETS.scenarioRssFailCandidateBytes
+          ? PERFORMANCE_BUDGETS.scenarioRssFailCandidateBytes
+          : PERFORMANCE_BUDGETS.scenarioRssWarnBytes,
+        limitLabel: formatBytes(span.rssPeakDelta >= PERFORMANCE_BUDGETS.scenarioRssFailCandidateBytes
+          ? PERFORMANCE_BUDGETS.scenarioRssFailCandidateBytes
+          : PERFORMANCE_BUDGETS.scenarioRssWarnBytes),
+        details: `RSS peak +${formatBytes(span.rssPeakDelta)}`,
+        nextStep: 'Inspect large file reads, subprocess buffers, and per-instruction data loaded in the extension host.',
       });
     }
   }
@@ -1539,6 +1568,7 @@ module.exports = {
   buildPayloadSignalSummary,
   buildPerfStepBreakdown,
   buildPerfPriorities,
+  buildPerformanceBudgetSignals,
   countAnnotationDisasmRebuilds,
   markdownForReport,
   summarizePerf,

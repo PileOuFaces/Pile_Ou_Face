@@ -278,6 +278,74 @@ jobs:
           if-no-files-found: error
 
   # ══════════════════════════════════════════════════════════════
+  # 📈 E2E Runtime Audit — PRs uniquement
+  # Audit runtime complet (VS Code réel) sur binaires réellement compilés
+  # (corpus), avec budgets perf/mémoire BLOQUANTS. C'est le filet anti-crash :
+  # une régression RSS/heap sur un vrai binaire fait échouer la CI au lieu
+  # de geler VS Code chez l'utilisateur.
+  # ══════════════════════════════════════════════════════════════
+  e2e-runtime-audit:
+    name: E2E Runtime Audit
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22.x'
+          cache: 'npm'
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install corpus toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            gcc-aarch64-linux-gnu \
+            binutils-aarch64-linux-gnu
+
+      - name: Install dependencies
+        run: |
+          pip install -r extension/backends/requirements-ci.txt
+          cd extension && npm ci
+
+      - name: Run E2E runtime audit with enforced budgets
+        working-directory: ./extension
+        env:
+          POF_E2E_REAL_CORPUS: "1"
+          POF_E2E_ENFORCE_PERF_BUDGETS: "1"
+          # Runners CI lents : budgets de durée relâchés. Les budgets mémoire
+          # (heap/RSS) gardent leurs valeurs par défaut — ce sont eux le filet.
+          POF_E2E_BUDGET_SCENARIO_DURATION_WARN_MS: "4000"
+          POF_E2E_BUDGET_SCENARIO_DURATION_FAIL_MS: "10000"
+          POF_E2E_BUDGET_BACKEND_SCENARIO_TOTAL_WARN_MS: "1500"
+          POF_E2E_BUDGET_BACKEND_SCENARIO_TOTAL_FAIL_MS: "4000"
+          POF_E2E_BUDGET_BACKEND_GLOBAL_TOTAL_WARN_MS: "12000"
+          POF_E2E_BUDGET_BACKEND_GLOBAL_TOTAL_FAIL_MS: "30000"
+        run: xvfb-run -a npm run test:e2e:audit
+
+      - name: Upload audit reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-runtime-audit-reports
+          path: |
+            extension/.pile-ou-face/test-artifacts/e2e-runtime-audit/runtime-audit-workflow-report.md
+            extension/.pile-ou-face/test-artifacts/e2e-runtime-audit/runtime-audit-workflow-report.json
+            extension/.pile-ou-face/test-artifacts/e2e-runtime-audit/runtime-audit-feature-coverage.md
+          if-no-files-found: warn
+
+  # ══════════════════════════════════════════════════════════════
   # 🔐 Security Scan — PRs uniquement, ubuntu seulement
   # Séparé de full-test pour ne pas bloquer les tests si l'audit échoue
   # ══════════════════════════════════════════════════════════════
@@ -328,7 +396,7 @@ jobs:
   ci-success:
     name: CI Success
     if: always()
-    needs: [lint, quick-test, full-test, dynamic-unicorn, real-corpus-arm64, security-scan]
+    needs: [lint, quick-test, full-test, dynamic-unicorn, real-corpus-arm64, e2e-runtime-audit, security-scan]
     runs-on: ubuntu-latest
     steps:
       - name: Check results
@@ -339,6 +407,7 @@ jobs:
           FULL="${{ needs.full-test.result }}"
           DYNAMIC_UNICORN="${{ needs.dynamic-unicorn.result }}"
           REAL_CORPUS="${{ needs.real-corpus-arm64.result }}"
+          E2E_AUDIT="${{ needs.e2e-runtime-audit.result }}"
           SECURITY="${{ needs.security-scan.result }}"
 
           echo "Event      : ${{ github.event_name }}"
@@ -347,6 +416,7 @@ jobs:
           echo "Full test  : $FULL"
           echo "Unicorn    : $DYNAMIC_UNICORN"
           echo "Corpus ARM : $REAL_CORPUS"
+          echo "E2E Audit  : $E2E_AUDIT"
           echo "Security   : $SECURITY"
 
           fail_if_bad() {
@@ -367,6 +437,7 @@ jobs:
             fail_if_bad "$FULL" "Full test"
             fail_if_bad "$DYNAMIC_UNICORN" "Dynamic Unicorn Regression"
             fail_if_bad "$REAL_CORPUS" "Real Corpus ARM64"
+            fail_if_bad "$E2E_AUDIT" "E2E Runtime Audit"
             # security-scan est informatif uniquement (continue-on-error sur tous ses steps)
             if [[ "$LINT" == "skipped" ]]; then
               echo "❌ Lint was skipped on a PR — check workflow conditions"
@@ -382,6 +453,10 @@ jobs:
             fi
             if [[ "$REAL_CORPUS" == "skipped" ]]; then
               echo "❌ Real Corpus ARM64 was skipped on a PR — check workflow conditions"
+              exit 1
+            fi
+            if [[ "$E2E_AUDIT" == "skipped" ]]; then
+              echo "❌ E2E Runtime Audit was skipped on a PR — check workflow conditions"
               exit 1
             fi
             echo "✅ PR checks passed (lint=$LINT, full=$FULL, unicorn=$DYNAMIC_UNICORN, real-corpus-arm64=$REAL_CORPUS, security=$SECURITY)"

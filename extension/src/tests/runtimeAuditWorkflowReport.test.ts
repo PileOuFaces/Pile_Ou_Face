@@ -139,4 +139,45 @@ describe('runtime audit workflow report', () => {
     expect(markdown).to.include('- Annotation-sensitive disasm rebuilds: 1');
     expect(markdown).to.include('rebuildReasons=[annotation-overlay]');
   });
+
+  it('flags scenario RSS peaks against the anti-crash memory budget', () => {
+    const { buildPerformanceBudgetSignals } = require('../../scripts/e2e/runtime-audit-workflow-report');
+    const signals = buildPerformanceBudgetSignals({
+      spans: [
+        {
+          ok: true,
+          scenario: 'hub-handler:hubOpenDisasm',
+          target: 'hubOpenDisasm',
+          durationMs: 500,
+          heapPeakDelta: 1024,
+          rssPeakDelta: 200 * 1024 * 1024,
+        },
+        {
+          ok: true,
+          scenario: 'hub-handler:hubLoadInfo',
+          target: 'hubLoadInfo',
+          durationMs: 500,
+          heapPeakDelta: 1024,
+          rssPeakDelta: 80 * 1024 * 1024,
+        },
+        {
+          ok: true,
+          scenario: 'hub-handler:hubLoadSections',
+          target: 'hubLoadSections',
+          durationMs: 500,
+          heapPeakDelta: 1024,
+          rssPeakDelta: 4 * 1024 * 1024,
+        },
+      ],
+      backendScenarioHotspots: [],
+      backendActivity: [],
+    });
+
+    const rssSignals = signals.filter((signal) => signal.budget === 'scenario-rss-peak');
+    expect(rssSignals).to.have.length(2);
+    expect(rssSignals[0].severity).to.equal('fail-candidate');
+    expect(rssSignals[0].scenario).to.equal('hub-handler:hubOpenDisasm');
+    expect(rssSignals[1].severity).to.equal('warn');
+    expect(rssSignals[1].scenario).to.equal('hub-handler:hubLoadInfo');
+  });
 });
