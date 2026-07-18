@@ -350,6 +350,106 @@ def _find_code_section(
     return None
 
 
+def _resolve_disasm_source(
+    binary_path: str,
+    *,
+    section: str | None = None,
+    raw_arch: str | None = None,
+    raw_base_addr: str | int | None = None,
+    raw_endian: str | None = None,
+) -> tuple[bytes, int, int, int] | None:
+    """Résout (code_bytes, base_addr, cs_arch, cs_mode) une seule fois.
+
+    Extrait de disassemble_with_capstone/disassemble_raw_blob pour pouvoir
+    désassembler la même source plusieurs fois (deux passages fenêtrés) sans
+    reparser le binaire à chaque fois.
+    """
+    if raw_arch:
+        if not capstone:
+            return None
+        if not Path(binary_path).exists():
+            raise BinaryNotFoundError(f"Binary not found: {binary_path}")
+        arch_mode = _get_raw_arch_mode(raw_arch, raw_endian)
+        if not arch_mode:
+            raise DisassemblyError(f"Unsupported raw architecture: {raw_arch}")
+        try:
+            code_bytes = Path(binary_path).read_bytes()
+        except OSError as exc:
+            raise BinaryParseError(f"Failed to read raw blob: {binary_path}") from exc
+        try:
+            base_addr = _parse_base_addr(raw_base_addr)
+        except ValueError as exc:
+            raise DisassemblyError(
+                f"Invalid raw base address: {raw_base_addr}"
+            ) from exc
+        cs_arch, cs_mode = arch_mode
+        return code_bytes, base_addr, cs_arch, cs_mode
+
+    if not lief or not capstone:
+        return None
+    if not Path(binary_path).exists():
+        raise BinaryNotFoundError(f"Binary not found: {binary_path}")
+    try:
+        binary = lief.parse(binary_path)
+        if binary is None:
+            raise BinaryParseError(f"lief could not parse binary: {binary_path}")
+    except (BinaryNotFoundError, BinaryParseError):
+        raise
+    except Exception as exc:
+        raise BinaryParseError(f"Failed to parse binary: {binary_path}") from exc
+    arch_mode = _get_arch_mode(binary)
+    if not arch_mode:
+        raise DisassemblyError(f"Unsupported architecture for: {binary_path}")
+    cs_arch, cs_mode = arch_mode
+    code_data = _find_code_section(binary, section)
+    if not code_data:
+        return None
+    code_bytes, base_addr = code_data
+    return code_bytes, base_addr, cs_arch, cs_mode
+
+
+def _iter_raw_instruction_dicts(
+    md,
+    cs_arch: int,
+    code_bytes: bytes,
+    base_addr: int,
+    *,
+    progress_callback: Callable[[dict], None] | None = None,
+    total_code_bytes: int | None = None,
+    progress_message: str = "Désassemblage en cours",
+):
+    """Désassemble par fenêtres et yield {addr,text,bytes,mnemonic,operands}.
+
+    Partagé par le chemin section-de-code et le chemin blob brut — seule la
+    résolution de la source (_resolve_disasm_source) diffère entre les deux.
+    """
+    total = max(total_code_bytes or len(code_bytes), 1)
+    next_report_percent = 15
+    for instr in _iter_windowed_instructions(md, code_bytes, base_addr):
+        bytes_hex = " ".join(f"{b:02x}" for b in instr.bytes)
+        op_str = _normalize_capstone_operands(cs_arch, instr)
+        text = f"{bytes_hex:<20} {instr.mnemonic:<8} {op_str}".strip()
+        yield {
+            "addr": f"0x{instr.address:x}",
+            "text": text,
+            "bytes": bytes_hex,
+            "mnemonic": instr.mnemonic,
+            "operands": op_str,
+        }
+        processed = min(total, max(0, (instr.address - base_addr) + len(instr.bytes)))
+        percent = 10 + int((processed / total) * 75)
+        if percent >= next_report_percent:
+            _emit_progress(
+                progress_callback,
+                "disasm",
+                progress_message,
+                current=processed,
+                total=total,
+                percent=percent,
+            )
+            next_report_percent = percent + 5
+
+
 def disassemble_with_capstone(
     binary_path: str,
     syntax: str = "intel",
@@ -379,37 +479,11 @@ def disassemble_with_capstone(
             progress_callback=progress_callback,
         )
 
-    if not lief or not capstone:
-        return None
-
-    if not Path(binary_path).exists():
-        raise BinaryNotFoundError(f"Binary not found: {binary_path}")
-
     _emit_progress(progress_callback, "parse", "Lecture du binaire", percent=5)
-
-    # Parser le binaire avec lief
-    try:
-        binary = lief.parse(binary_path)
-        if binary is None:
-            raise BinaryParseError(f"lief could not parse binary: {binary_path}")
-    except (BinaryNotFoundError, BinaryParseError):
-        raise
-    except Exception as exc:
-        raise BinaryParseError(f"Failed to parse binary: {binary_path}") from exc
-
-    # Déterminer architecture et mode capstone
-    arch_mode = _get_arch_mode(binary)
-    if not arch_mode:
-        raise DisassemblyError(f"Unsupported architecture for: {binary_path}")
-
-    cs_arch, cs_mode = arch_mode
-
-    # Trouver la section de code
-    code_data = _find_code_section(binary, section)
-    if not code_data:
+    resolved = _resolve_disasm_source(binary_path, section=section)
+    if resolved is None:
         return None
-
-    code_bytes, base_addr = code_data
+    code_bytes, base_addr, cs_arch, cs_mode = resolved
     total_code_bytes = max(len(code_bytes), 1)
     _emit_progress(
         progress_callback,
@@ -420,54 +494,24 @@ def disassemble_with_capstone(
         percent=10,
     )
 
-    # Créer le désassembleur capstone
     try:
         md = capstone.Cs(cs_arch, cs_mode)
         _apply_capstone_syntax(md, cs_arch, syntax)
-        # detail=True ferait allouer par Capstone une structure C par
-        # instruction (opérandes structurés, regs lus/écrits, groupes) —
-        # ~8x plus de RAM pour des champs que ce module ne lit jamais
-        # (seuls address/mnemonic/bytes/op_str texte sont utilisés).
     except Exception:
         return None
 
-    # Désassembler par fenêtres bornées (cf. _iter_windowed_instructions) :
-    # la RAM du process ne scale plus avec la taille totale du binaire.
-    lines = []
-    next_report_percent = 15
     try:
-        for instr in _iter_windowed_instructions(md, code_bytes, base_addr):
-            addr = f"0x{instr.address:x}"
-            # Format similaire à objdump : "mnemonic\toperands"
-            # Ajouter les bytes hex au début (comme objdump -d)
-            bytes_hex = " ".join(f"{b:02x}" for b in instr.bytes)
-            op_str = _normalize_capstone_operands(cs_arch, instr)
-            # Format : "bytes_hex  mnemonic  op_str"
-            text = f"{bytes_hex:<20} {instr.mnemonic:<8} {op_str}"
-            lines.append(
-                {
-                    "addr": addr,
-                    "text": text.strip(),
-                    "bytes": bytes_hex,
-                    "mnemonic": instr.mnemonic,
-                    "operands": op_str,
-                }
+        lines = list(
+            _iter_raw_instruction_dicts(
+                md,
+                cs_arch,
+                code_bytes,
+                base_addr,
+                progress_callback=progress_callback,
+                total_code_bytes=total_code_bytes,
+                progress_message="Désassemblage en cours",
             )
-            processed = min(
-                total_code_bytes,
-                max(0, (instr.address - base_addr) + len(instr.bytes)),
-            )
-            percent = 10 + int((processed / total_code_bytes) * 75)
-            if percent >= next_report_percent:
-                _emit_progress(
-                    progress_callback,
-                    "disasm",
-                    "Désassemblage en cours",
-                    current=processed,
-                    total=total_code_bytes,
-                    percent=percent,
-                )
-                next_report_percent = percent + 5
+        )
     except Exception:
         return None
 
@@ -492,26 +536,16 @@ def disassemble_raw_blob(
     progress_callback: Callable[[dict], None] | None = None,
 ) -> list[dict] | None:
     """Désassemble un blob brut en utilisant uniquement Capstone."""
-    if not capstone:
-        return None
-    if not Path(binary_path).exists():
-        raise BinaryNotFoundError(f"Binary not found: {binary_path}")
-
-    arch_mode = _get_raw_arch_mode(raw_arch, raw_endian)
-    if not arch_mode:
-        raise DisassemblyError(f"Unsupported raw architecture: {raw_arch}")
-
     _emit_progress(progress_callback, "parse", "Lecture du blob brut", percent=5)
-    try:
-        code_bytes = Path(binary_path).read_bytes()
-    except OSError as exc:
-        raise BinaryParseError(f"Failed to read raw blob: {binary_path}") from exc
-
-    cs_arch, cs_mode = arch_mode
-    try:
-        base_addr = _parse_base_addr(raw_base_addr)
-    except ValueError as exc:
-        raise DisassemblyError(f"Invalid raw base address: {raw_base_addr}") from exc
+    resolved = _resolve_disasm_source(
+        binary_path,
+        raw_arch=raw_arch,
+        raw_base_addr=raw_base_addr,
+        raw_endian=raw_endian,
+    )
+    if resolved is None:
+        return None
+    code_bytes, base_addr, cs_arch, cs_mode = resolved
     total_code_bytes = max(len(code_bytes), 1)
     _emit_progress(
         progress_callback,
@@ -531,38 +565,18 @@ def disassemble_raw_blob(
             f"Failed to initialize raw disassembler: {raw_arch}"
         ) from exc
 
-    lines = []
-    next_report_percent = 15
     try:
-        for instr in _iter_windowed_instructions(md, code_bytes, base_addr):
-            addr = f"0x{instr.address:x}"
-            bytes_hex = " ".join(f"{b:02x}" for b in instr.bytes)
-            op_str = _normalize_capstone_operands(cs_arch, instr)
-            text = f"{bytes_hex:<20} {instr.mnemonic:<8} {op_str}"
-            lines.append(
-                {
-                    "addr": addr,
-                    "text": text.strip(),
-                    "bytes": bytes_hex,
-                    "mnemonic": instr.mnemonic,
-                    "operands": op_str,
-                }
+        lines = list(
+            _iter_raw_instruction_dicts(
+                md,
+                cs_arch,
+                code_bytes,
+                base_addr,
+                progress_callback=progress_callback,
+                total_code_bytes=total_code_bytes,
+                progress_message="Désassemblage du blob en cours",
             )
-            processed = min(
-                total_code_bytes,
-                max(0, (instr.address - base_addr) + len(instr.bytes)),
-            )
-            percent = 10 + int((processed / total_code_bytes) * 75)
-            if percent >= next_report_percent:
-                _emit_progress(
-                    progress_callback,
-                    "disasm",
-                    "Désassemblage du blob en cours",
-                    current=processed,
-                    total=total_code_bytes,
-                    percent=percent,
-                )
-                next_report_percent = percent + 5
+        )
     except Exception as exc:
         raise DisassemblyError(f"Raw disassembly failed: {binary_path}") from exc
 
@@ -762,7 +776,7 @@ def _location_matches_text(location: str, text: str) -> bool:
 
 
 def _build_cfg_attribution(
-    lines: list[dict],
+    lines,
     function_ranges: list[tuple[int, int | None, dict]],
 ) -> dict[int, str]:
     """Attribue chaque instruction à une fonction par BFS dans le graphe de flot.
@@ -771,9 +785,15 @@ def _build_cfg_attribution(
     suit le flux de contrôle réel (sauts, branches) depuis chaque point d'entrée.
     Les instructions non-atteignables tombent en fallback linéaire dans l'appelant.
 
+    `lines` n'est parcouru qu'une seule fois (compatible générateur à usage
+    unique, utilisé par le désassemblage streaming) : seul (addr, is_branch,
+    is_call, target, is_unconditional) est conservé par instruction, pas le
+    dict complet. Suppose `lines` en ordre d'adresse croissant (garanti par
+    le désassembleur, fenêtré ou non) — "l'instruction suivante" est donc
+    simplement la suivante dans l'itération, sans recherche par bisection.
+
     Returns: {addr_int -> normalized_func_addr_str}
     """
-    import bisect
     from collections import deque
 
     try:
@@ -784,32 +804,32 @@ def _build_cfg_attribution(
     if not function_ranges:
         return {}
 
-    # Ordered address list for fast "next instruction" lookup
+    # Un seul passage : ne retient que l'essentiel par instruction (pas le
+    # texte/bytes/opérandes formatés déjà présents dans le dict complet).
     addr_sorted: list[int] = []
-    for line in lines:
-        a = _addr_to_int(line.get("addr"))
-        if a is not None:
-            addr_sorted.append(a)
-    addr_sorted.sort()
-    addr_set = set(addr_sorted)
-
-    # Successor map: addr_int -> [next reachable addr_int] (calls not followed)
-    successors: dict[int, list[int]] = {}
+    raw: list[tuple[int, bool, bool, int | None, bool]] = []
     for line in lines:
         a = _addr_to_int(line.get("addr"))
         if a is None:
             continue
         text = line.get("text", "")
         is_br, is_call, target_str = _is_branch(text)
-        pos = bisect.bisect_right(addr_sorted, a)
-        next_a = addr_sorted[pos] if pos < len(addr_sorted) else None
+        target_int = _addr_to_int(target_str) if target_str else None
+        is_unconditional = _get_mnemonic(text) in {"jmp", "jmpq", "b", "br"}
+        addr_sorted.append(a)
+        raw.append((a, is_br, is_call, target_int, is_unconditional))
+
+    addr_set = set(addr_sorted)
+
+    # Successor map: addr_int -> [next reachable addr_int] (calls not followed)
+    successors: dict[int, list[int]] = {}
+    for idx, (a, is_br, is_call, target_int, is_unconditional) in enumerate(raw):
+        next_a = raw[idx + 1][0] if idx + 1 < len(raw) else None
         succs: list[int] = []
         if not is_br or is_call:
             if next_a is not None:
                 succs.append(next_a)
         else:
-            target_int = _addr_to_int(target_str) if target_str else None
-            is_unconditional = _get_mnemonic(text) in {"jmp", "jmpq", "b", "br"}
             if target_int is not None and target_int in addr_set:
                 succs.append(target_int)
             if not is_unconditional and target_int is not None and next_a is not None:
