@@ -17,6 +17,7 @@ if str(ROOT) not in sys.path:
 from backends.shared.exceptions import BinaryNotFoundError
 from backends.static.disasm.disasm import (
     _augment_context_with_discovered_functions,
+    _iter_windowed_instructions,
     _write_disasm_outputs,
     disassemble,
     disassemble_with_capstone,
@@ -597,6 +598,119 @@ class TestDisasmEnrichmentFormatting(unittest.TestCase):
 
             asm = out_asm.read_text(encoding="utf-8")
             self.assertIn("bnez     a0, done", asm)
+
+
+@unittest.skipUnless(_LIEF_AVAILABLE, "lief/capstone not installed")
+class TestWindowedDisassembly(unittest.TestCase):
+    """_iter_windowed_instructions doit être équivalent à un appel unique."""
+
+    def _make_disassembler(self):
+        import capstone
+
+        md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
+        md.detail = False
+        return md, capstone.CS_ARCH_X86
+
+    def _decode_all(self, md, code_bytes, base_addr):
+        return [
+            (instr.address, instr.mnemonic, instr.op_str, bytes(instr.bytes))
+            for instr in md.disasm(code_bytes, base_addr)
+        ]
+
+    def test_matches_single_call_across_many_forced_window_boundaries(self):
+        # push rbp ; mov rbp, rsp ; mov eax, 0x2a ; leave ; ret  (variable-length x86)
+        pattern = bytes(
+            [0x55, 0x48, 0x89, 0xE5, 0xB8, 0x2A, 0x00, 0x00, 0x00, 0xC9, 0xC3]
+        )
+        code_bytes = (
+            pattern * 5000
+        )  # assez pour traverser des dizaines de petites fenêtres
+        base_addr = 0x401000
+
+        md_ref, _ = self._make_disassembler()
+        reference = self._decode_all(md_ref, code_bytes, base_addr)
+
+        md_windowed, _ = self._make_disassembler()
+        # Fenêtre volontairement minuscule (plus petite qu'un pattern complet)
+        # pour forcer de nombreuses frontières mid-instruction.
+        windowed = [
+            (instr.address, instr.mnemonic, instr.op_str, bytes(instr.bytes))
+            for instr in _iter_windowed_instructions(
+                md_windowed, code_bytes, base_addr, window_bytes=7, overlap_bytes=32
+            )
+        ]
+
+        self.assertEqual(len(windowed), len(reference))
+        self.assertEqual(windowed, reference)
+
+    def test_matches_single_call_when_window_smaller_than_overlap(self):
+        pattern = bytes(
+            [0x55, 0x48, 0x89, 0xE5, 0xB8, 0x2A, 0x00, 0x00, 0x00, 0xC9, 0xC3]
+        )
+        code_bytes = pattern * 200
+        base_addr = 0x1000
+
+        md_ref, _ = self._make_disassembler()
+        reference = self._decode_all(md_ref, code_bytes, base_addr)
+
+        md_windowed, _ = self._make_disassembler()
+        windowed = [
+            (instr.address, instr.mnemonic, instr.op_str, bytes(instr.bytes))
+            for instr in _iter_windowed_instructions(
+                md_windowed, code_bytes, base_addr, window_bytes=3, overlap_bytes=16
+            )
+        ]
+
+        self.assertEqual(windowed, reference)
+
+    def test_stops_like_a_single_call_on_undecodable_trailing_bytes(self):
+        # Instructions valides suivies d'un octet 0x0f seul (préfixe two-byte
+        # incomplet) : capstone doit s'arrêter au même endroit, fenêtré ou non.
+        valid = bytes([0x55, 0x48, 0x89, 0xE5, 0xC3]) * 10
+        code_bytes = valid + bytes([0x0F])
+        base_addr = 0x1000
+
+        md_ref, _ = self._make_disassembler()
+        reference = self._decode_all(md_ref, code_bytes, base_addr)
+        self.assertGreater(len(reference), 0)
+
+        md_windowed, _ = self._make_disassembler()
+        windowed = [
+            (instr.address, instr.mnemonic, instr.op_str, bytes(instr.bytes))
+            for instr in _iter_windowed_instructions(
+                md_windowed, code_bytes, base_addr, window_bytes=6, overlap_bytes=32
+            )
+        ]
+
+        self.assertEqual(windowed, reference)
+
+    def test_full_pipeline_still_produces_identical_asm_with_tiny_windows(self):
+        """Bout en bout via disasm.py, fenêtre forcée minuscule via monkeypatch."""
+        from backends.static.disasm import disasm as disasm_module
+        from backends.static.tests.fixtures.make_elf import make_minimal_elf
+
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = os.path.join(tmp, "test.elf")
+            make_minimal_elf(binary)
+
+            out_asm_windowed = os.path.join(tmp, "windowed.asm")
+            out_map_windowed = os.path.join(tmp, "windowed.mapping.json")
+            out_asm_ref = os.path.join(tmp, "ref.asm")
+            out_map_ref = os.path.join(tmp, "ref.mapping.json")
+
+            disassemble(binary, out_asm_ref, out_map_ref)
+
+            original = disasm_module._DISASM_WINDOW_BYTES
+            disasm_module._DISASM_WINDOW_BYTES = 5
+            try:
+                disassemble(binary, out_asm_windowed, out_map_windowed)
+            finally:
+                disasm_module._DISASM_WINDOW_BYTES = original
+
+            self.assertEqual(
+                Path(out_asm_windowed).read_text(encoding="utf-8"),
+                Path(out_asm_ref).read_text(encoding="utf-8"),
+            )
 
 
 if __name__ == "__main__":

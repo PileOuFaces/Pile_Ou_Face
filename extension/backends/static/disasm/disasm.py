@@ -181,6 +181,63 @@ def _parse_capstone_immediate(value: str) -> int | None:
         return None
 
 
+# Capstone (binding Python) matérialise en mémoire C *tout* le buffer passé
+# à un seul appel md.disasm(), avant même que l'itérateur Python ne cède le
+# premier résultat — la RAM du process scale donc avec la taille du buffer
+# soumis, pas avec ce que le code Python en fait ensuite. Sur un binaire de
+# plusieurs Go, un unique appel sur code_bytes entier est hors de portée
+# (mesuré : #180). On fenêtre les appels pour borner ce pic indépendamment
+# de la taille totale du binaire.
+_DISASM_WINDOW_BYTES = 4 * 1024 * 1024
+# Marge de chevauchement en fin de fenêtre pour ne jamais couper une
+# instruction : largement supérieure au max réel (15 octets en x86, les
+# autres ISA supportées ici sont à taille fixe ≤ 8 octets).
+_DISASM_WINDOW_OVERLAP_BYTES = 32
+
+
+def _iter_windowed_instructions(
+    md,
+    code_bytes: bytes,
+    base_addr: int,
+    *,
+    window_bytes: int = _DISASM_WINDOW_BYTES,
+    overlap_bytes: int = _DISASM_WINDOW_OVERLAP_BYTES,
+):
+    """Désassemble par fenêtres bornées au lieu d'un appel sur tout le buffer.
+
+    Chaque fenêtre est décodée avec un chevauchement de lookahead pour que
+    les instructions proches de la frontière restent décodables. Une
+    instruction dont l'adresse dépasse la frontière « utile » de la fenêtre
+    est reportée : elle sera décodée correctement au début de la fenêtre
+    suivante, qui reprend exactement à son adresse (pas à un offset fixe),
+    ce qui garantit l'alignement même pour un ISA à taille d'instruction
+    variable (x86).
+    """
+    total = len(code_bytes)
+    offset = 0
+    while offset < total:
+        read_end = min(offset + window_bytes + overlap_bytes, total)
+        chunk = code_bytes[offset:read_end]
+        soft_limit_addr = base_addr + offset + window_bytes
+        reached_soft_limit = False
+        for instr in md.disasm(chunk, base_addr + offset):
+            if read_end < total and instr.address >= soft_limit_addr:
+                offset = instr.address - base_addr
+                reached_soft_limit = True
+                break
+            yield instr
+        if reached_soft_limit:
+            continue
+        if read_end >= total:
+            # Fin réelle du buffer atteinte proprement : terminé.
+            offset = total
+        else:
+            # Capstone a arrêté de décoder avant la frontière logicielle
+            # (octets non décodables) — même comportement d'arrêt silencieux
+            # que l'ancien appel unique sur tout le buffer : ne pas boucler.
+            offset = total
+
+
 def _normalize_capstone_operands(cs_arch: int, instr) -> str:
     """Normalise certains opérandes Capstone vers les adresses attendues.
 
@@ -374,11 +431,12 @@ def disassemble_with_capstone(
     except Exception:
         return None
 
-    # Désassembler
+    # Désassembler par fenêtres bornées (cf. _iter_windowed_instructions) :
+    # la RAM du process ne scale plus avec la taille totale du binaire.
     lines = []
     next_report_percent = 15
     try:
-        for instr in md.disasm(code_bytes, base_addr):
+        for instr in _iter_windowed_instructions(md, code_bytes, base_addr):
             addr = f"0x{instr.address:x}"
             # Format similaire à objdump : "mnemonic\toperands"
             # Ajouter les bytes hex au début (comme objdump -d)
@@ -476,7 +534,7 @@ def disassemble_raw_blob(
     lines = []
     next_report_percent = 15
     try:
-        for instr in md.disasm(code_bytes, base_addr):
+        for instr in _iter_windowed_instructions(md, code_bytes, base_addr):
             addr = f"0x{instr.address:x}"
             bytes_hex = " ".join(f"{b:02x}" for b in instr.bytes)
             op_str = _normalize_capstone_operands(cs_arch, instr)
