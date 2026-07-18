@@ -319,6 +319,15 @@ jobs:
           pip install -r extension/backends/requirements-ci.txt
           cd extension && npm ci
 
+      # L'extension utilise backends/.venv quand il existe ; à l'activation
+      # elle le crée et installe les dépendances en asynchrone — trop tard
+      # pour les premiers scénarios de l'audit. Le provisionner d'avance.
+      - name: Provision backend venv
+        working-directory: ./extension
+        run: |
+          python3 -m venv backends/.venv
+          backends/.venv/bin/pip install -r backends/requirements-ci.txt
+
       - name: Run E2E runtime audit with enforced budgets
         working-directory: ./extension
         env:
