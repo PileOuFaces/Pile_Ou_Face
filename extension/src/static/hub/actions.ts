@@ -10,6 +10,7 @@ const crypto = require('crypto');
 const cp = require('child_process');
 const { readArchSupportFromMapping } = require('./archSupport');
 const { makeMappingStore } = require('../../shared/mappingStore');
+const { confirmOpenLargeTextFile } = require('../../shared/largeFileGuard');
 const { recordRuntimeEvent } = require('../../shared/runtimeAudit');
 
 const functionAddrsStore = makeMappingStore();
@@ -103,7 +104,7 @@ function createActions({
       throw new Error(`Le backend n'a pas généré ${path.basename(disasmPath)}.`);
     }
     auditPerfStep(`${auditPrefix}.validateArtifact`, Date.now() - stepStart, auditDetails);
-    if (openInEditor) {
+    if (openInEditor && await confirmOpenLargeTextFile(disasmPath, { fs, vscode })) {
       stepStart = Date.now();
       const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(disasmPath));
       auditPerfStep(`${auditPrefix}.openTextDocument`, Date.now() - stepStart, auditDetails);

@@ -13,6 +13,7 @@ const cp = require('child_process');
 const { getDisasmScript, getXrefsScript } = require('../shared/paths');
 const { getExtensionPath } = require('../shared/utils');
 const { makeMappingStore } = require('../shared/mappingStore');
+const { confirmOpenLargeTextFile } = require('../shared/largeFileGuard');
 
 const mappingStore = makeMappingStore();
 const { recordRuntimeEvent } = require('../shared/runtimeAudit');
@@ -285,7 +286,7 @@ function registerStaticCommands(context, deps, providers) {
     }
     if (fs.existsSync(disasmPath)) {
       const entry = await mappingStore.findEntryByAddr(mappingPath, addr);
-      if (entry) {
+      if (entry && await confirmOpenLargeTextFile(disasmPath, { fs, vscode })) {
         const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(disasmPath));
         const editor = await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.One, preview: false });
         const range = new vscode.Range(entry.line - 1, 0, entry.line - 1, 1000);
@@ -324,7 +325,7 @@ function registerStaticCommands(context, deps, providers) {
       logChannel,
       { PYTHONPATH: getExtensionPath() || root }
     );
-    if (fs.existsSync(disasmPath)) {
+    if (fs.existsSync(disasmPath) && await confirmOpenLargeTextFile(disasmPath, { fs, vscode })) {
       const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(disasmPath));
       await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.One, preview: false });
     }
