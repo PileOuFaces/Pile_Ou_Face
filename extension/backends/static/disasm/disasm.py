@@ -367,8 +367,10 @@ def disassemble_with_capstone(
     try:
         md = capstone.Cs(cs_arch, cs_mode)
         _apply_capstone_syntax(md, cs_arch, syntax)
-        # Afficher les détails
-        md.detail = True
+        # detail=True ferait allouer par Capstone une structure C par
+        # instruction (opérandes structurés, regs lus/écrits, groupes) —
+        # ~8x plus de RAM pour des champs que ce module ne lit jamais
+        # (seuls address/mnemonic/bytes/op_str texte sont utilisés).
     except Exception:
         return None
 
@@ -465,7 +467,6 @@ def disassemble_raw_blob(
     try:
         md = capstone.Cs(cs_arch, cs_mode)
         _apply_capstone_syntax(md, cs_arch, syntax)
-        md.detail = True
         md.skipdata = True
     except Exception as exc:
         raise DisassemblyError(
