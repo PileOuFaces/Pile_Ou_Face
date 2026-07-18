@@ -3,6 +3,7 @@
 
 const { getExtensionPath } = require('../../shared/utils');
 const { makeMappingStore } = require('../../shared/mappingStore');
+const { confirmOpenLargeTextFile } = require('../../shared/largeFileGuard');
 
 function createAnalysisContext({
   root,
@@ -562,6 +563,9 @@ function createAnalysisContext({
   const openDisasmAtLine = async (disasmPath, lineNumber) => {
     if (!disasmPath || !fs.existsSync(disasmPath)) {
       throw new Error('Fichier de désassemblage introuvable.');
+    }
+    if (!await confirmOpenLargeTextFile(disasmPath, { fs, vscode })) {
+      throw new Error('Ouverture annulée (fichier volumineux).');
     }
     const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(disasmPath));
     const editor = await vscode.window.showTextDocument(doc, {
