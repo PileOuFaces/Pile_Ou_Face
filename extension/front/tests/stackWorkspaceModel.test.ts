@@ -1865,6 +1865,11 @@ describe('stackWorkspaceModel', () => {
   });
 
   it('keeps return_address protected from approximate overlap and only marks corruption on exact slot evidence', () => {
+    // CORROMPU is a backend-only verdict: raw slot signals (pointerKind,
+    // changed, recentWrite, even the backend's own per-slot "corrupted"
+    // flag) are informative at most. Only a matching backend diagnostic
+    // (return_address_corrupted here) may promote the badge to CORROMPU --
+    // see stackWorkspaceCorruption.js::annotateEntriesWithDiagnostics.
     const exactWorkspace = buildStackWorkspaceModel({
       slots: [
         {
@@ -1913,7 +1918,15 @@ describe('stackWorkspaceModel', () => {
           savedBpAddr: '0x7fffffffdff8',
           retAddrAddr: '0x7fffffffe000'
         }
-      }
+      },
+      diagnostics: [
+        {
+          kind: 'return_address_corrupted',
+          severity: 'error',
+          step: 1,
+          slot: { kind: 'return_address', address: '0x7fffffffe000' }
+        }
+      ]
     });
 
     const approxWorkspace = buildStackWorkspaceModel({

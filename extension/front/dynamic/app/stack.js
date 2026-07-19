@@ -183,9 +183,7 @@ export function renderStack(stackItems, regMap, meta, options = {}) {
         onSelectSlotKey: options.onSelectSlotKey,
         onJumpToStep: options.onJumpToStep
       });
-      renderDetailPanel(workspaceModel.detailModel, {
-        onCloseDetail: options.onSelectSlotKey
-      });
+      hideDetailPanel();
     }
     return workspaceModel;
   }

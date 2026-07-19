@@ -200,6 +200,17 @@ describe('stackExpertView — buildExpertRowItems', () => {
     expect(rows[0].badges).to.deep.equal(['OVERFLOW', 'ABI']);
   });
 
+  it('does not infer overflow from a negated diagnostic message', () => {
+    const rows = mod.buildExpertRowItems([makeSlot({
+      diagnostics: [{
+        kind: 'benign_termination',
+        message: 'Aucun overflow et aucune ecriture suspecte.'
+      }]
+    })]);
+
+    expect(rows[0].badges).to.not.include('OVERFLOW');
+  });
+
   it('value preview is carried through', () => {
     const rows = mod.buildExpertRowItems([makeSlot({ valuePreview: '0xdeadbeef' })]);
     expect(rows[0].value).to.equal('0xdeadbeef');
@@ -381,7 +392,21 @@ describe('stack render dispatch — simple/expert panel modes', () => {
     expect(harness.stack.querySelectorAll('.frame-slot')).to.have.length(0);
   });
 
-  function renderSelectedFrame(stackPanelMode: 'simple' | 'expert') {
+  it('simple mode keeps selected slot details inline without the bottom detail drawer', () => {
+    const initialWorkspace = renderSelectedFrame('simple') as any;
+    const selectedEntry = initialWorkspace.frameModel.entries.find((entry: any) => (
+      entry.kind !== 'return_address' && entry.kind !== 'saved_bp'
+    ));
+
+    renderSelectedFrame('simple', selectedEntry.key);
+
+    expect(harness.stack.querySelectorAll('.is-expanded')).to.have.length(1);
+    expect(harness.stack.querySelectorAll('.frame-slot-inline-details')).to.have.length.greaterThan(0);
+    expect(harness.document.getElementById('stackDetail')?.hidden).to.equal(true);
+    expect(harness.document.getElementById('stackDetail')?.querySelectorAll('.stack-detail-card')).to.have.length(0);
+  });
+
+  function renderSelectedFrame(stackPanelMode: 'simple' | 'expert', selectedSlotKey = '') {
     return renderStack(
       [
         {
@@ -400,6 +425,7 @@ describe('stack render dispatch — simple/expert panel modes', () => {
       {
         displayMode: 'frame',
         stackPanelMode,
+        selectedSlotKey,
         snapshots: [{ step: 1, func: 'main' }],
         currentStep: 1,
         selectedFunction: 'main',
