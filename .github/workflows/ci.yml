@@ -416,6 +416,7 @@ jobs:
     name: Auth Licensing Interop E2E
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
