@@ -400,12 +400,87 @@ jobs:
         continue-on-error: true
 
   # ══════════════════════════════════════════════════════════════
+  # 🔑 Auth Licensing Interop E2E — PRs uniquement, filtré par chemin
+  # Test réel host<->auth (XSYNC-LIC-001, Pile_Ou_Face#70) : démarre un vrai
+  # serveur Pile_ou_Face_auth (repo privé, sibling) et fait dialoguer le vrai
+  # AuthService avec lui. Ne tourne que si un fichier pertinent a changé (pas
+  # de sens à répéter ce test pour une PR qui ne touche pas ce chemin) — voir
+  # extension/scripts/e2e/authLicensingInteropE2E.js pour ce que ça couvre.
+  #
+  # Nécessite un PAT en lecture seule sur Pile_ou_Face_auth stocké dans le
+  # secret AUTH_REPO_READONLY_PAT de CE repo (Settings > Secrets and
+  # variables > Actions). Absent : le job est ignoré avec un avertissement
+  # plutôt que d'échouer silencieusement ou de bloquer les PRs.
+  # ══════════════════════════════════════════════════════════════
+  auth-licensing-e2e:
+    name: Auth Licensing Interop E2E
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Detect relevant changes
+        id: filter
+        run: |
+          git fetch origin "${{ github.base_ref }}" --depth=50
+          if git diff --name-only "origin/${{ github.base_ref }}...HEAD" \
+              | grep -qE '^extension/(src/shared/(authService|deviceLicensing)\.ts|scripts/e2e/authLicensingInteropE2E\.js|package(-lock)?\.json)$'; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Report missing secret
+        if: steps.filter.outputs.relevant == 'true' && secrets.AUTH_REPO_READONLY_PAT == ''
+        run: echo "::warning::AUTH_REPO_READONLY_PAT non configuré — interop e2e ignoré pour cette PR malgré un changement pertinent."
+
+      - name: Setup Node.js
+        if: steps.filter.outputs.relevant == 'true' && secrets.AUTH_REPO_READONLY_PAT != ''
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22.x'
+          cache: 'npm'
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Setup Python
+        if: steps.filter.outputs.relevant == 'true' && secrets.AUTH_REPO_READONLY_PAT != ''
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Checkout sibling auth repo
+        if: steps.filter.outputs.relevant == 'true' && secrets.AUTH_REPO_READONLY_PAT != ''
+        uses: actions/checkout@v5
+        with:
+          repository: PileOuFaces/Pile_ou_Face_auth
+          token: ${{ secrets.AUTH_REPO_READONLY_PAT }}
+          path: pof-auth-sibling
+
+      - name: Install dependencies
+        if: steps.filter.outputs.relevant == 'true' && secrets.AUTH_REPO_READONLY_PAT != ''
+        run: |
+          python3 -m venv pof-auth-sibling/.venv
+          pof-auth-sibling/.venv/bin/pip install -e ./pof-auth-sibling
+          cd extension && npm ci
+
+      - name: Run real host<->auth interop e2e
+        if: steps.filter.outputs.relevant == 'true' && secrets.AUTH_REPO_READONLY_PAT != ''
+        working-directory: ./extension
+        env:
+          AUTH_REPO_PATH: ${{ github.workspace }}/pof-auth-sibling
+        run: npm run test:e2e:auth-licensing
+
+  # ══════════════════════════════════════════════════════════════
   # ✅ Status Check — required check pour les PRs et les pushs
   # ══════════════════════════════════════════════════════════════
   ci-success:
     name: CI Success
     if: always()
-    needs: [lint, quick-test, full-test, dynamic-unicorn, real-corpus-arm64, e2e-runtime-audit, security-scan]
+    needs: [lint, quick-test, full-test, dynamic-unicorn, real-corpus-arm64, e2e-runtime-audit, security-scan, auth-licensing-e2e]
     runs-on: ubuntu-latest
     steps:
       - name: Check results
@@ -418,6 +493,7 @@ jobs:
           REAL_CORPUS="${{ needs.real-corpus-arm64.result }}"
           E2E_AUDIT="${{ needs.e2e-runtime-audit.result }}"
           SECURITY="${{ needs.security-scan.result }}"
+          AUTH_LICENSING_E2E="${{ needs.auth-licensing-e2e.result }}"
 
           echo "Event      : ${{ github.event_name }}"
           echo "Lint       : $LINT"
@@ -427,6 +503,7 @@ jobs:
           echo "Corpus ARM : $REAL_CORPUS"
           echo "E2E Audit  : $E2E_AUDIT"
           echo "Security   : $SECURITY"
+          echo "Auth E2E   : $AUTH_LICENSING_E2E"
 
           fail_if_bad() {
             if [[ "$1" == "failure" || "$1" == "cancelled" ]]; then
@@ -447,6 +524,11 @@ jobs:
             fail_if_bad "$DYNAMIC_UNICORN" "Dynamic Unicorn Regression"
             fail_if_bad "$REAL_CORPUS" "Real Corpus ARM64"
             fail_if_bad "$E2E_AUDIT" "E2E Runtime Audit"
+            # auth-licensing-e2e est filtré par chemin : "skipped" n'existe pas
+            # en pratique tant que le job lui-même s'exécute (if: pull_request),
+            # seuls ses steps internes sont conditionnels — pas de check "not
+            # skipped" ici, contrairement aux jobs ci-dessus qui tournent toujours.
+            fail_if_bad "$AUTH_LICENSING_E2E" "Auth Licensing Interop E2E"
             # security-scan est informatif uniquement (continue-on-error sur tous ses steps)
             if [[ "$LINT" == "skipped" ]]; then
               echo "❌ Lint was skipped on a PR — check workflow conditions"
@@ -468,7 +550,7 @@ jobs:
               echo "❌ E2E Runtime Audit was skipped on a PR — check workflow conditions"
               exit 1
             fi
-            echo "✅ PR checks passed (lint=$LINT, full=$FULL, unicorn=$DYNAMIC_UNICORN, real-corpus-arm64=$REAL_CORPUS, security=$SECURITY)"
+            echo "✅ PR checks passed (lint=$LINT, full=$FULL, unicorn=$DYNAMIC_UNICORN, real-corpus-arm64=$REAL_CORPUS, security=$SECURITY, auth-licensing-e2e=$AUTH_LICENSING_E2E)"
             exit 0
           fi
 
