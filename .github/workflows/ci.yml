@@ -194,6 +194,57 @@ jobs:
           if-no-files-found: warn
 
   # ══════════════════════════════════════════════════════════════
+  # 🪟 Auth Licensing Windows Unit Tests — PRs uniquement, filtré par chemin
+  # DoD XSYNC-LIC-001 (Pile_Ou_Face#70) exige une couverture Windows pour
+  # l'agent de licence par installation. Job dédié et léger (juste les specs
+  # concernées, pas toute la suite Python+JS) plutôt qu'ajouter windows-latest
+  # à la matrice `full-test` : le backend Python a des hypothèses Unix
+  # (compilateurs, subprocess) sans rapport avec ce chemin, les y exposer
+  # casserait `full-test` sur des bases qui n'ont rien à voir avec l'auth.
+  # ══════════════════════════════════════════════════════════════
+  auth-licensing-windows:
+    name: Auth Licensing Windows Unit Tests
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Detect relevant changes
+        id: filter
+        shell: bash
+        run: |
+          git fetch origin "${{ github.base_ref }}" --depth=50
+          if git diff --name-only "origin/${{ github.base_ref }}...HEAD" \
+              | grep -qE '^extension/(src/shared/(authService|deviceLicensing)\.ts|src/tests/(authService|deviceLicensing)\.test\.ts)$'; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node.js
+        if: steps.filter.outputs.relevant == 'true'
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22.x'
+          cache: 'npm'
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Install dependencies
+        if: steps.filter.outputs.relevant == 'true'
+        working-directory: ./extension
+        run: npm ci
+
+      - name: Run authService/deviceLicensing tests on Windows
+        if: steps.filter.outputs.relevant == 'true'
+        working-directory: ./extension
+        run: npx tsx node_modules/.bin/_mocha "src/tests/authService.test.ts" "src/tests/deviceLicensing.test.ts" --require src/tests/setup.ts --exit
+
+  # ══════════════════════════════════════════════════════════════
   # 🦄 Régressions Unicorn x86_64 — PRs uniquement, Linux
   # Le requirements-ci générique exclut Unicorn car son binding natif est
   # fragile sur macOS. Ce job dédié garde néanmoins les flux dynamiques
@@ -514,7 +565,7 @@ jobs:
   ci-success:
     name: CI Success
     if: always()
-    needs: [lint, quick-test, full-test, dynamic-unicorn, real-corpus-arm64, e2e-runtime-audit, security-scan, auth-licensing-e2e]
+    needs: [lint, quick-test, full-test, dynamic-unicorn, real-corpus-arm64, e2e-runtime-audit, security-scan, auth-licensing-e2e, auth-licensing-windows]
     runs-on: ubuntu-latest
     steps:
       - name: Check results
@@ -528,6 +579,7 @@ jobs:
           E2E_AUDIT="${{ needs.e2e-runtime-audit.result }}"
           SECURITY="${{ needs.security-scan.result }}"
           AUTH_LICENSING_E2E="${{ needs.auth-licensing-e2e.result }}"
+          AUTH_LICENSING_WINDOWS="${{ needs.auth-licensing-windows.result }}"
 
           echo "Event      : ${{ github.event_name }}"
           echo "Lint       : $LINT"
@@ -537,6 +589,7 @@ jobs:
           echo "Corpus ARM : $REAL_CORPUS"
           echo "E2E Audit  : $E2E_AUDIT"
           echo "Security   : $SECURITY"
+          echo "Auth Win   : $AUTH_LICENSING_WINDOWS"
           echo "Auth E2E   : $AUTH_LICENSING_E2E"
 
           fail_if_bad() {
@@ -563,6 +616,7 @@ jobs:
             # seuls ses steps internes sont conditionnels — pas de check "not
             # skipped" ici, contrairement aux jobs ci-dessus qui tournent toujours.
             fail_if_bad "$AUTH_LICENSING_E2E" "Auth Licensing Interop E2E"
+            fail_if_bad "$AUTH_LICENSING_WINDOWS" "Auth Licensing Windows Unit Tests"
             # security-scan est informatif uniquement (continue-on-error sur tous ses steps)
             if [[ "$LINT" == "skipped" ]]; then
               echo "❌ Lint was skipped on a PR — check workflow conditions"
@@ -584,7 +638,7 @@ jobs:
               echo "❌ E2E Runtime Audit was skipped on a PR — check workflow conditions"
               exit 1
             fi
-            echo "✅ PR checks passed (lint=$LINT, full=$FULL, unicorn=$DYNAMIC_UNICORN, real-corpus-arm64=$REAL_CORPUS, security=$SECURITY, auth-licensing-e2e=$AUTH_LICENSING_E2E)"
+            echo "✅ PR checks passed (lint=$LINT, full=$FULL, unicorn=$DYNAMIC_UNICORN, real-corpus-arm64=$REAL_CORPUS, security=$SECURITY, auth-licensing-e2e=$AUTH_LICENSING_E2E, auth-licensing-windows=$AUTH_LICENSING_WINDOWS)"
             exit 0
           fi
 
