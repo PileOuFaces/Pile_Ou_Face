@@ -473,6 +473,12 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: PileOuFaces/Pile_ou_Face_auth
+          # `develops` est la branche de dev active de ce repo (voir CLAUDE.md
+          # racine du workspace) — `main` (défaut du checkout sans `ref:`) est
+          # la branche production, mise à jour seulement lors d'une release.
+          # Sans ce `ref:`, ce job teste une version de l'auth potentiellement
+          # bien en retard sur ce qui est réellement mergé.
+          ref: develops
           token: ${{ secrets.AUTH_REPO_READONLY_PAT }}
           path: pof-auth-sibling
 
