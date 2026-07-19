@@ -54,7 +54,7 @@ class AuthService {
       try {
         const data = await this._postJson(baseUrl, '/auth/login', { email, password });
         this.serverUrl = baseUrl;
-        await this._store(data.access_token, data.refresh_token, data.content_keys, email);
+        await this._store(data.access_token, data.refresh_token, email);
         await this._syncLicenseLeases(data.access_token);
         this._scheduleRefresh();
         return;
@@ -91,9 +91,9 @@ class AuthService {
    * lease existent mais que la dernière synchronisation réussie remonte à
    * plus de LEASE_OFFLINE_GRACE_MS (7 jours), on refuse de les servir plutôt
    * que de les garder indéfiniment — blocage explicite, pas un fallback
-   * permissif. N'affecte pas les content_keys legacy (server pas encore
-   * migré) : KEY_LEASE_SYNCED_AT n'est posé que par un vrai succès du
-   * chemin lease (_syncLicenseLeases), jamais par le login/refresh legacy.
+   * permissif. KEY_CONTENT_KEYS n'est écrite que par _syncLicenseLeases() —
+   * il n'existe plus de repli vers un content_key partageable brute
+   * (XSYNC-LIC-001, migration sans bypass, Pile_ou_Face_auth#24).
    */
   async getContentKeys() {
     const raw = await this.secrets.get(KEY_CONTENT_KEYS);
@@ -142,17 +142,16 @@ class AuthService {
       // réutilisation, cf. Pile_ou_Face_auth#9) — toujours stocker celui renvoyé
       // s'il y en a un, sinon garder l'ancien (compat avec un serveur qui n'a
       // pas encore la rotation).
-      await this._store(data.access_token, data.refresh_token || refreshToken, data.content_keys);
+      await this._store(data.access_token, data.refresh_token || refreshToken);
       await this._syncLicenseLeases(data.access_token);
       this._scheduleRefresh();
       return true;
     } catch { return false; }
   }
 
-  async _store(accessToken, refreshToken, contentKeys, email) {
+  async _store(accessToken, refreshToken, email) {
     await this.secrets.store(KEY_ACCESS_TOKEN, accessToken);
     await this.secrets.store(KEY_REFRESH_TOKEN, refreshToken);
-    await this.secrets.store(KEY_CONTENT_KEYS, JSON.stringify(contentKeys));
     if (email) await this.secrets.store(KEY_EMAIL, email);
     await this.secrets.store(KEY_KEYS_VALIDATED_AT, String(Date.now()));
   }
@@ -176,7 +175,7 @@ class AuthService {
     }
     try {
       const data = await this._postJson(this.serverUrl, '/auth/refresh', { refresh_token: refreshToken });
-      await this._store(data.access_token, data.refresh_token || refreshToken, data.content_keys || {});
+      await this._store(data.access_token, data.refresh_token || refreshToken);
       await this._syncLicenseLeases(data.access_token);
       return { refreshed: true, revoked: false };
     } catch (err) {
@@ -198,13 +197,15 @@ class AuthService {
 
   /**
    * Licence par installation (XSYNC-LIC-001, Pile_Ou_Face#70) : enrôle cette
-   * installation puis récupère un lease + DEK enveloppé par plugin autorisé,
-   * en remplacement du content_key partagé déjà stocké par _store().
+   * installation puis récupère un lease + DEK enveloppé par plugin autorisé.
+   * C'est la SEULE voie d'obtention des content_keys — il n'existe plus de
+   * modèle content_key partageable brute à retomber dessus (migration sans
+   * bypass, voir Pile_ou_Face_auth#24).
    *
-   * Best-effort et silencieux en cas d'échec (serveur pas encore migré,
-   * réseau indisponible, etc.) : les content_keys legacy posés par _store()
-   * juste avant restent en place — voir le design doc §4 pour la fenêtre
-   * de transition auth → host → plugins.
+   * Best-effort en cas d'échec réseau (serveur injoignable, etc.) : ne jette
+   * pas d'exception qui casserait login()/refresh() — les content_keys en
+   * cache (si récentes, cf. mode offline borné dans getContentKeys())
+   * continuent d'être servies ; sinon getContentKeys() renvoie {}.
    */
   async _syncLicenseLeases(accessToken) {
     if (!accessToken) return;
