@@ -182,7 +182,7 @@ async function main() {
     // elles sont toujours en cache. On simule le vieillissement du timestamp
     // (attendre 7 jours pour de vrai n'est pas praticable dans un test).
     const realSyncedAt = await secrets.get('pof.auth.leaseSyncedAt');
-    await secrets.store('pof.auth.leaseSyncedAt', String(Date.now() - 8 * 24 * 3600_000));
+    await secrets.store('pof.auth.leaseSyncedAt', String(Date.now() - 8 * 24 * 3600000));
     const keysAfterOfflineWindow = await svc.getContentKeys();
     assert(Object.keys(keysAfterOfflineWindow).length === 0, 'content_keys must be refused once the 7-day offline window is exceeded');
     await secrets.store('pof.auth.leaseSyncedAt', realSyncedAt);
@@ -207,9 +207,17 @@ async function main() {
     console.error('---- auth server output ----');
     console.error(serverOutput);
   } finally {
-    server.kill();
+    server.kill('SIGKILL');
     fs.rmSync(tmpDbFile, { force: true });
   }
 }
 
-main();
+main().then(() => {
+  // uvicorn (spawn 'pipe') peut laisser des handles stdio ouverts un instant
+  // après server.kill(), ce qui empêche Node de sortir de lui-même même si
+  // le script est logiquement terminé — observé en CI (le job restait
+  // "in_progress" indéfiniment alors que les deux PASS s'étaient déjà
+  // affichés). Sortie explicite pour ne pas dépendre du nettoyage des
+  // handles du child process.
+  process.exit(process.exitCode || 0);
+});

@@ -416,6 +416,7 @@ jobs:
     name: Auth Licensing Interop E2E
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
@@ -472,6 +473,12 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: PileOuFaces/Pile_ou_Face_auth
+          # `develops` est la branche de dev active de ce repo (voir CLAUDE.md
+          # racine du workspace) — `main` (défaut du checkout sans `ref:`) est
+          # la branche production, mise à jour seulement lors d'une release.
+          # Sans ce `ref:`, ce job teste une version de l'auth potentiellement
+          # bien en retard sur ce qui est réellement mergé.
+          ref: develops
           token: ${{ secrets.AUTH_REPO_READONLY_PAT }}
           path: pof-auth-sibling
 
@@ -479,7 +486,19 @@ jobs:
         if: steps.filter.outputs.relevant == 'true' && steps.secret_check.outputs.has_pat == 'true'
         run: |
           python3 -m venv pof-auth-sibling/.venv
-          pof-auth-sibling/.venv/bin/pip install -e ./pof-auth-sibling
+          # Installe les dépendances runtime directement plutôt que `pip install -e .` :
+          # le pyproject.toml de Pile_ou_Face_auth a un layout plat (k8s/, alembic/, app/
+          # au même niveau) qui déclenche l'heuristique setuptools "multiple top-level
+          # packages" selon la version de setuptools récupérée par l'isolation de build
+          # (non pinnée côté auth) — marche localement, casse en CI de façon non
+          # déterministe. Pas besoin d'installer `app` comme paquet : uvicorn tourne
+          # avec le repo en CWD (working-directory ci-dessous), comme les tests du
+          # repo auth le font déjà. Garder cette liste synchronisée avec
+          # pof-auth-sibling/pyproject.toml si ses dépendances changent.
+          pof-auth-sibling/.venv/bin/pip install \
+            'fastapi>=0.111' 'uvicorn[standard]>=0.29' 'sqlalchemy>=2.0' 'alembic>=1.13' \
+            'psycopg2-binary>=2.9' 'pydantic-settings>=2.2' 'pydantic[email]>=2.7' \
+            'python-jose[cryptography]>=3.3' 'passlib[bcrypt]>=1.7' 'bcrypt<4.1' 'slowapi>=0.1.9'
           cd extension && npm ci
 
       - name: Run real host<->auth interop e2e
