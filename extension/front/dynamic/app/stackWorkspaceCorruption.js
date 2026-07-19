@@ -70,6 +70,7 @@ export function annotateEntriesWithDiagnostics(entries, diagnostics = []) {
       || primary.kind === 'saved_bp_corrupted'
       || (primary.kind === 'runtime_crash' && (primarySlotKind === 'return_address' || primarySlotKind === 'saved_bp'))
       || (['invalid_control_flow', 'fatal_crash', 'control_hijack'].includes(primary.kind) && primarySlotKind === 'return_address');
+    const hasOverflow = matches.some((diagnostic) => diagnostic?.kind === 'buffer_overflow');
     const rows = Array.isArray(entry?.detailPayload?.rows)
       ? entry.detailPayload.rows.map((row) => ({ ...row }))
       : [];
@@ -85,7 +86,7 @@ export function annotateEntriesWithDiagnostics(entries, diagnostics = []) {
     }
 
     const badges = uniqueStrings([
-      isCorrupted ? 'CORROMPU' : 'OVERFLOW',
+      isCorrupted ? 'CORROMPU' : hasOverflow ? 'OVERFLOW' : '',
       ...(Array.isArray(entry?.badges) ? entry.badges : [])
     ]).slice(0, 3);
 
@@ -154,6 +155,10 @@ export function diagnosticKindLabel(kind) {
       return 'Acces a la fonction cible';
     case 'runtime_crash':
       return 'Crash runtime';
+    case 'benign_termination':
+      return "Fin d'execution normale";
+    case 'emulator_stop':
+      return "Limite de l'emulateur";
     default:
       return 'Diagnostic runtime';
   }

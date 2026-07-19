@@ -265,11 +265,8 @@ function hasExpertOverflowSignal(slot, existingBadges) {
   if ((Array.isArray(existingBadges) ? existingBadges : []).some((badge) => /overflow/i.test(String(badge || '')))) {
     return true;
   }
-  return (Array.isArray(slot?.diagnostics) ? slot.diagnostics : []).some((diagnostic) => {
-    const kind = String(diagnostic?.kind || '').toLowerCase();
-    const message = String(diagnostic?.message || '').toLowerCase();
-    return kind === 'buffer_overflow' || kind.includes('overflow') || message.includes('overflow');
-  });
+  return (Array.isArray(slot?.diagnostics) ? slot.diagnostics : [])
+    .some((diagnostic) => String(diagnostic?.kind || '').toLowerCase() === 'buffer_overflow');
 }
 
 function hasExpertUserSignal(slot, existingBadges) {

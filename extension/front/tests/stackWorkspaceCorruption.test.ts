@@ -173,4 +173,21 @@ describe('dynamic stack workspace corruption helpers', () => {
 
     expect(annotated.badges).to.not.include('CORROMPU');
   });
+
+  it('benign termination mentioning "aucun overflow" does not add an OVERFLOW badge', () => {
+    const retEntry = displayEntry('return_address', RET_ADDR, controlSlotEntryBase('return_address'));
+    const [annotated] = helpers.annotateEntriesWithDiagnostics([retEntry], [{
+      kind: 'benign_termination',
+      severity: 'info',
+      message: 'Fin normale sans preuve de corruption (aucun overflow).',
+      slot: { kind: 'return_address', address: RET_ADDR }
+    }]);
+
+    expect(annotated.badges).to.deep.equal(['RET']);
+    expect(annotated.diagnosticCorrupted).to.equal(false);
+    expect(annotated.detailPayload.rows).to.deep.include({
+      label: 'Diagnostic',
+      value: "Fin d'execution normale"
+    });
+  });
 });
