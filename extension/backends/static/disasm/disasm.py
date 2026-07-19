@@ -181,6 +181,63 @@ def _parse_capstone_immediate(value: str) -> int | None:
         return None
 
 
+# Capstone (binding Python) matérialise en mémoire C *tout* le buffer passé
+# à un seul appel md.disasm(), avant même que l'itérateur Python ne cède le
+# premier résultat — la RAM du process scale donc avec la taille du buffer
+# soumis, pas avec ce que le code Python en fait ensuite. Sur un binaire de
+# plusieurs Go, un unique appel sur code_bytes entier est hors de portée
+# (mesuré : #180). On fenêtre les appels pour borner ce pic indépendamment
+# de la taille totale du binaire.
+_DISASM_WINDOW_BYTES = 4 * 1024 * 1024
+# Marge de chevauchement en fin de fenêtre pour ne jamais couper une
+# instruction : largement supérieure au max réel (15 octets en x86, les
+# autres ISA supportées ici sont à taille fixe ≤ 8 octets).
+_DISASM_WINDOW_OVERLAP_BYTES = 32
+
+
+def _iter_windowed_instructions(
+    md,
+    code_bytes: bytes,
+    base_addr: int,
+    *,
+    window_bytes: int = _DISASM_WINDOW_BYTES,
+    overlap_bytes: int = _DISASM_WINDOW_OVERLAP_BYTES,
+):
+    """Désassemble par fenêtres bornées au lieu d'un appel sur tout le buffer.
+
+    Chaque fenêtre est décodée avec un chevauchement de lookahead pour que
+    les instructions proches de la frontière restent décodables. Une
+    instruction dont l'adresse dépasse la frontière « utile » de la fenêtre
+    est reportée : elle sera décodée correctement au début de la fenêtre
+    suivante, qui reprend exactement à son adresse (pas à un offset fixe),
+    ce qui garantit l'alignement même pour un ISA à taille d'instruction
+    variable (x86).
+    """
+    total = len(code_bytes)
+    offset = 0
+    while offset < total:
+        read_end = min(offset + window_bytes + overlap_bytes, total)
+        chunk = code_bytes[offset:read_end]
+        soft_limit_addr = base_addr + offset + window_bytes
+        reached_soft_limit = False
+        for instr in md.disasm(chunk, base_addr + offset):
+            if read_end < total and instr.address >= soft_limit_addr:
+                offset = instr.address - base_addr
+                reached_soft_limit = True
+                break
+            yield instr
+        if reached_soft_limit:
+            continue
+        if read_end >= total:
+            # Fin réelle du buffer atteinte proprement : terminé.
+            offset = total
+        else:
+            # Capstone a arrêté de décoder avant la frontière logicielle
+            # (octets non décodables) — même comportement d'arrêt silencieux
+            # que l'ancien appel unique sur tout le buffer : ne pas boucler.
+            offset = total
+
+
 def _normalize_capstone_operands(cs_arch: int, instr) -> str:
     """Normalise certains opérandes Capstone vers les adresses attendues.
 
@@ -293,6 +350,106 @@ def _find_code_section(
     return None
 
 
+def _resolve_disasm_source(
+    binary_path: str,
+    *,
+    section: str | None = None,
+    raw_arch: str | None = None,
+    raw_base_addr: str | int | None = None,
+    raw_endian: str | None = None,
+) -> tuple[bytes, int, int, int] | None:
+    """Résout (code_bytes, base_addr, cs_arch, cs_mode) une seule fois.
+
+    Extrait de disassemble_with_capstone/disassemble_raw_blob pour pouvoir
+    désassembler la même source plusieurs fois (deux passages fenêtrés) sans
+    reparser le binaire à chaque fois.
+    """
+    if raw_arch:
+        if not capstone:
+            return None
+        if not Path(binary_path).exists():
+            raise BinaryNotFoundError(f"Binary not found: {binary_path}")
+        arch_mode = _get_raw_arch_mode(raw_arch, raw_endian)
+        if not arch_mode:
+            raise DisassemblyError(f"Unsupported raw architecture: {raw_arch}")
+        try:
+            code_bytes = Path(binary_path).read_bytes()
+        except OSError as exc:
+            raise BinaryParseError(f"Failed to read raw blob: {binary_path}") from exc
+        try:
+            base_addr = _parse_base_addr(raw_base_addr)
+        except ValueError as exc:
+            raise DisassemblyError(
+                f"Invalid raw base address: {raw_base_addr}"
+            ) from exc
+        cs_arch, cs_mode = arch_mode
+        return code_bytes, base_addr, cs_arch, cs_mode
+
+    if not lief or not capstone:
+        return None
+    if not Path(binary_path).exists():
+        raise BinaryNotFoundError(f"Binary not found: {binary_path}")
+    try:
+        binary = lief.parse(binary_path)
+        if binary is None:
+            raise BinaryParseError(f"lief could not parse binary: {binary_path}")
+    except (BinaryNotFoundError, BinaryParseError):
+        raise
+    except Exception as exc:
+        raise BinaryParseError(f"Failed to parse binary: {binary_path}") from exc
+    arch_mode = _get_arch_mode(binary)
+    if not arch_mode:
+        raise DisassemblyError(f"Unsupported architecture for: {binary_path}")
+    cs_arch, cs_mode = arch_mode
+    code_data = _find_code_section(binary, section)
+    if not code_data:
+        return None
+    code_bytes, base_addr = code_data
+    return code_bytes, base_addr, cs_arch, cs_mode
+
+
+def _iter_raw_instruction_dicts(
+    md,
+    cs_arch: int,
+    code_bytes: bytes,
+    base_addr: int,
+    *,
+    progress_callback: Callable[[dict], None] | None = None,
+    total_code_bytes: int | None = None,
+    progress_message: str = "Désassemblage en cours",
+):
+    """Désassemble par fenêtres et yield {addr,text,bytes,mnemonic,operands}.
+
+    Partagé par le chemin section-de-code et le chemin blob brut — seule la
+    résolution de la source (_resolve_disasm_source) diffère entre les deux.
+    """
+    total = max(total_code_bytes or len(code_bytes), 1)
+    next_report_percent = 15
+    for instr in _iter_windowed_instructions(md, code_bytes, base_addr):
+        bytes_hex = " ".join(f"{b:02x}" for b in instr.bytes)
+        op_str = _normalize_capstone_operands(cs_arch, instr)
+        text = f"{bytes_hex:<20} {instr.mnemonic:<8} {op_str}".strip()
+        yield {
+            "addr": f"0x{instr.address:x}",
+            "text": text,
+            "bytes": bytes_hex,
+            "mnemonic": instr.mnemonic,
+            "operands": op_str,
+        }
+        processed = min(total, max(0, (instr.address - base_addr) + len(instr.bytes)))
+        percent = 10 + int((processed / total) * 75)
+        if percent >= next_report_percent:
+            _emit_progress(
+                progress_callback,
+                "disasm",
+                progress_message,
+                current=processed,
+                total=total,
+                percent=percent,
+            )
+            next_report_percent = percent + 5
+
+
 def disassemble_with_capstone(
     binary_path: str,
     syntax: str = "intel",
@@ -322,37 +479,11 @@ def disassemble_with_capstone(
             progress_callback=progress_callback,
         )
 
-    if not lief or not capstone:
-        return None
-
-    if not Path(binary_path).exists():
-        raise BinaryNotFoundError(f"Binary not found: {binary_path}")
-
     _emit_progress(progress_callback, "parse", "Lecture du binaire", percent=5)
-
-    # Parser le binaire avec lief
-    try:
-        binary = lief.parse(binary_path)
-        if binary is None:
-            raise BinaryParseError(f"lief could not parse binary: {binary_path}")
-    except (BinaryNotFoundError, BinaryParseError):
-        raise
-    except Exception as exc:
-        raise BinaryParseError(f"Failed to parse binary: {binary_path}") from exc
-
-    # Déterminer architecture et mode capstone
-    arch_mode = _get_arch_mode(binary)
-    if not arch_mode:
-        raise DisassemblyError(f"Unsupported architecture for: {binary_path}")
-
-    cs_arch, cs_mode = arch_mode
-
-    # Trouver la section de code
-    code_data = _find_code_section(binary, section)
-    if not code_data:
+    resolved = _resolve_disasm_source(binary_path, section=section)
+    if resolved is None:
         return None
-
-    code_bytes, base_addr = code_data
+    code_bytes, base_addr, cs_arch, cs_mode = resolved
     total_code_bytes = max(len(code_bytes), 1)
     _emit_progress(
         progress_callback,
@@ -363,53 +494,24 @@ def disassemble_with_capstone(
         percent=10,
     )
 
-    # Créer le désassembleur capstone
     try:
         md = capstone.Cs(cs_arch, cs_mode)
         _apply_capstone_syntax(md, cs_arch, syntax)
-        # detail=True ferait allouer par Capstone une structure C par
-        # instruction (opérandes structurés, regs lus/écrits, groupes) —
-        # ~8x plus de RAM pour des champs que ce module ne lit jamais
-        # (seuls address/mnemonic/bytes/op_str texte sont utilisés).
     except Exception:
         return None
 
-    # Désassembler
-    lines = []
-    next_report_percent = 15
     try:
-        for instr in md.disasm(code_bytes, base_addr):
-            addr = f"0x{instr.address:x}"
-            # Format similaire à objdump : "mnemonic\toperands"
-            # Ajouter les bytes hex au début (comme objdump -d)
-            bytes_hex = " ".join(f"{b:02x}" for b in instr.bytes)
-            op_str = _normalize_capstone_operands(cs_arch, instr)
-            # Format : "bytes_hex  mnemonic  op_str"
-            text = f"{bytes_hex:<20} {instr.mnemonic:<8} {op_str}"
-            lines.append(
-                {
-                    "addr": addr,
-                    "text": text.strip(),
-                    "bytes": bytes_hex,
-                    "mnemonic": instr.mnemonic,
-                    "operands": op_str,
-                }
+        lines = list(
+            _iter_raw_instruction_dicts(
+                md,
+                cs_arch,
+                code_bytes,
+                base_addr,
+                progress_callback=progress_callback,
+                total_code_bytes=total_code_bytes,
+                progress_message="Désassemblage en cours",
             )
-            processed = min(
-                total_code_bytes,
-                max(0, (instr.address - base_addr) + len(instr.bytes)),
-            )
-            percent = 10 + int((processed / total_code_bytes) * 75)
-            if percent >= next_report_percent:
-                _emit_progress(
-                    progress_callback,
-                    "disasm",
-                    "Désassemblage en cours",
-                    current=processed,
-                    total=total_code_bytes,
-                    percent=percent,
-                )
-                next_report_percent = percent + 5
+        )
     except Exception:
         return None
 
@@ -434,26 +536,16 @@ def disassemble_raw_blob(
     progress_callback: Callable[[dict], None] | None = None,
 ) -> list[dict] | None:
     """Désassemble un blob brut en utilisant uniquement Capstone."""
-    if not capstone:
-        return None
-    if not Path(binary_path).exists():
-        raise BinaryNotFoundError(f"Binary not found: {binary_path}")
-
-    arch_mode = _get_raw_arch_mode(raw_arch, raw_endian)
-    if not arch_mode:
-        raise DisassemblyError(f"Unsupported raw architecture: {raw_arch}")
-
     _emit_progress(progress_callback, "parse", "Lecture du blob brut", percent=5)
-    try:
-        code_bytes = Path(binary_path).read_bytes()
-    except OSError as exc:
-        raise BinaryParseError(f"Failed to read raw blob: {binary_path}") from exc
-
-    cs_arch, cs_mode = arch_mode
-    try:
-        base_addr = _parse_base_addr(raw_base_addr)
-    except ValueError as exc:
-        raise DisassemblyError(f"Invalid raw base address: {raw_base_addr}") from exc
+    resolved = _resolve_disasm_source(
+        binary_path,
+        raw_arch=raw_arch,
+        raw_base_addr=raw_base_addr,
+        raw_endian=raw_endian,
+    )
+    if resolved is None:
+        return None
+    code_bytes, base_addr, cs_arch, cs_mode = resolved
     total_code_bytes = max(len(code_bytes), 1)
     _emit_progress(
         progress_callback,
@@ -473,38 +565,18 @@ def disassemble_raw_blob(
             f"Failed to initialize raw disassembler: {raw_arch}"
         ) from exc
 
-    lines = []
-    next_report_percent = 15
     try:
-        for instr in md.disasm(code_bytes, base_addr):
-            addr = f"0x{instr.address:x}"
-            bytes_hex = " ".join(f"{b:02x}" for b in instr.bytes)
-            op_str = _normalize_capstone_operands(cs_arch, instr)
-            text = f"{bytes_hex:<20} {instr.mnemonic:<8} {op_str}"
-            lines.append(
-                {
-                    "addr": addr,
-                    "text": text.strip(),
-                    "bytes": bytes_hex,
-                    "mnemonic": instr.mnemonic,
-                    "operands": op_str,
-                }
+        lines = list(
+            _iter_raw_instruction_dicts(
+                md,
+                cs_arch,
+                code_bytes,
+                base_addr,
+                progress_callback=progress_callback,
+                total_code_bytes=total_code_bytes,
+                progress_message="Désassemblage du blob en cours",
             )
-            processed = min(
-                total_code_bytes,
-                max(0, (instr.address - base_addr) + len(instr.bytes)),
-            )
-            percent = 10 + int((processed / total_code_bytes) * 75)
-            if percent >= next_report_percent:
-                _emit_progress(
-                    progress_callback,
-                    "disasm",
-                    "Désassemblage du blob en cours",
-                    current=processed,
-                    total=total_code_bytes,
-                    percent=percent,
-                )
-                next_report_percent = percent + 5
+        )
     except Exception as exc:
         raise DisassemblyError(f"Raw disassembly failed: {binary_path}") from exc
 
@@ -704,7 +776,7 @@ def _location_matches_text(location: str, text: str) -> bool:
 
 
 def _build_cfg_attribution(
-    lines: list[dict],
+    lines,
     function_ranges: list[tuple[int, int | None, dict]],
 ) -> dict[int, str]:
     """Attribue chaque instruction à une fonction par BFS dans le graphe de flot.
@@ -713,9 +785,15 @@ def _build_cfg_attribution(
     suit le flux de contrôle réel (sauts, branches) depuis chaque point d'entrée.
     Les instructions non-atteignables tombent en fallback linéaire dans l'appelant.
 
+    `lines` n'est parcouru qu'une seule fois (compatible générateur à usage
+    unique, utilisé par le désassemblage streaming) : seul (addr, is_branch,
+    is_call, target, is_unconditional) est conservé par instruction, pas le
+    dict complet. Suppose `lines` en ordre d'adresse croissant (garanti par
+    le désassembleur, fenêtré ou non) — "l'instruction suivante" est donc
+    simplement la suivante dans l'itération, sans recherche par bisection.
+
     Returns: {addr_int -> normalized_func_addr_str}
     """
-    import bisect
     from collections import deque
 
     try:
@@ -726,32 +804,32 @@ def _build_cfg_attribution(
     if not function_ranges:
         return {}
 
-    # Ordered address list for fast "next instruction" lookup
+    # Un seul passage : ne retient que l'essentiel par instruction (pas le
+    # texte/bytes/opérandes formatés déjà présents dans le dict complet).
     addr_sorted: list[int] = []
-    for line in lines:
-        a = _addr_to_int(line.get("addr"))
-        if a is not None:
-            addr_sorted.append(a)
-    addr_sorted.sort()
-    addr_set = set(addr_sorted)
-
-    # Successor map: addr_int -> [next reachable addr_int] (calls not followed)
-    successors: dict[int, list[int]] = {}
+    raw: list[tuple[int, bool, bool, int | None, bool]] = []
     for line in lines:
         a = _addr_to_int(line.get("addr"))
         if a is None:
             continue
         text = line.get("text", "")
         is_br, is_call, target_str = _is_branch(text)
-        pos = bisect.bisect_right(addr_sorted, a)
-        next_a = addr_sorted[pos] if pos < len(addr_sorted) else None
+        target_int = _addr_to_int(target_str) if target_str else None
+        is_unconditional = _get_mnemonic(text) in {"jmp", "jmpq", "b", "br"}
+        addr_sorted.append(a)
+        raw.append((a, is_br, is_call, target_int, is_unconditional))
+
+    addr_set = set(addr_sorted)
+
+    # Successor map: addr_int -> [next reachable addr_int] (calls not followed)
+    successors: dict[int, list[int]] = {}
+    for idx, (a, is_br, is_call, target_int, is_unconditional) in enumerate(raw):
+        next_a = raw[idx + 1][0] if idx + 1 < len(raw) else None
         succs: list[int] = []
         if not is_br or is_call:
             if next_a is not None:
                 succs.append(next_a)
         else:
-            target_int = _addr_to_int(target_str) if target_str else None
-            is_unconditional = _get_mnemonic(text) in {"jmp", "jmpq", "b", "br"}
             if target_int is not None and target_int in addr_set:
                 succs.append(target_int)
             if not is_unconditional and target_int is not None and next_a is not None:
@@ -870,6 +948,22 @@ def _comment_suffix(parts: list[str]) -> str:
     return f"  ; {' | '.join(clean)}" if clean else ""
 
 
+def _resolve_cache_db_path(cache_db_path: str | None, binary_path: str) -> str | None:
+    """Résout le chemin effectif du cache SQLite ("auto" ou absent) — logique
+    partagée par _load_disasm_context et la persistance des fonctions
+    découvertes par heuristique (_augment_context_with_discovered_functions),
+    pour que les deux s'accordent sur le même fichier de cache.
+    """
+    from backends.static.cache.cache import default_cache_path
+
+    if cache_db_path == "auto":
+        return default_cache_path(binary_path)
+    if not cache_db_path:
+        candidate = default_cache_path(binary_path)
+        return candidate if os.path.exists(candidate) else None
+    return cache_db_path
+
+
 def _load_disasm_context(
     binary_path: str,
     annotations_json_path: str | None = None,
@@ -883,16 +977,7 @@ def _load_disasm_context(
     stack_frames: dict[str, dict] = {}
     typed_struct_index = build_typed_struct_index(binary_path)
 
-    resolved_cache = cache_db_path
-    if resolved_cache == "auto":
-        from backends.static.cache.cache import default_cache_path
-
-        resolved_cache = default_cache_path(binary_path)
-    if not resolved_cache:
-        from backends.static.cache.cache import default_cache_path
-
-        candidate = default_cache_path(binary_path)
-        resolved_cache = candidate if os.path.exists(candidate) else None
+    resolved_cache = _resolve_cache_db_path(cache_db_path, binary_path)
 
     if resolved_cache and os.path.exists(resolved_cache):
         try:
@@ -907,6 +992,15 @@ def _load_disasm_context(
                     for fn in cached_functions
                     if not _is_generic_macho_header_symbol(fn.get("name"))
                 ]
+                # Miroir de _augment_context_with_discovered_functions : une
+                # fonction (découverte par heuristique ou symbole) doit
+                # produire le même label_map (rename affiché) qu'elle vienne
+                # d'un désassemblage frais ou d'un cache hit.
+                for fn in functions:
+                    fn_addr = _addr_to_int(fn.get("addr"))
+                    fn_name = str(fn.get("name") or "").strip()
+                    if fn_addr is not None and fn_name:
+                        label_map.setdefault(fn_addr, fn_name)
                 for symbol in cached_symbols:
                     if symbol.get("type") not in {"T", "t"}:
                         continue
@@ -977,6 +1071,8 @@ def _augment_context_with_discovered_functions(
     binary_path: str,
     *,
     raw_mode: bool = False,
+    cache_db_path: str | None = None,
+    discovered_functions_sink: Callable[[list[dict]], None] | None = None,
 ) -> dict:
     if raw_mode or context.get("function_ranges") or not lines:
         return context
@@ -1011,6 +1107,35 @@ def _augment_context_with_discovered_functions(
             label_map.setdefault(addr, name)
     context["label_map"] = label_map
     context["function_ranges"] = _build_function_ranges(discovered)
+
+    # Persister dans le cache SQLite si actif : _load_disasm_context lit déjà
+    # cache.get_functions() en premier, donc un futur cache hit (désassemblage
+    # depuis DisasmCache) retrouve ces fonctions sans redécouverte — sans
+    # cette persistance, un cache hit perdait silencieusement labels/bannières
+    # de fonction découverts heuristiquement (bug préexistant, indépendant de
+    # #180, révélé en validant l'équivalence hit/miss du chemin streaming).
+    #
+    # Si l'appelant a déjà une connexion DisasmCache ouverte sur ce fichier
+    # (ex: le CLI, qui tient une transaction en cours via
+    # begin_disasm_replace), il doit fournir discovered_functions_sink
+    # plutôt que de laisser cette fonction ouvrir SA PROPRE connexion :
+    # SQLite ne supporte qu'un seul writer à la fois, une seconde connexion
+    # pendant une transaction non commitée lève "database is locked".
+    if discovered_functions_sink is not None:
+        try:
+            discovered_functions_sink(discovered)
+        except Exception:
+            pass
+    else:
+        resolved_cache = _resolve_cache_db_path(cache_db_path, binary_path)
+        if resolved_cache:
+            try:
+                from backends.static.cache.cache import DisasmCache
+
+                with DisasmCache(resolved_cache) as cache:
+                    cache.save_functions(binary_path, discovered)
+            except Exception:
+                pass
     return context
 
 
@@ -1331,6 +1456,282 @@ def _write_disasm_outputs(
     return mapping
 
 
+def _stream_write_disasm_outputs(
+    make_raw_instructions,
+    binary_path: str,
+    output_asm: str,
+    output_mapping: str | None,
+    *,
+    label_map: dict[int, str] | None = None,
+    comment_map: dict[int, str] | None = None,
+    function_ranges: list[tuple[int, int | None, dict]] | None = None,
+    stack_frames: dict[str, dict] | None = None,
+    typed_struct_index: dict[str, object] | None = None,
+    line_map: dict | None = None,
+    progress_callback: Callable[[dict], None] | None = None,
+    raw_profile: dict | None = None,
+    disasm_cache_sink: Callable[[dict], None] | None = None,
+) -> dict:
+    """Écrit .asm + mapping en un seul passage streaming, quelle que soit la
+    source des instructions (désassemblage Capstone frais ou relecture d'un
+    cache existant) : sert à la fois `disassemble()` et le chemin CLI de
+    cache hit, qui n'ont plus besoin de deux implémentations distinctes.
+
+    `make_raw_instructions` est un facteur (rappelé deux fois — une passe
+    légère pour l'attribution CFG, une passe streaming pour l'écriture) qui
+    retourne un itérable de {addr, text, bytes, mnemonic, operands} ; jamais
+    de liste complète matérialisée par cette fonction elle-même.
+
+    Si `disasm_cache_sink` est fourni, chaque ligne écrite lui est aussi
+    transmise (mêmes champs bruts) — permet d'alimenter le DisasmCache
+    (`.pfdb`, cache général réutilisé par xrefs/call_graph/stack_frame/…)
+    dans la même passe, sans jamais matérialiser la liste complète deux fois
+    pour les deux caches.
+
+    Réservé au cas où function_ranges est déjà connu (symboles présents) ;
+    le fallback découverte-de-fonctions (binaire stripped sans symboles)
+    reste sur `disassemble_with_capstone` + `_write_disasm_outputs` (voir
+    `disassemble()`), qui a de toute façon besoin de la liste complète pour
+    ses heuristiques.
+    """
+    label_map = label_map or {}
+    comment_map = comment_map or {}
+    function_ranges = function_ranges or []
+    stack_frames = stack_frames or {}
+
+    # --- Passe 1 : attribution CFG (vue globale nécessaire, structures
+    # légères — cf. _build_cfg_attribution) ---
+    _emit_progress(progress_callback, "cfg", "Analyse du flot de contrôle", percent=88)
+    cfg_attribution = _build_cfg_attribution(make_raw_instructions(), function_ranges)
+    entry_addr_to_fn: dict[str, dict] = {
+        _normalize_addr(fn.get("addr", "")): fn for _, _, fn in function_ranges
+    }
+
+    def _resolve_function(addr_int: int | None) -> dict | None:
+        if addr_int is None:
+            return None
+        cfg_addr = cfg_attribution.get(addr_int)
+        if cfg_addr:
+            fn = entry_addr_to_fn.get(cfg_addr)
+            if fn is not None:
+                return fn
+        return _find_function_context(function_ranges, addr_int)
+
+    # --- Passe 2 : écriture streaming du .asm + lignes du mapping ---
+    _emit_progress(
+        progress_callback, "format", "Formatage du désassemblage", percent=90
+    )
+    stats = {"line_count": 0, "function_addr_keys": set()}
+    for _, _, fn in function_ranges:
+        key = mapping_db.normalize_addr_key(fn.get("addr"))
+        if key:
+            stats["function_addr_keys"].add(key)
+
+    def _rows():
+        emitted_function_banners: set[int] = set()
+        prev_src: tuple[str, int] | None = None
+        physical_lineno = 0
+
+        with open(output_asm, "w", encoding="utf-8") as f:
+
+            def _write_line(text: str) -> int:
+                nonlocal physical_lineno
+                if physical_lineno > 0:
+                    f.write("\n")
+                f.write(text)
+                physical_lineno += 1
+                return physical_lineno
+
+            for instr_dict in make_raw_instructions():
+                addr_hex = instr_dict["addr"]
+                addr_int = _addr_to_int(addr_hex)
+                raw_text = instr_dict["text"]
+                mnemonic = instr_dict.get("mnemonic", "")
+                op_str = instr_dict.get("operands", "")
+
+                current_function = _resolve_function(addr_int)
+                is_function_start = (
+                    current_function is not None
+                    and addr_int is not None
+                    and _addr_to_int(current_function.get("addr")) == addr_int
+                )
+                if (
+                    current_function is not None
+                    and addr_int is not None
+                    and is_function_start
+                    and addr_int not in emitted_function_banners
+                ):
+                    emitted_function_banners.add(addr_int)
+                    function_name_banner = str(
+                        current_function.get("name")
+                        or label_map.get(addr_int)
+                        or addr_hex
+                    )
+                    _write_line("")
+                    _write_line(
+                        f"; ===== Function {function_name_banner} @ {addr_hex} ====="
+                    )
+
+                if addr_int is not None and addr_int in label_map:
+                    label_kind = (
+                        "function rename" if is_function_start else "annotation label"
+                    )
+                    _write_line(f"; -- {label_kind} @ {addr_hex} --")
+                    _write_line(f"{label_map[addr_int]}:")
+
+                text = raw_text
+                if mnemonic.lower() in _BRANCH_MNEMONICS and op_str and label_map:
+                    token = op_str.strip()
+                    try:
+                        target = int(token, 16)
+                        if target in label_map:
+                            text = text.replace(token, label_map[target])
+                    except ValueError:
+                        pass
+
+                comment_parts: list[str] = []
+                if addr_int is not None and addr_int in comment_map:
+                    comment_parts.append(comment_map[addr_int])
+
+                function_addr = ""
+                function_name = ""
+                stack_hints: list[dict] = []
+                if current_function is not None:
+                    function_addr = _normalize_addr(current_function.get("addr", ""))
+                    function_name = str(
+                        current_function.get("name")
+                        or label_map.get(addr_int or -1)
+                        or ""
+                    ).strip()
+                    stack_hints = _extract_stack_hints_from_frame(
+                        op_str, stack_frames.get(function_addr)
+                    )
+                    if stack_hints:
+                        hint_str = ", ".join(
+                            f"{h['kind']} {h['name']} @ {h['location']}"
+                            for h in stack_hints
+                        )
+                        comment_parts.append(hint_str)
+
+                typed_struct_hints = _extract_typed_struct_hints(
+                    text, typed_struct_index
+                )
+                if typed_struct_hints:
+                    typed_hint_str = ", ".join(
+                        str(h.get("label") or h.get("addr") or "").strip()
+                        for h in typed_struct_hints[:2]
+                        if str(h.get("label") or h.get("addr") or "").strip()
+                    )
+                    if typed_hint_str:
+                        if len(typed_struct_hints) > 2:
+                            typed_hint_str += f", +{len(typed_struct_hints) - 2}"
+                        comment_parts.append(f"struct {typed_hint_str}")
+
+                if (
+                    line_map is not None
+                    and addr_int is not None
+                    and addr_int in line_map
+                ):
+                    src = line_map[addr_int]
+                    cur = (src["file"], src["line"])
+                    if cur != prev_src:
+                        comment_parts.insert(0, f"{src['file']}:{src['line']}")
+                        prev_src = cur
+
+                instruction_lineno = _write_line(
+                    f"  {addr_hex}:  {text}{_comment_suffix(comment_parts)}"
+                )
+
+                stats["line_count"] += 1
+                addr_key = mapping_db.normalize_addr_key(addr_hex)
+                fn_key = mapping_db.normalize_addr_key(function_addr)
+                if addr_key and fn_key and addr_key == fn_key:
+                    stats["function_addr_keys"].add(addr_key)
+
+                if disasm_cache_sink is not None:
+                    disasm_cache_sink(
+                        {
+                            "addr": addr_hex,
+                            "line": instruction_lineno,
+                            "text": raw_text,
+                            "bytes": instr_dict.get("bytes", ""),
+                            "mnemonic": mnemonic,
+                            "operands": op_str,
+                        }
+                    )
+
+                yield {
+                    "addr": addr_hex,
+                    "text": raw_text,
+                    "line": instruction_lineno,
+                    "bytes": instr_dict.get("bytes", ""),
+                    "mnemonic": mnemonic,
+                    "operands": op_str,
+                    "label": label_map.get(addr_int) if addr_int is not None else None,
+                    "comment": comment_map.get(addr_int)
+                    if addr_int is not None
+                    else None,
+                    "function_addr": function_addr or None,
+                    "function_name": function_name or None,
+                    "stack_hints": stack_hints,
+                    "typed_struct_hints": typed_struct_hints,
+                }
+
+    mapping: dict = {
+        "meta": make_meta("disasm"),
+        "path": output_asm,
+        "binary": binary_path,
+        "lines": _rows(),
+        "functions": [
+            {
+                "addr": fn.get("addr"),
+                "name": fn.get("name"),
+                "size": fn.get("size"),
+                "reason": fn.get("reason"),
+            }
+            for _, _, fn in function_ranges
+        ],
+    }
+    arch_payload = _resolve_arch_payload(
+        binary_path,
+        raw_arch=raw_profile.get("arch") if raw_profile else None,
+        raw_endian=raw_profile.get("endian") if raw_profile else None,
+    )
+    if arch_payload:
+        mapping["arch"] = arch_payload
+    if raw_profile:
+        mapping["raw"] = raw_profile
+
+    if not output_mapping:
+        # Il faut quand même épuiser le générateur pour écrire le .asm et,
+        # le cas échéant, alimenter disasm_cache_sink.
+        for _ in mapping["lines"]:
+            pass
+    else:
+        _emit_progress(progress_callback, "write", "Écriture du mapping", percent=98)
+        db_path = mapping_db.mapping_db_path_for(output_mapping)
+        # write_mapping_db épuise mapping["lines"] (générateur) par lots :
+        # c'est ici que le .asm est réellement écrit et disasm_cache_sink
+        # alimenté, en un seul passage.
+        mapping_db.write_mapping_db(db_path, mapping)
+        slim = {key: value for key, value in mapping.items() if key != "lines"}
+        slim["function_addrs"] = sorted(
+            stats["function_addr_keys"], key=lambda a: int(a, 16)
+        )
+        slim["line_count"] = stats["line_count"]
+        slim["lines_db"] = os.path.basename(db_path)
+        with open(output_mapping, "w", encoding="utf-8") as f:
+            json.dump(slim, f, indent=2)
+
+    _emit_progress(progress_callback, "done", "Désassemblage prêt", percent=100)
+    # "lines" est un générateur épuisé à ce stade (contrairement à
+    # _write_disasm_outputs qui retourne une vraie liste) : ce chemin n'a
+    # pas de consommateur ayant besoin de la liste complète en retour.
+    del mapping["lines"]
+    mapping["line_count"] = stats["line_count"]
+    return mapping
+
+
 def disassemble(
     binary_path: str,
     output_asm: str,
@@ -1346,8 +1747,17 @@ def disassemble(
     dwarf_lines: bool = False,
     cache_db_path: str | None = None,
     progress_callback: Callable[[dict], None] | None = None,
+    disasm_cache_sink: Callable[[dict], None] | None = None,
+    discovered_functions_sink: Callable[[list[dict]], None] | None = None,
 ) -> dict | None:
     """Désassemble un binaire, écrit le .asm et optionnellement un JSON de mapping.
+
+    `disasm_cache_sink`, si fourni, reçoit chaque ligne brute (mêmes champs
+    que DisasmCache.save_disasm) au fil de l'écriture — permet à l'appelant
+    (le CLI, cf. main()) d'alimenter DisasmCache dans la même passe
+    streaming plutôt que de redemander la liste complète après coup.
+    Ignoré sur le chemin de repli (pas de symboles) : l'appelant a de toute
+    façon déjà `result["lines"]` matérialisé dans ce cas.
 
     Args:
         binary_path: Chemin vers le binaire (ELF, Mach-O, PE)
@@ -1358,15 +1768,20 @@ def disassemble(
         arch: Ignoré (lief auto-détecte), gardé pour compatibilité API
 
     Returns:
-        {"path": str, "lines": list[dict]} ou None si échec
+        {"path": str, "lines": list[dict]} ou None si échec — sauf sur le
+        chemin streaming (symboles déjà connus), où "lines" est absent :
+        voir _stream_write_disasm_outputs.
     """
-    # Désassembler avec capstone + lief
+    _emit_progress(
+        progress_callback,
+        "parse",
+        "Lecture du blob brut" if raw_arch else "Lecture du binaire",
+        percent=5,
+    )
     try:
-        lines = disassemble_with_capstone(
+        resolved = _resolve_disasm_source(
             binary_path,
-            syntax=syntax,
             section=section,
-            progress_callback=progress_callback,
             raw_arch=raw_arch,
             raw_base_addr=raw_base_addr,
             raw_endian=raw_endian,
@@ -1375,9 +1790,18 @@ def disassemble(
         raise
     except Exception as exc:
         raise DisassemblyError(f"Unexpected disassembly error: {binary_path}") from exc
-
-    if lines is None:
+    if resolved is None:
         return None
+    code_bytes, base_addr, cs_arch, cs_mode = resolved
+    total_code_bytes = max(len(code_bytes), 1)
+    _emit_progress(
+        progress_callback,
+        "prepare",
+        "Blob brut chargé" if raw_arch else "Section de code chargée",
+        current=0,
+        total=total_code_bytes,
+        percent=10,
+    )
 
     # Charger le mapping DWARF ligne → source si demandé
     line_map: dict | None = None
@@ -1396,15 +1820,94 @@ def disassemble(
         annotations_db_path=annotations_db,
         raw_mode=bool(raw_arch),
     )
-    context = _augment_context_with_discovered_functions(
-        context,
-        lines,
-        binary_path,
-        raw_mode=bool(raw_arch),
-    )
+
     raw_info = get_raw_arch_info(raw_arch, raw_endian) if raw_arch else None
-    return _write_disasm_outputs(
-        lines,
+    raw_profile = (
+        {
+            "arch": raw_info.raw_name if raw_info else raw_arch,
+            "base_addr": raw_base_addr or "0x0",
+            "endian": raw_info.endian if raw_info else (raw_endian or "little"),
+        }
+        if raw_arch
+        else None
+    )
+
+    if raw_arch or not context.get("function_ranges"):
+        # Pas de symboles connus (ou blob brut) : la découverte heuristique
+        # de fonctions a besoin de la liste complète — chemin historique,
+        # non streaming (voir _augment_context_with_discovered_functions).
+        try:
+            md = capstone.Cs(cs_arch, cs_mode)
+            _apply_capstone_syntax(md, cs_arch, syntax)
+            if raw_arch:
+                md.skipdata = True
+            lines = list(
+                _iter_raw_instruction_dicts(
+                    md,
+                    cs_arch,
+                    code_bytes,
+                    base_addr,
+                    progress_callback=progress_callback,
+                    total_code_bytes=total_code_bytes,
+                    progress_message="Désassemblage du blob en cours"
+                    if raw_arch
+                    else "Désassemblage en cours",
+                )
+            )
+        except Exception as exc:
+            if raw_arch:
+                raise DisassemblyError(
+                    f"Raw disassembly failed: {binary_path}"
+                ) from exc
+            return None
+        _emit_progress(
+            progress_callback,
+            "disasm",
+            f"Désassemblage terminé ({len(lines)} instructions)",
+            current=total_code_bytes,
+            total=total_code_bytes,
+            percent=85,
+        )
+        context = _augment_context_with_discovered_functions(
+            context,
+            lines,
+            binary_path,
+            raw_mode=bool(raw_arch),
+            cache_db_path=cache_db_path,
+            discovered_functions_sink=discovered_functions_sink,
+        )
+        return _write_disasm_outputs(
+            lines,
+            binary_path,
+            output_asm,
+            output_mapping,
+            label_map=context["label_map"],
+            comment_map=context["comment_map"],
+            function_ranges=context["function_ranges"],
+            stack_frames=context["stack_frames"],
+            typed_struct_index=context["typed_struct_index"],
+            line_map=line_map,
+            progress_callback=progress_callback,
+            raw_profile=raw_profile,
+        )
+
+    # Chemin streaming : symboles déjà connus, jamais de liste complète
+    # matérialisée quelle que soit la taille du binaire (cf. #180).
+    def _make_instructions():
+        md = capstone.Cs(cs_arch, cs_mode)
+        _apply_capstone_syntax(md, cs_arch, syntax)
+        return _iter_raw_instruction_dicts(
+            md,
+            cs_arch,
+            code_bytes,
+            base_addr,
+            progress_callback=progress_callback,
+            total_code_bytes=total_code_bytes,
+            progress_message="Désassemblage en cours",
+        )
+
+    return _stream_write_disasm_outputs(
+        _make_instructions,
         binary_path,
         output_asm,
         output_mapping,
@@ -1415,13 +1918,8 @@ def disassemble(
         typed_struct_index=context["typed_struct_index"],
         line_map=line_map,
         progress_callback=progress_callback,
-        raw_profile={
-            "arch": raw_info.raw_name if raw_info else raw_arch,
-            "base_addr": raw_base_addr or "0x0",
-            "endian": raw_info.endian if raw_info else (raw_endian or "little"),
-        }
-        if raw_arch
-        else None,
+        raw_profile=raw_profile,
+        disasm_cache_sink=disasm_cache_sink,
     )
 
 
@@ -1527,10 +2025,9 @@ def main() -> int:
             hit = (
                 None
                 if getattr(args, "cache_write_only", False)
-                else cache.get_disasm(args.binary)
+                else cache.iter_disasm(args.binary)
             )
             if hit is not None:
-                _, cached_lines = hit
                 logger.debug("Cache hit — skipping disassembly")
                 _emit_progress(
                     progress_callback, "cache", "Cache SQLite trouvé", percent=20
@@ -1553,8 +2050,11 @@ def main() -> int:
                     cache_db_path=cache_db,
                     annotations_db_path=getattr(args, "annotations_db", "auto"),
                 )
-                _write_disasm_outputs(
-                    cached_lines,
+                # Deux passages streaming sur le même cache (attribution CFG
+                # puis écriture) : chaque appel refait une requête SQL
+                # indexée bon marché, jamais de liste complète en mémoire.
+                cached_result = _stream_write_disasm_outputs(
+                    lambda: cache.iter_disasm(args.binary)[1],
                     args.binary,
                     args.output,
                     getattr(args, "output_mapping", None),
@@ -1567,10 +2067,28 @@ def main() -> int:
                     progress_callback=progress_callback,
                 )
                 print(
-                    f"Disassembly written to {args.output} ({len(cached_lines)} instructions) [cached]"
+                    f"Disassembly written to {args.output} "
+                    f"({cached_result.get('line_count', 0)} instructions) [cached]"
                 )
                 return 0
-            # Cache miss → désassembler et sauvegarder
+            # Cache miss → désassembler, écrire .asm/mapping et alimenter le
+            # cache dans le même passage streaming (pas de second passage
+            # matérialisant toute la liste juste pour le cache). Rien n'est
+            # commité tant que le désassemblage n'a pas réussi en entier :
+            # une erreur en cours de route laisse le cache dans son état
+            # précédent (DELETE non commité, annulé à la fermeture).
+            cache_binary_id = cache.begin_disasm_replace(args.binary)
+            cache_batch: list[dict] = []
+            cache_line_count = 0
+
+            def _feed_cache(row: dict) -> None:
+                nonlocal cache_line_count
+                cache_batch.append(row)
+                cache_line_count += 1
+                if len(cache_batch) >= 5000:
+                    cache.append_disasm_rows(cache_binary_id, cache_batch)
+                    cache_batch.clear()
+
             result = disassemble(
                 args.binary,
                 args.output,
@@ -1585,11 +2103,28 @@ def main() -> int:
                 dwarf_lines=getattr(args, "dwarf_lines", False),
                 cache_db_path=cache_db,
                 progress_callback=progress_callback,
+                disasm_cache_sink=_feed_cache,
+                discovered_functions_sink=lambda fns: cache.save_functions(
+                    args.binary, fns
+                ),
             )
             if result is None:
                 logger.error("Disassembly failed.")
                 return 1
-            cache.save_disasm(args.binary, result["lines"])
+            if "lines" in result:
+                # Chemin de repli (pas de symboles) : disasm_cache_sink n'a
+                # pas été utilisé, result["lines"] est déjà matérialisé (sans
+                # champ "line" — save_disasm le numérote par énumération,
+                # comme avant ce refactor). Redélimite son propre
+                # begin_disasm_replace/commit, redondant mais inoffensif
+                # avec celui déjà ouvert ci-dessus.
+                cache.save_disasm(args.binary, result["lines"])
+                line_count = len(result["lines"])
+            else:
+                if cache_batch:
+                    cache.append_disasm_rows(cache_binary_id, cache_batch)
+                cache.commit_disasm()
+                line_count = result.get("line_count", cache_line_count)
             _emit_progress(
                 progress_callback,
                 "cache",
@@ -1597,7 +2132,7 @@ def main() -> int:
                 percent=100,
             )
             print(
-                f"Disassembly written to {args.output} ({len(result['lines'])} instructions) [cached]"
+                f"Disassembly written to {args.output} ({line_count} instructions) [cached]"
             )
             return 0
 
@@ -1627,7 +2162,10 @@ def main() -> int:
         )
         return 1
 
-    print(f"Disassembly written to {args.output} ({len(result['lines'])} instructions)")
+    line_count = (
+        len(result["lines"]) if "lines" in result else result.get("line_count", 0)
+    )
+    print(f"Disassembly written to {args.output} ({line_count} instructions)")
     if getattr(args, "output_mapping", None):
         print(f"Mapping written to {args.output_mapping}")
     return 0

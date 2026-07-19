@@ -23,9 +23,11 @@ Usage:
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import os
 import sqlite3
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +35,11 @@ from backends.shared.exceptions import CacheCorruptedError, CacheError
 from backends.shared.log import get_logger
 
 logger = get_logger(__name__)
+
+# Taille de batch pour l'insertion des lignes de désassemblage — évite de
+# matérialiser une liste complète de tuples avant d'insérer (cf. le même
+# motif dans backends/static/disasm/mapping_db.py).
+_DISASM_BATCH_SIZE = 5000
 
 # Version du schéma SQLite — incrémentée si changement incompatible
 SCHEMA_VERSION = 2
@@ -346,38 +353,115 @@ class DisasmCache:
         logger.debug("Cache hit: %s (%d lines)", binary_path, len(lines))
         return binary_id, lines
 
-    def save_disasm(self, binary_path: str, lines: list[dict]) -> int:
-        """Sauvegarde le désassemblage dans le cache.
+    def iter_disasm(self, binary_path: str) -> tuple[int, Iterator[dict]] | None:
+        """Variante streaming de get_disasm : ne matérialise jamais la liste
+        complète — pour un consommateur qui réécrit lui-même en flux (ex:
+        réapplication de labels sur cache hit sans reconstruire un gros
+        binaire en mémoire). Le curseur SQLite est retourné ouvert ; le
+        consommateur doit l'épuiser avant toute autre requête sur `self`.
+        """
+        row = self._get_valid_binary_row(binary_path)
+        if row is None:
+            return None
+        binary_id: int = row["id"]
+        cur = self._conn.execute(
+            """
+            SELECT addr, line, text, bytes, mnemonic, operands
+            FROM disasm_lines
+            WHERE binary_id=?
+            ORDER BY COALESCE(line, id), id
+            """,
+            (binary_id,),
+        )
+        first = cur.fetchone()
+        if first is None:
+            return None
 
-        Args:
-            binary_path: Chemin absolu vers le binaire
-            lines: Lignes de désassemblage
+        def _rows() -> Iterator[dict]:
+            for r in itertools.chain([first], cur):
+                yield {
+                    "addr": r["addr"],
+                    "line": r["line"],
+                    "text": r["text"],
+                    "bytes": r["bytes"] or "",
+                    "mnemonic": r["mnemonic"] or "",
+                    "operands": r["operands"] or "",
+                }
+
+        return binary_id, _rows()
+
+    def begin_disasm_replace(self, binary_path: str) -> int:
+        """Prépare une écriture streaming du désassemblage : assure l'entrée
+        binaire et vide ses anciennes lignes. À utiliser avec
+        append_disasm_rows()/commit_disasm() pour insérer par lots au fil de
+        l'eau sans jamais matérialiser la liste complète — le pendant
+        streaming de save_disasm(), pour un appelant qui produit déjà ses
+        lignes en flux (ex: le passage d'écriture de disasm.py).
 
         Returns:
             binary_id de l'entrée créée ou mise à jour.
         """
         binary_id = self._ensure_binary(binary_path)
         self._conn.execute("DELETE FROM disasm_lines WHERE binary_id=?", (binary_id,))
-        self._conn.executemany(
-            """
+        return binary_id
+
+    def append_disasm_rows(self, binary_id: int, rows: Iterable[dict]) -> int:
+        """Insère un lot de lignes (après begin_disasm_replace). Ne commite
+        pas — appeler commit_disasm() une fois tous les lots insérés.
+
+        Returns:
+            Nombre de lignes insérées dans ce lot.
+        """
+        insert_sql = """
             INSERT INTO disasm_lines(binary_id, addr, line, text, bytes, mnemonic, operands)
             VALUES(?,?,?,?,?,?,?)
-            """,
-            [
-                (
-                    binary_id,
-                    ln.get("addr", ""),
-                    ln.get("line", idx),
-                    ln.get("text", ""),
-                    ln.get("bytes", ""),
-                    ln.get("mnemonic", ""),
-                    ln.get("operands", ""),
-                )
-                for idx, ln in enumerate(lines, start=1)
-            ],
-        )
+        """
+        batch = [
+            (
+                binary_id,
+                r.get("addr", ""),
+                r.get("line", 0),
+                r.get("text", ""),
+                r.get("bytes", ""),
+                r.get("mnemonic", ""),
+                r.get("operands", ""),
+            )
+            for r in rows
+        ]
+        if batch:
+            self._conn.executemany(insert_sql, batch)
+        return len(batch)
+
+    def commit_disasm(self) -> None:
+        """Valide les lots insérés via append_disasm_rows()."""
         self._conn.commit()
-        logger.debug("Cache saved: %s (%d lines)", binary_path, len(lines))
+
+    def save_disasm(self, binary_path: str, lines: Iterable[dict]) -> int:
+        """Sauvegarde le désassemblage dans le cache.
+
+        Args:
+            binary_path: Chemin absolu vers le binaire
+            lines: Lignes de désassemblage (liste ou tout itérable à usage
+                unique — inséré par lots, jamais matérialisé en un seul bloc)
+
+        Returns:
+            binary_id de l'entrée créée ou mise à jour.
+        """
+        binary_id = self.begin_disasm_replace(binary_path)
+        batch: list[dict] = []
+        count = 0
+        for idx, ln in enumerate(lines, start=1):
+            row = dict(ln)
+            row.setdefault("line", idx)
+            batch.append(row)
+            count += 1
+            if len(batch) >= _DISASM_BATCH_SIZE:
+                self.append_disasm_rows(binary_id, batch)
+                batch = []
+        if batch:
+            self.append_disasm_rows(binary_id, batch)
+        self.commit_disasm()
+        logger.debug("Cache saved: %s (%d lines)", binary_path, count)
         return binary_id
 
     # ------------------------------------------------------------------
