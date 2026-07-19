@@ -124,6 +124,9 @@ async function main() {
     JWT_PRIVATE_KEY: privateKey,
     JWT_PUBLIC_KEY: publicKey,
     ADMIN_SECRET,
+    // Requis par app/services/content_keys.py (chiffrement des content_keys
+    // au repos) — une valeur aléatoire par run suffit, cette base est jetée.
+    CONTENT_KEY_ENCRYPTION_KEY: crypto.randomBytes(32).toString('base64url'),
     ENV: 'prod', // clés réelles fournies — pas besoin du repli dev
     LOG_LEVEL: 'WARNING',
   };
