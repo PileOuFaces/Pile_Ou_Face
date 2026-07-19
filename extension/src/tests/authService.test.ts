@@ -336,13 +336,10 @@ describe("AuthService._syncLicenseLeases()", () => {
     mod.AuthService._instance = null;
   });
 
-  it("overwrites content_keys with lease-derived DEKs on success", async () => {
+  it("overwrites cached content_keys with freshly lease-derived DEKs on success", async () => {
     const { svc, store } = makeAuthService({
-      storedKeys: { "pof.plugin-x": "legacy-key==" },
-      refreshResponse: {
-        access_token: "new-tok",
-        content_keys: { "pof.plugin-x": "legacy-key==" },
-      },
+      storedKeys: { "pof.plugin-x": "stale-cached-key==" },
+      refreshResponse: { access_token: "new-tok" },
     });
 
     const server = serverKeypair();
@@ -377,23 +374,23 @@ describe("AuthService._syncLicenseLeases()", () => {
     await svc.refresh();
 
     const contentKeys = JSON.parse(store["pof.auth.contentKeys"]);
-    expect(contentKeys["pof.plugin-x"]).to.not.equal("legacy-key==");
+    expect(contentKeys["pof.plugin-x"]).to.not.equal("stale-cached-key==");
     expect(Buffer.from(contentKeys["pof.plugin-x"], "base64")).to.have.lengthOf(32);
   });
 
-  it("keeps the legacy content_keys untouched when the server doesn't support enroll/lease yet", async () => {
+  it("does not touch cached content_keys when the lease sync fails (no bypass, no legacy fallback)", async () => {
     const { svc, store } = makeAuthService({
-      refreshResponse: {
-        access_token: "new-tok",
-        content_keys: { "pof.plugin-x": "legacy-key==" },
-      },
+      storedKeys: { "pof.plugin-x": "stale-cached-key==" },
+      refreshResponse: { access_token: "new-tok" },
     });
     sinon.stub(svc, "_postJsonAuthenticated").rejects(Object.assign(new Error("Not Found"), { status: 404 }));
 
     const ok = await svc.refresh();
 
     expect(ok).to.equal(true);
-    expect(JSON.parse(store["pof.auth.contentKeys"])).to.deep.equal({ "pof.plugin-x": "legacy-key==" });
+    // _syncLicenseLeases échoue avant d'écrire quoi que ce soit — la valeur
+    // en cache reste celle d'avant, ni écrasée ni "réparée" par un repli.
+    expect(JSON.parse(store["pof.auth.contentKeys"])).to.deep.equal({ "pof.plugin-x": "stale-cached-key==" });
   });
 
   it("persists the same device_id across multiple syncs (idempotent identity)", async () => {
@@ -426,7 +423,7 @@ describe("AuthService._syncLicenseLeases()", () => {
     expect(store["pof.auth.leaseSyncedAt"]).to.exist;
   });
 
-  it("does NOT set leaseSyncedAt when the sync fails (server not migrated yet)", async () => {
+  it("does NOT set leaseSyncedAt when the sync fails (network error, server down, etc.)", async () => {
     const { svc, store } = makeAuthService({
       refreshResponse: { access_token: "new-tok", content_keys: {} },
     });
@@ -484,15 +481,18 @@ describe("AuthService.getContentKeys() — bounded offline window", () => {
     expect(await svc.getContentKeys()).to.deep.equal({});
   });
 
-  it("does not apply the offline window to legacy content_keys (no leaseSyncedAt yet)", async () => {
+  it("does not apply the offline cutoff when leaseSyncedAt is missing entirely (defensive, not a legacy path)", async () => {
+    // Ne devrait plus jamais arriver en pratique (_syncLicenseLeases pose
+    // toujours leaseSyncedAt avant contentKeys), mais si l'un des deux
+    // manque on ne doit pas bloquer sur une hypothèse de "trop vieux".
     const { secrets } = createSecrets({
-      "pof.auth.contentKeys": JSON.stringify({ "pof.x": "legacy-key==" }),
+      "pof.auth.contentKeys": JSON.stringify({ "pof.x": "key==" }),
     });
     const { AuthService } = proxyquire("../shared/authService", { vscode: {} });
     AuthService._instance = null;
     const svc = AuthService.getInstance(secrets, "http://localhost:8000");
 
-    expect(await svc.getContentKeys()).to.deep.equal({ "pof.x": "legacy-key==" });
+    expect(await svc.getContentKeys()).to.deep.equal({ "pof.x": "key==" });
   });
 
   it("clears leaseSyncedAt on logout", async () => {
