@@ -2,6 +2,7 @@
 const { expect } = require("chai");
 const proxyquire = require("proxyquire").noCallThru();
 const sinon = require("sinon");
+const crypto = require("crypto");
 
 // ---------------------------------------------------------------------------
 // Existing suite — loopback fallback
@@ -295,5 +296,121 @@ describe("AuthService.refresh() — refresh token rotation", () => {
 
     expect(ok).to.equal(true);
     expect(store["pof.auth.refreshToken"]).to.equal("fake-refresh");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// New suite — _syncLicenseLeases() (XSYNC-LIC-001, Pile_Ou_Face#70)
+// ---------------------------------------------------------------------------
+describe("AuthService._syncLicenseLeases()", () => {
+  function b64url(buf) {
+    return buf
+      .toString("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+  }
+
+  function signLease(payload, signingPrivateKeyPem) {
+    const header = { alg: "RS256", typ: "JWT" };
+    const headerB64 = b64url(Buffer.from(JSON.stringify(header)));
+    const payloadB64 = b64url(Buffer.from(JSON.stringify(payload)));
+    const signingInput = `${headerB64}.${payloadB64}`;
+    const signature = crypto.sign("RSA-SHA256", Buffer.from(signingInput), signingPrivateKeyPem);
+    return `${signingInput}.${b64url(signature)}`;
+  }
+
+  function serverKeypair() {
+    const { publicKey, privateKey } = crypto.generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      publicKeyEncoding: { type: "spki", format: "pem" },
+      privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    });
+    const jwk = crypto.createPublicKey(publicKey).export({ format: "jwk" });
+    return { publicKey, privateKey, jwks: { keys: [{ kty: "RSA", n: jwk.n, e: jwk.e, kid: "1" }] } };
+  }
+
+  afterEach(() => {
+    sinon.restore();
+    const mod = require("../shared/authService");
+    mod.AuthService._instance = null;
+  });
+
+  it("overwrites content_keys with lease-derived DEKs on success", async () => {
+    const { svc, store } = makeAuthService({
+      storedKeys: { "pof.plugin-x": "legacy-key==" },
+      refreshResponse: {
+        access_token: "new-tok",
+        content_keys: { "pof.plugin-x": "legacy-key==" },
+      },
+    });
+
+    const server = serverKeypair();
+    sinon.stub(svc, "_fetchJwks").resolves(server.jwks);
+
+    let capturedPublicKey;
+    sinon.stub(svc, "_postJsonAuthenticated").callsFake(async (baseUrl, path, token, payload) => {
+      if (path === "/plugins/enroll") {
+        capturedPublicKey = payload.public_key;
+        return { device_id: payload.device_id };
+      }
+      if (path === "/plugins/lease") {
+        const dek = crypto.randomBytes(32);
+        const wrapped = crypto.publicEncrypt(
+          { key: capturedPublicKey, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha256" },
+          dek,
+        );
+        const now = Math.floor(Date.now() / 1000);
+        const lease = signLease(
+          { device_id: payload.device_id, plugin_id: "pof.plugin-x", iat: now, exp: now + 3600 },
+          server.privateKey,
+        );
+        return {
+          plugins: {
+            "pof.plugin-x": { wrapped_dek: wrapped.toString("base64"), lease },
+          },
+        };
+      }
+      throw new Error(`unexpected path: ${path}`);
+    });
+
+    await svc.refresh();
+
+    const contentKeys = JSON.parse(store["pof.auth.contentKeys"]);
+    expect(contentKeys["pof.plugin-x"]).to.not.equal("legacy-key==");
+    expect(Buffer.from(contentKeys["pof.plugin-x"], "base64")).to.have.lengthOf(32);
+  });
+
+  it("keeps the legacy content_keys untouched when the server doesn't support enroll/lease yet", async () => {
+    const { svc, store } = makeAuthService({
+      refreshResponse: {
+        access_token: "new-tok",
+        content_keys: { "pof.plugin-x": "legacy-key==" },
+      },
+    });
+    sinon.stub(svc, "_postJsonAuthenticated").rejects(Object.assign(new Error("Not Found"), { status: 404 }));
+
+    const ok = await svc.refresh();
+
+    expect(ok).to.equal(true);
+    expect(JSON.parse(store["pof.auth.contentKeys"])).to.deep.equal({ "pof.plugin-x": "legacy-key==" });
+  });
+
+  it("persists the same device_id across multiple syncs (idempotent identity)", async () => {
+    const { svc } = makeAuthService({
+      refreshResponse: { access_token: "new-tok", content_keys: {} },
+    });
+    sinon.stub(svc, "_fetchJwks").resolves({ keys: [] });
+    const deviceIds = [];
+    sinon.stub(svc, "_postJsonAuthenticated").callsFake(async (baseUrl, path, token, payload) => {
+      if (path === "/plugins/enroll") deviceIds.push(payload.device_id);
+      if (path === "/plugins/lease") deviceIds.push(payload.device_id);
+      return { plugins: {} };
+    });
+
+    await svc.refresh();
+    await svc.refresh();
+
+    expect(new Set(deviceIds).size).to.equal(1);
   });
 });

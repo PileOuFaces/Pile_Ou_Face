@@ -5,12 +5,21 @@
  * @brief Authentification avec le serveur POF Auth. Stocke JWT + content_keys dans SecretStorage.
  */
 const vscode = require('vscode');
+const {
+  generateDeviceKeypair,
+  generateDeviceId,
+  unwrapDek,
+  verifyLeaseJwt,
+} = require('./deviceLicensing');
 
 const KEY_ACCESS_TOKEN  = 'pof.auth.accessToken';
 const KEY_REFRESH_TOKEN = 'pof.auth.refreshToken';
 const KEY_CONTENT_KEYS  = 'pof.auth.contentKeys';
 const KEY_EMAIL             = 'pof.auth.email';
 const KEY_KEYS_VALIDATED_AT = 'pof.auth.keysValidatedAt';
+const KEY_DEVICE_ID          = 'pof.auth.deviceId';
+const KEY_DEVICE_PRIVATE_KEY = 'pof.auth.devicePrivateKey';
+const KEY_DEVICE_PUBLIC_KEY  = 'pof.auth.devicePublicKey';
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 
 class AuthService {
@@ -37,6 +46,7 @@ class AuthService {
         const data = await this._postJson(baseUrl, '/auth/login', { email, password });
         this.serverUrl = baseUrl;
         await this._store(data.access_token, data.refresh_token, data.content_keys, email);
+        await this._syncLicenseLeases(data.access_token);
         this._scheduleRefresh();
         return;
       } catch (error) {
@@ -60,6 +70,9 @@ class AuthService {
     await this.secrets.delete(KEY_CONTENT_KEYS);
     await this.secrets.delete(KEY_EMAIL);
     await this.secrets.delete(KEY_KEYS_VALIDATED_AT);
+    // La paire de clés d'installation (KEY_DEVICE_*) N'EST PAS effacée : c'est une
+    // identité de machine, pas une session utilisateur. Se reconnecter avec un
+    // autre compte ré-enrôle le même device_id (voir _syncLicenseLeases).
     this._clearRefreshTimer();
   }
 
@@ -103,6 +116,7 @@ class AuthService {
       // s'il y en a un, sinon garder l'ancien (compat avec un serveur qui n'a
       // pas encore la rotation).
       await this._store(data.access_token, data.refresh_token || refreshToken, data.content_keys);
+      await this._syncLicenseLeases(data.access_token);
       this._scheduleRefresh();
       return true;
     } catch { return false; }
@@ -136,6 +150,7 @@ class AuthService {
     try {
       const data = await this._postJson(this.serverUrl, '/auth/refresh', { refresh_token: refreshToken });
       await this._store(data.access_token, data.refresh_token || refreshToken, data.content_keys || {});
+      await this._syncLicenseLeases(data.access_token);
       return { refreshed: true, revoked: false };
     } catch (err) {
       const status = err?.status ?? 0;
@@ -151,6 +166,101 @@ class AuthService {
       // Erreur réseau — mode gracieux, on garde les clés existantes
       return { refreshed: false, revoked: false };
     }
+  }
+
+  /**
+   * Licence par installation (XSYNC-LIC-001, Pile_Ou_Face#70) : enrôle cette
+   * installation puis récupère un lease + DEK enveloppé par plugin autorisé,
+   * en remplacement du content_key partagé déjà stocké par _store().
+   *
+   * Best-effort et silencieux en cas d'échec (serveur pas encore migré,
+   * réseau indisponible, etc.) : les content_keys legacy posés par _store()
+   * juste avant restent en place — voir le design doc §4 pour la fenêtre
+   * de transition auth → host → plugins.
+   */
+  async _syncLicenseLeases(accessToken) {
+    if (!accessToken) return;
+    try {
+      const { deviceId, privateKeyPem, publicKeyPem } = await this._getOrCreateDeviceIdentity();
+      await this._postJsonAuthenticated(this.serverUrl, '/plugins/enroll', accessToken, {
+        device_id: deviceId,
+        public_key: publicKeyPem,
+      });
+      const leaseData = await this._postJsonAuthenticated(this.serverUrl, '/plugins/lease', accessToken, {
+        device_id: deviceId,
+      });
+      const jwks = await this._fetchJwks();
+      const contentKeys = {};
+      for (const [pluginId, entry] of Object.entries(leaseData.plugins || {})) {
+        try {
+          verifyLeaseJwt(entry.lease, jwks, deviceId, pluginId);
+          contentKeys[pluginId] = unwrapDek(entry.wrapped_dek, privateKeyPem);
+        } catch (err) {
+          // Un lease individuel invalide/expiré ne doit pas faire échouer les
+          // autres plugins — celui-ci reste simplement absent des content_keys.
+          this._log(`lease invalide pour ${pluginId}: ${err.message}`);
+        }
+      }
+      if (Object.keys(contentKeys).length > 0) {
+        await this.secrets.store(KEY_CONTENT_KEYS, JSON.stringify(contentKeys));
+      }
+    } catch (err) {
+      this._log(`sync licence par installation ignorée: ${err.message}`);
+    }
+  }
+
+  _log(message) {
+    // Pas de canal de log injecté dans ce service — évite d'imposer une
+    // dépendance vscode.OutputChannel pour un chemin best-effort. À
+    // remplacer par un vrai logger si ce chemin devient bruyant en pratique.
+    if (typeof console !== 'undefined' && console.warn) {
+      console.warn(`[AuthService] ${message}`);
+    }
+  }
+
+  async _getOrCreateDeviceIdentity() {
+    let deviceId = await this.secrets.get(KEY_DEVICE_ID);
+    let privateKeyPem = await this.secrets.get(KEY_DEVICE_PRIVATE_KEY);
+    let publicKeyPem = await this.secrets.get(KEY_DEVICE_PUBLIC_KEY);
+    if (deviceId && privateKeyPem && publicKeyPem) {
+      return { deviceId, privateKeyPem, publicKeyPem };
+    }
+    deviceId = generateDeviceId();
+    const keypair = generateDeviceKeypair();
+    privateKeyPem = keypair.privateKeyPem;
+    publicKeyPem = keypair.publicKeyPem;
+    await this.secrets.store(KEY_DEVICE_ID, deviceId);
+    await this.secrets.store(KEY_DEVICE_PRIVATE_KEY, privateKeyPem);
+    await this.secrets.store(KEY_DEVICE_PUBLIC_KEY, publicKeyPem);
+    return { deviceId, privateKeyPem, publicKeyPem };
+  }
+
+  async _fetchJwks() {
+    const cacheTtlMs = 3600_000;
+    if (this._jwksCache && Date.now() - this._jwksCache.fetchedAt < cacheTtlMs) {
+      return this._jwksCache.jwks;
+    }
+    const res = await fetch(`${String(this.serverUrl || '').replace(/\/+$/, '')}/auth/jwks`);
+    if (!res.ok) throw new Error(`jwks fetch failed: ${res.status}`);
+    const jwks = await res.json();
+    this._jwksCache = { jwks, fetchedAt: Date.now() };
+    return jwks;
+  }
+
+  async _postJsonAuthenticated(baseUrl, path, accessToken, payload) {
+    const res = await fetch(`${String(baseUrl || '').replace(/\/+$/, '')}${path}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw Object.assign(new Error(String(err['detail'] ?? `Auth failed: ${res.status}`)), { status: res.status });
+    }
+    return res.json();
   }
 
   _scheduleRefresh() {

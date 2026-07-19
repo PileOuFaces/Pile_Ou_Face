@@ -298,6 +298,7 @@
     "test:e2e:audit": "node scripts/e2e/run-runtime-audit.js",
     "test:e2e:audit:coverage": "node scripts/e2e/runtime-audit-feature-coverage.js",
     "test:e2e:audit:workflow": "node scripts/e2e/runtime-audit-workflow-report.js",
+    "test:e2e:auth-licensing": "tsx scripts/e2e/authLicensingInteropE2E.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
