@@ -242,7 +242,14 @@ jobs:
       - name: Run authService/deviceLicensing tests on Windows
         if: steps.filter.outputs.relevant == 'true'
         working-directory: ./extension
-        run: npx tsx node_modules/.bin/_mocha "src/tests/authService.test.ts" "src/tests/deviceLicensing.test.ts" --require src/tests/setup.ts --exit
+        shell: bash
+        # node_modules/.bin/_mocha est le shim POSIX généré par npm ; sur
+        # windows-latest le shell par défaut (pwsh) le passe tel quel à tsx,
+        # qui essaie de le parser comme du JS et échoue ("missing ) after
+        # argument list" — c'est le script shell, pas le vrai fichier JS).
+        # On force bash (git-bash, présent sur windows-latest) et on pointe
+        # directement sur le vrai fichier pour éviter le shim.
+        run: npx tsx node_modules/mocha/bin/_mocha "src/tests/authService.test.ts" "src/tests/deviceLicensing.test.ts" --require src/tests/setup.ts --exit
 
   # ══════════════════════════════════════════════════════════════
   # 🦄 Régressions Unicorn x86_64 — PRs uniquement, Linux

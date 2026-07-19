@@ -4,7 +4,8 @@
  * @file authService.ts
  * @brief Authentification avec le serveur POF Auth. Stocke JWT + content_keys dans SecretStorage.
  * Interop réelle avec Pile_ou_Face_auth couverte par le job CI "Auth Licensing Interop E2E"
- * (npm run test:e2e:auth-licensing) — déclenché uniquement quand ce fichier change.
+ * (npm run test:e2e:auth-licensing) ; couverture Windows par "Auth Licensing Windows Unit
+ * Tests" — les deux déclenchés uniquement quand ce fichier change.
  */
 const vscode = require('vscode');
 const {
