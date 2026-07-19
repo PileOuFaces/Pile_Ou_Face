@@ -434,12 +434,27 @@ jobs:
             echo "relevant=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # La condition ne peut pas référencer `secrets` directement dans un `if:`
+      # (context non disponible à cet endroit) — on le teste ici et on
+      # propage le résultat via un output de step, seul context garanti
+      # disponible dans les `if:` suivants.
+      - name: Check secret configured
+        id: secret_check
+        env:
+          AUTH_REPO_READONLY_PAT: ${{ secrets.AUTH_REPO_READONLY_PAT }}
+        run: |
+          if [ -n "$AUTH_REPO_READONLY_PAT" ]; then
+            echo "has_pat=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_pat=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Report missing secret
-        if: steps.filter.outputs.relevant == 'true' && secrets.AUTH_REPO_READONLY_PAT == ''
+        if: steps.filter.outputs.relevant == 'true' && steps.secret_check.outputs.has_pat == 'false'
         run: echo "::warning::AUTH_REPO_READONLY_PAT non configuré — interop e2e ignoré pour cette PR malgré un changement pertinent."
 
       - name: Setup Node.js
-        if: steps.filter.outputs.relevant == 'true' && secrets.AUTH_REPO_READONLY_PAT != ''
+        if: steps.filter.outputs.relevant == 'true' && steps.secret_check.outputs.has_pat == 'true'
         uses: actions/setup-node@v6
         with:
           node-version: '22.x'
@@ -447,13 +462,13 @@ jobs:
           cache-dependency-path: extension/package-lock.json
 
       - name: Setup Python
-        if: steps.filter.outputs.relevant == 'true' && secrets.AUTH_REPO_READONLY_PAT != ''
+        if: steps.filter.outputs.relevant == 'true' && steps.secret_check.outputs.has_pat == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Checkout sibling auth repo
-        if: steps.filter.outputs.relevant == 'true' && secrets.AUTH_REPO_READONLY_PAT != ''
+        if: steps.filter.outputs.relevant == 'true' && steps.secret_check.outputs.has_pat == 'true'
         uses: actions/checkout@v5
         with:
           repository: PileOuFaces/Pile_ou_Face_auth
@@ -461,14 +476,14 @@ jobs:
           path: pof-auth-sibling
 
       - name: Install dependencies
-        if: steps.filter.outputs.relevant == 'true' && secrets.AUTH_REPO_READONLY_PAT != ''
+        if: steps.filter.outputs.relevant == 'true' && steps.secret_check.outputs.has_pat == 'true'
         run: |
           python3 -m venv pof-auth-sibling/.venv
           pof-auth-sibling/.venv/bin/pip install -e ./pof-auth-sibling
           cd extension && npm ci
 
       - name: Run real host<->auth interop e2e
-        if: steps.filter.outputs.relevant == 'true' && secrets.AUTH_REPO_READONLY_PAT != ''
+        if: steps.filter.outputs.relevant == 'true' && steps.secret_check.outputs.has_pat == 'true'
         working-directory: ./extension
         env:
           AUTH_REPO_PATH: ${{ github.workspace }}/pof-auth-sibling
