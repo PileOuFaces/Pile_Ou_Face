@@ -177,6 +177,17 @@ async function main() {
     assert(keys[pluginId] === contentKeyB64, `unwrapped DEK should match the seeded content_key (got ${keys[pluginId]})`);
     console.log('[authLicensingInteropE2E] PASS: real enroll + lease + RSA-OAEP unwrap + JWT verification round-trip matches');
 
+    // Mode offline borné (design doc §5) : au-delà de 7 jours sans sync réussie,
+    // les content_keys dérivées du lease ne doivent plus être servies, même si
+    // elles sont toujours en cache. On simule le vieillissement du timestamp
+    // (attendre 7 jours pour de vrai n'est pas praticable dans un test).
+    const realSyncedAt = await secrets.get('pof.auth.leaseSyncedAt');
+    await secrets.store('pof.auth.leaseSyncedAt', String(Date.now() - 8 * 24 * 3600_000));
+    const keysAfterOfflineWindow = await svc.getContentKeys();
+    assert(Object.keys(keysAfterOfflineWindow).length === 0, 'content_keys must be refused once the 7-day offline window is exceeded');
+    await secrets.store('pof.auth.leaseSyncedAt', realSyncedAt);
+    console.log('[authLicensingInteropE2E] PASS: bounded offline window refuses stale lease-derived content_keys');
+
     // La révocation doit couper l'émission de nouveaux leases — vérifie que le
     // chemin d'erreur (403) interagit correctement de bout en bout lui aussi,
     // pas seulement le chemin nominal ci-dessus.

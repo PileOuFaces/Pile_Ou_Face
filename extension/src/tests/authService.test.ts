@@ -413,4 +413,102 @@ describe("AuthService._syncLicenseLeases()", () => {
 
     expect(new Set(deviceIds).size).to.equal(1);
   });
+
+  it("marks a successful lease sync with leaseSyncedAt even when the user has zero authorized plugins", async () => {
+    const { svc, store } = makeAuthService({
+      refreshResponse: { access_token: "new-tok", content_keys: {} },
+    });
+    sinon.stub(svc, "_fetchJwks").resolves({ keys: [] });
+    sinon.stub(svc, "_postJsonAuthenticated").resolves({ plugins: {} });
+
+    await svc.refresh();
+
+    expect(store["pof.auth.leaseSyncedAt"]).to.exist;
+  });
+
+  it("does NOT set leaseSyncedAt when the sync fails (server not migrated yet)", async () => {
+    const { svc, store } = makeAuthService({
+      refreshResponse: { access_token: "new-tok", content_keys: {} },
+    });
+    sinon.stub(svc, "_postJsonAuthenticated").rejects(Object.assign(new Error("Not Found"), { status: 404 }));
+
+    await svc.refresh();
+
+    expect(store["pof.auth.leaseSyncedAt"]).to.equal(undefined);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// New suite — bounded offline mode for lease-derived content_keys (§5 design doc)
+// ---------------------------------------------------------------------------
+describe("AuthService.getContentKeys() — bounded offline window", () => {
+  function createSecrets(initial = {}) {
+    const store = { ...initial };
+    return {
+      store,
+      secrets: {
+        async get(key) { return store[key]; },
+        async store(key, value) { store[key] = value; },
+        async delete(key) { delete store[key]; },
+      },
+    };
+  }
+
+  afterEach(() => {
+    const mod = require("../shared/authService");
+    mod.AuthService._instance = null;
+  });
+
+  it("serves lease-derived content_keys when the last sync is recent", async () => {
+    const { secrets } = createSecrets({
+      "pof.auth.contentKeys": JSON.stringify({ "pof.x": "key==" }),
+      "pof.auth.leaseSyncedAt": String(Date.now() - 1000),
+    });
+    const { AuthService } = proxyquire("../shared/authService", { vscode: {} });
+    AuthService._instance = null;
+    const svc = AuthService.getInstance(secrets, "http://localhost:8000");
+
+    expect(await svc.getContentKeys()).to.deep.equal({ "pof.x": "key==" });
+  });
+
+  it("refuses lease-derived content_keys once the offline window (7 days) is exceeded", async () => {
+    const eightDaysAgo = Date.now() - 8 * 24 * 3600_000;
+    const { secrets } = createSecrets({
+      "pof.auth.contentKeys": JSON.stringify({ "pof.x": "key==" }),
+      "pof.auth.leaseSyncedAt": String(eightDaysAgo),
+    });
+    const { AuthService } = proxyquire("../shared/authService", { vscode: {} });
+    AuthService._instance = null;
+    const svc = AuthService.getInstance(secrets, "http://localhost:8000");
+
+    expect(await svc.getContentKeys()).to.deep.equal({});
+  });
+
+  it("does not apply the offline window to legacy content_keys (no leaseSyncedAt yet)", async () => {
+    const { secrets } = createSecrets({
+      "pof.auth.contentKeys": JSON.stringify({ "pof.x": "legacy-key==" }),
+    });
+    const { AuthService } = proxyquire("../shared/authService", { vscode: {} });
+    AuthService._instance = null;
+    const svc = AuthService.getInstance(secrets, "http://localhost:8000");
+
+    expect(await svc.getContentKeys()).to.deep.equal({ "pof.x": "legacy-key==" });
+  });
+
+  it("clears leaseSyncedAt on logout", async () => {
+    const { secrets, store } = createSecrets({
+      "pof.auth.refreshToken": "tok",
+      "pof.auth.leaseSyncedAt": String(Date.now()),
+    });
+    const { AuthService } = proxyquire("../shared/authService", { vscode: {} });
+    AuthService._instance = null;
+    const originalFetch = global.fetch;
+    global.fetch = async () => ({ ok: true, json: async () => ({}) });
+    const svc = AuthService.getInstance(secrets, "http://localhost:8000");
+
+    await svc.logout();
+    global.fetch = originalFetch;
+
+    expect(store["pof.auth.leaseSyncedAt"]).to.equal(undefined);
+  });
 });

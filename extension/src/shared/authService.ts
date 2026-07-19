@@ -20,7 +20,13 @@ const KEY_KEYS_VALIDATED_AT = 'pof.auth.keysValidatedAt';
 const KEY_DEVICE_ID          = 'pof.auth.deviceId';
 const KEY_DEVICE_PRIVATE_KEY = 'pof.auth.devicePrivateKey';
 const KEY_DEVICE_PUBLIC_KEY  = 'pof.auth.devicePublicKey';
+const KEY_LEASE_SYNCED_AT    = 'pof.auth.leaseSyncedAt';
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+
+// Mode offline borné (XSYNC-LIC-001, design doc §5) : au-delà de cette durée
+// sans synchronisation réussie du lease, les content_keys dérivées du lease
+// ne sont plus servies — blocage explicite, pas de fallback permissif indéfini.
+const LEASE_OFFLINE_GRACE_MS = 7 * 24 * 3600_000;
 
 class AuthService {
   constructor(secrets, serverUrl) {
@@ -70,15 +76,33 @@ class AuthService {
     await this.secrets.delete(KEY_CONTENT_KEYS);
     await this.secrets.delete(KEY_EMAIL);
     await this.secrets.delete(KEY_KEYS_VALIDATED_AT);
+    await this.secrets.delete(KEY_LEASE_SYNCED_AT);
     // La paire de clés d'installation (KEY_DEVICE_*) N'EST PAS effacée : c'est une
     // identité de machine, pas une session utilisateur. Se reconnecter avec un
     // autre compte ré-enrôle le même device_id (voir _syncLicenseLeases).
     this._clearRefreshTimer();
   }
 
+  /**
+   * Mode offline borné (design doc §5) : si des content_keys dérivées d'un
+   * lease existent mais que la dernière synchronisation réussie remonte à
+   * plus de LEASE_OFFLINE_GRACE_MS (7 jours), on refuse de les servir plutôt
+   * que de les garder indéfiniment — blocage explicite, pas un fallback
+   * permissif. N'affecte pas les content_keys legacy (server pas encore
+   * migré) : KEY_LEASE_SYNCED_AT n'est posé que par un vrai succès du
+   * chemin lease (_syncLicenseLeases), jamais par le login/refresh legacy.
+   */
   async getContentKeys() {
     const raw = await this.secrets.get(KEY_CONTENT_KEYS);
     if (!raw) { return {}; }
+    const syncedAtRaw = await this.secrets.get(KEY_LEASE_SYNCED_AT);
+    if (syncedAtRaw) {
+      const age = Date.now() - Number(syncedAtRaw);
+      if (age > LEASE_OFFLINE_GRACE_MS) {
+        this._log(`fenêtre offline dépassée (${Math.floor(age / 3600_000)}h) — content_keys refusées`);
+        return {};
+      }
+    }
     try { return JSON.parse(raw); }
     catch { return {}; }
   }
@@ -161,6 +185,7 @@ class AuthService {
         await this.secrets.delete(KEY_CONTENT_KEYS);
         await this.secrets.delete(KEY_EMAIL);
         await this.secrets.delete(KEY_KEYS_VALIDATED_AT);
+        await this.secrets.delete(KEY_LEASE_SYNCED_AT);
         return { refreshed: false, revoked: true };
       }
       // Erreur réseau — mode gracieux, on garde les clés existantes
@@ -201,6 +226,10 @@ class AuthService {
           this._log(`lease invalide pour ${pluginId}: ${err.message}`);
         }
       }
+      // Le round-trip enroll+lease+jwks a réussi (indépendamment du nombre de
+      // plugins autorisés) : c'est ce qui fait repartir la fenêtre offline à
+      // zéro, pas le fait d'avoir des content_keys à écrire.
+      await this.secrets.store(KEY_LEASE_SYNCED_AT, String(Date.now()));
       if (Object.keys(contentKeys).length > 0) {
         await this.secrets.store(KEY_CONTENT_KEYS, JSON.stringify(contentKeys));
       }
