@@ -1,7 +1,5 @@
 import {
-  POINTER_HEX_RE,
   addressesEqual,
-  clean,
   cleanValue,
   hasCorruptionSignal,
   normalizeEntryKind,
@@ -11,14 +9,23 @@ import {
   uniqueStrings
 } from './stackWorkspaceUtils.js';
 
+// Corruption of a control slot (saved_bp / return_address) is decided
+// EXCLUSIVELY by the backend (return_address_corrupted / saved_bp_corrupted
+// / control_hijack / fatal_crash diagnostics, gated on real crossing-write
+// evidence -- see diagnostics.py::_overflow_has_runtime_evidence). This
+// function must never emit a corruption verdict itself: it only surfaces a
+// non-authoritative "suspect" signal (a write/change was observed on this
+// slot's memory this step) for informative display. The only place allowed
+// to promote a slot to CORROMPU is annotateEntriesWithDiagnostics below,
+// from an actual backend diagnostic.
 export function validateReturnAddressIntegrity({ kind, start, size, observations } = {}) {
   if (normalizeEntryKind(kind) !== 'return_address') {
-    return { corrupted: false, suspect: false, exactObservation: null };
+    return { suspect: false, exactObservation: null };
   }
   const slotAddress = parseBigIntAddr(start);
   const width = readPositiveInt(size);
   if (slotAddress === null || width === null) {
-    return { corrupted: false, suspect: false, exactObservation: null };
+    return { suspect: false, exactObservation: null };
   }
 
   const exactObservation = [...(Array.isArray(observations) ? observations : [])]
@@ -26,39 +33,21 @@ export function validateReturnAddressIntegrity({ kind, start, size, observations
     .sort((left, right) => resolveSourcePriority(right?.source) - resolveSourcePriority(left?.source))[0] ?? null;
 
   if (!exactObservation) {
-    return { corrupted: false, suspect: false, exactObservation: null };
+    return { suspect: false, exactObservation: null };
   }
 
-  const pointerKind = clean(exactObservation?.pointerKind).toLowerCase();
-  const hexValue = clean(exactObservation?.displayValue || exactObservation?.rawValue);
-  const hasWriteSignal = Boolean(
-    exactObservation?.recentWrite
-    || uniqueStrings(exactObservation?.flags).includes('recent_write')
-  );
-  const looksBadPointer = Boolean(
-    hexValue
-    && POINTER_HEX_RE.test(hexValue)
-    && /(4141|4242|4343|4444|4545|9090)/i.test(hexValue.replace(/^0x/i, ''))
-  );
-
-  const corrupted = Boolean(
-    hasWriteSignal
-    && (!pointerKind || pointerKind !== 'code')
-    && (looksBadPointer || pointerKind === 'stack' || pointerKind === 'heap' || pointerKind === 'data' || pointerKind === 'unknown')
-  );
-
   return {
-    corrupted,
-    suspect: !corrupted && hasWriteSignal && hasCorruptionSignal([exactObservation]),
+    suspect: hasCorruptionSignal([exactObservation]),
     exactObservation
   };
 }
 
+// Non-verdict, informative badges only. CORROMPU is never added here --
+// see annotateEntriesWithDiagnostics, the sole source of truth for control
+// slot corruption.
 export function buildEntryBadges(entry) {
   const badges = [];
-  const integrity = entry?.returnAddressIntegrity || { corrupted: false };
-  if (integrity.corrupted) badges.push('CORROMPU');
-  else if (Array.isArray(entry?.flags) && entry.flags.includes('changed')) badges.push('CHANGED');
+  if (Array.isArray(entry?.flags) && entry.flags.includes('changed')) badges.push('CHANGED');
   else if (Array.isArray(entry?.flags) && entry.flags.includes('recent_write')) badges.push('WRITE');
   else if (Array.isArray(entry?.flags) && entry.flags.includes('recent_read')) badges.push('READ');
   if (normalizeEntryKind(entry?.kind) === 'return_address') badges.push('RET');

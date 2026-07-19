@@ -102,9 +102,10 @@ export function buildDetailPayload({
   const mutations = buildMutationSummary(entry?.flags);
   if (mutations.length) rows.push({ label: 'Mutation', value: mutations.join(', ') });
 
-  if (entry?.returnAddressIntegrity?.corrupted) {
-    rows.push({ label: 'Statut', value: 'corrompu' });
-  } else if (entry?.returnAddressIntegrity?.suspect) {
+  // Only a backend diagnostic (attached later by annotateEntriesWithDiagnostics,
+  // via the 'Diagnostic' row above) may confirm corruption. This local
+  // signal is informative only and must never say "corrompu".
+  if (entry?.returnAddressIntegrity?.suspect) {
     rows.push({ label: 'Statut', value: 'suspect' });
   }
 
