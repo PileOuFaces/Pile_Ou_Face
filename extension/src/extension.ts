@@ -41,7 +41,11 @@ const { registerStaticCommands } = require('./static/commands');
 const { registerDecompilerCommands } = require('./static/decompilerCommands');
 const { AuthService } = require('./shared/authService');
 const { resolveAuthServerUrl } = require('./shared/authConfig');
+const { getProductConfig } = require('./shared/productConfig');
 const { configureRuntimeAudit, recordRuntimeEvent, resetRuntimeAudit } = require('./shared/runtimeAudit');
+const { createTelemetryService } = require('./shared/telemetry/telemetry');
+const { EVENT_NAMES } = require('./shared/telemetry/telemetryEvents');
+const { mapPlatform } = require('./shared/telemetry/telemetryMappings');
 const logger = require('./shared/logger');
 
 const decorationTypes = new Map();
@@ -86,6 +90,17 @@ function _unregisterGlobalErrorHandlers() {
 function activate(context) {
   setExtensionPath(context.extensionPath);
   _registerGlobalErrorHandlers();
+  const productConfig = getProductConfig();
+  const telemetry = createTelemetryService({
+    vscode,
+    context,
+    endpoint: productConfig.telemetryProviderUrl,
+  });
+  telemetry.trackEvent(EVENT_NAMES.EXTENSION_ACTIVATED, {
+    extensionVersion: String(context.extension?.packageJSON?.version || '0.0.0'),
+    vscodeVersionMajor: String(vscode.version || '0').split('.')[0],
+    platform: mapPlatform(process.platform),
+  });
   const storageDir  = ensureStorageDir(context);
   const globalDir   = getGlobalStorageDir(context);
   const auditEnabled = vscode.workspace.getConfiguration('pileOuFace').get('runtimeUsageAudit', false);
@@ -123,7 +138,7 @@ function activate(context) {
   const _authService = AuthService.getInstance(context.secrets, authServerUrl);
   _authService.refresh().catch(() => {}); // refresh silencieux au démarrage
 
-  const openVisualizerWebview = createVisualizer({ context, logChannel, decorationTypes });
+  const openVisualizerWebview = createVisualizer({ context, logChannel, decorationTypes, telemetry });
   const hubConfig = {
     context,
     logChannel,
@@ -140,7 +155,8 @@ function activate(context) {
     payloadToHex,
     parseStdinExpression,
     check32BitToolchain,
-    openVisualizerWebview
+    openVisualizerWebview,
+    telemetry,
   };
   const openHub = createHub(hubConfig);
 

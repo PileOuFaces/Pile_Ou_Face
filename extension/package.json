@@ -281,6 +281,16 @@
           "default": false,
           "description": "Active les snapshots de diagnostic performance webview/extension host dans les logs Pile ou Face. Désactivé par défaut pour les versions publiées."
         },
+        "pileOuFace.telemetry.enabled": {
+          "type": "boolean",
+          "default": true,
+          "scope": "machine",
+          "tags": [
+            "telemetry",
+            "usesOnlineServices"
+          ],
+          "description": "Autorise les métriques d’usage agrégées de Pile ou Face lorsque la télémétrie VS Code est également activée. Aucun contenu analysé n’est envoyé."
+        },
         "pileOuFace.runtimeUsageAudit": {
           "type": "boolean",
           "default": false,

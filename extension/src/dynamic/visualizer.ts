@@ -10,6 +10,7 @@ const path = require('path');
 const { resolveProjectRoot } = require('../shared/utils');
 const { getWebviewContent } = require('../shared/webview');
 const { buildFunctionModel, buildMcpPayload, chooseFocusFunction } = require('./pedagogy');
+const { createTelemetryHandlers } = require('../shared/telemetry/telemetryMessageHandler');
 
 /**
  * @brief Crée la fonction openVisualizerWebview.
@@ -17,7 +18,8 @@ const { buildFunctionModel, buildMcpPayload, chooseFocusFunction } = require('./
  * @return openVisualizerWebview(trace)
  */
 function createVisualizer(config) {
-  const { context, logChannel, decorationTypes } = config;
+  const { context, logChannel, decorationTypes, telemetry } = config;
+  const telemetryHandlers = createTelemetryHandlers(telemetry);
   let visualizerPanelRef = null;
   let currentTraceRef = null;
   let functionModelCacheRef = new Map();
@@ -102,6 +104,10 @@ function createVisualizer(config) {
 
     visualizerPanel.webview.onDidReceiveMessage(
       async (message) => {
+        if (message?.type === 'pof.telemetry') {
+          await telemetryHandlers['pof.telemetry'](message);
+          return;
+        }
         logChannel.appendLine('[pile-ou-face] webview message: ' + JSON.stringify(message));
         const traceForHandler = getActiveTrace();
         const currentTraceRunId = getTraceRunId(traceForHandler);
