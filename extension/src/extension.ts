@@ -120,7 +120,11 @@ function activate(context) {
     configuredAuthServerUrl: authConfig?.workspaceFolderValue || authConfig?.workspaceValue || authConfig?.globalValue || '',
     projectRoot: folders?.[0]?.uri?.fsPath || '',
   });
-  const _authService = AuthService.getInstance(context.secrets, authServerUrl);
+  const _authService = AuthService.getInstance(context.secrets, authServerUrl, {
+    pluginSearchDirs: [storageDir, globalDir]
+      .filter(Boolean)
+      .map((dir) => path.join(dir, 'plugins')),
+  });
   _authService.refresh().catch(() => {}); // refresh silencieux au démarrage
 
   const openVisualizerWebview = createVisualizer({ context, logChannel, decorationTypes });

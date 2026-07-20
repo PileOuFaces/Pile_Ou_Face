@@ -359,12 +359,12 @@ describe("AuthService._syncLicenseLeases()", () => {
         );
         const now = Math.floor(Date.now() / 1000);
         const lease = signLease(
-          { device_id: payload.device_id, plugin_id: "pof.plugin-x", iat: now, exp: now + 3600 },
+          { device_id: payload.device_id, plugin_id: "pof.plugin-x", release_id: "legacy", iat: now, exp: now + 3600 },
           server.privateKey,
         );
         return {
           plugins: {
-            "pof.plugin-x": { wrapped_dek: wrapped.toString("base64"), lease },
+            "pof.plugin-x": { wrapped_dek: wrapped.toString("base64"), lease, release_id: "legacy" },
           },
         };
       }

@@ -66,7 +66,7 @@ class LeaseVerificationError extends Error {}
  * Vérification purement locale (lease stateless, voir design doc §5) — pas
  * d'appel réseau supplémentaire au-delà du jwks déjà récupéré/caché par l'appelant.
  */
-function verifyLeaseJwt(token, jwks, expectedDeviceId, expectedPluginId) {
+function verifyLeaseJwt(token, jwks, expectedDeviceId, expectedPluginId, expectedReleaseId = 'legacy') {
   const parts = String(token || '').split('.');
   if (parts.length !== 3) {
     throw new LeaseVerificationError('malformed lease token');
@@ -102,6 +102,9 @@ function verifyLeaseJwt(token, jwks, expectedDeviceId, expectedPluginId) {
   }
   if (payload.plugin_id !== expectedPluginId) {
     throw new LeaseVerificationError('lease plugin_id mismatch');
+  }
+  if (payload.release_id !== expectedReleaseId) {
+    throw new LeaseVerificationError('lease release_id mismatch');
   }
   return payload;
 }

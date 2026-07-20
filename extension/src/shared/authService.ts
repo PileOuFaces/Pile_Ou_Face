@@ -8,6 +8,8 @@
  * Tests" — les deux déclenchés uniquement quand ce fichier change.
  */
 const vscode = require('vscode');
+const fs = require('fs');
+const path = require('path');
 const {
   generateDeviceKeypair,
   generateDeviceId,
@@ -31,18 +33,52 @@ const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 // ne sont plus servies — blocage explicite, pas de fallback permissif indéfini.
 const LEASE_OFFLINE_GRACE_MS = 7 * 24 * 3600_000;
 
+function discoverInstalledPluginReleases(searchDirs = []) {
+  const releases = {};
+  for (const pluginsDir of searchDirs) {
+    if (!pluginsDir || !fs.existsSync(pluginsDir)) continue;
+    let entries = [];
+    try { entries = fs.readdirSync(pluginsDir); } catch { continue; }
+    for (const entry of entries) {
+      const root = path.join(pluginsDir, entry);
+      try {
+        const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
+        let releaseId = String(manifest?.licensing?.release_id || '').trim();
+        if (!releaseId) {
+          const encryption = JSON.parse(
+            fs.readFileSync(path.join(root, 'metadata', 'encryption.json'), 'utf8'),
+          );
+          releaseId = String(encryption?.license_id || '').trim();
+        }
+        const pluginId = String(manifest?.id || '').trim();
+        if (pluginId && releaseId) releases[pluginId] = releaseId;
+      } catch {
+        // Development/invalid plugins have no release identity and continue
+        // through the legacy compatibility path.
+      }
+    }
+  }
+  return releases;
+}
+
 class AuthService {
-  constructor(secrets, serverUrl) {
+  constructor(secrets, serverUrl, options = {}) {
     this.secrets = secrets;
     this.serverUrl = serverUrl;
     this._refreshTimer = null;
+    this.pluginSearchDirs = Array.isArray(options.pluginSearchDirs)
+      ? options.pluginSearchDirs
+      : [];
   }
 
-  static getInstance(secrets, serverUrl) {
+  static getInstance(secrets, serverUrl, options = {}) {
     if (!AuthService._instance) {
-      AuthService._instance = new AuthService(secrets, serverUrl);
+      AuthService._instance = new AuthService(secrets, serverUrl, options);
     } else if (serverUrl && serverUrl !== AuthService._instance.serverUrl) {
       AuthService._instance.serverUrl = serverUrl;
+    }
+    if (Array.isArray(options.pluginSearchDirs)) {
+      AuthService._instance.pluginSearchDirs = options.pluginSearchDirs;
     }
     return AuthService._instance;
   }
@@ -215,14 +251,20 @@ class AuthService {
         device_id: deviceId,
         public_key: publicKeyPem,
       });
+      const installedReleases = discoverInstalledPluginReleases(this.pluginSearchDirs);
       const leaseData = await this._postJsonAuthenticated(this.serverUrl, '/plugins/lease', accessToken, {
         device_id: deviceId,
+        releases: installedReleases,
       });
       const jwks = await this._fetchJwks();
       const contentKeys = {};
       for (const [pluginId, entry] of Object.entries(leaseData.plugins || {})) {
         try {
-          verifyLeaseJwt(entry.lease, jwks, deviceId, pluginId);
+          const expectedReleaseId = installedReleases[pluginId] || 'legacy';
+          verifyLeaseJwt(entry.lease, jwks, deviceId, pluginId, expectedReleaseId);
+          if (entry.release_id !== expectedReleaseId) {
+            throw new Error('lease response release_id mismatch');
+          }
           contentKeys[pluginId] = unwrapDek(entry.wrapped_dek, privateKeyPem);
         } catch (err) {
           // Un lease individuel invalide/expiré ne doit pas faire échouer les
@@ -234,9 +276,9 @@ class AuthService {
       // plugins autorisés) : c'est ce qui fait repartir la fenêtre offline à
       // zéro, pas le fait d'avoir des content_keys à écrire.
       await this.secrets.store(KEY_LEASE_SYNCED_AT, String(Date.now()));
-      if (Object.keys(contentKeys).length > 0) {
-        await this.secrets.store(KEY_CONTENT_KEYS, JSON.stringify(contentKeys));
-      }
+      // Remplace aussi le cache par un objet vide : une release installée sans
+      // clé correspondante ne doit jamais continuer à utiliser le DEK précédent.
+      await this.secrets.store(KEY_CONTENT_KEYS, JSON.stringify(contentKeys));
     } catch (err) {
       this._log(`sync licence par installation ignorée: ${err.message}`);
     }
@@ -361,4 +403,4 @@ class AuthService {
 
 AuthService._instance = null;
 
-module.exports = { AuthService };
+module.exports = { AuthService, discoverInstalledPluginReleases };
