@@ -117,6 +117,7 @@ async function main() {
   }
 
   const tmpDbFile = path.join(os.tmpdir(), `pof-auth-e2e-${Date.now()}.db`);
+  const tmpPluginRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pof-plugin-e2e-'));
   const { publicKey, privateKey } = generateServerRsaKeys();
   const env = {
     ...process.env,
@@ -156,7 +157,14 @@ async function main() {
     const email = 'e2e-interop@pof-e2e-interop-test.dev';
     const password = 'e2e-interop-password-123';
     const pluginId = 'pof.e2e-interop-plugin';
+    const releaseId = 'e2e-release-v1';
     const contentKeyB64 = crypto.randomBytes(32).toString('base64');
+    const installedPluginDir = path.join(tmpPluginRoot, pluginId);
+    fs.mkdirSync(installedPluginDir, { recursive: true });
+    fs.writeFileSync(path.join(installedPluginDir, 'manifest.json'), JSON.stringify({
+      id: pluginId,
+      licensing: { release_id: releaseId },
+    }));
 
     const user = await adminPost('/admin/users', { email, password });
     await adminPost('/admin/subscriptions', {
@@ -164,14 +172,18 @@ async function main() {
       owner_id: user.id,
       plugin_id: pluginId,
     });
-    await adminPut('/admin/plugin-keys', { plugin_id: pluginId, content_key: contentKeyB64 });
+    await adminPut('/admin/plugin-keys', {
+      plugin_id: pluginId,
+      release_id: releaseId,
+      content_key: contentKeyB64,
+    });
 
     const { AuthService } = proxyquire(path.join(EXTENSION_ROOT, 'src', 'shared', 'authService'), {
       vscode: {},
     });
     AuthService._instance = null;
     const secrets = makeInMemorySecrets();
-    const svc = AuthService.getInstance(secrets, BASE_URL);
+    const svc = AuthService.getInstance(secrets, BASE_URL, { pluginSearchDirs: [tmpPluginRoot] });
 
     console.log('[authLicensingInteropE2E] logging in against the real auth server');
     await svc.login(email, password);
@@ -212,6 +224,7 @@ async function main() {
   } finally {
     server.kill('SIGKILL');
     fs.rmSync(tmpDbFile, { force: true });
+    fs.rmSync(tmpPluginRoot, { recursive: true, force: true });
   }
 }
 
