@@ -38,6 +38,7 @@
       triggerStaticQuickAction,
       _autoLoadTab,
       getSectionsCacheBinaryPath,
+      trackBinaryLoaded,
     } = deps || {};
 
     // Internal state — initialized from storage at creation time
@@ -522,6 +523,9 @@
         }
         applyStaticBinarySelectionUi(bp, nextMeta, skipAutoLoad);
         finalizeStaticBinarySelection(bp, nextMeta, { sameSelection, skipAutoLoad });
+        if (!sameSelection && typeof trackBinaryLoaded === 'function') {
+          trackBinaryLoaded(nextMeta);
+        }
         if (window.PluginIframeRouter) {
           window.PluginIframeRouter.broadcast({ type: '__binaryPath', binaryPath: bp });
         }

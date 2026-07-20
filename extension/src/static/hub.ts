@@ -75,8 +75,16 @@ const { createGraphRenderers } = require('./hub/graphRenderers');
 const { createLoaders } = require('./hub/loaders');
 const { createTraceHistory } = require('./hub/traceHistory');
 const { createActions } = require('./hub/actions');
+const { createRunTraceTelemetry } = require('../dynamic/runTraceTelemetry');
 const archSupport = require('./hub/archSupport');
 const { getRuntimeAuditState, recordRuntimeEvent } = require('../shared/runtimeAudit');
+const { EVENT_NAMES } = require('../shared/telemetry/telemetryEvents');
+const {
+  mapArch,
+  mapPanel,
+  mapPayloadMode,
+  mapTarget,
+} = require('../shared/telemetry/telemetryMappings');
 
 const AUTH_STRICT_LICENSE_ENV = 'BINHOST_DISABLE_LICENSE_FALLBACK';
 const AUTH_CONTENT_KEYS_STDIN_ENV = 'BINHOST_CONTENT_KEYS_STDIN';
@@ -138,7 +146,8 @@ function createHub(config) {
     check32BitToolchain,
     openVisualizerWebview,
     refreshSidebar,
-    setSidebarMode
+    setSidebarMode,
+    telemetry,
   } = config;
 
   const SETTINGS_DEFAULTS = {
@@ -395,6 +404,10 @@ function createHub(config) {
     };
 
     if (hubPanelRef && !hubPanelRef.disposed) {
+      telemetry?.trackEvent?.(EVENT_NAMES.HUB_OPENED, {
+        state: 'revealed',
+        initialPanel: mapPanel(initialPanel),
+      });
       hubPanelRef.reveal(vscode.ViewColumn.Beside);
       hubPanelRef.webview.postMessage({ type: 'hubPerfDiagnosticsConfig', enabled: perfDiagnosticsEnabled() });
       hubPanelRef.webview.postMessage({ type: 'showPanel', panel: initialPanel, focusGoToAddr: options.focusGoToAddr });
@@ -427,6 +440,10 @@ function createHub(config) {
         ],
       }
     );
+    telemetry?.trackEvent?.(EVENT_NAMES.HUB_OPENED, {
+      state: 'created',
+      initialPanel: mapPanel(initialPanel),
+    });
     if (getRuntimeAuditState().enabled) {
       const originalPostMessage = panel.webview.postMessage.bind(panel.webview);
       panel.webview.postMessage = ((message) => {
@@ -537,6 +554,7 @@ function createHub(config) {
       getRawProfile,
       setRawProfile,
       clearRawProfile,
+      telemetry,
     };
     const handlers = createHandlers(handlerCtx);
     hubHandlersRef = handlers;
@@ -896,7 +914,7 @@ function createHub(config) {
       panel, root, storageDir, globalDir, ensureTempDir, readTraceJson, writeTraceJson, setViewMode,
       buildSourceEnrichmentMeta, attachTraceAddressEnrichment,
       payloadTargetLabel, normalizePayloadTargetMode, openVisualizerWebview, toWebviewPath,
-      vscode, fs, path, crypto,
+      vscode, fs, path, crypto, telemetry,
     });
     const actionsHandlers = createActions({
       panel, context, vscode, root, workspaceRoot, storageDir, globalDir, logChannel, fs, path,
@@ -1257,6 +1275,21 @@ function createHub(config) {
       const bufferOffset = hasBufferOffset ? String(payload.bufferOffset) : null;
       const bufferSize = hasBufferSize ? String(payload.bufferSize) : null;
       const maxSteps = String(payload.maxSteps || '800');
+      const telemetryInput = payload.input && typeof payload.input === 'object' ? payload.input : {};
+      const telemetryPayloadMode = mapPayloadMode(telemetryInput.mode || payload.payloadMode);
+      const runTelemetry = createRunTraceTelemetry({
+        telemetry,
+        arch: mapArch(payload.arch || '', payload.archBits),
+        payloadMode: telemetryPayloadMode,
+        target: mapTarget(
+          telemetryInput.targetMode || payload.payloadTargetMode || payload.payloadTarget,
+          telemetryPayloadMode,
+        ),
+        sourceProvided: Boolean(sourcePath),
+      });
+      let runTraceResult = 'failed';
+      let failureCategory = 'backend_failed';
+      runTelemetry.start();
 
       let startSymbol = String(payload.startSymbol || 'main').trim();
       if (!startSymbol) startSymbol = 'main';
@@ -1274,6 +1307,7 @@ function createHub(config) {
           const absoluteSource = sourcePath ? (path.isAbsolute(sourcePath) ? sourcePath : path.join(root, sourcePath)) : null;
           const staticResult = ensureStaticAsm(absoluteAsm, absoluteSource, logChannel);
           if (!staticResult.ok) {
+            runTelemetry.fail('invalid_input');
             vscode.window.showErrorMessage(staticResult.error || 'Static: generation input.asm echouee.');
             return;
           }
@@ -1287,6 +1321,8 @@ function createHub(config) {
             throw new Error(`Trace statique introuvable: ${path.basename(isolatedJsonPath)}`);
           }
           if (traceRunId !== latestTraceRunId) {
+            runTraceResult = 'cancelled';
+            runTelemetry.cancel();
             logChannel.appendLine(`[trace] Resultat perime ignore (#${traceRunId}).`);
             return;
           }
@@ -1300,13 +1336,20 @@ function createHub(config) {
           traceHistoryHandlers.setActiveDynamicTracePath(isolatedJsonPath);
           writeTraceJson(canonicalJsonPath, trace);
           openVisualizerWebview(trace);
+          telemetry?.trackEvent?.(EVENT_NAMES.VISUALIZER_OPENED, {
+            origin: 'fresh_run', surface: 'standalone',
+          });
           traceHistoryHandlers.postDynamicTraceHistory();
+          runTelemetry.complete(false);
+          runTraceResult = 'completed';
         } else {
           if (useExistingBinary && !binaryPath) {
+            runTelemetry.fail('invalid_input');
             vscode.window.showErrorMessage('Chemin binaire requis.');
             return;
           }
           if (!useExistingBinary && !sourcePath) {
+            runTelemetry.fail('invalid_input');
             vscode.window.showErrorMessage('Source C requise.');
             return;
           }
@@ -1315,11 +1358,13 @@ function createHub(config) {
           if (useExistingBinary) {
             const absoluteBinaryPath = resolvePathFromWorkspace(binaryPath);
             if (!fs.existsSync(absoluteBinaryPath)) {
+              runTelemetry.fail('unsupported_binary');
               vscode.window.showErrorMessage(`Binaire introuvable: ${absoluteBinaryPath}`);
               return;
             }
             binaryOutPath = absoluteBinaryPath;
           } else {
+            failureCategory = 'compilation_failed';
             const sourceBase = path.parse(sourcePath).name || 'binary';
             const requestedName = binaryPath ? path.basename(binaryPath) : `${sourceBase}.elf`;
             const outputName = requestedName || `${sourceBase}.elf`;
@@ -1334,17 +1379,20 @@ function createHub(config) {
             });
             binaryOutPath = compileResult.absoluteBinaryPath;
           }
+          failureCategory = 'backend_failed';
           const binaryInfoForSymbols = await loadBinaryHeaders(binaryOutPath).catch(() => inspectBinaryInput(binaryOutPath));
           startSymbol = normalizeStartSymbolForBinary(startSymbol, binaryInfoForSymbols);
 
           const payloadExprRaw = String(payload.payloadExpr || '').trim();
           const inputMeta = normalizeTraceInputMeta(payload.input || null, 'payload_builder');
+          failureCategory = 'invalid_input';
           const stagedInputFile = inputMeta.mode === 'file'
             ? stageDynamicInputFile(payload.file || payload.input?.file || null)
             : null;
           if (inputMeta.mode === 'file' && !stagedInputFile) {
             throw new Error('Configuration fichier payload manquante.');
           }
+          failureCategory = 'backend_failed';
           const payloadTargetMode = normalizePayloadTargetMode(
             inputMeta.targetMode || payload.payloadTargetMode || payload.payloadTarget || 'auto'
           );
@@ -1372,11 +1420,13 @@ function createHub(config) {
               payloadString = normalizePayloadExpression(payloadExprRaw);
               payloadHex = typeof payloadToHex === 'function' ? payloadToHex(payloadExprRaw) : '';
             } catch (err) {
+              runTelemetry.fail('invalid_input');
               vscode.window.showErrorMessage(`Payload invalide: ${err.message || err}`);
               return;
             }
           }
           if (injectArgv && payloadHex && hexContainsNullByte(payloadHex)) {
+            runTelemetry.fail('invalid_input');
             vscode.window.showErrorMessage('Payload invalide pour argv[1]: contient un octet NUL. Utilisez stdin ou Fichier.');
             return;
           }
@@ -1404,11 +1454,14 @@ function createHub(config) {
           if (stopSymbol) pythonArgs.push('--stop-symbol', stopSymbol);
           if (useInterp) pythonArgs.push('--start-interp');
 
+          failureCategory = 'backend_failed';
           await runCommand(pythonExe, pythonArgs, root, logChannel, { PYTHONPATH: getExtensionPath() || root });
           if (!fs.existsSync(isolatedJsonPath)) {
             throw new Error(`Trace dynamique introuvable: ${path.basename(isolatedJsonPath)}`);
           }
           if (traceRunId !== latestTraceRunId) {
+            runTraceResult = 'cancelled';
+            runTelemetry.cancel();
             logChannel.appendLine(`[trace] Resultat perime ignore (#${traceRunId}).`);
             return;
           }
@@ -1459,14 +1512,21 @@ function createHub(config) {
           writeTraceJson(isolatedJsonPath, trace);
           traceHistoryHandlers.setActiveDynamicTracePath(isolatedJsonPath);
           writeTraceJson(canonicalJsonPath, trace);
-          traceHistoryHandlers.postDynamicTraceReady(trace, { binaryPath, tracePath: isolatedJsonPath });
+          await traceHistoryHandlers.postDynamicTraceReady(trace, { binaryPath, tracePath: isolatedJsonPath });
+          telemetry?.trackEvent?.(EVENT_NAMES.VISUALIZER_OPENED, {
+            origin: 'fresh_run', surface: 'embedded',
+          });
           traceHistoryHandlers.postDynamicTraceHistory();
+          runTelemetry.complete(Boolean(trace?.crash));
+          runTraceResult = 'completed';
         }
       } catch (err) {
+        runTelemetry.fail(failureCategory);
         vscode.window.showErrorMessage(`Trace failed: ${err.message || err}`);
       } finally {
+        if (!runTelemetry.getOutcome()) runTelemetry.fail('unknown');
         if (traceRunId === latestTraceRunId) {
-          panel.webview.postMessage({ type: 'runTraceDone', binaryPath });
+          panel.webview.postMessage({ type: 'runTraceDone', binaryPath, result: runTraceResult });
         }
       }
     };

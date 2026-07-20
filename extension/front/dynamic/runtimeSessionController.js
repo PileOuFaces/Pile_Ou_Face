@@ -73,6 +73,7 @@
       btn.setAttribute('aria-label', session.label);
       btn.textContent = '⚡';
       btn.addEventListener('click', function() {
+        global.POFTelemetry?.trackEvent?.('panel.opened', { panel: 'runtime' });
         activateRuntimePanel();
       });
       slot.appendChild(btn);

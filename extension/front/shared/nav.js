@@ -65,7 +65,11 @@ function showPanel(id) {
 
 // Icon nav click handlers
 iconNavItems.forEach((item) => {
-  item.addEventListener('click', () => showPanel(item.dataset.panel));
+  item.addEventListener('click', () => {
+    const panel = window.POFTelemetryClient?.mapPanel?.(item.dataset.panel);
+    if (panel) window.POFTelemetry?.trackEvent?.('panel.opened', { panel });
+    showPanel(item.dataset.panel);
+  });
 });
 
 // Binary button listeners are handled by binarySourceController (binarySourceController.js).
@@ -217,6 +221,8 @@ function showGroup(groupId, tabId, skipAutoLoad = false) {
     btn.addEventListener('click', () => {
       if (Date.now() < staticSubtabSuppressClickUntil) return;
       if (isUnsupported) return;
+      const feature = window.POFTelemetryClient?.mapStaticFeature?.(tid);
+      if (feature) window.POFTelemetry?.trackEvent?.('static.feature.used', { feature });
       showSubTab(groupId, tid);
     });
     bar.appendChild(btn);

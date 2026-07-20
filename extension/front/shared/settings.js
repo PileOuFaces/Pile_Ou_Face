@@ -284,6 +284,7 @@ document.querySelectorAll('[data-interface-mode]').forEach((btn) => {
   btn.addEventListener('click', () => {
     const mode = btn.dataset.interfaceMode === 'simple' ? 'simple' : 'advanced';
     const input = document.getElementById('settingInterfaceMode');
+    const previousMode = input?.value === 'simple' ? 'simple' : 'advanced';
     if (input) input.value = mode;
     _settingsCache = { ...(_settingsCache || {}), interfaceMode: mode };
     if (mode === 'simple') {
@@ -295,6 +296,9 @@ document.querySelectorAll('[data-interface-mode]').forEach((btn) => {
     syncStaticInterfaceModeControls(_settingsCache);
     refreshStaticNavigationForSettings();
     _scheduleSave();
+    if (mode !== previousMode) {
+      window.POFTelemetry?.trackEvent?.('static.interface_mode.changed', { mode });
+    }
   });
 });
 

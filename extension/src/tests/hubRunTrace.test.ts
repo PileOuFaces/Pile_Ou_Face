@@ -587,6 +587,7 @@ describe('hub runTrace isolation', () => {
     expect(runTraceDoneMessage).to.deep.equal({
       type: 'runTraceDone',
       binaryPath: 'examples/rootme2.elf',
+      result: 'completed',
     });
   });
 

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // @ts-nocheck
 
+const { EVENT_NAMES } = require('../../shared/telemetry/telemetryEvents');
+
 function createTraceHistory({
   panel,
   root,
@@ -19,6 +21,7 @@ function createTraceHistory({
   fs,
   path,
   crypto,
+  telemetry,
 }) {
   let _activeDynamicTracePath = '';
   const getActiveDynamicTracePath = () => _activeDynamicTracePath;
@@ -157,7 +160,7 @@ function createTraceHistory({
   // sends on a fresh run, so a fresh run and a historical trace both drive the
   // Hub's embedded Runtime tab through one mechanism (no standalone panel).
   const postDynamicTraceReady = (trace, { binaryPath = '', tracePath = '' } = {}) => {
-    panel.webview.postMessage({
+    return panel.webview.postMessage({
       type: 'dynamicTraceReady',
       binaryPath,
       traceRunId: (trace?.meta?.trace_run_id !== undefined && trace?.meta?.trace_run_id !== null)
@@ -257,6 +260,9 @@ function createTraceHistory({
           ? openVisualizerWebview.revealCurrentTrace()
           : false;
         if (revealed) {
+          telemetry?.trackEvent?.(EVENT_NAMES.VISUALIZER_OPENED, {
+            origin: 'history', surface: 'standalone',
+          });
           return;
         }
       }
@@ -269,6 +275,9 @@ function createTraceHistory({
       writeTraceJson(requestedTracePath, trace);
       if (trace?.meta?.view_mode === 'static') {
         openVisualizerWebview(trace);
+        telemetry?.trackEvent?.(EVENT_NAMES.VISUALIZER_OPENED, {
+          origin: 'history', surface: 'standalone',
+        });
       } else {
         const binaryPath = toDynamicTraceBinaryWebviewPath(trace?.meta?.binary);
         // Sync the Hub's active binary field first and wait for it to be
@@ -280,7 +289,10 @@ function createTraceHistory({
           binaryPath,
           binaryMeta: trace?.meta?.binary_metadata || null,
         });
-        postDynamicTraceReady(trace, { binaryPath, tracePath: requestedTracePath });
+        await postDynamicTraceReady(trace, { binaryPath, tracePath: requestedTracePath });
+        telemetry?.trackEvent?.(EVENT_NAMES.VISUALIZER_OPENED, {
+          origin: 'history', surface: 'embedded',
+        });
       }
       postDynamicTraceHistory();
     },

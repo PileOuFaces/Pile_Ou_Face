@@ -364,10 +364,18 @@
         if (isStaleDynamicBinaryResponse(msg, 'dynamic-run-trace-done')) {
           return true;
         }
+        const result = ['completed', 'failed', 'cancelled'].includes(msg.result)
+          ? msg.result
+          : 'completed';
         if (typeof setDynamicTraceStatus === 'function') {
-          setDynamicTraceStatus('Trace terminée.');
+          const status = result === 'failed'
+            ? 'Échec de la trace.'
+            : (result === 'cancelled' ? 'Trace annulée.' : 'Trace terminée.');
+          setDynamicTraceStatus(status);
         }
-        if (typeof refreshDynamicTraceHistory === 'function') refreshDynamicTraceHistory();
+        if (result === 'completed' && typeof refreshDynamicTraceHistory === 'function') {
+          refreshDynamicTraceHistory();
+        }
         return true;
       }
       return handlePickedFile(msg);
