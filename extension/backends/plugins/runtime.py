@@ -268,11 +268,6 @@ def _resolve_effective_plugin_root(manifest: PluginManifest) -> Path:
     release_id = manifest.licensing.release_id.strip()
     if not release_id:
         raise RuntimeError("Bundle ONLINE_STANDARD invalide: release_id absent.")
-    cache_key = str(manifest.root_path)
-    cached = _DECRYPTED_PLUGIN_CACHE.get(cache_key)
-    if cached and cached.exists():
-        return cached
-
     metadata_path = manifest.root_path / "metadata" / "encryption.json"
     if not metadata_path.exists():
         raise RuntimeError("Bundle chiffré invalide: metadata/encryption.json absent.")
@@ -313,6 +308,7 @@ def _resolve_effective_plugin_root(manifest: PluginManifest) -> Path:
         )
 
     raw_ciphertext = payload_path.read_bytes()
+    ciphertext_sha256 = hashlib.sha256(raw_ciphertext).hexdigest()
 
     evaluation = evaluate_plugin_license(manifest)
     if evaluation.status not in ("unlocked", "active"):
@@ -327,6 +323,14 @@ def _resolve_effective_plugin_root(manifest: PluginManifest) -> Path:
     hmac_expected = str(getattr(manifest.distribution, "hmac_sha256", "") or "").strip()
     if not _verify_payload_hmac(raw_ciphertext, content_key, hmac_expected):
         raise RuntimeError("Intégrité du module compromise : HMAC ciphertext invalide.")
+
+    # A cached plaintext must never outlive either its encrypted release or the
+    # licence which unlocked it.  In particular, replacing a bundle in place
+    # must not let the previous DEK reuse the old decrypted tree.
+    cache_key = f"{manifest.root_path}:{release_id}:{ciphertext_sha256}"
+    cached = _DECRYPTED_PLUGIN_CACHE.get(cache_key)
+    if cached and cached.exists():
+        return cached
 
     try:
         key = _base64.b64decode(content_key)

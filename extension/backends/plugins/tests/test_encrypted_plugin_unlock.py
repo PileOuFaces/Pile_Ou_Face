@@ -17,7 +17,9 @@ import hashlib
 import hmac
 import io
 import json
+import shutil
 import zipfile
+from types import SimpleNamespace
 
 import pytest
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -43,7 +45,7 @@ def _build_encrypted_bundle(root_path, content_key_b64: str) -> PluginManifest:
     (payload zip -> AES-256-GCM -> HMAC-SHA256(ciphertext) avec sha256(content_key)).
     """
     plugin_source = root_path / "plugin_source"
-    plugin_source.mkdir()
+    plugin_source.mkdir(parents=True)
     inner_manifest = {
         "id": PLUGIN_ID,
         "name": "Encrypted Unlock Test",
@@ -157,6 +159,66 @@ def test_wrong_content_key_is_refused(tmp_path, monkeypatch):
     # Le HMAC (calculé avec la mauvaise clé) ne correspond plus au premier
     # contrôle d'intégrité — échec attendu avant même de tenter l'AES-GCM.
     with pytest.raises(RuntimeError, match="Intégrité|déchiffrer"):
+        runtime_module._resolve_effective_plugin_root(manifest)
+
+
+def test_cached_plaintext_cannot_unlock_a_replaced_bundle(tmp_path, monkeypatch):
+    first_key_b64 = base64.b64encode(b"\x07" * 32).decode("ascii")
+    manifest = _build_encrypted_bundle(tmp_path / "first", first_key_b64)
+    monkeypatch.setattr(
+        runtime_module,
+        "evaluate_plugin_license",
+        lambda _manifest: SimpleNamespace(
+            status="active", message="", content_key=first_key_b64
+        ),
+    )
+    runtime_module._resolve_effective_plugin_root(manifest)
+
+    second_key_b64 = base64.b64encode(b"\x08" * 32).decode("ascii")
+    replacement = _build_encrypted_bundle(tmp_path / "second", second_key_b64)
+    shutil.copy2(
+        replacement.root_path / "payload.enc", manifest.root_path / "payload.enc"
+    )
+    shutil.copy2(
+        replacement.root_path / "metadata" / "encryption.json",
+        manifest.root_path / "metadata" / "encryption.json",
+    )
+    manifest = PluginManifest(
+        **{
+            **manifest.__dict__,
+            "distribution": PluginDistribution(
+                **{
+                    **manifest.distribution.__dict__,
+                    "hmac_sha256": replacement.distribution.hmac_sha256,
+                }
+            ),
+        }
+    )
+
+    with pytest.raises(RuntimeError, match="Intégrité|déchiffrer"):
+        runtime_module._resolve_effective_plugin_root(manifest)
+
+
+def test_cached_plaintext_still_requires_an_active_license(tmp_path, monkeypatch):
+    content_key_b64 = base64.b64encode(b"\x09" * 32).decode("ascii")
+    manifest = _build_encrypted_bundle(tmp_path, content_key_b64)
+    monkeypatch.setattr(
+        runtime_module,
+        "evaluate_plugin_license",
+        lambda _manifest: SimpleNamespace(
+            status="active", message="", content_key=content_key_b64
+        ),
+    )
+    runtime_module._resolve_effective_plugin_root(manifest)
+
+    monkeypatch.setattr(
+        runtime_module,
+        "evaluate_plugin_license",
+        lambda _manifest: SimpleNamespace(
+            status="locked", message="Accès retiré.", content_key=None
+        ),
+    )
+    with pytest.raises(RuntimeError, match="Accès retiré"):
         runtime_module._resolve_effective_plugin_root(manifest)
 
 
