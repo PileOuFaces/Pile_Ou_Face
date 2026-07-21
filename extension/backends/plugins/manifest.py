@@ -34,6 +34,7 @@ class PluginHostRequirements:
 class PluginDistribution:
     encrypted: bool = False
     bundle_format: str = ""
+    profile: str = ""
     hmac_sha256: str = ""  # HMAC-SHA256(ciphertext) with content_key
 
 
@@ -46,6 +47,7 @@ class PluginLicensing:
     public_key: str = ""
     public_key_path: str = ""
     license_filename: str = ""
+    release_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -79,6 +81,7 @@ class PluginManifest:
             "distribution": {
                 "encrypted": self.distribution.encrypted,
                 "bundle_format": self.distribution.bundle_format,
+                "profile": self.distribution.profile,
                 "hmac_sha256": self.distribution.hmac_sha256,
             },
             "licensing": {
@@ -89,6 +92,7 @@ class PluginManifest:
                 "public_key": self.licensing.public_key,
                 "public_key_path": self.licensing.public_key_path,
                 "license_filename": self.licensing.license_filename,
+                "release_id": self.licensing.release_id,
             },
             "entrypoints": {
                 "python": (
@@ -230,6 +234,7 @@ def load_plugin_manifest(path: str | Path) -> PluginManifest:
             bundle_format=_optional_string(
                 dict(distribution_raw or {}), "bundle_format"
             ),
+            profile=_optional_string(dict(distribution_raw or {}), "profile"),
             hmac_sha256=_optional_string(dict(distribution_raw or {}), "hmac_sha256"),
         ),
         licensing=PluginLicensing(
@@ -244,6 +249,7 @@ def load_plugin_manifest(path: str | Path) -> PluginManifest:
             license_filename=_optional_string(
                 dict(licensing_raw or {}), "license_filename"
             ),
+            release_id=_optional_string(dict(licensing_raw or {}), "release_id"),
         ),
         entrypoints=PluginEntrypoints(
             python=python_entrypoint,

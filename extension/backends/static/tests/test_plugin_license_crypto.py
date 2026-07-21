@@ -33,8 +33,16 @@ def _manifest(root: Path, *, encrypted: bool = False, required: bool = True):
         version="1.0.0",
         kind="python",
         host=PluginHostRequirements(api_version=1),
-        distribution=PluginDistribution(encrypted=encrypted),
-        licensing=PluginLicensing(required=required),
+        distribution=PluginDistribution(
+            encrypted=encrypted,
+            bundle_format="pofplug-enc" if encrypted else "",
+            profile="ONLINE_STANDARD" if encrypted else "",
+        ),
+        licensing=PluginLicensing(
+            required=required,
+            mode="signed-license" if encrypted else "",
+            release_id="release-test-1" if encrypted else "",
+        ),
         entrypoints=PluginEntrypoints(),
         capabilities={},
         dependencies={},
@@ -98,7 +106,29 @@ class TestRuntimeEncryption(unittest.TestCase):
 
         payload = io.BytesIO()
         with zipfile.ZipFile(payload, "w") as archive:
-            archive.writestr("manifest.json", '{"id":"pof.test","version":"1.0.0"}')
+            archive.writestr(
+                "manifest.json",
+                json.dumps(
+                    {
+                        "id": "pof.test",
+                        "name": "Test",
+                        "version": "1.0.0",
+                        "kind": "python",
+                        "host": {"api_version": 1},
+                        "distribution": {
+                            "encrypted": True,
+                            "bundle_format": "pofplug-enc",
+                            "profile": "ONLINE_STANDARD",
+                        },
+                        "licensing": {
+                            "required": True,
+                            "mode": "signed-license",
+                            "release_id": "release-test-1",
+                        },
+                        "entrypoints": {},
+                    }
+                ),
+            )
         plaintext = payload.getvalue()
         nonce = os.urandom(12)
         ciphertext = AESGCM(base64.b64decode(content_key)).encrypt(
@@ -114,6 +144,8 @@ class TestRuntimeEncryption(unittest.TestCase):
                     "nonce_b64": base64.b64encode(nonce).decode(),
                     "payload_file": "payload.enc",
                     "payload_sha256": hashlib.sha256(plaintext).hexdigest(),
+                    "content_format": "zip",
+                    "license_id": "release-test-1",
                 }
             ),
             encoding="utf-8",
