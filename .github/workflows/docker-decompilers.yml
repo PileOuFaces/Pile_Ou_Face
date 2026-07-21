@@ -39,6 +39,14 @@ permissions:
   contents: read
   packages: write
 
+# Annule les runs PR obsolètes (mêmes commits ré-poussés en boucle pendant
+# une itération) ; ne coupe jamais un run sur develops, qui pousse de vraies
+# images sur le registre — une annulation mi-push pourrait laisser un tag
+# incomplet.
+concurrency:
+  group: docker-decompilers-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ${{ github.repository_owner }}/pile-ou-face
@@ -50,6 +58,7 @@ jobs:
   detect-changes:
     name: Detect changed decompilers
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
       any_changed: ${{ steps.set-matrix.outputs.any_changed }}
@@ -57,13 +66,42 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
         with:
-          fetch-depth: 2
+          # dorny/paths-filter compare par commit range en mode push ; il lui
+          # faut l'historique complet pour ne pas se limiter au dernier commit
+          # (c'était le bug de l'ancienne logique `git diff HEAD~1 HEAD`, qui
+          # ratait silencieusement les commits antérieurs d'une PR à plusieurs
+          # commits). En pull_request il utilise l'API GitHub et n'a pas besoin
+          # de l'historique local, mais fetch-depth: 0 reste correct dans les
+          # deux cas.
+          fetch-depth: 0
 
       - name: Detect changed decompilers
+        id: filter
+        if: github.event_name != 'workflow_dispatch'
+        uses: dorny/paths-filter@6852f92c20ea7fd3b0c25de3b5112db3a98da050 # v3
+        with:
+          filters: |
+            ghidra:
+              - 'docker/decompilers/ghidra/**'
+              - 'extension/backends/static/decompile/**'
+              - '.github/workflows/docker-decompilers.yml'
+            retdec:
+              - 'docker/decompilers/retdec/**'
+              - 'extension/backends/static/decompile/**'
+              - '.github/workflows/docker-decompilers.yml'
+            angr:
+              - 'docker/decompilers/angr/**'
+              - 'extension/backends/static/decompile/**'
+              - '.github/workflows/docker-decompilers.yml'
+
+      - name: Build matrix
         id: set-matrix
         env:
           FORCED_DECOMPILER: ${{ github.event.inputs.decompiler }}
           EVENT_NAME: ${{ github.event_name }}
+          GHIDRA_CHANGED: ${{ steps.filter.outputs.ghidra }}
+          RETDEC_CHANGED: ${{ steps.filter.outputs.retdec }}
+          ANGR_CHANGED: ${{ steps.filter.outputs.angr }}
         run: |
           DECOMPILERS="ghidra retdec angr"
           FORCED="$FORCED_DECOMPILER"
@@ -73,33 +111,10 @@ jobs:
           elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             TARGETS="$DECOMPILERS"
           else
-            CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || git diff --name-only HEAD)
-            echo "==> Fichiers modifiés :"
-            echo "$CHANGED"
             TARGETS=""
-
-            for d in $DECOMPILERS; do
-              REBUILD=false
-
-              # Dockerfile ou fichier propre à ce décompilateur
-              if echo "$CHANGED" | grep -Eq "^docker/decompilers/${d}/"; then
-                REBUILD=true
-              fi
-
-              # Backend Python du sous-module decompile
-              if echo "$CHANGED" | grep -Eq "^extension/backends/static/decompile/"; then
-                REBUILD=true
-              fi
-
-              # Le workflow lui-même a changé → rebuild tous
-              if echo "$CHANGED" | grep -Eq "^\.github/workflows/docker-decompilers\.yml$"; then
-                REBUILD=true
-              fi
-
-              if [ "$REBUILD" = "true" ]; then
-                TARGETS="$TARGETS $d"
-              fi
-            done
+            [ "$GHIDRA_CHANGED" = "true" ] && TARGETS="$TARGETS ghidra"
+            [ "$RETDEC_CHANGED" = "true" ] && TARGETS="$TARGETS retdec"
+            [ "$ANGR_CHANGED" = "true" ] && TARGETS="$TARGETS angr"
             TARGETS=$(echo $TARGETS | xargs)  # trim
           fi
 
@@ -132,6 +147,7 @@ jobs:
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.any_changed == 'true' && github.ref != 'refs/heads/main' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     strategy:
       fail-fast: false
@@ -223,6 +239,7 @@ jobs:
           github.event_name != 'pull_request' &&
           github.ref != 'refs/heads/main' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     strategy:
       fail-fast: false
@@ -290,6 +307,7 @@ jobs:
     if: always()
     needs: [detect-changes, build, smoke-arm64]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Evaluate results
         run: |
