@@ -124,6 +124,14 @@ async function adminPut(pathname, body) {
   return res.json();
 }
 
+async function adminDelete(pathname) {
+  const res = await fetch(`${BASE_URL}${pathname}`, {
+    method: 'DELETE',
+    headers: { 'X-Admin-Secret': ADMIN_SECRET },
+  });
+  if (!res.ok) throw new Error(`admin DELETE ${pathname} failed: ${res.status} ${await res.text()}`);
+}
+
 function makeInMemorySecrets() {
   const store = new Map();
   return {
@@ -189,37 +197,61 @@ async function main() {
     const contentKeyB64 = crypto.randomBytes(32).toString('base64');
     const signingKey = path.join(releaseRoot, 'signing-private.pem');
     const signingPublicKey = path.join(releaseRoot, 'signing-public.pem');
-    const releaseLicense = path.join(releaseRoot, 'release.json');
-    const releaseDist = path.join(releaseRoot, 'dist');
     fs.writeFileSync(signingKey, privateKey, { mode: 0o600 });
     fs.writeFileSync(signingPublicKey, publicKey);
-    await runPython(pythonExe, [
-      '-m', 'tooling.license_tool', 'create-license', '--plugin-id', pluginId,
-      '--licensee', 'E2E Interop', '--private-key', signingKey, '--output', releaseLicense,
-      '--license-id', releaseId, '--content-key', contentKeyB64,
-    ], process.env, PLUGINS_REPO_PATH);
-    await runPython(pythonExe, [
-      '-m', 'tooling.plugin_builder', '--plugin', 'vulnerability-audit-pro',
-      '--release-license', releaseLicense, '--public-key', signingPublicKey,
-      '--release-profile', 'bytecode', '--output-dir', releaseDist, '--clean',
-    ], process.env, PLUGINS_REPO_PATH);
-    const bundlePath = fs.readdirSync(releaseDist)
-      .filter((name) => name.endsWith('.pofplug'))
-      .map((name) => path.join(releaseDist, name))[0];
-    assert(bundlePath, 'plugin builder must produce a .pofplug bundle');
-    const installResult = await runPythonJson(pythonExe, [
-      path.join(EXTENSION_ROOT, 'backends', 'plugins', 'install_plugin.py'),
-      '--source', bundlePath, '--target-root', tmpPluginRoot,
-    ], process.env, EXTENSION_ROOT);
-    assert(installResult.ok === true, `real host installer rejected bundle: ${installResult.error || 'unknown error'}`);
     const installedPluginDir = path.join(tmpPluginRoot, pluginId);
-    const installedManifest = JSON.parse(fs.readFileSync(path.join(installedPluginDir, 'manifest.json'), 'utf8'));
-    assert(installedManifest.licensing.release_id === releaseId, 'installed real bundle must expose the expected release_id');
-    const ciphertextSha256 = crypto.createHash('sha256')
-      .update(fs.readFileSync(path.join(installedPluginDir, 'payload.enc'))).digest('hex');
+
+    async function runtimeUnlock(contentKeys) {
+      return runPythonJson(pythonExe, [
+        '-c',
+        [
+          'import json, sys',
+          'from backends.plugins.manifest import load_plugin_manifest',
+          'from backends.plugins.runtime import _resolve_effective_plugin_root',
+          'manifest = load_plugin_manifest(sys.argv[1])',
+          'try:',
+          ' root = _resolve_effective_plugin_root(manifest)',
+          ' print(json.dumps({"active": True, "root": str(root)}))',
+          'except Exception as exc:',
+          ' print(json.dumps({"active": False, "error": str(exc)}))',
+        ].join('\n'),
+        installedPluginDir,
+      ], { ...process.env, BINHOST_CONTENT_KEYS_STDIN: '1' }, EXTENSION_ROOT,
+      JSON.stringify({ content_keys: contentKeys }));
+    }
+
+    async function buildAndInstallRelease(nextReleaseId, nextContentKey) {
+      const releaseLicense = path.join(releaseRoot, `${nextReleaseId}.json`);
+      const releaseDist = path.join(releaseRoot, `dist-${nextReleaseId}`);
+      await runPython(pythonExe, [
+        '-m', 'tooling.license_tool', 'create-license', '--plugin-id', pluginId,
+        '--licensee', 'E2E Interop', '--private-key', signingKey, '--output', releaseLicense,
+        '--license-id', nextReleaseId, '--content-key', nextContentKey,
+      ], process.env, PLUGINS_REPO_PATH);
+      await runPython(pythonExe, [
+        '-m', 'tooling.plugin_builder', '--plugin', 'vulnerability-audit-pro',
+        '--release-license', releaseLicense, '--public-key', signingPublicKey,
+        '--release-profile', 'bytecode', '--output-dir', releaseDist, '--clean',
+      ], process.env, PLUGINS_REPO_PATH);
+      const bundlePath = fs.readdirSync(releaseDist)
+        .filter((name) => name.endsWith('.pofplug'))
+        .map((name) => path.join(releaseDist, name))[0];
+      assert(bundlePath, `plugin builder must produce a .pofplug bundle for ${nextReleaseId}`);
+      const installResult = await runPythonJson(pythonExe, [
+        path.join(EXTENSION_ROOT, 'backends', 'plugins', 'install_plugin.py'),
+        '--source', bundlePath, '--target-root', tmpPluginRoot,
+      ], process.env, EXTENSION_ROOT);
+      assert(installResult.ok === true, `real host installer rejected ${nextReleaseId}: ${installResult.error || 'unknown error'}`);
+      const installedManifest = JSON.parse(fs.readFileSync(path.join(installedPluginDir, 'manifest.json'), 'utf8'));
+      assert(installedManifest.licensing.release_id === nextReleaseId, `installed bundle must expose ${nextReleaseId}`);
+      return crypto.createHash('sha256')
+        .update(fs.readFileSync(path.join(installedPluginDir, 'payload.enc'))).digest('hex');
+    }
+
+    const ciphertextSha256 = await buildAndInstallRelease(releaseId, contentKeyB64);
 
     const user = await adminPost('/admin/users', { email, password });
-    await adminPost('/admin/subscriptions', {
+    const subscription = await adminPost('/admin/subscriptions', {
       owner_type: 'user',
       owner_id: user.id,
       plugin_id: pluginId,
@@ -322,13 +354,45 @@ async function main() {
     assert(ownershipRejected, 'another tenant must not claim an enrolled device id');
     console.log('[authLicensingInteropE2E] PASS: tenant access and device ownership are isolated end-to-end');
 
-    const runtimeState = await runPythonJson(pythonExe, [
-      '-m', 'backends.plugins.runtime', 'list', '--paths', tmpPluginRoot,
-    ], { ...process.env, BINHOST_CONTENT_KEYS_STDIN: '1' }, EXTENSION_ROOT,
-    JSON.stringify({ content_keys: keys }));
-    const runtimePlugin = runtimeState.plugins.find((plugin) => plugin.id === pluginId);
-    assert(runtimePlugin?.state === 'active', `real runtime must unlock the packaged plugin (state=${runtimePlugin?.state})`);
+    const runtimeState = await runtimeUnlock(keys);
+    assert(runtimeState.active === true, `real runtime must unlock the packaged plugin (${runtimeState.error || 'unknown error'})`);
     console.log('[authLicensingInteropE2E] PASS: real ONLINE_STANDARD bundle installs, decrypts and loads in the host runtime');
+
+    const releaseIdV2 = 'e2e-release-v2';
+    const contentKeyV2 = crypto.randomBytes(32).toString('base64');
+    const ciphertextSha256V2 = await buildAndInstallRelease(releaseIdV2, contentKeyV2);
+    await adminPut('/admin/plugin-keys', {
+      plugin_id: pluginId,
+      release_id: releaseIdV2,
+      content_key: contentKeyV2,
+      ciphertext_sha256: ciphertextSha256V2,
+    });
+    assert(await svc.refresh(), 'refresh after installing release v2 must succeed');
+    assert(await secondSvc.refresh(), 'second installation refresh after release rotation must succeed');
+    const rotatedKeys = await svc.getContentKeys();
+    assert(rotatedKeys[pluginId] === contentKeyV2, 'host must replace the v1 DEK with the v2 DEK');
+    const runtimeWithOldKey = await runtimeUnlock({ [pluginId]: contentKeyB64 });
+    assert(runtimeWithOldKey.active === false, 'v1 DEK must not unlock the v2 bundle');
+    const runtimeWithV2Key = await runtimeUnlock(rotatedKeys);
+    assert(runtimeWithV2Key.active === true, `v2 DEK must unlock the v2 bundle (${runtimeWithV2Key.error || 'unknown error'})`);
+    console.log('[authLicensingInteropE2E] PASS: packaged release rotation replaces the DEK and rejects the previous key');
+
+    await runPython(pythonExe, [
+      '-c',
+      'import sys; from app.db import SessionLocal; from app.models import PluginContentKey; db=SessionLocal(); row=db.query(PluginContentKey).filter_by(plugin_id=sys.argv[1], release_id=sys.argv[2]).one(); db.delete(row); db.commit(); db.close()',
+      pluginId, releaseIdV2,
+    ], env, AUTH_REPO_PATH);
+    assert(await svc.refresh(), 'auth refresh must still succeed after release removal');
+    assert(Object.keys(await svc.getContentKeys()).length === 0, 'removed release must clear the cached DEK at renewal');
+    await adminPut('/admin/plugin-keys', {
+      plugin_id: pluginId,
+      release_id: releaseIdV2,
+      content_key: contentKeyV2,
+      ciphertext_sha256: ciphertextSha256V2,
+    });
+    assert(await svc.refresh(), 'refresh after restoring release v2 must succeed');
+    assert((await svc.getContentKeys())[pluginId] === contentKeyV2, 'restored release must return only its v2 DEK');
+    console.log('[authLicensingInteropE2E] PASS: release withdrawal clears the host cache at lease renewal');
 
     const realExpiresAt = await secrets.get('pof.auth.leaseExpiresAt');
     await secrets.store('pof.auth.leaseExpiresAt', String(Date.now() - 1));
@@ -354,6 +418,16 @@ async function main() {
     }
     assert(leaseRejected, 'lease request for a revoked installation must be rejected with 403');
     console.log('[authLicensingInteropE2E] PASS: revoked installation is refused a new lease end-to-end');
+
+    await adminDelete(`/admin/subscriptions/${subscription.id}`);
+    const accessWithdrawal = await secondSvc.refreshKeysIfStale(0);
+    assert(accessWithdrawal.refreshed === true, 'subscription withdrawal must renew the still-valid auth session and plugin lease');
+    assert(accessWithdrawal.revoked === false, 'plugin subscription withdrawal must not revoke the user auth session');
+    const keysAfterAccessWithdrawal = await secondSvc.getContentKeys();
+    assert(Object.keys(keysAfterAccessWithdrawal).length === 0, 'subscription withdrawal must clear cached plugin keys');
+    const runtimeAfterAccessWithdrawal = await runtimeUnlock(keysAfterAccessWithdrawal);
+    assert(runtimeAfterAccessWithdrawal.active === false, 'runtime must lock after subscription withdrawal');
+    console.log('[authLicensingInteropE2E] PASS: subscription withdrawal clears keys and locks the runtime');
   } catch (err) {
     fail(err.message);
     console.error('---- auth server output ----');
