@@ -286,27 +286,11 @@ function createHub(config) {
         // AuthService non disponible — aucune clé injectée.
       }
 
+      // ONLINE_STANDARD refuse toujours les fichiers de licence et les
+      // fallbacks locaux. AIRGAP_ENTERPRISE utilisera une distribution séparée.
+      env[AUTH_STRICT_LICENSE_ENV] = '1';
       if (hasOnlineKeys) {
-        // MODE 1 — en ligne : bloquer les fichiers licence offline.
-        env[AUTH_STRICT_LICENSE_ENV] = '1';
         env[AUTH_CONTENT_KEYS_STDIN_ENV] = '1';
-      } else {
-        // Pas de clés en ligne : vérifier la présence de fichiers licence offline signés.
-        const licenseDir = path.join(storageDir, 'licenses');
-        let hasOfflineLicenses = false;
-        try {
-          const files = fs.readdirSync(licenseDir);
-          hasOfflineLicenses = files.some((f) => String(f).endsWith('.license.json'));
-        } catch (_e) {
-          // Répertoire absent → pas de licences offline.
-        }
-
-        if (!hasOfflineLicenses) {
-          // Ni clés en ligne, ni licences offline → plugin verrouillé.
-          env[AUTH_STRICT_LICENSE_ENV] = '1';
-        }
-        // MODE 3 — offline contractuel : hasOfflineLicenses=true, flag absent,
-        // le runtime Python lira les fichiers .license.json signés.
       }
 
       return { env, stdin: encodePluginRuntimeStdin(contentKeys) };
