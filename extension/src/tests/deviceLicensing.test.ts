@@ -4,6 +4,7 @@ const crypto = require("crypto");
 const {
   generateDeviceKeypair,
   generateDeviceId,
+  signEnrollmentChallenge,
   unwrapDek,
   verifyLeaseJwt,
   LeaseVerificationError,
@@ -62,6 +63,31 @@ describe("deviceLicensing", () => {
       const b = generateDeviceId();
       expect(a).to.not.equal(b);
       expect(a).to.match(/^[0-9a-f-]{36}$/);
+    });
+  });
+
+  describe("signEnrollmentChallenge", () => {
+    it("creates an RSA-PSS SHA-256 signature verifiable by the device public key", () => {
+      const { publicKeyPem, privateKeyPem } = generateDeviceKeypair();
+      const challenge = Buffer.from("pof-enroll-v1\nchallenge");
+      const signature = signEnrollmentChallenge(challenge.toString("base64"), privateKeyPem);
+
+      const valid = crypto.verify(
+        "sha256",
+        challenge,
+        {
+          key: publicKeyPem,
+          padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: crypto.constants.RSA_PSS_SALTLEN_AUTO,
+        },
+        Buffer.from(signature, "base64"),
+      );
+      expect(valid).to.equal(true);
+    });
+
+    it("rejects an empty challenge", () => {
+      const { privateKeyPem } = generateDeviceKeypair();
+      expect(() => signEnrollmentChallenge("", privateKeyPem)).to.throw(/empty/);
     });
   });
 

@@ -14,6 +14,7 @@ const path = require('path');
 const {
   generateDeviceKeypair,
   generateDeviceId,
+  signEnrollmentChallenge,
   unwrapDek,
   verifyLeaseJwt,
 } = require('./deviceLicensing');
@@ -256,9 +257,19 @@ class AuthService {
     if (!accessToken) return;
     try {
       const { deviceId, privateKeyPem, publicKeyPem } = await this._getOrCreateDeviceIdentity();
+      const enrollmentChallenge = await this._postJsonAuthenticated(
+        this.serverUrl,
+        '/plugins/enroll/challenge',
+        accessToken,
+        {
+          device_id: deviceId,
+          public_key: publicKeyPem,
+        },
+      );
+      const signature = signEnrollmentChallenge(enrollmentChallenge.challenge, privateKeyPem);
       await this._postJsonAuthenticated(this.serverUrl, '/plugins/enroll', accessToken, {
-        device_id: deviceId,
-        public_key: publicKeyPem,
+        challenge_id: enrollmentChallenge.challenge_id,
+        signature,
       });
       const installedArtifacts = discoverInstalledPluginArtifacts(this.pluginSearchDirs);
       const installedReleases = Object.fromEntries(
