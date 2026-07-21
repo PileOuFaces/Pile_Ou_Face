@@ -7,12 +7,14 @@ on:
       - 'extension/**'
       - '.github/workflows/ci.yml'
       - '.github/workflows/publish.yml'
+      - '.github/workflows/tripartite-scheduled.yml'
   pull_request:
     branches: [main, develops]
     paths:
       - 'extension/**'
       - '.github/workflows/ci.yml'
       - '.github/workflows/publish.yml'
+      - '.github/workflows/tripartite-scheduled.yml'
 
 permissions:
   contents: read
