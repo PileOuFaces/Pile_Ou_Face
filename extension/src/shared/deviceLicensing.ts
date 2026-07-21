@@ -66,9 +66,19 @@ class LeaseVerificationError extends Error {}
  * Vérification purement locale (lease stateless, voir design doc §5) — pas
  * d'appel réseau supplémentaire au-delà du jwks déjà récupéré/caché par l'appelant.
  */
-function verifyLeaseJwt(token, jwks, expectedDeviceId, expectedPluginId, expectedReleaseId) {
+function verifyLeaseJwt(
+  token,
+  jwks,
+  expectedDeviceId,
+  expectedPluginId,
+  expectedReleaseId,
+  expectedCiphertextSha256,
+) {
   if (!String(expectedReleaseId || '').trim()) {
     throw new LeaseVerificationError('expected release_id is required');
+  }
+  if (!/^[0-9a-f]{64}$/.test(String(expectedCiphertextSha256 || ''))) {
+    throw new LeaseVerificationError('expected ciphertext_sha256 is required');
   }
   const parts = String(token || '').split('.');
   if (parts.length !== 3) {
@@ -108,6 +118,9 @@ function verifyLeaseJwt(token, jwks, expectedDeviceId, expectedPluginId, expecte
   }
   if (payload.release_id !== expectedReleaseId) {
     throw new LeaseVerificationError('lease release_id mismatch');
+  }
+  if (payload.ciphertext_sha256 !== expectedCiphertextSha256) {
+    throw new LeaseVerificationError('lease ciphertext_sha256 mismatch');
   }
   return payload;
 }

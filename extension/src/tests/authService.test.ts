@@ -308,6 +308,8 @@ describe("AuthService.refresh() — refresh token rotation", () => {
 // ---------------------------------------------------------------------------
 describe("AuthService._syncLicenseLeases()", () => {
   const tempDirs = [];
+  const encryptedPayload = Buffer.from("encrypted-plugin-payload");
+  const ciphertextSha256 = crypto.createHash("sha256").update(encryptedPayload).digest("hex");
 
   function pluginSearchDir(pluginId = "pof.plugin-x", releaseId = "release-test-1") {
     const pluginsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pof-online-license-"));
@@ -317,6 +319,7 @@ describe("AuthService._syncLicenseLeases()", () => {
       path.join(pluginDir, "manifest.json"),
       JSON.stringify({ id: pluginId, licensing: { release_id: releaseId } }),
     );
+    fs.writeFileSync(path.join(pluginDir, "payload.enc"), encryptedPayload);
     tempDirs.push(pluginsDir);
     return pluginsDir;
   }
@@ -379,12 +382,12 @@ describe("AuthService._syncLicenseLeases()", () => {
         );
         const now = Math.floor(Date.now() / 1000);
         const lease = signLease(
-          { device_id: payload.device_id, plugin_id: "pof.plugin-x", release_id: "release-test-1", iat: now, exp: now + 3600 },
+          { device_id: payload.device_id, plugin_id: "pof.plugin-x", release_id: "release-test-1", ciphertext_sha256: ciphertextSha256, iat: now, exp: now + 3600 },
           server.privateKey,
         );
         return {
           plugins: {
-            "pof.plugin-x": { wrapped_dek: wrapped.toString("base64"), lease, release_id: "release-test-1" },
+            "pof.plugin-x": { wrapped_dek: wrapped.toString("base64"), lease, release_id: "release-test-1", ciphertext_sha256: ciphertextSha256 },
           },
         };
       }
