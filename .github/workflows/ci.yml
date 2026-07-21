@@ -443,7 +443,7 @@ jobs:
   # le licensing même sans modifier directement authService.ts.
   #
   # Nécessite un PAT en lecture seule sur Pile_ou_Face_auth stocké dans le
-  # secret AUTH_REPO_READONLY_PAT de CE repo (Settings > Secrets and
+  # secret CROSS_REPO_READONLY_PAT de CE repo (Settings > Secrets and
   # variables > Actions). Absent : le job échoue fermé ; un succès sans avoir
   # exécuté l'interop réel serait un faux vert.
   # ══════════════════════════════════════════════════════════════
@@ -463,9 +463,9 @@ jobs:
       - name: Check secret configured
         id: secret_check
         env:
-          AUTH_REPO_READONLY_PAT: ${{ secrets.AUTH_REPO_READONLY_PAT }}
+          CROSS_REPO_READONLY_PAT: ${{ secrets.CROSS_REPO_READONLY_PAT }}
         run: |
-          if [ -n "$AUTH_REPO_READONLY_PAT" ]; then
+          if [ -n "$CROSS_REPO_READONLY_PAT" ]; then
             echo "has_pat=true" >> "$GITHUB_OUTPUT"
           else
             echo "has_pat=false" >> "$GITHUB_OUTPUT"
@@ -474,7 +474,7 @@ jobs:
       - name: Require Auth checkout capability
         if: steps.secret_check.outputs.has_pat == 'false'
         run: |
-          echo "::error::AUTH_REPO_READONLY_PAT non configuré — impossible d'exécuter l'interop host↔Auth obligatoire."
+          echo "::error::CROSS_REPO_READONLY_PAT non configuré — impossible d'exécuter l'interop Host↔Auth↔Plugins obligatoire."
           exit 1
 
       - name: Setup Node.js
@@ -502,7 +502,7 @@ jobs:
           # Sans ce `ref:`, ce job teste une version de l'auth potentiellement
           # bien en retard sur ce qui est réellement mergé.
           ref: develops
-          token: ${{ secrets.AUTH_REPO_READONLY_PAT }}
+          token: ${{ secrets.CROSS_REPO_READONLY_PAT }}
           path: pof-auth-sibling
 
       - name: Checkout sibling plugins repo
@@ -511,7 +511,7 @@ jobs:
         with:
           repository: PileOuFaces/Pile_ou_Face_plugins
           ref: develops
-          token: ${{ secrets.AUTH_REPO_READONLY_PAT }}
+          token: ${{ secrets.CROSS_REPO_READONLY_PAT }}
           path: pof-plugins-sibling
 
       - name: Cache pip downloads (auth-sibling deps)
