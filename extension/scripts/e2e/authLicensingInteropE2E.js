@@ -220,6 +220,39 @@ async function main() {
       JSON.stringify({ content_keys: contentKeys }));
     }
 
+    async function runtimeInvoke(contentKeys, commandId, payload) {
+      return runPythonJson(pythonExe, [
+        '-c',
+        [
+          'import json, sys',
+          'from backends.plugins.registry import build_plugin_registry',
+          'from backends.plugins.runtime import apply_plugin_licensing, invoke_plugin_command',
+          'records = build_plugin_registry([sys.argv[1]], host_version="0.1.0")',
+          'records = apply_plugin_licensing(records)',
+          'response, _, records = invoke_plugin_command(records, sys.argv[2], json.loads(sys.argv[3]))',
+          'response["plugin_states"] = {record.plugin_id: record.state for record in records}',
+          'print(json.dumps(response))',
+        ].join('\n'),
+        tmpPluginRoot,
+        commandId,
+        JSON.stringify(payload),
+      ], { ...process.env, BINHOST_CONTENT_KEYS_STDIN: '1' }, EXTENSION_ROOT,
+      JSON.stringify({ content_keys: contentKeys }));
+    }
+
+    async function inspectSecretTransport(secretValues) {
+      return runPythonJson(pythonExe, [
+        '-c',
+        [
+          'import json, os, sys',
+          'secrets = list(json.loads(sys.stdin.read()).get("secret_values", []))',
+          'argv = "\\n".join(sys.argv)',
+          'environment = "\\n".join(f"{key}={value}" for key, value in os.environ.items())',
+          'print(json.dumps({"argv_clean": all(secret not in argv for secret in secrets), "env_clean": all(secret not in environment for secret in secrets)}))',
+        ].join('\n'),
+      ], process.env, EXTENSION_ROOT, JSON.stringify({ secret_values: secretValues }));
+    }
+
     async function buildAndInstallRelease(nextReleaseId, nextContentKey) {
       const releaseLicense = path.join(releaseRoot, `${nextReleaseId}.json`);
       const releaseDist = path.join(releaseRoot, `dist-${nextReleaseId}`);
@@ -266,7 +299,9 @@ async function main() {
     const { AuthService } = proxyquire(path.join(EXTENSION_ROOT, 'src', 'shared', 'authService'), {
       vscode: {},
     });
-    const { signEnrollmentChallenge, unwrapDek } = require(path.join(
+    const {
+      getJwtSubject, signEnrollmentChallenge, unwrapDek, verifyLeaseJwt,
+    } = require(path.join(
       EXTENSION_ROOT, 'src', 'shared', 'deviceLicensing',
     ));
     AuthService._instance = null;
@@ -326,6 +361,27 @@ async function main() {
     assert(crossDeviceUnwrapRejected, 'a wrapped DEK must not be reusable on another installation');
     console.log('[authLicensingInteropE2E] PASS: wrapped DEKs are cryptographically isolated between installations');
 
+    const firstLeaseEntry = firstLease.plugins[pluginId];
+    const jwks = await svc._fetchJwks();
+    const expectedSubject = getJwtSubject(firstAccessToken);
+    const rejectedBindings = [
+      ['device', secondDeviceId, pluginId, releaseId, ciphertextSha256, expectedSubject],
+      ['plugin', firstDeviceId, 'pof.other-plugin', releaseId, ciphertextSha256, expectedSubject],
+      ['release', firstDeviceId, pluginId, 'e2e-release-replayed', ciphertextSha256, expectedSubject],
+      ['artifact', firstDeviceId, pluginId, releaseId, '0'.repeat(64), expectedSubject],
+      ['tenant', firstDeviceId, pluginId, releaseId, ciphertextSha256, '00000000-0000-4000-8000-000000000000'],
+    ];
+    for (const [binding, device, plugin, release, digest, subject] of rejectedBindings) {
+      let rejected = false;
+      try {
+        verifyLeaseJwt(firstLeaseEntry.lease, jwks, device, plugin, release, digest, subject);
+      } catch {
+        rejected = true;
+      }
+      assert(rejected, `signed lease replay with a different ${binding} binding must be rejected`);
+    }
+    console.log('[authLicensingInteropE2E] PASS: signed leases reject cross-device/plugin/release/artifact/tenant replay');
+
     // Un autre tenant sans abonnement ne reçoit aucune clé et ne peut pas
     // s'approprier l'identité déjà enrôlée, même s'il présente une preuve signée.
     const otherEmail = 'e2e-other-tenant@pof-e2e-interop-test.dev';
@@ -356,7 +412,12 @@ async function main() {
 
     const runtimeState = await runtimeUnlock(keys);
     assert(runtimeState.active === true, `real runtime must unlock the packaged plugin (${runtimeState.error || 'unknown error'})`);
-    console.log('[authLicensingInteropE2E] PASS: real ONLINE_STANDARD bundle installs, decrypts and loads in the host runtime');
+    assert(!fs.existsSync(runtimeState.root), 'decrypted runtime directory must be deleted when the plugin process exits');
+    const commandSmoke = await runtimeInvoke(keys, 'audit.cross_analyze.run', { dossiers_by_function: {} });
+    assert(commandSmoke.ok === true, `packaged premium command must execute (${commandSmoke.error || 'unknown error'})`);
+    assert(commandSmoke.plugin_id === pluginId, 'executed command must be registered by the licensed premium plugin');
+    assert(commandSmoke.result && typeof commandSmoke.result === 'object', 'premium command must return a structured result');
+    console.log('[authLicensingInteropE2E] PASS: real ONLINE_STANDARD bundle decrypts, loads and executes a packaged premium command');
 
     const releaseIdV2 = 'e2e-release-v2';
     const contentKeyV2 = crypto.randomBytes(32).toString('base64');
@@ -376,6 +437,36 @@ async function main() {
     const runtimeWithV2Key = await runtimeUnlock(rotatedKeys);
     assert(runtimeWithV2Key.active === true, `v2 DEK must unlock the v2 bundle (${runtimeWithV2Key.error || 'unknown error'})`);
     console.log('[authLicensingInteropE2E] PASS: packaged release rotation replaces the DEK and rejects the previous key');
+
+    const payloadPath = path.join(installedPluginDir, 'payload.enc');
+    const originalCiphertext = fs.readFileSync(payloadPath);
+    const tamperedCiphertext = Buffer.from(originalCiphertext);
+    tamperedCiphertext[0] ^= 0x01;
+    fs.writeFileSync(payloadPath, tamperedCiphertext);
+    assert(await svc.refresh(), 'auth refresh must survive an altered local artifact');
+    assert(Object.keys(await svc.getContentKeys()).length === 0, 'artifact substitution must clear the cached DEK');
+    const tamperedRuntime = await runtimeUnlock({ [pluginId]: contentKeyV2 });
+    assert(tamperedRuntime.active === false, 'altered ciphertext must be rejected even with the correct DEK');
+    fs.writeFileSync(payloadPath, originalCiphertext);
+    assert(await svc.refresh(), 'auth refresh after restoring the exact artifact must succeed');
+    assert((await svc.getContentKeys())[pluginId] === contentKeyV2, 'restored exact artifact must recover only the v2 DEK');
+
+    const manifestPath = path.join(installedPluginDir, 'manifest.json');
+    const originalManifest = fs.readFileSync(manifestPath, 'utf8');
+    const alteredManifest = JSON.parse(originalManifest);
+    alteredManifest.licensing.release_id = releaseId;
+    fs.writeFileSync(manifestPath, JSON.stringify(alteredManifest));
+    const mismatchedReleaseRuntime = await runtimeUnlock({ [pluginId]: contentKeyV2 });
+    assert(mismatchedReleaseRuntime.active === false, 'outer manifest release substitution must be rejected');
+    fs.writeFileSync(manifestPath, originalManifest);
+    console.log('[authLicensingInteropE2E] PASS: ciphertext and manifest substitution fail closed and evict cached keys');
+
+    const transportAudit = await inspectSecretTransport([
+      contentKeyB64, contentKeyV2, firstPrivateKey, firstAccessToken, initialRefreshToken,
+    ]);
+    assert(transportAudit.argv_clean === true, 'DEKs, private keys and tokens must never enter child argv');
+    assert(transportAudit.env_clean === true, 'DEKs, private keys and tokens must never enter the plugin child environment');
+    console.log('[authLicensingInteropE2E] PASS: plugin IPC keeps DEKs, private keys and tokens out of argv and environment');
 
     await runPython(pythonExe, [
       '-c',
@@ -428,6 +519,13 @@ async function main() {
     const runtimeAfterAccessWithdrawal = await runtimeUnlock(keysAfterAccessWithdrawal);
     assert(runtimeAfterAccessWithdrawal.active === false, 'runtime must lock after subscription withdrawal');
     console.log('[authLicensingInteropE2E] PASS: subscription withdrawal clears keys and locks the runtime');
+
+    const secretValues = [
+      contentKeyB64, contentKeyV2, firstPrivateKey, secondPrivateKey,
+      firstAccessToken, secondAccessToken, initialRefreshToken, rotatedRefreshToken,
+    ].filter(Boolean);
+    assert(secretValues.every((secret) => !serverOutput.includes(secret)), 'auth logs must not contain DEKs, private keys or tokens');
+    console.log('[authLicensingInteropE2E] PASS: auth logs contain no DEK, device private key or token');
   } catch (err) {
     fail(err.message);
     console.error('---- auth server output ----');
