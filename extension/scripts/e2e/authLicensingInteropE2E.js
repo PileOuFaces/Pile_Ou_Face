@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+/* global fetch */
 /**
  * @file authLicensingInteropE2E.js
  * @brief Vrai test d'interopérabilité host <-> auth pour XSYNC-LIC-001 (Pile_Ou_Face#70).
@@ -28,6 +29,9 @@ const proxyquire = require('proxyquire').noCallThru();
 const EXTENSION_ROOT = path.join(__dirname, '..', '..');
 const AUTH_REPO_PATH = path.resolve(
   process.env.AUTH_REPO_PATH || path.join(EXTENSION_ROOT, '..', '..', 'Pile_ou_Face_auth'),
+);
+const PLUGINS_REPO_PATH = path.resolve(
+  process.env.PLUGINS_REPO_PATH || path.join(EXTENSION_ROOT, '..', '..', 'Pile_ou_Face_plugins'),
 );
 const PORT = Number(process.env.AUTH_E2E_PORT || 8791);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
@@ -81,6 +85,21 @@ function runPython(pythonExe, args, env, cwd) {
   });
 }
 
+function runPythonJson(pythonExe, args, env, cwd, stdin = '') {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(pythonExe, args, { cwd, env, stdio: 'pipe' });
+    let stdout = '';
+    let stderr = '';
+    proc.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+    proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+    proc.on('close', (code) => {
+      if (code !== 0) return reject(new Error(`python exited ${code}: ${stderr || stdout}`));
+      try { return resolve(JSON.parse(stdout)); } catch { return reject(new Error(`invalid Python JSON output: ${stdout}\n${stderr}`)); }
+    });
+    proc.stdin.end(stdin);
+  });
+}
+
 async function adminPost(pathname, body) {
   const res = await fetch(`${BASE_URL}${pathname}`, {
     method: 'POST',
@@ -115,9 +134,14 @@ async function main() {
     fail(`auth repo not found at ${AUTH_REPO_PATH} (set AUTH_REPO_PATH to override) — skipping`);
     return;
   }
+  if (!fs.existsSync(PLUGINS_REPO_PATH)) {
+    fail(`plugins repo not found at ${PLUGINS_REPO_PATH} (set PLUGINS_REPO_PATH to override)`);
+    return;
+  }
 
   const tmpDbFile = path.join(os.tmpdir(), `pof-auth-e2e-${Date.now()}.db`);
   const tmpPluginRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pof-plugin-e2e-'));
+  const releaseRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pof-plugin-release-e2e-'));
   const { publicKey, privateKey } = generateServerRsaKeys();
   const env = {
     ...process.env,
@@ -156,18 +180,39 @@ async function main() {
 
     const email = 'e2e-interop@pof-e2e-interop-test.dev';
     const password = 'e2e-interop-password-123';
-    const pluginId = 'pof.e2e-interop-plugin';
+    const pluginId = 'pof.vulnerability-audit-pro';
     const releaseId = 'e2e-release-v1';
     const contentKeyB64 = crypto.randomBytes(32).toString('base64');
+    const signingKey = path.join(releaseRoot, 'signing-private.pem');
+    const signingPublicKey = path.join(releaseRoot, 'signing-public.pem');
+    const releaseLicense = path.join(releaseRoot, 'release.json');
+    const releaseDist = path.join(releaseRoot, 'dist');
+    fs.writeFileSync(signingKey, privateKey, { mode: 0o600 });
+    fs.writeFileSync(signingPublicKey, publicKey);
+    await runPython(pythonExe, [
+      '-m', 'tooling.license_tool', 'create-license', '--plugin-id', pluginId,
+      '--licensee', 'E2E Interop', '--private-key', signingKey, '--output', releaseLicense,
+      '--license-id', releaseId, '--content-key', contentKeyB64,
+    ], process.env, PLUGINS_REPO_PATH);
+    await runPython(pythonExe, [
+      '-m', 'tooling.plugin_builder', '--plugin', 'vulnerability-audit-pro',
+      '--release-license', releaseLicense, '--public-key', signingPublicKey,
+      '--release-profile', 'bytecode', '--output-dir', releaseDist, '--clean',
+    ], process.env, PLUGINS_REPO_PATH);
+    const bundlePath = fs.readdirSync(releaseDist)
+      .filter((name) => name.endsWith('.pofplug'))
+      .map((name) => path.join(releaseDist, name))[0];
+    assert(bundlePath, 'plugin builder must produce a .pofplug bundle');
+    const installResult = await runPythonJson(pythonExe, [
+      path.join(EXTENSION_ROOT, 'backends', 'plugins', 'install_plugin.py'),
+      '--source', bundlePath, '--target-root', tmpPluginRoot,
+    ], process.env, EXTENSION_ROOT);
+    assert(installResult.ok === true, `real host installer rejected bundle: ${installResult.error || 'unknown error'}`);
     const installedPluginDir = path.join(tmpPluginRoot, pluginId);
-    fs.mkdirSync(installedPluginDir, { recursive: true });
-    fs.writeFileSync(path.join(installedPluginDir, 'manifest.json'), JSON.stringify({
-      id: pluginId,
-      licensing: { release_id: releaseId },
-    }));
-    const encryptedPayload = crypto.randomBytes(128);
-    fs.writeFileSync(path.join(installedPluginDir, 'payload.enc'), encryptedPayload);
-    const ciphertextSha256 = crypto.createHash('sha256').update(encryptedPayload).digest('hex');
+    const installedManifest = JSON.parse(fs.readFileSync(path.join(installedPluginDir, 'manifest.json'), 'utf8'));
+    assert(installedManifest.licensing.release_id === releaseId, 'installed real bundle must expose the expected release_id');
+    const ciphertextSha256 = crypto.createHash('sha256')
+      .update(fs.readFileSync(path.join(installedPluginDir, 'payload.enc'))).digest('hex');
 
     const user = await adminPost('/admin/users', { email, password });
     await adminPost('/admin/subscriptions', {
@@ -195,6 +240,14 @@ async function main() {
     const keys = await svc.getContentKeys();
     assert(keys[pluginId] === contentKeyB64, `unwrapped DEK should match the seeded content_key (got ${keys[pluginId]})`);
     console.log('[authLicensingInteropE2E] PASS: real enroll + lease + RSA-OAEP unwrap + JWT verification round-trip matches');
+
+    const runtimeState = await runPythonJson(pythonExe, [
+      '-m', 'backends.plugins.runtime', 'list', '--paths', tmpPluginRoot,
+    ], { ...process.env, BINHOST_CONTENT_KEYS_STDIN: '1' }, EXTENSION_ROOT,
+    JSON.stringify({ content_keys: keys }));
+    const runtimePlugin = runtimeState.plugins.find((plugin) => plugin.id === pluginId);
+    assert(runtimePlugin?.state === 'active', `real runtime must unlock the packaged plugin (state=${runtimePlugin?.state})`);
+    console.log('[authLicensingInteropE2E] PASS: real ONLINE_STANDARD bundle installs, decrypts and loads in the host runtime');
 
     const realExpiresAt = await secrets.get('pof.auth.leaseExpiresAt');
     await secrets.store('pof.auth.leaseExpiresAt', String(Date.now() - 1));
@@ -228,6 +281,7 @@ async function main() {
     server.kill('SIGKILL');
     fs.rmSync(tmpDbFile, { force: true });
     fs.rmSync(tmpPluginRoot, { recursive: true, force: true });
+    fs.rmSync(releaseRoot, { recursive: true, force: true });
   }
 }
 

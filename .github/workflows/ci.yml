@@ -531,6 +531,15 @@ jobs:
           token: ${{ secrets.AUTH_REPO_READONLY_PAT }}
           path: pof-auth-sibling
 
+      - name: Checkout sibling plugins repo
+        if: steps.secret_check.outputs.has_pat == 'true'
+        uses: actions/checkout@v5
+        with:
+          repository: PileOuFaces/Pile_ou_Face_plugins
+          ref: develops
+          token: ${{ secrets.AUTH_REPO_READONLY_PAT }}
+          path: pof-plugins-sibling
+
       - name: Install dependencies
         if: steps.secret_check.outputs.has_pat == 'true'
         run: |
@@ -548,6 +557,11 @@ jobs:
             'fastapi>=0.111' 'uvicorn[standard]>=0.29' 'sqlalchemy>=2.0' 'alembic>=1.13' \
             'psycopg2-binary>=2.9' 'pydantic-settings>=2.2' 'pydantic[email]>=2.7' \
             'python-jose[cryptography]>=3.3' 'passlib[bcrypt]>=1.7' 'bcrypt<4.1' 'slowapi>=0.1.9'
+          pof-auth-sibling/.venv/bin/pip install -e './pof-plugins-sibling[dev]'
+          cd pof-plugins-sibling
+          npm ci
+          npm run build:webviews
+          cd ..
           cd extension && npm ci
 
       - name: Run real host<->auth interop e2e
@@ -555,6 +569,7 @@ jobs:
         working-directory: ./extension
         env:
           AUTH_REPO_PATH: ${{ github.workspace }}/pof-auth-sibling
+          PLUGINS_REPO_PATH: ${{ github.workspace }}/pof-plugins-sibling
         run: npm run test:e2e:auth-licensing
 
   # ══════════════════════════════════════════════════════════════
