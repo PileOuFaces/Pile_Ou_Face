@@ -13,6 +13,11 @@
  */
 const crypto = require('crypto');
 
+const LEASE_PROTOCOL_VERSION = 1;
+const LEASE_ISSUER = 'pof-auth';
+const LEASE_AUDIENCE = 'pof-plugin-runtime';
+const LEASE_TTL_SECONDS = 8 * 60 * 60;
+
 function generateDeviceKeypair() {
   const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
     modulusLength: 2048,
@@ -55,6 +60,20 @@ function _b64urlToBuffer(input) {
   return Buffer.from(input.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
 }
 
+function getJwtSubject(token) {
+  const parts = String(token || '').split('.');
+  if (parts.length !== 3) throw new LeaseVerificationError('malformed access token');
+  try {
+    const payload = JSON.parse(_b64urlToBuffer(parts[1]).toString('utf8'));
+    if (typeof payload.sub !== 'string' || !payload.sub) {
+      throw new Error('missing subject');
+    }
+    return payload.sub;
+  } catch {
+    throw new LeaseVerificationError('malformed access token subject');
+  }
+}
+
 /**
  * Construit une clé publique PEM à partir d'un JWK RSA {n, e} (format renvoyé par /auth/jwks).
  */
@@ -84,6 +103,7 @@ function verifyLeaseJwt(
   expectedPluginId,
   expectedReleaseId,
   expectedCiphertextSha256,
+  expectedSubject,
 ) {
   if (!String(expectedReleaseId || '').trim()) {
     throw new LeaseVerificationError('expected release_id is required');
@@ -96,16 +116,21 @@ function verifyLeaseJwt(
     throw new LeaseVerificationError('malformed lease token');
   }
   const [headerB64, payloadB64, sigB64] = parts;
+  let header;
   let payload;
   try {
+    header = JSON.parse(_b64urlToBuffer(headerB64).toString('utf8'));
     payload = JSON.parse(_b64urlToBuffer(payloadB64).toString('utf8'));
   } catch {
     throw new LeaseVerificationError('malformed lease payload');
   }
+  if (header.alg !== 'RS256' || header.typ !== 'JWT' || typeof header.kid !== 'string') {
+    throw new LeaseVerificationError('invalid lease header');
+  }
 
   const signingInput = `${headerB64}.${payloadB64}`;
   const signature = _b64urlToBuffer(sigB64);
-  const verified = (jwks?.keys || []).some((jwk) => {
+  const verified = (jwks?.keys || []).filter((jwk) => jwk.kid === header.kid).some((jwk) => {
     try {
       const publicKeyPem = jwkToPublicKeyPem(jwk);
       return crypto.verify('RSA-SHA256', Buffer.from(signingInput), publicKeyPem, signature);
@@ -118,6 +143,33 @@ function verifyLeaseJwt(
   }
 
   const now = Math.floor(Date.now() / 1000);
+  if (payload.protocol_version !== LEASE_PROTOCOL_VERSION) {
+    throw new LeaseVerificationError('lease protocol_version mismatch');
+  }
+  if (payload.iss !== LEASE_ISSUER) {
+    throw new LeaseVerificationError('lease issuer mismatch');
+  }
+  if (payload.aud !== LEASE_AUDIENCE) {
+    throw new LeaseVerificationError('lease audience mismatch');
+  }
+  if (typeof payload.jti !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(payload.jti)) {
+    throw new LeaseVerificationError('invalid lease jti');
+  }
+  if (typeof expectedSubject !== 'string' || !expectedSubject || payload.sub !== expectedSubject) {
+    throw new LeaseVerificationError('lease subject mismatch');
+  }
+  if (payload.org_id !== null && (typeof payload.org_id !== 'string' || !payload.org_id)) {
+    throw new LeaseVerificationError('invalid lease org_id');
+  }
+  if (!Number.isInteger(payload.iat) || !Number.isInteger(payload.nbf) || !Number.isInteger(payload.exp)) {
+    throw new LeaseVerificationError('invalid lease timestamps');
+  }
+  if (payload.iat > now || payload.nbf > now) {
+    throw new LeaseVerificationError('lease not active');
+  }
+  if (payload.nbf !== payload.iat || payload.exp - payload.iat !== LEASE_TTL_SECONDS) {
+    throw new LeaseVerificationError('invalid lease validity window');
+  }
   if (typeof payload.exp !== 'number' || payload.exp <= now) {
     throw new LeaseVerificationError('lease expired');
   }
@@ -139,6 +191,7 @@ function verifyLeaseJwt(
 module.exports = {
   generateDeviceKeypair,
   generateDeviceId,
+  getJwtSubject,
   signEnrollmentChallenge,
   unwrapDek,
   jwkToPublicKeyPem,
