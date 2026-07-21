@@ -11,6 +11,7 @@ import importlib.util
 import inspect
 import json
 import os
+import re
 import sys
 import tempfile
 import zipfile
@@ -55,6 +56,7 @@ DEFAULT_HOST_VERSION = "0.1.0"
 POF_VERSION = "1.0.0"
 _DECRYPTED_PLUGIN_CACHE: dict[str, Path] = {}
 _DECRYPTED_PLUGIN_TEMPS: list[tempfile.TemporaryDirectory[str]] = []
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _check_pof_compatibility(manifest: PluginManifest, pof_version: str) -> None:
@@ -247,20 +249,29 @@ def _load_plugin_module(manifest: PluginManifest):
 def _resolve_effective_plugin_root(manifest: PluginManifest) -> Path:
     if manifest.distribution.encrypted is not True:
         return manifest.root_path
+    if manifest.distribution.profile != "ONLINE_STANDARD":
+        raise RuntimeError(
+            "Bundle premium refusé: distribution.profile doit être ONLINE_STANDARD."
+        )
+    if manifest.distribution.bundle_format != "pofplug-enc":
+        raise RuntimeError(
+            "Bundle ONLINE_STANDARD invalide: format pofplug-enc requis."
+        )
+    if manifest.licensing.required is not True:
+        raise RuntimeError(
+            "Bundle ONLINE_STANDARD invalide: licensing.required doit être true."
+        )
+    if manifest.licensing.mode != "signed-license":
+        raise RuntimeError(
+            "Bundle ONLINE_STANDARD invalide: licensing.mode doit être signed-license."
+        )
+    release_id = manifest.licensing.release_id.strip()
+    if not release_id:
+        raise RuntimeError("Bundle ONLINE_STANDARD invalide: release_id absent.")
     cache_key = str(manifest.root_path)
     cached = _DECRYPTED_PLUGIN_CACHE.get(cache_key)
     if cached and cached.exists():
         return cached
-
-    evaluation = evaluate_plugin_license(manifest)
-    if evaluation.status not in ("unlocked", "active"):
-        raise RuntimeError(
-            evaluation.message
-            or f"Le plugin {manifest.plugin_id} est chiffré et nécessite une licence valide."
-        )
-    content_key = str(evaluation.content_key or "").strip()
-    if not content_key:
-        raise RuntimeError("La licence valide ne contient pas de clé de déchiffrement.")
 
     metadata_path = manifest.root_path / "metadata" / "encryption.json"
     if not metadata_path.exists():
@@ -272,9 +283,21 @@ def _resolve_effective_plugin_root(manifest: PluginManifest) -> Path:
     if not isinstance(encryption_meta, dict):
         raise RuntimeError("Metadata de chiffrement invalide.")
 
-    payload_name = str(encryption_meta.get("payload_file", "") or "payload.enc").strip()
+    payload_name = str(encryption_meta.get("payload_file", "") or "").strip()
     payload_sha256 = str(encryption_meta.get("payload_sha256", "") or "").strip()
     algorithm = str(encryption_meta.get("algorithm", "") or "").strip()
+    content_format = str(encryption_meta.get("content_format", "") or "").strip()
+    metadata_release_id = str(encryption_meta.get("license_id", "") or "").strip()
+    if payload_name != "payload.enc" or content_format != "zip":
+        raise RuntimeError(
+            "Bundle ONLINE_STANDARD invalide: enveloppe chiffrée inconnue."
+        )
+    if metadata_release_id != release_id:
+        raise RuntimeError("Bundle ONLINE_STANDARD invalide: release_id incohérent.")
+    if not _SHA256_RE.fullmatch(payload_sha256):
+        raise RuntimeError(
+            "Bundle ONLINE_STANDARD invalide: payload_sha256 absent ou invalide."
+        )
     payload_path = manifest.root_path / payload_name
     if not payload_path.exists():
         raise RuntimeError(f"Bundle chiffré invalide: payload absent ({payload_name}).")
@@ -290,6 +313,16 @@ def _resolve_effective_plugin_root(manifest: PluginManifest) -> Path:
         )
 
     raw_ciphertext = payload_path.read_bytes()
+
+    evaluation = evaluate_plugin_license(manifest)
+    if evaluation.status not in ("unlocked", "active"):
+        raise RuntimeError(
+            evaluation.message
+            or f"Le plugin {manifest.plugin_id} est chiffré et nécessite une licence valide."
+        )
+    content_key = str(evaluation.content_key or "").strip()
+    if not content_key:
+        raise RuntimeError("La licence valide ne contient pas de clé de déchiffrement.")
 
     hmac_expected = str(getattr(manifest.distribution, "hmac_sha256", "") or "").strip()
     if not _verify_payload_hmac(raw_ciphertext, content_key, hmac_expected):
@@ -313,13 +346,12 @@ def _resolve_effective_plugin_root(manifest: PluginManifest) -> Path:
     payload_zip = temp_root / "payload.zip"
     payload_zip.write_bytes(plaintext)
 
-    if payload_sha256:
-        digest = hashlib.sha256(plaintext).hexdigest()
-        if digest != payload_sha256:
-            temp_dir.cleanup()
-            raise RuntimeError(
-                "Le payload déchiffré ne correspond pas au checksum attendu."
-            )
+    digest = hashlib.sha256(plaintext).hexdigest()
+    if digest != payload_sha256:
+        temp_dir.cleanup()
+        raise RuntimeError(
+            "Le payload déchiffré ne correspond pas au checksum attendu."
+        )
     plugin_root = temp_root / "plugin"
     with zipfile.ZipFile(payload_zip) as archive:
         archive.extractall(plugin_root)
@@ -328,6 +360,21 @@ def _resolve_effective_plugin_root(manifest: PluginManifest) -> Path:
     if not (plugin_root / "manifest.json").exists():
         temp_dir.cleanup()
         raise RuntimeError("Bundle déchiffré invalide: manifest.json absent.")
+    try:
+        inner_manifest = load_plugin_manifest(plugin_root / "manifest.json")
+    except PluginManifestError:
+        temp_dir.cleanup()
+        raise
+    if (
+        inner_manifest.plugin_id != manifest.plugin_id
+        or inner_manifest.version != manifest.version
+        or inner_manifest.distribution.profile != "ONLINE_STANDARD"
+        or inner_manifest.licensing.release_id != release_id
+    ):
+        temp_dir.cleanup()
+        raise RuntimeError(
+            "Bundle ONLINE_STANDARD invalide: manifeste interne incohérent avec l'enveloppe."
+        )
     try:
         for path in plugin_root.rglob("*"):
             if path.is_dir():

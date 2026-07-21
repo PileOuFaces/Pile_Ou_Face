@@ -48,6 +48,19 @@ def _build_encrypted_bundle(root_path, content_key_b64: str) -> PluginManifest:
         "id": PLUGIN_ID,
         "name": "Encrypted Unlock Test",
         "version": "1.0.0",
+        "kind": "feature",
+        "host": {"api_version": 1},
+        "distribution": {
+            "encrypted": True,
+            "bundle_format": "pofplug-enc",
+            "profile": "ONLINE_STANDARD",
+        },
+        "licensing": {
+            "required": True,
+            "mode": "signed-license",
+            "release_id": "release-test-1",
+        },
+        "entrypoints": {},
     }
     (plugin_source / "manifest.json").write_text(
         json.dumps(inner_manifest), encoding="utf-8"
@@ -79,6 +92,8 @@ def _build_encrypted_bundle(root_path, content_key_b64: str) -> PluginManifest:
                 "nonce_b64": base64.b64encode(nonce).decode("ascii"),
                 "algorithm": "aes-256-gcm",
                 "payload_sha256": payload_sha256,
+                "content_format": "zip",
+                "license_id": "release-test-1",
             }
         ),
         encoding="utf-8",
@@ -91,9 +106,14 @@ def _build_encrypted_bundle(root_path, content_key_b64: str) -> PluginManifest:
         kind="feature",
         host=PluginHostRequirements(api_version=1),
         distribution=PluginDistribution(
-            encrypted=True, bundle_format="pofplug", hmac_sha256=hmac_hex
+            encrypted=True,
+            bundle_format="pofplug-enc",
+            profile="ONLINE_STANDARD",
+            hmac_sha256=hmac_hex,
         ),
-        licensing=PluginLicensing(required=True),
+        licensing=PluginLicensing(
+            required=True, mode="signed-license", release_id="release-test-1"
+        ),
         entrypoints=PluginEntrypoints(),
         capabilities={},
         dependencies={},
@@ -149,4 +169,56 @@ def test_missing_content_key_is_refused(tmp_path, monkeypatch):
     monkeypatch.setattr("sys.stdin", io.StringIO(""))
 
     with pytest.raises(RuntimeError):
+        runtime_module._resolve_effective_plugin_root(manifest)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("profile", "DEVELOPMENT", "ONLINE_STANDARD"),
+        ("profile", "AIRGAP_ENTERPRISE", "ONLINE_STANDARD"),
+        ("bundle_format", "pofplug", "pofplug-enc"),
+    ],
+)
+def test_non_standard_encrypted_bundle_is_refused_before_license(
+    tmp_path, monkeypatch, field, value, message
+):
+    content_key_b64 = base64.b64encode(b"\x05" * 32).decode("ascii")
+    manifest = _build_encrypted_bundle(tmp_path, content_key_b64)
+    manifest = PluginManifest(
+        **{
+            **manifest.__dict__,
+            "distribution": PluginDistribution(
+                **{**manifest.distribution.__dict__, field: value}
+            ),
+        }
+    )
+    monkeypatch.setattr(
+        runtime_module,
+        "evaluate_plugin_license",
+        lambda _manifest: pytest.fail("license evaluation must not run"),
+    )
+
+    with pytest.raises(RuntimeError, match=message):
+        runtime_module._resolve_effective_plugin_root(manifest)
+
+
+def test_outer_and_inner_release_ids_must_match(tmp_path, monkeypatch):
+    content_key_b64 = base64.b64encode(b"\x06" * 32).decode("ascii")
+    manifest = _build_encrypted_bundle(tmp_path, content_key_b64)
+    manifest = PluginManifest(
+        **{
+            **manifest.__dict__,
+            "licensing": PluginLicensing(
+                **{**manifest.licensing.__dict__, "release_id": "release-other"}
+            ),
+        }
+    )
+    monkeypatch.setattr(
+        runtime_module,
+        "evaluate_plugin_license",
+        lambda _manifest: pytest.fail("license evaluation must not run"),
+    )
+
+    with pytest.raises(RuntimeError, match="release_id incohérent"):
         runtime_module._resolve_effective_plugin_root(manifest)
