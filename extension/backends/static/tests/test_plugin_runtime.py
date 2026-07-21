@@ -15,9 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backends.plugins.install_license import install_license
 from backends.plugins.install_plugin import install_plugin
-from backends.plugins.license import default_license_search_paths
 from backends.plugins.manifest import PluginManifestError, load_plugin_manifest
 from backends.plugins.registry import build_plugin_registry, discover_plugin_dirs
 from backends.plugins.runtime import (
@@ -686,24 +684,6 @@ class TestPluginRuntime(unittest.TestCase):
         )
         self.assertEqual(paths, [Path("/tmp/workspaceStorage/pof/plugins")])
 
-    def test_default_license_search_paths_prefers_workspace_root_when_present(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            project = Path(tmp) / "project"
-            workspace_root = project / ".pile-ou-face"
-            workspace_root.mkdir(parents=True)
-            paths = default_license_search_paths(
-                cwd=project, home=Path(tmp) / "home", env={}
-            )
-        self.assertEqual(paths, [(workspace_root / "licenses").resolve()])
-
-    def test_default_license_search_paths_falls_back_to_home_without_workspace_root(
-        self,
-    ):
-        paths = default_license_search_paths(
-            cwd="/tmp/project", home="/tmp/home", env={}
-        )
-        self.assertEqual(paths, [Path("/tmp/home/.pile-ou-face/licenses").resolve()])
-
     def test_collect_runtime_state_includes_search_paths_and_summary(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -795,7 +775,7 @@ class TestPluginRuntime(unittest.TestCase):
             )
             self.assertEqual(state["attached"]["commands"], [])
 
-    def test_valid_signed_account_based_license_unlocks_plugin(self):
+    def test_signed_local_license_does_not_unlock_plugin(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             plugin_dir = base / "pof.demo"
@@ -898,20 +878,10 @@ class TestPluginRuntime(unittest.TestCase):
             )
 
             records = apply_plugin_licensing(
-                build_plugin_registry([base], host_version="0.1.0"),
-                search_paths=[license_dir],
+                build_plugin_registry([base], host_version="0.1.0")
             )
-            self.assertEqual(records[0].state, "active")
-            self.assertEqual(records[0].license_status, "unlocked")
-            with self._with_env(BINHOST_LICENSE_PATH=str(license_dir)):
-                response, _, _ = invoke_plugin_command(
-                    records,
-                    "demo.scan.run",
-                    {"binaryPath": "/tmp/demo.bin"},
-                    host_version="0.1.0",
-                )
-            self.assertTrue(response["ok"])
-            self.assertEqual(response["result"]["binaryPath"], "/tmp/demo.bin")
+            self.assertEqual(records[0].state, "locked")
+            self.assertEqual(records[0].license_status, "locked")
 
     def test_install_plugin_from_bundle_extracts_into_target_root(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -961,31 +931,7 @@ class TestPluginRuntime(unittest.TestCase):
             self.assertTrue((installed_dir / "manifest.json").exists())
             self.assertTrue((installed_dir / "python" / "plugin_main.py").exists())
 
-    def test_install_license_copies_license_into_user_root(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp)
-            source = base / "demo-license.json"
-            source.write_text(
-                json.dumps(
-                    {
-                        "plugin_id": "pof.demo-plugin",
-                        "license_id": "lic-001",
-                        "signature": "ZmFrZQ==",
-                    }
-                ),
-                encoding="utf-8",
-            )
-            target_root = base / ".pile-ou-face" / "licenses"
-            result = install_license(source, target_root)
-            self.assertTrue(result["ok"])
-            destination = target_root / "pof.demo-plugin.license.json"
-            self.assertTrue(destination.exists())
-            self.assertEqual(
-                json.loads(destination.read_text(encoding="utf-8"))["license_id"],
-                "lic-001",
-            )
-
-    def test_install_encrypted_plugin_bundle_uses_signed_license(self):
+    def test_install_encrypted_plugin_bundle_uses_auth_key(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             keys_dir = base / "keys"
@@ -1167,12 +1113,16 @@ class TestPluginRuntime(unittest.TestCase):
             self.assertTrue((installed_dir / "manifest.json").exists())
             self.assertTrue((installed_dir / "payload.enc").exists())
             self.assertFalse((installed_dir / "python").exists())
-            state = collect_runtime_state(
-                host_version="0.1.0",
-                search_paths=[target_root],
-                license_search_paths=[license_dir],
-                attach=True,
-            )
+            from backends.plugins import license as license_module
+
+            license_module._STDIN_CONTENT_KEYS_CACHE = {plugin_id: content_key}
+            with self._with_env(BINHOST_CONTENT_KEYS_STDIN="1"):
+                state = collect_runtime_state(
+                    host_version="0.1.0",
+                    search_paths=[target_root],
+                    attach=True,
+                )
+            license_module._STDIN_CONTENT_KEYS_CACHE = None
             self.assertEqual(state["summary"], {"active": 1})
             self.assertEqual(state["plugins"][0]["state"], "active")
             self.assertIn("demo.scan.run", state["attached"]["commands"])

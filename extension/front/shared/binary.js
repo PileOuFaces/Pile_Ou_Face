@@ -220,7 +220,7 @@ function renderPluginManager(state = pluginUiState) {
   const hintEl = document.getElementById('pluginStateHint');
   if (!summaryEl || !listEl) return;
 
-  const unlockedStatuses = new Set(['active', 'unlocked', 'grace']);
+  const unlockedStatuses = new Set(['active', 'unlocked']);
   const stateCounts = state?.stateCounts && typeof state.stateCounts === 'object' ? state.stateCounts : {};
   const activeCount = Number(stateCounts.active || 0);
   const lockedCount = (Array.isArray(state?.plugins) ? state.plugins : []).filter((plugin) => plugin?.licenseRequired && !unlockedStatuses.has(String(plugin?.licenseStatus || '').trim())).length;

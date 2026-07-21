@@ -826,13 +826,11 @@ async function run() {
     const scriptPath = path.join(workspaceDir, 'e2e-runtime-audit-script.py');
     const sourcePath = path.join(workspaceDir, 'e2e-runtime-audit-source.c');
     const rulePath = path.join(workspaceDir, 'e2e-runtime-audit-rule.yar');
-    const licensePath = path.join(workspaceDir, 'e2e-runtime-audit-plugin.license.json');
     const pluginBundlePath = path.join(workspaceDir, 'e2e-runtime-audit-plugin.pofplug');
     const patchBinaryPath = path.join(workspaceDir, 'e2e-runtime-audit-patch-copy.bin');
     fs.writeFileSync(scriptPath, 'print({"ok": True})\n', 'utf8');
     fs.writeFileSync(sourcePath, 'int main(void) { return 0; }\n', 'utf8');
     fs.writeFileSync(rulePath, 'rule E2ERuntimeAuditRule { condition: true }\n', 'utf8');
-    fs.writeFileSync(licensePath, JSON.stringify({ plugin_id: 'e2e.runtime-audit', license_key: 'e2e' }), 'utf8');
     fs.writeFileSync(pluginBundlePath, 'not a real plugin bundle\n', 'utf8');
     fs.copyFileSync(binaryPath, patchBinaryPath);
 
@@ -942,13 +940,11 @@ async function run() {
       { type: 'hubGrantPluginConsent', pluginId: 'e2e.runtime-audit' },
       { type: 'hubPluginInvoke', requestId: 'e2e-plugin-missing-feature' },
       { type: 'hubInstallPlugin', scope: 'workspace' },
-      { type: 'hubInstallPluginLicense' },
       { type: 'hubInstallDecompiler', tool: 'e2e-custom' },
       { type: 'hubPullDecompilerImage', decompiler: '', image: '' },
       { type: 'hubOllamaModelSelected', model: 'e2e-runtime-audit-model' },
       { type: 'hubOllamaPrompt', requestId: 'e2e-ollama-prompt', model: 'e2e-ollama-model', prompt: 'hello' },
       { type: 'hubOpenPluginDirectory', scope: 'workspace' },
-      { type: 'hubOpenLicenseDirectory' },
       { type: 'hubResetSettings' },
       { type: 'hubSaveSettings', settings: { interfaceMode: 'advanced', lang: 'fr' } },
       { type: 'pof.auth.login', email: 'e2e@example.invalid', password: 'e2e-password' },

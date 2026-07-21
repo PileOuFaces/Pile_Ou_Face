@@ -20,7 +20,7 @@ def _build_manifest(required=True):
     )
 
 
-def test_env_content_key_is_ignored_in_strict_mode(tmp_path):
+def test_env_content_key_is_ignored_in_strict_mode():
     """POF_CONTENT_KEY_* is no longer a supported online key transport."""
     manifest = _build_manifest()
     result = evaluate_plugin_license(
@@ -29,14 +29,13 @@ def test_env_content_key_is_ignored_in_strict_mode(tmp_path):
             "BINHOST_DISABLE_LICENSE_FALLBACK": "1",
             "POF_CONTENT_KEY_POF_TEST_PLUGIN": "dGVzdGtleWFiY2RlZmc=",
         },
-        search_paths=[tmp_path],
     )
 
     assert result.content_key == ""
     assert result.status == "locked"
 
 
-def test_stdin_content_key_takes_priority(tmp_path, monkeypatch):
+def test_stdin_content_key_takes_priority(monkeypatch):
     """Online content keys can be passed over stdin instead of process env."""
     manifest = _build_manifest()
     fake_key = "c3RkaW4ta2V5"
@@ -47,7 +46,6 @@ def test_stdin_content_key_takes_priority(tmp_path, monkeypatch):
     result = evaluate_plugin_license(
         manifest,
         env={"BINHOST_CONTENT_KEYS_STDIN": "1"},
-        search_paths=[tmp_path],
     )
 
     assert result.content_key == fake_key
@@ -55,23 +53,21 @@ def test_stdin_content_key_takes_priority(tmp_path, monkeypatch):
     assert result.verified is True
 
 
-def test_no_env_key_falls_back_to_file_lookup(tmp_path):
-    """Sans env var, la fonction continue vers la recherche de fichier licence."""
+def test_no_auth_key_stays_locked():
     manifest = _build_manifest()
 
-    # Sans licence et sans env var -> status non-active (pas d'erreur levee)
-    result = evaluate_plugin_license(manifest, search_paths=[tmp_path])
-    assert result.status != "active" or result.content_key == ""
+    result = evaluate_plugin_license(manifest)
+    assert result.status == "locked"
+    assert result.content_key == ""
 
 
-def test_auth_strict_env_disables_license_file_fallback(tmp_path):
+def test_disable_fallback_flag_is_no_longer_needed():
     manifest = _build_manifest()
 
     result = evaluate_plugin_license(
         manifest,
         env={"BINHOST_DISABLE_LICENSE_FALLBACK": "1"},
-        search_paths=[tmp_path],
     )
 
     assert result.status == "locked"
-    assert "Connexion requise" in result.message
+    assert "Connexion Auth requise" in result.message

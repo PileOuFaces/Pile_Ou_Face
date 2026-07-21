@@ -994,25 +994,6 @@ function staticHandlers(config) {
         });
       }
     },
-    hubOpenLicenseDirectory: async () => {
-      const licenseDir = getHostArtifactRoot('licenses');
-      try {
-        await fs.promises.mkdir(licenseDir, { recursive: true });
-        await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(licenseDir));
-        panel.webview.postMessage({
-          type: 'hubLicenseFolderOpened',
-          ok: true,
-          path: licenseDir,
-        });
-      } catch (error) {
-        panel.webview.postMessage({
-          type: 'hubLicenseFolderOpened',
-          ok: false,
-          path: licenseDir,
-          error: String(error?.message || error || `Impossible d'ouvrir le dossier licences.`),
-        });
-      }
-    },
     hubInstallPlugin: async (message = {}) => {
       const requestedScope = String(message.scope || 'user').trim() === 'workspace' ? 'workspace' : 'user';
       const selectedScope = storageDir ? 'workspace' : requestedScope;
@@ -1058,47 +1039,6 @@ function staticHandlers(config) {
           ok: false,
           scope: selectedScope || 'workspace',
           error: String(details || 'Installation du plugin impossible.'),
-        });
-      }
-    },
-    hubInstallPluginLicense: async () => {
-      try {
-        const picked = await vscode.window.showOpenDialog({
-          canSelectFiles: true,
-          canSelectFolders: false,
-          canSelectMany: false,
-          openLabel: 'Importer la licence',
-          defaultUri: vscode.Uri.file(getPreferredPluginArtifactDir('licenses')),
-          title: 'Sélectionner un fichier de licence plugin',
-        });
-        if (!Array.isArray(picked) || !picked.length) {
-          panel.webview.postMessage({
-            type: 'hubPluginLicenseInstalled',
-            ok: false,
-            cancelled: true,
-          });
-          return;
-        }
-        const sourceUri = picked[0];
-        const targetRoot = getHostArtifactRoot('licenses');
-        const { stdout } = await runPython([
-          'backends/plugins/install_license.py',
-          '--source', sourceUri.fsPath,
-          '--target-root', targetRoot,
-          '--workspace', root,
-        ], { timeout: 120000 });
-        const response = JSON.parse(String(stdout || '{}'));
-        panel.webview.postMessage({
-          type: 'hubPluginLicenseInstalled',
-          source: sourceUri.fsPath,
-          ...response,
-        });
-      } catch (error) {
-        const details = [error?.message || error, error?.stderr].filter(Boolean).join('\n');
-        panel.webview.postMessage({
-          type: 'hubPluginLicenseInstalled',
-          ok: false,
-          error: String(details || 'Installation de la licence impossible.'),
         });
       }
     },

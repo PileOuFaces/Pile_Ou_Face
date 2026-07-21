@@ -8,7 +8,7 @@ approved is held in a "pending_consent" state instead of being attached —
 see attach_plugins()'s consent_path parameter in runtime.py.
 
 Storage follows the same convention as plugin/license search paths
-(default_plugin_search_paths, default_license_search_paths): a workspace-
+(default_plugin_search_paths): a workspace-
 local .pile-ou-face/ directory if present, else the user's home directory.
 """
 

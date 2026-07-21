@@ -400,14 +400,8 @@ document.getElementById('btnPluginRefresh')?.addEventListener('click', () => {
 document.getElementById('btnPluginAdd')?.addEventListener('click', () => {
   vscode.postMessage({ type: 'hubInstallPlugin' });
 });
-document.getElementById('btnPluginAddLicense')?.addEventListener('click', () => {
-  vscode.postMessage({ type: 'hubInstallPluginLicense' });
-});
 document.getElementById('btnOpenUserPluginDir')?.addEventListener('click', () => {
   vscode.postMessage({ type: 'hubOpenPluginDirectory', scope: 'user' });
-});
-document.getElementById('btnOpenLicenseDir')?.addEventListener('click', () => {
-  vscode.postMessage({ type: 'hubOpenLicenseDirectory' });
 });
 
 // ─── Gestionnaire de décompilateurs (panneau Options) ──────────────────────

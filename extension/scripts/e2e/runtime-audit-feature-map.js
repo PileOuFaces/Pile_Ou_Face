@@ -74,10 +74,8 @@ const RESPONSE_TYPES_BY_MESSAGE = {
   hubGrantPluginConsent: ['hubPluginState'],
   hubPluginInvoke: ['hubPluginResult'],
   hubInstallPlugin: ['hubPluginInstalled'],
-  hubInstallPluginLicense: ['hubPluginLicenseInstalled'],
   hubPullDecompilerImage: ['hubDecompilerPullDone'],
   hubOpenPluginDirectory: ['hubPluginFolderOpened'],
-  hubOpenLicenseDirectory: ['hubLicenseFolderOpened'],
   hubOllamaPrompt: ['hubOllamaResult'],
   hubResetSettings: ['hubSettings'],
   hubSaveSettings: ['hubSettingsSaved'],
@@ -324,17 +322,11 @@ const PAYLOAD_ASSERTIONS_BY_MESSAGE = {
   hubInstallPlugin: [
     { responseType: 'hubPluginInstalled', requiredKeys: ['ok', 'scope'], allowErrors: true },
   ],
-  hubInstallPluginLicense: [
-    { responseType: 'hubPluginLicenseInstalled', requiredKeys: ['ok'], allowErrors: true },
-  ],
   hubPullDecompilerImage: [
     { responseType: 'hubDecompilerPullDone', requiredKeys: ['ok', 'decompiler'], allowErrors: true },
   ],
   hubOpenPluginDirectory: [
     { responseType: 'hubPluginFolderOpened', requiredKeys: ['ok', 'scope', 'path'] },
-  ],
-  hubOpenLicenseDirectory: [
-    { responseType: 'hubLicenseFolderOpened', requiredKeys: ['ok', 'path'] },
   ],
   hubOllamaPrompt: [
     { responseType: 'hubOllamaResult', requiredKeys: ['model', 'output', 'requestId', 'usage'], exactFields: { ok: true } },
