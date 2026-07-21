@@ -1018,6 +1018,7 @@ function getWebviewContent(webview, extensionUri) {
     html = fs.readFileSync(legacyPath.fsPath, 'utf8');
   }
   const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'dynamic', 'app', 'main.js'));
+  const telemetryClientUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'telemetryClient.js'));
   const preferredStyle = vscode.Uri.joinPath(extensionUri, 'front', 'dynamic', 'graphical-stack.css');
   const fallbackStyle = vscode.Uri.joinPath(extensionUri, 'front', 'dynamic', 'legacy-visualizer.css');
   const stylePath = fs.existsSync(preferredStyle.fsPath) ? preferredStyle : fallbackStyle;
@@ -1025,6 +1026,7 @@ function getWebviewContent(webview, extensionUri) {
   const csp = webview.cspSource;
   return html
     .replace(/{{scriptUri}}/g, scriptUri.toString())
+    .replace(/{{telemetryClientUri}}/g, telemetryClientUri.toString())
     .replace(/{{styleUri}}/g, styleUri.toString())
     .replace(/{{cspSource}}/g, csp);
 }
@@ -1078,6 +1080,7 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', global
   // shared controllers
   const sharedHubStateUri              = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'hubState.js'));
   const sharedMessageBusUri            = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'messageBus.js'));
+  const sharedTelemetryClientUri       = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'telemetryClient.js'));
   const sharedTaskProgressControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'taskProgressController.js'));
   const sharedMessageRouterUri         = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'messageRouter.js'));
   const sharedStatusControllerUri      = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'statusController.js'));
@@ -1162,6 +1165,7 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', global
     // shared controllers
     .replace(/{{sharedHubStateUri}}/g, sharedHubStateUri.toString())
     .replace(/{{sharedMessageBusUri}}/g, sharedMessageBusUri.toString())
+    .replace(/{{sharedTelemetryClientUri}}/g, sharedTelemetryClientUri.toString())
     .replace(/{{sharedTaskProgressControllerUri}}/g, sharedTaskProgressControllerUri.toString())
     .replace(/{{sharedMessageRouterUri}}/g, sharedMessageRouterUri.toString())
     .replace(/{{sharedStatusControllerUri}}/g, sharedStatusControllerUri.toString())

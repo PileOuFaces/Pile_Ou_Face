@@ -6,6 +6,7 @@
 
 const sharedHandlers = require('../shared/sharedHandlers');
 const staticHandlers = require('./staticHandlers');
+const { createTelemetryHandlers } = require('../shared/telemetry/telemetryMessageHandler');
 
 /**
  * @brief Crée le registre des handlers pour un hub donné.
@@ -15,7 +16,8 @@ const staticHandlers = require('./staticHandlers');
 function createHandlers(config) {
   const shared = sharedHandlers(config);
   const static_ = staticHandlers(config);
-  return { ...shared, ...static_ };
+  const telemetry = createTelemetryHandlers(config.telemetry);
+  return { ...shared, ...static_, ...telemetry };
 }
 
 module.exports = { createHandlers };

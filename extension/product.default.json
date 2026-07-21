@@ -1,4 +1,5 @@
 {
   "authProviderUrl": "",
-  "collabProviderUrl": ""
+  "collabProviderUrl": "",
+  "telemetryProviderUrl": ""
 }

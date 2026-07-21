@@ -19,6 +19,7 @@ describe("product config layer", () => {
       const cfg = loadProductConfig(root);
       expect(cfg.authProviderUrl).to.equal("");
       expect(cfg.collabProviderUrl).to.equal("");
+      expect(cfg.telemetryProviderUrl).to.equal("");
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -27,6 +28,7 @@ describe("product config layer", () => {
   it("keeps the neutral default map empty", () => {
     expect(NEUTRAL_CONFIG.authProviderUrl).to.equal("");
     expect(NEUTRAL_CONFIG.collabProviderUrl).to.equal("");
+    expect(NEUTRAL_CONFIG.telemetryProviderUrl).to.equal("");
   });
 
   it("reads the versioned neutral default file", () => {
@@ -34,7 +36,7 @@ describe("product config layer", () => {
     try {
       fs.writeFileSync(
         path.join(root, "product.default.json"),
-        JSON.stringify({ authProviderUrl: "", collabProviderUrl: "" }),
+        JSON.stringify({ authProviderUrl: "", collabProviderUrl: "", telemetryProviderUrl: "" }),
       );
       const cfg = loadProductConfig(root);
       expect(cfg.authProviderUrl).to.equal("");
@@ -48,18 +50,20 @@ describe("product config layer", () => {
     try {
       fs.writeFileSync(
         path.join(root, "product.default.json"),
-        JSON.stringify({ authProviderUrl: "", collabProviderUrl: "" }),
+        JSON.stringify({ authProviderUrl: "", collabProviderUrl: "", telemetryProviderUrl: "" }),
       );
       fs.writeFileSync(
         path.join(root, "product.json"),
         JSON.stringify({
           authProviderUrl: "https://auth.official.example",
           collabProviderUrl: "https://collab.official.example",
+          telemetryProviderUrl: "https://telemetry.official.example",
         }),
       );
       const cfg = loadProductConfig(root);
       expect(cfg.authProviderUrl).to.equal("https://auth.official.example");
       expect(cfg.collabProviderUrl).to.equal("https://collab.official.example");
+      expect(cfg.telemetryProviderUrl).to.equal("https://telemetry.official.example");
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

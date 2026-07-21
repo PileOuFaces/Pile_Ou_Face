@@ -131,6 +131,34 @@ describe('dynamic/workflows run trace submit dispatch', () => {
     }]);
   });
 
+  it('renders the terminal Run Trace outcome without treating failures as completed', () => {
+    const controller = loadRunTraceController();
+    const statuses: string[] = [];
+    const runBtn = createMockElement({ disabled: true });
+    const instance = controller.initRunTraceController({
+      document: { getElementById: () => null },
+      form: createMockElement(),
+      postMessage: () => {},
+      runBtn,
+      binaryPathInput: createMockElement({ value: '/tmp/current.bin' }),
+      dynamicSourcePathInput: createMockElement(),
+      dynamicPayloadTargetMode: createMockElement(),
+      btnDynamicSelectBinary: createMockElement(),
+      btnDynamicSelectSource: createMockElement(),
+      payloadBuilderInput: createMockElement(),
+      setDynamicTraceStatus: (status: string) => statuses.push(status),
+    });
+
+    expect(instance.handleMessage({
+      type: 'runTraceDone',
+      binaryPath: '/tmp/current.bin',
+      result: 'failed',
+    })).to.equal(true);
+
+    expect(runBtn.disabled).to.equal(false);
+    expect(statuses).to.deep.equal(['Échec de la trace.']);
+  });
+
   function loadRunTraceController() {
     const source = fs.readFileSync(
       path.resolve(__dirname, '../../../dynamic/runTraceController.js'),

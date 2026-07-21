@@ -6,7 +6,7 @@
  *
  * Frontière open-core : la source open-source ne contient AUCUN endpoint,
  * branding ou télémétrie spécifique à la société. Les URLs des providers
- * (auth/entitlement, collaboration) sont lues ici, jamais codées en dur.
+ * (auth/entitlement, collaboration, télémétrie) sont lues ici, jamais codées en dur.
  *
  * - `product.default.json` (versionné) : configuration NEUTRE, tout vide.
  * - `product.json` (non versionné, cf. .gitignore) : overlay écrit par le
@@ -20,7 +20,11 @@
 const fs = require('fs');
 const path = require('path');
 
-const NEUTRAL_CONFIG = Object.freeze({ authProviderUrl: '', collabProviderUrl: '' });
+const NEUTRAL_CONFIG = Object.freeze({
+  authProviderUrl: '',
+  collabProviderUrl: '',
+  telemetryProviderUrl: '',
+});
 
 let _cache = null;
 

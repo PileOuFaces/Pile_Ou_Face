@@ -164,6 +164,12 @@ binarySourceController = binarySourceControllerFactory?.initBinarySourceControll
   triggerStaticQuickAction,
   _autoLoadTab,
   getSectionsCacheBinaryPath: () => tabDataCache.sections?.binaryPath,
+  trackBinaryLoaded: (meta) => {
+    window.POFTelemetry?.trackEvent?.('binary.loaded', {
+      binaryFormat: window.POFTelemetryClient?.mapBinaryFormat?.(meta?.format),
+      arch: window.POFTelemetryClient?.mapArch?.(meta?.arch || meta?.rawConfig?.arch),
+    });
+  },
 }) || null;
 
 // Restore static binary path from storage
@@ -419,14 +425,25 @@ messageRouter?.registerController(runtimeSessionController);
 
 
 
+let telemetryBuilderLevel = payloadTabsController?.getBuilderLevel?.() || 'beginner';
 payloadTabsController?.bindEvents({
-  onTabClick: invalidateDynamicPayloadPreview,
+  onTabClick: ({ mode }) => {
+    const payloadMode = window.POFTelemetryClient?.mapPayloadMode?.(mode);
+    if (payloadMode) window.POFTelemetry?.trackEvent?.('payload.mode.used', { payloadMode });
+    invalidateDynamicPayloadPreview();
+  },
   onFileSourceChange: () => {
     filePayloadController?.refreshFilePayloadUi?.();
     invalidateDynamicPayloadPreview();
   },
   onHelperTemplateChange: invalidateDynamicPayloadPreview,
-  onBuilderLevelClick: invalidateDynamicPayloadPreview,
+  onBuilderLevelClick: ({ builderLevel }) => {
+    if (builderLevel !== telemetryBuilderLevel) {
+      telemetryBuilderLevel = builderLevel;
+      window.POFTelemetry?.trackEvent?.('payload.builder_level.changed', { level: builderLevel });
+    }
+    invalidateDynamicPayloadPreview();
+  },
 });
 
 // Disasm nav / search / export listeners registered in search.js at top level
