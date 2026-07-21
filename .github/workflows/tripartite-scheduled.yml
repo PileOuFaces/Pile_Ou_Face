@@ -1,0 +1,93 @@
+name: Scheduled Tripartite E2E
+
+on:
+  schedule:
+    # GitHub schedules run from the default branch (main), but every checkout
+    # below deliberately targets the active integration branch (develops).
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scheduled-tripartite-e2e
+  cancel-in-progress: true
+
+jobs:
+  tripartite-e2e:
+    name: Host develops + Auth develops + Plugins develops
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Host develops
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: develops
+
+      - name: Require cross-repo checkout capability
+        env:
+          CROSS_REPO_READONLY_PAT: ${{ secrets.CROSS_REPO_READONLY_PAT }}
+        run: |
+          if [ -z "$CROSS_REPO_READONLY_PAT" ]; then
+            echo "::error::CROSS_REPO_READONLY_PAT is missing; the mandatory tripartite check cannot run."
+            exit 1
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22.x'
+          cache: 'npm'
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.11'
+
+      - name: Checkout Auth develops
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: PileOuFaces/Pile_ou_Face_auth
+          ref: develops
+          token: ${{ secrets.CROSS_REPO_READONLY_PAT }}
+          path: pof-auth-sibling
+
+      - name: Checkout Plugins develops
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: PileOuFaces/Pile_ou_Face_plugins
+          ref: develops
+          token: ${{ secrets.CROSS_REPO_READONLY_PAT }}
+          path: pof-plugins-sibling
+
+      - name: Cache pip downloads
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/pip
+          key: scheduled-tripartite-pip-${{ runner.os }}-${{ hashFiles('.github/workflows/tripartite-scheduled.yml') }}
+          restore-keys: |
+            scheduled-tripartite-pip-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: |
+          python3 -m venv pof-auth-sibling/.venv
+          pof-auth-sibling/.venv/bin/pip install \
+            'fastapi>=0.111' 'uvicorn[standard]>=0.29' 'sqlalchemy>=2.0' 'alembic>=1.13' \
+            'psycopg2-binary>=2.9' 'pydantic-settings>=2.2' 'pydantic[email]>=2.7' \
+            'python-jose[cryptography]>=3.3' 'passlib[bcrypt]>=1.7' 'bcrypt<4.1' 'slowapi>=0.1.9'
+          pof-auth-sibling/.venv/bin/pip install -e './pof-plugins-sibling[dev]'
+          cd pof-plugins-sibling
+          npm ci
+          npm run build:webviews
+          cd ../extension
+          npm ci
+
+      - name: Run real Host-Auth-Plugins E2E
+        working-directory: ./extension
+        env:
+          AUTH_REPO_PATH: ${{ github.workspace }}/pof-auth-sibling
+          PLUGINS_REPO_PATH: ${{ github.workspace }}/pof-plugins-sibling
+        run: npm run test:e2e:auth-licensing
