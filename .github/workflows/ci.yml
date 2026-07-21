@@ -1,12 +1,6 @@
 name: CI
 
 on:
-  push:
-    branches-ignore: [main, develops]
-    paths:
-      - 'extension/**'
-      - '.github/workflows/ci.yml'
-      - '.github/workflows/publish.yml'
   pull_request:
     branches: [main, develops]
     paths:
@@ -26,15 +20,10 @@ concurrency:
 
 jobs:
   # ══════════════════════════════════════════════════════════════
-  # 🔎 Lint — feature branches + PRs (une seule fois, ubuntu uniquement)
+  # 🔎 Lint — PRs (une seule fois, ubuntu uniquement)
   # ══════════════════════════════════════════════════════════════
   lint:
     name: Lint
-    if: |
-      github.event_name == 'pull_request' ||
-      (github.event_name == 'push' &&
-       github.ref != 'refs/heads/main' &&
-       github.ref != 'refs/heads/develops')
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -60,78 +49,10 @@ jobs:
         run: python3 -m ruff format --check .
 
   # ══════════════════════════════════════════════════════════════
-  # 🔍 Tests Rapides — feature branches (push uniquement, hors main/develops)
-  # ══════════════════════════════════════════════════════════════
-  quick-test:
-    name: Quick Test
-    if: |
-      github.event_name == 'push' &&
-      github.ref != 'refs/heads/main' &&
-      github.ref != 'refs/heads/develops'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '22.x'
-          cache: 'npm'
-          cache-dependency-path: extension/package-lock.json
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-
-      - name: Install dependencies
-        run: |
-          pip install -r extension/backends/requirements-ci.txt
-          cd extension && npm ci
-
-      - name: Python tests
-        working-directory: ./extension
-        run: |
-          python3 -m coverage erase
-          python3 -m coverage run -m pytest
-          python3 -m coverage report
-          python3 -m coverage xml
-          python3 -m coverage json -o coverage-python.json
-
-      - name: JavaScript tests
-        working-directory: ./extension
-        run: npm run test:coverage
-
-      - name: Summarize coverage
-        if: always()
-        working-directory: ./extension
-        run: |
-          mkdir -p .pile-ou-face/test-artifacts
-          npm run coverage:summary > .pile-ou-face/test-artifacts/coverage-summary.log
-          cat .pile-ou-face/test-artifacts/coverage-summary.md >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload coverage reports
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: coverage-quick-${{ github.sha }}
-          path: |
-            extension/coverage-python.json
-            extension/coverage.xml
-            extension/coverage/
-            extension/.pile-ou-face/test-artifacts/coverage-summary.md
-          if-no-files-found: warn
-
-  # ══════════════════════════════════════════════════════════════
   # 🧪 Tests Complets Multi-OS — PRs uniquement
   # ══════════════════════════════════════════════════════════════
   full-test:
     name: ${{ matrix.os }} / Node ${{ matrix.node }}
-    if: github.event_name == 'pull_request'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
 
@@ -214,7 +135,6 @@ jobs:
   # ══════════════════════════════════════════════════════════════
   auth-licensing-windows:
     name: Auth Licensing Windows Unit Tests
-    if: github.event_name == 'pull_request'
     runs-on: windows-latest
     timeout-minutes: 10
 
@@ -269,7 +189,6 @@ jobs:
   # ══════════════════════════════════════════════════════════════
   dynamic-unicorn:
     name: Dynamic Unicorn Regression
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -305,7 +224,6 @@ jobs:
   # ══════════════════════════════════════════════════════════════
   real-corpus-arm64:
     name: Real Corpus ARM64
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -356,7 +274,6 @@ jobs:
   # ══════════════════════════════════════════════════════════════
   e2e-runtime-audit:
     name: E2E Runtime Audit
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -431,7 +348,6 @@ jobs:
   # ══════════════════════════════════════════════════════════════
   security-scan:
     name: Security Scan
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -486,7 +402,6 @@ jobs:
   # ══════════════════════════════════════════════════════════════
   auth-licensing-e2e:
     name: Auth Licensing Interop E2E
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -587,12 +502,12 @@ jobs:
         run: npm run test:e2e:auth-licensing
 
   # ══════════════════════════════════════════════════════════════
-  # ✅ Status Check — required check pour les PRs et les pushs
+  # ✅ Status Check — required check pour les PRs
   # ══════════════════════════════════════════════════════════════
   ci-success:
     name: CI Success
     if: always()
-    needs: [lint, quick-test, full-test, dynamic-unicorn, real-corpus-arm64, e2e-runtime-audit, security-scan, auth-licensing-e2e, auth-licensing-windows]
+    needs: [lint, full-test, dynamic-unicorn, real-corpus-arm64, e2e-runtime-audit, security-scan, auth-licensing-e2e, auth-licensing-windows]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -600,7 +515,6 @@ jobs:
         shell: bash
         run: |
           LINT="${{ needs.lint.result }}"
-          QUICK="${{ needs.quick-test.result }}"
           FULL="${{ needs.full-test.result }}"
           DYNAMIC_UNICORN="${{ needs.dynamic-unicorn.result }}"
           REAL_CORPUS="${{ needs.real-corpus-arm64.result }}"
@@ -609,9 +523,7 @@ jobs:
           AUTH_LICENSING_E2E="${{ needs.auth-licensing-e2e.result }}"
           AUTH_LICENSING_WINDOWS="${{ needs.auth-licensing-windows.result }}"
 
-          echo "Event      : ${{ github.event_name }}"
           echo "Lint       : $LINT"
-          echo "Quick test : $QUICK"
           echo "Full test  : $FULL"
           echo "Unicorn    : $DYNAMIC_UNICORN"
           echo "Corpus ARM : $REAL_CORPUS"
@@ -621,49 +533,17 @@ jobs:
           echo "Auth E2E   : $AUTH_LICENSING_E2E"
 
           fail_if_bad() {
-            if [[ "$1" == "failure" || "$1" == "cancelled" ]]; then
-              echo "❌ $2 failed" && exit 1
+            if [[ "$1" == "failure" || "$1" == "cancelled" || "$1" == "skipped" ]]; then
+              echo "❌ $2 failed or was skipped — check workflow conditions" && exit 1
             fi
           }
 
-          if [[ "${{ github.event_name }}" == "push" ]]; then
-            fail_if_bad "$LINT" "Lint"
-            fail_if_bad "$QUICK" "Quick test"
-            echo "✅ Push checks passed (lint=$LINT, quick=$QUICK)"
-            exit 0
-          fi
-
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            fail_if_bad "$LINT" "Lint"
-            fail_if_bad "$FULL" "Full test"
-            fail_if_bad "$DYNAMIC_UNICORN" "Dynamic Unicorn Regression"
-            fail_if_bad "$REAL_CORPUS" "Real Corpus ARM64"
-            fail_if_bad "$E2E_AUDIT" "E2E Runtime Audit"
-            fail_if_bad "$AUTH_LICENSING_E2E" "Auth Licensing Interop E2E"
-            fail_if_bad "$AUTH_LICENSING_WINDOWS" "Auth Licensing Windows Unit Tests"
-            # security-scan est informatif uniquement (continue-on-error sur tous ses steps)
-            if [[ "$LINT" == "skipped" ]]; then
-              echo "❌ Lint was skipped on a PR — check workflow conditions"
-              exit 1
-            fi
-            if [[ "$FULL" == "skipped" ]]; then
-              echo "❌ Full test was skipped on a PR — check workflow conditions"
-              exit 1
-            fi
-            if [[ "$DYNAMIC_UNICORN" == "skipped" ]]; then
-              echo "❌ Dynamic Unicorn Regression was skipped on a PR — check workflow conditions"
-              exit 1
-            fi
-            if [[ "$REAL_CORPUS" == "skipped" ]]; then
-              echo "❌ Real Corpus ARM64 was skipped on a PR — check workflow conditions"
-              exit 1
-            fi
-            if [[ "$E2E_AUDIT" == "skipped" ]]; then
-              echo "❌ E2E Runtime Audit was skipped on a PR — check workflow conditions"
-              exit 1
-            fi
-            echo "✅ PR checks passed (lint=$LINT, full=$FULL, unicorn=$DYNAMIC_UNICORN, real-corpus-arm64=$REAL_CORPUS, security=$SECURITY, auth-licensing-e2e=$AUTH_LICENSING_E2E, auth-licensing-windows=$AUTH_LICENSING_WINDOWS)"
-            exit 0
-          fi
-
-          echo "❌ Unexpected event: ${{ github.event_name }}" && exit 1
+          fail_if_bad "$LINT" "Lint"
+          fail_if_bad "$FULL" "Full test"
+          fail_if_bad "$DYNAMIC_UNICORN" "Dynamic Unicorn Regression"
+          fail_if_bad "$REAL_CORPUS" "Real Corpus ARM64"
+          fail_if_bad "$E2E_AUDIT" "E2E Runtime Audit"
+          fail_if_bad "$AUTH_LICENSING_E2E" "Auth Licensing Interop E2E"
+          fail_if_bad "$AUTH_LICENSING_WINDOWS" "Auth Licensing Windows Unit Tests"
+          # security-scan est informatif uniquement (continue-on-error sur tous ses steps)
+          echo "✅ PR checks passed (lint=$LINT, full=$FULL, unicorn=$DYNAMIC_UNICORN, real-corpus-arm64=$REAL_CORPUS, security=$SECURITY, auth-licensing-e2e=$AUTH_LICENSING_E2E, auth-licensing-windows=$AUTH_LICENSING_WINDOWS)"
