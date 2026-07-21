@@ -26,6 +26,17 @@ function generateDeviceId() {
   return crypto.randomUUID();
 }
 
+/** Signe un challenge d'enrôlement Auth avec la clé privée de l'installation. */
+function signEnrollmentChallenge(challengeBase64, privateKeyPem) {
+  const challenge = Buffer.from(String(challengeBase64 || ''), 'base64');
+  if (challenge.length === 0) throw new Error('empty enrollment challenge');
+  return crypto.sign('sha256', challenge, {
+    key: privateKeyPem,
+    padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+    saltLength: crypto.constants.RSA_PSS_SALTLEN_MAX_SIGN,
+  }).toString('base64');
+}
+
 /** Déchiffre un DEK enveloppé (base64 RSA-OAEP/SHA-256) avec la clé privée de l'installation. */
 function unwrapDek(wrappedDekBase64, privateKeyPem) {
   const wrapped = Buffer.from(wrappedDekBase64, 'base64');
@@ -128,6 +139,7 @@ function verifyLeaseJwt(
 module.exports = {
   generateDeviceKeypair,
   generateDeviceId,
+  signEnrollmentChallenge,
   unwrapDek,
   jwkToPublicKeyPem,
   verifyLeaseJwt,

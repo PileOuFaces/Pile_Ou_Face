@@ -369,10 +369,25 @@ describe("AuthService._syncLicenseLeases()", () => {
     sinon.stub(svc, "_fetchJwks").resolves(server.jwks);
 
     let capturedPublicKey;
+    const enrollmentChallenge = Buffer.from("pof-enroll-v1\ntest-challenge");
     sinon.stub(svc, "_postJsonAuthenticated").callsFake(async (baseUrl, path, token, payload) => {
-      if (path === "/plugins/enroll") {
+      if (path === "/plugins/enroll/challenge") {
         capturedPublicKey = payload.public_key;
-        return { device_id: payload.device_id };
+        return { challenge_id: "challenge-1", challenge: enrollmentChallenge.toString("base64") };
+      }
+      if (path === "/plugins/enroll") {
+        expect(payload.challenge_id).to.equal("challenge-1");
+        expect(crypto.verify(
+          "sha256",
+          enrollmentChallenge,
+          {
+            key: capturedPublicKey,
+            padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+            saltLength: crypto.constants.RSA_PSS_SALTLEN_AUTO,
+          },
+          Buffer.from(payload.signature, "base64"),
+        )).to.equal(true);
+        return { device_id: "device-test" };
       }
       if (path === "/plugins/lease") {
         const dek = crypto.randomBytes(32);
@@ -424,7 +439,10 @@ describe("AuthService._syncLicenseLeases()", () => {
     sinon.stub(svc, "_fetchJwks").resolves({ keys: [] });
     const deviceIds = [];
     sinon.stub(svc, "_postJsonAuthenticated").callsFake(async (baseUrl, path, token, payload) => {
-      if (path === "/plugins/enroll") deviceIds.push(payload.device_id);
+      if (path === "/plugins/enroll/challenge") {
+        deviceIds.push(payload.device_id);
+        return { challenge_id: crypto.randomUUID(), challenge: Buffer.from("challenge").toString("base64") };
+      }
       if (path === "/plugins/lease") deviceIds.push(payload.device_id);
       return { plugins: {} };
     });
@@ -440,7 +458,12 @@ describe("AuthService._syncLicenseLeases()", () => {
       refreshResponse: { access_token: "new-tok", content_keys: {} },
     });
     sinon.stub(svc, "_fetchJwks").resolves({ keys: [] });
-    sinon.stub(svc, "_postJsonAuthenticated").resolves({ plugins: {} });
+    sinon.stub(svc, "_postJsonAuthenticated").callsFake(async (baseUrl, path) => {
+      if (path === "/plugins/enroll/challenge") {
+        return { challenge_id: "challenge-1", challenge: Buffer.from("challenge").toString("base64") };
+      }
+      return { plugins: {} };
+    });
 
     await svc.refresh();
 
