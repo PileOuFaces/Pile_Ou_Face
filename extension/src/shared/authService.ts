@@ -8,6 +8,7 @@
  * Tests" — les deux déclenchés uniquement quand ce fichier change.
  */
 const vscode = require('vscode');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const {
@@ -48,6 +49,33 @@ function discoverInstalledPluginReleases(searchDirs = []) {
     }
   }
   return releases;
+}
+
+function discoverInstalledPluginArtifacts(searchDirs = []) {
+  const artifacts = {};
+  for (const pluginsDir of searchDirs) {
+    if (!pluginsDir || !fs.existsSync(pluginsDir)) continue;
+    let entries = [];
+    try { entries = fs.readdirSync(pluginsDir); } catch { continue; }
+    for (const entry of entries) {
+      const root = path.join(pluginsDir, entry);
+      try {
+        const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
+        const releaseId = String(manifest?.licensing?.release_id || '').trim();
+        const pluginId = String(manifest?.id || '').trim();
+        const payload = fs.readFileSync(path.join(root, 'payload.enc'));
+        if (pluginId && releaseId) {
+          artifacts[pluginId] = {
+            releaseId,
+            ciphertextSha256: crypto.createHash('sha256').update(payload).digest('hex'),
+          };
+        }
+      } catch {
+        // Un artefact incomplet ne peut recevoir aucune clé de déchiffrement.
+      }
+    }
+  }
+  return artifacts;
 }
 
 class AuthService {
@@ -232,7 +260,10 @@ class AuthService {
         device_id: deviceId,
         public_key: publicKeyPem,
       });
-      const installedReleases = discoverInstalledPluginReleases(this.pluginSearchDirs);
+      const installedArtifacts = discoverInstalledPluginArtifacts(this.pluginSearchDirs);
+      const installedReleases = Object.fromEntries(
+        Object.entries(installedArtifacts).map(([pluginId, artifact]) => [pluginId, artifact.releaseId]),
+      );
       if (Object.keys(installedReleases).length === 0) {
         await this.secrets.store(KEY_CONTENT_KEYS, JSON.stringify({}));
         await this.secrets.delete(KEY_LEASE_EXPIRES_AT);
@@ -249,9 +280,20 @@ class AuthService {
         try {
           const expectedReleaseId = installedReleases[pluginId];
           if (!expectedReleaseId) throw new Error('unexpected plugin in lease response');
-          const leasePayload = verifyLeaseJwt(entry.lease, jwks, deviceId, pluginId, expectedReleaseId);
+          const expectedDigest = installedArtifacts[pluginId].ciphertextSha256;
+          const leasePayload = verifyLeaseJwt(
+            entry.lease,
+            jwks,
+            deviceId,
+            pluginId,
+            expectedReleaseId,
+            expectedDigest,
+          );
           if (entry.release_id !== expectedReleaseId) {
             throw new Error('lease response release_id mismatch');
+          }
+          if (entry.ciphertext_sha256 !== expectedDigest) {
+            throw new Error('lease response ciphertext_sha256 mismatch');
           }
           contentKeys[pluginId] = unwrapDek(entry.wrapped_dek, privateKeyPem);
           leaseExpirations.push(Number(leasePayload.exp) * 1000);
@@ -393,4 +435,8 @@ class AuthService {
 
 AuthService._instance = null;
 
-module.exports = { AuthService, discoverInstalledPluginReleases };
+module.exports = {
+  AuthService,
+  discoverInstalledPluginReleases,
+  discoverInstalledPluginArtifacts,
+};

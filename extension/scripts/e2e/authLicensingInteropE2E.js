@@ -165,6 +165,9 @@ async function main() {
       id: pluginId,
       licensing: { release_id: releaseId },
     }));
+    const encryptedPayload = crypto.randomBytes(128);
+    fs.writeFileSync(path.join(installedPluginDir, 'payload.enc'), encryptedPayload);
+    const ciphertextSha256 = crypto.createHash('sha256').update(encryptedPayload).digest('hex');
 
     const user = await adminPost('/admin/users', { email, password });
     await adminPost('/admin/subscriptions', {
@@ -176,6 +179,7 @@ async function main() {
       plugin_id: pluginId,
       release_id: releaseId,
       content_key: contentKeyB64,
+      ciphertext_sha256: ciphertextSha256,
     });
 
     const { AuthService } = proxyquire(path.join(EXTENSION_ROOT, 'src', 'shared', 'authService'), {
