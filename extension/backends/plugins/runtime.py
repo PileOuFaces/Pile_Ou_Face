@@ -35,10 +35,7 @@ from backends.plugins.consent import (
 from backends.plugins.license import (
     _ENV_PREFIX as _LICENSE_ENV_PREFIX,
 )
-from backends.plugins.license import (
-    default_license_search_paths,
-    evaluate_plugin_license,
-)
+from backends.plugins.license import evaluate_plugin_license
 from backends.plugins.manifest import (
     PluginManifest,
     PluginManifestError,
@@ -224,15 +221,11 @@ def _plugin_python_path(plugin_root: Path):
                 sys.path.remove(str(python_root))
 
 
-def _load_plugin_module(
-    manifest: PluginManifest, *, license_search_paths: list[Path] | None = None
-):
+def _load_plugin_module(manifest: PluginManifest):
     entrypoint = manifest.entrypoints.python
     if entrypoint is None:
         return None
-    plugin_root = _resolve_effective_plugin_root(
-        manifest, license_search_paths=license_search_paths
-    )
+    plugin_root = _resolve_effective_plugin_root(manifest)
     python_root = plugin_root / "python"
     unique_name = f"pof_plugin_{manifest.plugin_id.replace('.', '_').replace('-', '_')}"
     if python_root.is_dir():
@@ -251,11 +244,7 @@ def _load_plugin_module(
     return importlib.import_module(entrypoint.module)
 
 
-def _resolve_effective_plugin_root(
-    manifest: PluginManifest,
-    *,
-    license_search_paths: list[Path] | None = None,
-) -> Path:
+def _resolve_effective_plugin_root(manifest: PluginManifest) -> Path:
     if manifest.distribution.encrypted is not True:
         return manifest.root_path
     cache_key = str(manifest.root_path)
@@ -263,8 +252,8 @@ def _resolve_effective_plugin_root(
     if cached and cached.exists():
         return cached
 
-    evaluation = evaluate_plugin_license(manifest, search_paths=license_search_paths)
-    if evaluation.status not in ("unlocked", "grace", "active"):
+    evaluation = evaluate_plugin_license(manifest)
+    if evaluation.status not in ("unlocked", "active"):
         raise RuntimeError(
             evaluation.message
             or f"Le plugin {manifest.plugin_id} est chiffré et nécessite une licence valide."
@@ -302,11 +291,7 @@ def _resolve_effective_plugin_root(
 
     raw_ciphertext = payload_path.read_bytes()
 
-    # Prefer HMAC from RSA-signed license (tamper-proof); fall back to manifest for older bundles.
-    hmac_expected = (
-        str(getattr(evaluation, "hmac_sha256", "") or "").strip()
-        or str(getattr(manifest.distribution, "hmac_sha256", "") or "").strip()
-    )
+    hmac_expected = str(getattr(manifest.distribution, "hmac_sha256", "") or "").strip()
     if not _verify_payload_hmac(raw_ciphertext, content_key, hmac_expected):
         raise RuntimeError("Intégrité du module compromise : HMAC ciphertext invalide.")
 
@@ -361,7 +346,6 @@ def attach_plugins(
     *,
     host_version: str = DEFAULT_HOST_VERSION,
     api_version: int = HOST_API_VERSION,
-    license_search_paths: list[Path] | None = None,
     consent_path: str | Path | None = None,
     require_consent: bool = False,
 ) -> tuple[PluginContext, list[PluginRecord]]:
@@ -399,13 +383,9 @@ def attach_plugins(
             continue
         try:
             context.current_plugin_id = record.plugin_id
-            module = _load_plugin_module(
-                record.manifest, license_search_paths=license_search_paths
-            )
+            module = _load_plugin_module(record.manifest)
             register = getattr(module, entrypoint.register)
-            plugin_root = _resolve_effective_plugin_root(
-                record.manifest, license_search_paths=license_search_paths
-            )
+            plugin_root = _resolve_effective_plugin_root(record.manifest)
             with _plugin_python_path(plugin_root):
                 register(context)
         except Exception as exc:  # pragma: no cover - safety net
@@ -417,16 +397,12 @@ def attach_plugins(
     return context, records
 
 
-def apply_plugin_licensing(
-    records: list[PluginRecord],
-    *,
-    search_paths: list[Path] | None = None,
-) -> list[PluginRecord]:
+def apply_plugin_licensing(records: list[PluginRecord]) -> list[PluginRecord]:
     for record in records:
         manifest = record.manifest
         if manifest is None:
             continue
-        evaluation = evaluate_plugin_license(manifest, search_paths=search_paths)
+        evaluation = evaluate_plugin_license(manifest)
         record.license_status = evaluation.status
         record.license_message = evaluation.message
         record.license_path = evaluation.license_path
@@ -434,11 +410,7 @@ def apply_plugin_licensing(
         record.licensee = evaluation.licensee
         record.license_verified = evaluation.verified
         record.license_features = list(evaluation.features)
-        if record.state == "active" and evaluation.status not in (
-            "unlocked",
-            "grace",
-            "active",
-        ):
+        if record.state == "active" and evaluation.status not in ("unlocked", "active"):
             record.state = "locked"
             if not record.error and evaluation.message:
                 record.error = evaluation.message
@@ -453,7 +425,6 @@ def invoke_plugin_command(
     feature_name: str = "",
     host_version: str = DEFAULT_HOST_VERSION,
     api_version: int = HOST_API_VERSION,
-    license_search_paths: list[Path] | None = None,
     consent_path: str | Path | None = None,
     require_consent: bool = False,
 ) -> tuple[dict[str, Any], PluginContext, list[PluginRecord]]:
@@ -461,7 +432,6 @@ def invoke_plugin_command(
         records,
         host_version=host_version,
         api_version=api_version,
-        license_search_paths=license_search_paths,
         consent_path=consent_path,
         require_consent=require_consent,
     )
@@ -813,7 +783,6 @@ def invoke_plugin_feature(
     *,
     host_version: str = DEFAULT_HOST_VERSION,
     api_version: int = HOST_API_VERSION,
-    license_search_paths: list[Path] | None = None,
     consent_path: str | Path | None = None,
     require_consent: bool = False,
 ) -> tuple[dict[str, Any], PluginContext, list[PluginRecord]]:
@@ -821,7 +790,6 @@ def invoke_plugin_feature(
         records,
         host_version=host_version,
         api_version=api_version,
-        license_search_paths=license_search_paths,
         consent_path=consent_path,
         require_consent=require_consent,
     )
@@ -847,7 +815,6 @@ def invoke_plugin_feature(
         feature_name=feature_name,
         host_version=host_version,
         api_version=api_version,
-        license_search_paths=license_search_paths,
     )
     response["feature"] = feature_name
     return response, context, attached_records
@@ -888,30 +855,25 @@ def collect_runtime_state(
     host_version: str = DEFAULT_HOST_VERSION,
     api_version: int = HOST_API_VERSION,
     search_paths: list[Path] | None = None,
-    license_search_paths: list[Path] | None = None,
     disabled_plugin_ids: list[str] | None = None,
     attach: bool = False,
     consent_path: str | Path | None = None,
     require_consent: bool = False,
 ) -> dict[str, Any]:
     effective_paths = search_paths or default_plugin_search_paths(cwd=Path.cwd())
-    effective_license_paths = license_search_paths or default_license_search_paths(
-        cwd=Path.cwd()
-    )
     records = build_plugin_registry(
         effective_paths,
         host_version=host_version,
         api_version=api_version,
         disabled_plugin_ids=disabled_plugin_ids or [],
     )
-    records = apply_plugin_licensing(records, search_paths=effective_license_paths)
+    records = apply_plugin_licensing(records)
     context = None
     if attach:
         context, records = attach_plugins(
             records,
             host_version=host_version,
             api_version=api_version,
-            license_search_paths=effective_license_paths,
             consent_path=consent_path,
             require_consent=require_consent,
         )
@@ -919,7 +881,6 @@ def collect_runtime_state(
         "host_version": host_version,
         "api_version": api_version,
         "search_paths": [str(path) for path in effective_paths],
-        "license_search_paths": [str(path) for path in effective_license_paths],
         "plugins": [record.to_dict() for record in records],
         "summary": summarize_plugin_states(records),
     }
@@ -952,10 +913,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
 
 
 def _cmd_inspect(args: argparse.Namespace) -> int:
-    license_search_paths = default_license_search_paths(cwd=Path.cwd())
-    records = apply_plugin_licensing(
-        _build_registry_from_args(args), search_paths=license_search_paths
-    )
+    records = apply_plugin_licensing(_build_registry_from_args(args))
     record = get_plugin_record(records, args.plugin_id)
     if record is None:
         print(
@@ -1013,17 +971,13 @@ def _cmd_invoke(args: argparse.Namespace) -> int:
             json.dumps({"ok": False, "error": str(exc)}, indent=2, ensure_ascii=False)
         )
         return 0
-    license_search_paths = default_license_search_paths(cwd=Path.cwd())
-    records = apply_plugin_licensing(
-        _build_registry_from_args(args), search_paths=license_search_paths
-    )
+    records = apply_plugin_licensing(_build_registry_from_args(args))
     response, context, records = invoke_plugin_command(
         records,
         args.command_id,
         payload,
         host_version=args.host_version,
         api_version=args.api_version,
-        license_search_paths=license_search_paths,
         require_consent=True,
     )
     response["host_version"] = args.host_version
@@ -1042,17 +996,13 @@ def _cmd_invoke_feature(args: argparse.Namespace) -> int:
             json.dumps({"ok": False, "error": str(exc)}, indent=2, ensure_ascii=False)
         )
         return 0
-    license_search_paths = default_license_search_paths(cwd=Path.cwd())
-    records = apply_plugin_licensing(
-        _build_registry_from_args(args), search_paths=license_search_paths
-    )
+    records = apply_plugin_licensing(_build_registry_from_args(args))
     response, context, records = invoke_plugin_feature(
         records,
         args.feature,
         payload,
         host_version=args.host_version,
         api_version=args.api_version,
-        license_search_paths=license_search_paths,
         require_consent=True,
     )
     response["host_version"] = args.host_version

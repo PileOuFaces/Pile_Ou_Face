@@ -273,8 +273,8 @@ window.addEventListener('message', (event) => {
     renderPluginManager(pluginUiState);
     refreshStaticNavigationForSettings();
     renderStaticFeatureSettings();
-    const activeStatuses = new Set(['unlocked', 'grace']);
-    const lockedStatuses = new Set(['expired', 'clock_tampered']);
+    const activeStatuses = new Set(['active', 'unlocked']);
+    const lockedStatuses = new Set(['locked']);
     newPayload.forEach((p) => {
       if (!p?.id) return;
       const prev = prevStatusById[p.id];
@@ -312,27 +312,6 @@ window.addEventListener('message', (event) => {
     }
     return;
   }
-  if (msg.type === 'hubLicenseFolderOpened') {
-    if (msg.ok) {
-      _showToast({
-        title: 'Dossier licences ouvert',
-        sub: String(msg.path || ''),
-        icon: '🔑',
-        variant: 'ready',
-        duration: 3500,
-      });
-      vscode.postMessage({ type: 'hubLoadPluginState' });
-    } else {
-      _showToast({
-        title: 'Ouverture du dossier licences impossible',
-        sub: String(msg.error || msg.path || ''),
-        icon: '⚠️',
-        variant: 'error',
-        duration: 4500,
-      });
-    }
-    return;
-  }
   if (msg.type === 'hubPluginInstalled') {
     if (msg.cancelled) return;
     if (msg.ok) {
@@ -347,28 +326,6 @@ window.addEventListener('message', (event) => {
     } else {
       _showToast({
         title: 'Installation du plugin impossible',
-        sub: String(msg.error || msg.source || ''),
-        icon: '⚠️',
-        variant: 'error',
-        duration: 5200,
-      });
-    }
-    return;
-  }
-  if (msg.type === 'hubPluginLicenseInstalled') {
-    if (msg.cancelled) return;
-    if (msg.ok) {
-      _showToast({
-        title: 'Licence importée',
-        sub: String(msg.plugin_id || msg.installed_to || msg.source || ''),
-        icon: '🔑',
-        variant: 'ready',
-        duration: 4200,
-      });
-      vscode.postMessage({ type: 'hubLoadPluginState' });
-    } else {
-      _showToast({
-        title: 'Import de licence impossible',
         sub: String(msg.error || msg.source || ''),
         icon: '⚠️',
         variant: 'error',

@@ -59,8 +59,6 @@ const WEBVIEW_HANDLER_NOTES = {
   hubBrowseImportRule: 'Interactive file picker; cover with dialog mocking or fixture import hook.',
   hubInstallDecompiler: 'Interactive/developer setup flow; keep out of smoke until dialog mocking exists.',
   hubInstallPlugin: 'Interactive install flow; requires plugin package fixture and dialog mocking.',
-  hubInstallPluginLicense: 'Interactive license install flow; requires file picker mocking.',
-  hubOpenLicenseDirectory: 'Opens a folder in the OS; avoid in automated smoke.',
   hubOpenPluginDirectory: 'Opens a folder in the OS; avoid in automated smoke.',
   hubPickFile: 'Interactive file picker; cover with dialog mocking.',
   hubPullDecompilerImage: 'Docker/network flow; keep outside default E2E smoke.',
