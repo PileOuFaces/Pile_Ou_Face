@@ -333,7 +333,7 @@ describe("AuthService._syncLicenseLeases()", () => {
   }
 
   function signLease(payload, signingPrivateKeyPem) {
-    const header = { alg: "RS256", typ: "JWT" };
+    const header = { alg: "RS256", typ: "JWT", kid: "1" };
     const headerB64 = b64url(Buffer.from(JSON.stringify(header)));
     const payloadB64 = b64url(Buffer.from(JSON.stringify(payload)));
     const signingInput = `${headerB64}.${payloadB64}`;
@@ -359,9 +359,10 @@ describe("AuthService._syncLicenseLeases()", () => {
   });
 
   it("overwrites cached content_keys with freshly lease-derived DEKs on success", async () => {
+    const accessToken = `header.${b64url(Buffer.from(JSON.stringify({ sub: "user-test" })))}.signature`;
     const { svc, store } = makeAuthService({
       storedKeys: { "pof.plugin-x": "stale-cached-key==" },
-      refreshResponse: { access_token: "new-tok" },
+      refreshResponse: { access_token: accessToken },
       pluginSearchDirs: [pluginSearchDir()],
     });
 
@@ -397,7 +398,21 @@ describe("AuthService._syncLicenseLeases()", () => {
         );
         const now = Math.floor(Date.now() / 1000);
         const lease = signLease(
-          { device_id: payload.device_id, plugin_id: "pof.plugin-x", release_id: "release-test-1", ciphertext_sha256: ciphertextSha256, iat: now, exp: now + 3600 },
+          {
+            protocol_version: 1,
+            iss: "pof-auth",
+            aud: "pof-plugin-runtime",
+            jti: "123e4567-e89b-42d3-a456-426614174000",
+            sub: "user-test",
+            org_id: null,
+            device_id: payload.device_id,
+            plugin_id: "pof.plugin-x",
+            release_id: "release-test-1",
+            ciphertext_sha256: ciphertextSha256,
+            iat: now,
+            nbf: now,
+            exp: now + 8 * 60 * 60,
+          },
           server.privateKey,
         );
         return {

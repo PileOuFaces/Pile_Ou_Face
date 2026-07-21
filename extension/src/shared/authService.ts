@@ -14,6 +14,7 @@ const path = require('path');
 const {
   generateDeviceKeypair,
   generateDeviceId,
+  getJwtSubject,
   signEnrollmentChallenge,
   unwrapDek,
   verifyLeaseJwt,
@@ -285,6 +286,7 @@ class AuthService {
         releases: installedReleases,
       });
       const jwks = await this._fetchJwks();
+      const expectedSubject = getJwtSubject(accessToken);
       const contentKeys = {};
       const leaseExpirations = [];
       for (const [pluginId, entry] of Object.entries(leaseData.plugins || {})) {
@@ -299,6 +301,7 @@ class AuthService {
             pluginId,
             expectedReleaseId,
             expectedDigest,
+            expectedSubject,
           );
           if (entry.release_id !== expectedReleaseId) {
             throw new Error('lease response release_id mismatch');

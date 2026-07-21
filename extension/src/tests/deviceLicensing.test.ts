@@ -4,6 +4,7 @@ const crypto = require("crypto");
 const {
   generateDeviceKeypair,
   generateDeviceId,
+  getJwtSubject,
   signEnrollmentChallenge,
   unwrapDek,
   verifyLeaseJwt,
@@ -18,8 +19,7 @@ function b64url(buf) {
     .replace(/=+$/, "");
 }
 
-function signLease(payload, signingPrivateKeyPem) {
-  const header = { alg: "RS256", typ: "JWT" };
+function signLease(payload, signingPrivateKeyPem, header = { alg: "RS256", typ: "JWT", kid: "1" }) {
   const headerB64 = b64url(Buffer.from(JSON.stringify(header)));
   const payloadB64 = b64url(Buffer.from(JSON.stringify(payload)));
   const signingInput = `${headerB64}.${payloadB64}`;
@@ -40,6 +40,27 @@ function serverKeypair() {
 
 describe("deviceLicensing", () => {
   const DIGEST = "a".repeat(64);
+  const SUBJECT = "user-1";
+
+  function leaseClaims(overrides = {}) {
+    const now = Math.floor(Date.now() / 1000);
+    return {
+      protocol_version: 1,
+      iss: "pof-auth",
+      aud: "pof-plugin-runtime",
+      jti: "123e4567-e89b-42d3-a456-426614174000",
+      sub: SUBJECT,
+      org_id: null,
+      device_id: "dev-1",
+      plugin_id: "pof.x",
+      release_id: "release-test-1",
+      ciphertext_sha256: DIGEST,
+      iat: now,
+      nbf: now,
+      exp: now + 8 * 60 * 60,
+      ...overrides,
+    };
+  }
   describe("generateDeviceKeypair / generateDeviceId", () => {
     it("generates a usable RSA PEM keypair", () => {
       const { publicKeyPem, privateKeyPem } = generateDeviceKeypair();
@@ -118,12 +139,8 @@ describe("deviceLicensing", () => {
   describe("verifyLeaseJwt", () => {
     it("accepts a validly signed, unexpired, matching lease", () => {
       const { privateKey, jwks } = serverKeypair();
-      const now = Math.floor(Date.now() / 1000);
-      const token = signLease(
-        { device_id: "dev-1", plugin_id: "pof.x", release_id: "release-test-1", ciphertext_sha256: DIGEST, iat: now, exp: now + 3600 },
-        privateKey,
-      );
-      const payload = verifyLeaseJwt(token, jwks, "dev-1", "pof.x", "release-test-1", DIGEST);
+      const token = signLease(leaseClaims(), privateKey);
+      const payload = verifyLeaseJwt(token, jwks, "dev-1", "pof.x", "release-test-1", DIGEST, SUBJECT);
       expect(payload.device_id).to.equal("dev-1");
     });
 
@@ -134,69 +151,90 @@ describe("deviceLicensing", () => {
         privateKeyEncoding: { type: "pkcs8", format: "pem" },
         publicKeyEncoding: { type: "spki", format: "pem" },
       });
-      const now = Math.floor(Date.now() / 1000);
-      const token = signLease(
-        { device_id: "dev-1", plugin_id: "pof.x", release_id: "release-test-1", ciphertext_sha256: DIGEST, iat: now, exp: now + 3600 },
-        attacker.privateKey,
-      );
-      expect(() => verifyLeaseJwt(token, jwks, "dev-1", "pof.x", "release-test-1", DIGEST)).to.throw(LeaseVerificationError);
+      const token = signLease(leaseClaims(), attacker.privateKey);
+      expect(() => verifyLeaseJwt(token, jwks, "dev-1", "pof.x", "release-test-1", DIGEST, SUBJECT)).to.throw(LeaseVerificationError);
     });
 
     it("rejects an expired lease", () => {
       const { privateKey, jwks } = serverKeypair();
       const now = Math.floor(Date.now() / 1000);
-      const token = signLease(
-        { device_id: "dev-1", plugin_id: "pof.x", release_id: "release-test-1", ciphertext_sha256: DIGEST, iat: now - 7200, exp: now - 3600 },
-        privateKey,
-      );
-      expect(() => verifyLeaseJwt(token, jwks, "dev-1", "pof.x", "release-test-1", DIGEST)).to.throw(LeaseVerificationError, /expired/);
+      const token = signLease(leaseClaims({ iat: now - 28801, nbf: now - 28801, exp: now - 1 }), privateKey);
+      expect(() => verifyLeaseJwt(token, jwks, "dev-1", "pof.x", "release-test-1", DIGEST, SUBJECT)).to.throw(LeaseVerificationError, /expired/);
     });
 
     it("rejects a lease issued for a different device_id", () => {
       const { privateKey, jwks } = serverKeypair();
-      const now = Math.floor(Date.now() / 1000);
-      const token = signLease(
-        { device_id: "dev-OTHER", plugin_id: "pof.x", release_id: "release-test-1", ciphertext_sha256: DIGEST, iat: now, exp: now + 3600 },
-        privateKey,
-      );
-      expect(() => verifyLeaseJwt(token, jwks, "dev-1", "pof.x", "release-test-1", DIGEST)).to.throw(LeaseVerificationError, /device_id/);
+      const token = signLease(leaseClaims({ device_id: "dev-OTHER" }), privateKey);
+      expect(() => verifyLeaseJwt(token, jwks, "dev-1", "pof.x", "release-test-1", DIGEST, SUBJECT)).to.throw(LeaseVerificationError, /device_id/);
     });
 
     it("rejects a lease issued for a different plugin_id", () => {
       const { privateKey, jwks } = serverKeypair();
-      const now = Math.floor(Date.now() / 1000);
-      const token = signLease(
-        { device_id: "dev-1", plugin_id: "pof.OTHER", release_id: "release-test-1", ciphertext_sha256: DIGEST, iat: now, exp: now + 3600 },
-        privateKey,
-      );
-      expect(() => verifyLeaseJwt(token, jwks, "dev-1", "pof.x", "release-test-1", DIGEST)).to.throw(LeaseVerificationError, /plugin_id/);
+      const token = signLease(leaseClaims({ plugin_id: "pof.OTHER" }), privateKey);
+      expect(() => verifyLeaseJwt(token, jwks, "dev-1", "pof.x", "release-test-1", DIGEST, SUBJECT)).to.throw(LeaseVerificationError, /plugin_id/);
     });
 
     it("rejects a lease issued for a different release_id", () => {
       const { privateKey, jwks } = serverKeypair();
-      const now = Math.floor(Date.now() / 1000);
-      const token = signLease(
-        { device_id: "dev-1", plugin_id: "pof.x", release_id: "release-old", ciphertext_sha256: DIGEST, iat: now, exp: now + 3600 },
-        privateKey,
-      );
-      expect(() => verifyLeaseJwt(token, jwks, "dev-1", "pof.x", "release-new", DIGEST))
+      const token = signLease(leaseClaims({ release_id: "release-old" }), privateKey);
+      expect(() => verifyLeaseJwt(token, jwks, "dev-1", "pof.x", "release-new", DIGEST, SUBJECT))
         .to.throw(LeaseVerificationError, /release_id/);
     });
 
     it("rejects a lease bound to a different encrypted payload", () => {
       const { privateKey, jwks } = serverKeypair();
-      const now = Math.floor(Date.now() / 1000);
-      const token = signLease(
-        { device_id: "dev-1", plugin_id: "pof.x", release_id: "release-test-1", ciphertext_sha256: "b".repeat(64), iat: now, exp: now + 3600 },
-        privateKey,
-      );
-      expect(() => verifyLeaseJwt(token, jwks, "dev-1", "pof.x", "release-test-1", DIGEST))
+      const token = signLease(leaseClaims({ ciphertext_sha256: "b".repeat(64) }), privateKey);
+      expect(() => verifyLeaseJwt(token, jwks, "dev-1", "pof.x", "release-test-1", DIGEST, SUBJECT))
         .to.throw(LeaseVerificationError, /ciphertext_sha256/);
     });
 
     it("rejects a malformed token", () => {
       const { jwks } = serverKeypair();
-      expect(() => verifyLeaseJwt("not-a-jwt", jwks, "dev-1", "pof.x", "release-test-1", DIGEST)).to.throw(LeaseVerificationError);
+      expect(() => verifyLeaseJwt("not-a-jwt", jwks, "dev-1", "pof.x", "release-test-1", DIGEST, SUBJECT)).to.throw(LeaseVerificationError);
+    });
+
+    for (const [name, override, message] of [
+      ["protocol version", { protocol_version: 0 }, /protocol_version/],
+      ["issuer", { iss: "attacker" }, /issuer/],
+      ["audience", { aud: "other-runtime" }, /audience/],
+      ["jti", { jti: "not-a-uuid" }, /jti/],
+      ["subject", { sub: "other-user" }, /subject/],
+      ["organization", { org_id: 42 }, /org_id/],
+    ]) {
+      it(`rejects an invalid ${name} claim`, () => {
+        const { privateKey, jwks } = serverKeypair();
+        const token = signLease(leaseClaims(override), privateKey);
+        expect(() => verifyLeaseJwt(token, jwks, "dev-1", "pof.x", "release-test-1", DIGEST, SUBJECT))
+          .to.throw(LeaseVerificationError, message);
+      });
+    }
+
+    it("rejects an unknown signing kid", () => {
+      const { privateKey, jwks } = serverKeypair();
+      const token = signLease(leaseClaims(), privateKey, { alg: "RS256", typ: "JWT", kid: "other" });
+      expect(() => verifyLeaseJwt(token, jwks, "dev-1", "pof.x", "release-test-1", DIGEST, SUBJECT))
+        .to.throw(LeaseVerificationError, /signature/);
+    });
+
+    it("rejects a future or non-contractual validity window", () => {
+      const { privateKey, jwks } = serverKeypair();
+      const now = Math.floor(Date.now() / 1000);
+      for (const claims of [
+        leaseClaims({ iat: now + 10, nbf: now + 10, exp: now + 10 + 28800 }),
+        leaseClaims({ exp: now + 3600 }),
+      ]) {
+        const token = signLease(claims, privateKey);
+        expect(() => verifyLeaseJwt(token, jwks, "dev-1", "pof.x", "release-test-1", DIGEST, SUBJECT))
+          .to.throw(LeaseVerificationError);
+      }
+    });
+  });
+
+  describe("getJwtSubject", () => {
+    it("extracts a non-empty subject and rejects malformed tokens", () => {
+      const payload = b64url(Buffer.from(JSON.stringify({ sub: SUBJECT })));
+      expect(getJwtSubject(`header.${payload}.signature`)).to.equal(SUBJECT);
+      expect(() => getJwtSubject("not-a-jwt")).to.throw(LeaseVerificationError);
     });
   });
 });
