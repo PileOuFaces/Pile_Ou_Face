@@ -961,6 +961,7 @@ class TestPluginRuntime(unittest.TestCase):
                         "distribution": {
                             "encrypted": True,
                             "bundle_format": "pofplug-enc",
+                            "profile": "ONLINE_STANDARD",
                         },
                         "licensing": {
                             "required": True,
@@ -969,6 +970,7 @@ class TestPluginRuntime(unittest.TestCase):
                             "message": "Licence requise",
                             "public_key_path": "metadata/extras/keys/license-public.pem",
                             "license_filename": f"{plugin_id}.license.json",
+                            "release_id": "lic-enc-001",
                         },
                         "entrypoints": {
                             "python": {
@@ -1014,7 +1016,11 @@ class TestPluginRuntime(unittest.TestCase):
                     "min_version": "0.1.0",
                     "max_version": "0.1.x",
                 },
-                "distribution": {"encrypted": True, "bundle_format": "pofplug-enc"},
+                "distribution": {
+                    "encrypted": True,
+                    "bundle_format": "pofplug-enc",
+                    "profile": "ONLINE_STANDARD",
+                },
                 "licensing": {
                     "required": True,
                     "mode": "signed-license",
@@ -1022,6 +1028,7 @@ class TestPluginRuntime(unittest.TestCase):
                     "message": "Licence requise",
                     "public_key_path": "metadata/extras/keys/license-public.pem",
                     "license_filename": f"{plugin_id}.license.json",
+                    "release_id": "lic-enc-001",
                 },
                 "entrypoints": {
                     "python": {"module": "plugin_main", "register": "register_plugin"}
