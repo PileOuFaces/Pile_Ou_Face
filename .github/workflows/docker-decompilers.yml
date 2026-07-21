@@ -39,6 +39,14 @@ permissions:
   contents: read
   packages: write
 
+# Annule les runs PR obsolètes (mêmes commits ré-poussés en boucle pendant
+# une itération) ; ne coupe jamais un run sur develops, qui pousse de vraies
+# images sur le registre — une annulation mi-push pourrait laisser un tag
+# incomplet.
+concurrency:
+  group: docker-decompilers-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ${{ github.repository_owner }}/pile-ou-face
@@ -50,6 +58,7 @@ jobs:
   detect-changes:
     name: Detect changed decompilers
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
       any_changed: ${{ steps.set-matrix.outputs.any_changed }}
@@ -132,6 +141,7 @@ jobs:
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.any_changed == 'true' && github.ref != 'refs/heads/main' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     strategy:
       fail-fast: false
@@ -223,6 +233,7 @@ jobs:
           github.event_name != 'pull_request' &&
           github.ref != 'refs/heads/main' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     strategy:
       fail-fast: false
@@ -290,6 +301,7 @@ jobs:
     if: always()
     needs: [detect-changes, build, smoke-arm64]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Evaluate results
         run: |

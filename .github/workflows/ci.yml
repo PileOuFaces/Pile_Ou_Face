@@ -17,6 +17,13 @@ on:
 permissions:
   contents: read
 
+# Un nouveau push (ou une nouvelle synchro de PR) annule le run précédent
+# encore en cours sur la même ref — sans ça, chaque commit successif laisse
+# tourner à fond les runs déjà obsolètes en plus du nouveau.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # ══════════════════════════════════════════════════════════════
   # 🔎 Lint — feature branches + PRs (une seule fois, ubuntu uniquement)
@@ -29,6 +36,7 @@ jobs:
        github.ref != 'refs/heads/main' &&
        github.ref != 'refs/heads/develops')
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
@@ -61,6 +69,7 @@ jobs:
       github.ref != 'refs/heads/main' &&
       github.ref != 'refs/heads/develops'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -124,6 +133,7 @@ jobs:
     name: ${{ matrix.os }} / Node ${{ matrix.node }}
     if: github.event_name == 'pull_request'
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
 
     strategy:
       fail-fast: false
@@ -261,6 +271,7 @@ jobs:
     name: Dynamic Unicorn Regression
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -296,6 +307,7 @@ jobs:
     name: Real Corpus ARM64
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -346,6 +358,7 @@ jobs:
     name: E2E Runtime Audit
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -420,6 +433,7 @@ jobs:
     name: Security Scan
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
@@ -580,6 +594,7 @@ jobs:
     if: always()
     needs: [lint, quick-test, full-test, dynamic-unicorn, real-corpus-arm64, e2e-runtime-audit, security-scan, auth-licensing-e2e, auth-licensing-windows]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Check results
         shell: bash
