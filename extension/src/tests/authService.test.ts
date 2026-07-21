@@ -3,6 +3,9 @@ const { expect } = require("chai");
 const proxyquire = require("proxyquire").noCallThru();
 const sinon = require("sinon");
 const crypto = require("crypto");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 
 // ---------------------------------------------------------------------------
 // Existing suite — loopback fallback
@@ -85,6 +88,7 @@ function makeAuthService({
   refreshResponse = null,
   refreshThrows = false,
   refreshThrows401 = false,
+  pluginSearchDirs = [],
 } = {}) {
   // Reset du singleton avant chaque usage
   const mod = require("../shared/authService");
@@ -108,7 +112,7 @@ function makeAuthService({
     }),
   };
 
-  const svc = mod.AuthService.getInstance(secrets, "http://localhost:8000");
+  const svc = mod.AuthService.getInstance(secrets, "http://localhost:8000", { pluginSearchDirs });
 
   // Stub _postJson pour contrôler la réponse réseau
   if (refreshThrows) {
@@ -303,6 +307,20 @@ describe("AuthService.refresh() — refresh token rotation", () => {
 // New suite — _syncLicenseLeases() (XSYNC-LIC-001, Pile_Ou_Face#70)
 // ---------------------------------------------------------------------------
 describe("AuthService._syncLicenseLeases()", () => {
+  const tempDirs = [];
+
+  function pluginSearchDir(pluginId = "pof.plugin-x", releaseId = "release-test-1") {
+    const pluginsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pof-online-license-"));
+    const pluginDir = path.join(pluginsDir, "plugin-x");
+    fs.mkdirSync(pluginDir);
+    fs.writeFileSync(
+      path.join(pluginDir, "manifest.json"),
+      JSON.stringify({ id: pluginId, licensing: { release_id: releaseId } }),
+    );
+    tempDirs.push(pluginsDir);
+    return pluginsDir;
+  }
+
   function b64url(buf) {
     return buf
       .toString("base64")
@@ -332,6 +350,7 @@ describe("AuthService._syncLicenseLeases()", () => {
 
   afterEach(() => {
     sinon.restore();
+    for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
     const mod = require("../shared/authService");
     mod.AuthService._instance = null;
   });
@@ -340,6 +359,7 @@ describe("AuthService._syncLicenseLeases()", () => {
     const { svc, store } = makeAuthService({
       storedKeys: { "pof.plugin-x": "stale-cached-key==" },
       refreshResponse: { access_token: "new-tok" },
+      pluginSearchDirs: [pluginSearchDir()],
     });
 
     const server = serverKeypair();
@@ -359,12 +379,12 @@ describe("AuthService._syncLicenseLeases()", () => {
         );
         const now = Math.floor(Date.now() / 1000);
         const lease = signLease(
-          { device_id: payload.device_id, plugin_id: "pof.plugin-x", release_id: "legacy", iat: now, exp: now + 3600 },
+          { device_id: payload.device_id, plugin_id: "pof.plugin-x", release_id: "release-test-1", iat: now, exp: now + 3600 },
           server.privateKey,
         );
         return {
           plugins: {
-            "pof.plugin-x": { wrapped_dek: wrapped.toString("base64"), lease, release_id: "legacy" },
+            "pof.plugin-x": { wrapped_dek: wrapped.toString("base64"), lease, release_id: "release-test-1" },
           },
         };
       }
@@ -376,6 +396,7 @@ describe("AuthService._syncLicenseLeases()", () => {
     const contentKeys = JSON.parse(store["pof.auth.contentKeys"]);
     expect(contentKeys["pof.plugin-x"]).to.not.equal("stale-cached-key==");
     expect(Buffer.from(contentKeys["pof.plugin-x"], "base64")).to.have.lengthOf(32);
+    expect(Number(store["pof.auth.leaseExpiresAt"])).to.be.greaterThan(Date.now());
   });
 
   it("does not touch cached content_keys when the lease sync fails (no bypass, no legacy fallback)", async () => {
@@ -411,7 +432,7 @@ describe("AuthService._syncLicenseLeases()", () => {
     expect(new Set(deviceIds).size).to.equal(1);
   });
 
-  it("marks a successful lease sync with leaseSyncedAt even when the user has zero authorized plugins", async () => {
+  it("keeps no lease expiry when no customer release is installed", async () => {
     const { svc, store } = makeAuthService({
       refreshResponse: { access_token: "new-tok", content_keys: {} },
     });
@@ -420,10 +441,11 @@ describe("AuthService._syncLicenseLeases()", () => {
 
     await svc.refresh();
 
-    expect(store["pof.auth.leaseSyncedAt"]).to.exist;
+    expect(JSON.parse(store["pof.auth.contentKeys"])).to.deep.equal({});
+    expect(store["pof.auth.leaseExpiresAt"]).to.equal(undefined);
   });
 
-  it("does NOT set leaseSyncedAt when the sync fails (network error, server down, etc.)", async () => {
+  it("does NOT set leaseExpiresAt when the sync fails (network error, server down, etc.)", async () => {
     const { svc, store } = makeAuthService({
       refreshResponse: { access_token: "new-tok", content_keys: {} },
     });
@@ -431,14 +453,14 @@ describe("AuthService._syncLicenseLeases()", () => {
 
     await svc.refresh();
 
-    expect(store["pof.auth.leaseSyncedAt"]).to.equal(undefined);
+    expect(store["pof.auth.leaseExpiresAt"]).to.equal(undefined);
   });
 });
 
 // ---------------------------------------------------------------------------
-// New suite — bounded offline mode for lease-derived content_keys (§5 design doc)
+// ONLINE_STANDARD — no grace beyond the signed lease expiration
 // ---------------------------------------------------------------------------
-describe("AuthService.getContentKeys() — bounded offline window", () => {
+describe("AuthService.getContentKeys() — signed lease validity", () => {
   function createSecrets(initial = {}) {
     const store = { ...initial };
     return {
@@ -456,10 +478,10 @@ describe("AuthService.getContentKeys() — bounded offline window", () => {
     mod.AuthService._instance = null;
   });
 
-  it("serves lease-derived content_keys when the last sync is recent", async () => {
+  it("serves lease-derived content_keys while the lease is valid", async () => {
     const { secrets } = createSecrets({
       "pof.auth.contentKeys": JSON.stringify({ "pof.x": "key==" }),
-      "pof.auth.leaseSyncedAt": String(Date.now() - 1000),
+      "pof.auth.leaseExpiresAt": String(Date.now() + 60_000),
     });
     const { AuthService } = proxyquire("../shared/authService", { vscode: {} });
     AuthService._instance = null;
@@ -468,11 +490,10 @@ describe("AuthService.getContentKeys() — bounded offline window", () => {
     expect(await svc.getContentKeys()).to.deep.equal({ "pof.x": "key==" });
   });
 
-  it("refuses lease-derived content_keys once the offline window (7 days) is exceeded", async () => {
-    const eightDaysAgo = Date.now() - 8 * 24 * 3600_000;
+  it("refuses lease-derived content_keys immediately after lease expiration", async () => {
     const { secrets } = createSecrets({
       "pof.auth.contentKeys": JSON.stringify({ "pof.x": "key==" }),
-      "pof.auth.leaseSyncedAt": String(eightDaysAgo),
+      "pof.auth.leaseExpiresAt": String(Date.now() - 1),
     });
     const { AuthService } = proxyquire("../shared/authService", { vscode: {} });
     AuthService._instance = null;
@@ -481,10 +502,7 @@ describe("AuthService.getContentKeys() — bounded offline window", () => {
     expect(await svc.getContentKeys()).to.deep.equal({});
   });
 
-  it("does not apply the offline cutoff when leaseSyncedAt is missing entirely (defensive, not a legacy path)", async () => {
-    // Ne devrait plus jamais arriver en pratique (_syncLicenseLeases pose
-    // toujours leaseSyncedAt avant contentKeys), mais si l'un des deux
-    // manque on ne doit pas bloquer sur une hypothèse de "trop vieux".
+  it("fails closed when leaseExpiresAt is missing", async () => {
     const { secrets } = createSecrets({
       "pof.auth.contentKeys": JSON.stringify({ "pof.x": "key==" }),
     });
@@ -492,13 +510,13 @@ describe("AuthService.getContentKeys() — bounded offline window", () => {
     AuthService._instance = null;
     const svc = AuthService.getInstance(secrets, "http://localhost:8000");
 
-    expect(await svc.getContentKeys()).to.deep.equal({ "pof.x": "key==" });
+    expect(await svc.getContentKeys()).to.deep.equal({});
   });
 
-  it("clears leaseSyncedAt on logout", async () => {
+  it("clears leaseExpiresAt on logout", async () => {
     const { secrets, store } = createSecrets({
       "pof.auth.refreshToken": "tok",
-      "pof.auth.leaseSyncedAt": String(Date.now()),
+      "pof.auth.leaseExpiresAt": String(Date.now() + 60_000),
     });
     const { AuthService } = proxyquire("../shared/authService", { vscode: {} });
     AuthService._instance = null;
@@ -509,6 +527,6 @@ describe("AuthService.getContentKeys() — bounded offline window", () => {
     await svc.logout();
     global.fetch = originalFetch;
 
-    expect(store["pof.auth.leaseSyncedAt"]).to.equal(undefined);
+    expect(store["pof.auth.leaseExpiresAt"]).to.equal(undefined);
   });
 });

@@ -145,10 +145,10 @@ describe('plugin runtime online key transport — MODE selection', () => {
   });
 
   // -------------------------------------------------------------------------
-  // MODE 3 — no online keys, offline license files present
+  // Offline license files are never accepted by ONLINE_STANDARD
   // -------------------------------------------------------------------------
 
-  it('MODE 3 — no online keys + .license.json files: BINHOST flag is absent', async () => {
+  it('Locked — local .license.json cannot enable a plugin without an online lease', async () => {
     const { handlers, spawnCalls } = makeHandlers({
       fakeKeys: {},
       licenseFiles: ['pof.plugin-x.license.json'],
@@ -157,12 +157,12 @@ describe('plugin runtime online key transport — MODE selection', () => {
     await handlers.hubLoadPluginState();
 
     const env = runtimeEnv(spawnCalls);
-    expect(env).to.not.have.property('BINHOST_DISABLE_LICENSE_FALLBACK');
+    expect(env).to.have.property('BINHOST_DISABLE_LICENSE_FALLBACK', '1');
     expect(env).to.not.have.property('BINHOST_CONTENT_KEYS_STDIN');
     expect(runtimeStdin(spawnCalls)).to.equal('');
   });
 
-  it('MODE 3 — AuthService throws + license files: BINHOST flag is absent', async () => {
+  it('Locked — auth failure cannot fall back to local license files', async () => {
     const { handlers, spawnCalls } = makeHandlers({
       authThrows: true,
       licenseFiles: ['pof.plugin-y.license.json', 'pof.plugin-z.license.json'],
@@ -171,11 +171,11 @@ describe('plugin runtime online key transport — MODE selection', () => {
     await handlers.hubLoadPluginState();
 
     const env = runtimeEnv(spawnCalls);
-    expect(env).to.not.have.property('BINHOST_DISABLE_LICENSE_FALLBACK');
+    expect(env).to.have.property('BINHOST_DISABLE_LICENSE_FALLBACK', '1');
     expect(env).to.not.have.property('BINHOST_CONTENT_KEYS_STDIN');
   });
 
-  it('MODE 3 — only .license.json files count, not other files', async () => {
+  it('Locked — unrelated local files cannot enable a plugin', async () => {
     const { handlers, spawnCalls } = makeHandlers({
       fakeKeys: {},
       licenseFiles: ['README.md', 'install.sh', 'notes.txt'],
@@ -183,7 +183,6 @@ describe('plugin runtime online key transport — MODE selection', () => {
 
     await handlers.hubLoadPluginState();
 
-    // No .license.json → locked, not MODE 3
     const env = runtimeEnv(spawnCalls);
     expect(env).to.have.property('BINHOST_DISABLE_LICENSE_FALLBACK', '1');
     expect(env).to.not.have.property('BINHOST_CONTENT_KEYS_STDIN');

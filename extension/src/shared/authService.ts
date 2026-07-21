@@ -25,13 +25,8 @@ const KEY_KEYS_VALIDATED_AT = 'pof.auth.keysValidatedAt';
 const KEY_DEVICE_ID          = 'pof.auth.deviceId';
 const KEY_DEVICE_PRIVATE_KEY = 'pof.auth.devicePrivateKey';
 const KEY_DEVICE_PUBLIC_KEY  = 'pof.auth.devicePublicKey';
-const KEY_LEASE_SYNCED_AT    = 'pof.auth.leaseSyncedAt';
+const KEY_LEASE_EXPIRES_AT   = 'pof.auth.leaseExpiresAt';
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
-
-// Mode offline borné (XSYNC-LIC-001, design doc §5) : au-delà de cette durée
-// sans synchronisation réussie du lease, les content_keys dérivées du lease
-// ne sont plus servies — blocage explicite, pas de fallback permissif indéfini.
-const LEASE_OFFLINE_GRACE_MS = 7 * 24 * 3600_000;
 
 function discoverInstalledPluginReleases(searchDirs = []) {
   const releases = {};
@@ -43,18 +38,12 @@ function discoverInstalledPluginReleases(searchDirs = []) {
       const root = path.join(pluginsDir, entry);
       try {
         const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
-        let releaseId = String(manifest?.licensing?.release_id || '').trim();
-        if (!releaseId) {
-          const encryption = JSON.parse(
-            fs.readFileSync(path.join(root, 'metadata', 'encryption.json'), 'utf8'),
-          );
-          releaseId = String(encryption?.license_id || '').trim();
-        }
+        const releaseId = String(manifest?.licensing?.release_id || '').trim();
         const pluginId = String(manifest?.id || '').trim();
         if (pluginId && releaseId) releases[pluginId] = releaseId;
       } catch {
-        // Development/invalid plugins have no release identity and continue
-        // through the legacy compatibility path.
+        // Les plugins de développement n'ont pas de release client et ne
+        // participent pas au protocole ONLINE_STANDARD.
       }
     }
   }
@@ -115,7 +104,7 @@ class AuthService {
     await this.secrets.delete(KEY_CONTENT_KEYS);
     await this.secrets.delete(KEY_EMAIL);
     await this.secrets.delete(KEY_KEYS_VALIDATED_AT);
-    await this.secrets.delete(KEY_LEASE_SYNCED_AT);
+    await this.secrets.delete(KEY_LEASE_EXPIRES_AT);
     // La paire de clés d'installation (KEY_DEVICE_*) N'EST PAS effacée : c'est une
     // identité de machine, pas une session utilisateur. Se reconnecter avec un
     // autre compte ré-enrôle le même device_id (voir _syncLicenseLeases).
@@ -123,24 +112,18 @@ class AuthService {
   }
 
   /**
-   * Mode offline borné (design doc §5) : si des content_keys dérivées d'un
-   * lease existent mais que la dernière synchronisation réussie remonte à
-   * plus de LEASE_OFFLINE_GRACE_MS (7 jours), on refuse de les servir plutôt
-   * que de les garder indéfiniment — blocage explicite, pas un fallback
-   * permissif. KEY_CONTENT_KEYS n'est écrite que par _syncLicenseLeases() —
-   * il n'existe plus de repli vers un content_key partageable brute
-   * (XSYNC-LIC-001, migration sans bypass, Pile_ou_Face_auth#24).
+   * ONLINE_STANDARD : les DEK ne sont utilisables que pendant la validité du
+   * lease signé qui les accompagnait. Il n'existe aucune grâce offline après
+   * expiration, ni fallback vers un ancien format de licence.
    */
   async getContentKeys() {
     const raw = await this.secrets.get(KEY_CONTENT_KEYS);
     if (!raw) { return {}; }
-    const syncedAtRaw = await this.secrets.get(KEY_LEASE_SYNCED_AT);
-    if (syncedAtRaw) {
-      const age = Date.now() - Number(syncedAtRaw);
-      if (age > LEASE_OFFLINE_GRACE_MS) {
-        this._log(`fenêtre offline dépassée (${Math.floor(age / 3600_000)}h) — content_keys refusées`);
-        return {};
-      }
+    const expiresAtRaw = await this.secrets.get(KEY_LEASE_EXPIRES_AT);
+    const expiresAt = expiresAtRaw ? Number(expiresAtRaw) : 0;
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+      this._log('lease absent ou expiré — content_keys refusées');
+      return {};
     }
     try { return JSON.parse(raw); }
     catch { return {}; }
@@ -223,7 +206,7 @@ class AuthService {
         await this.secrets.delete(KEY_CONTENT_KEYS);
         await this.secrets.delete(KEY_EMAIL);
         await this.secrets.delete(KEY_KEYS_VALIDATED_AT);
-        await this.secrets.delete(KEY_LEASE_SYNCED_AT);
+        await this.secrets.delete(KEY_LEASE_EXPIRES_AT);
         return { refreshed: false, revoked: true };
       }
       // Erreur réseau — mode gracieux, on garde les clés existantes
@@ -238,10 +221,8 @@ class AuthService {
    * modèle content_key partageable brute à retomber dessus (migration sans
    * bypass, voir Pile_ou_Face_auth#24).
    *
-   * Best-effort en cas d'échec réseau (serveur injoignable, etc.) : ne jette
-   * pas d'exception qui casserait login()/refresh() — les content_keys en
-   * cache (si récentes, cf. mode offline borné dans getContentKeys())
-   * continuent d'être servies ; sinon getContentKeys() renvoie {}.
+   * Un échec réseau n'autorise aucune fenêtre supplémentaire : un DEK déjà
+   * reçu reste utilisable uniquement jusqu'à l'expiration de son lease.
    */
   async _syncLicenseLeases(accessToken) {
     if (!accessToken) return;
@@ -252,35 +233,44 @@ class AuthService {
         public_key: publicKeyPem,
       });
       const installedReleases = discoverInstalledPluginReleases(this.pluginSearchDirs);
+      if (Object.keys(installedReleases).length === 0) {
+        await this.secrets.store(KEY_CONTENT_KEYS, JSON.stringify({}));
+        await this.secrets.delete(KEY_LEASE_EXPIRES_AT);
+        return;
+      }
       const leaseData = await this._postJsonAuthenticated(this.serverUrl, '/plugins/lease', accessToken, {
         device_id: deviceId,
         releases: installedReleases,
       });
       const jwks = await this._fetchJwks();
       const contentKeys = {};
+      const leaseExpirations = [];
       for (const [pluginId, entry] of Object.entries(leaseData.plugins || {})) {
         try {
-          const expectedReleaseId = installedReleases[pluginId] || 'legacy';
-          verifyLeaseJwt(entry.lease, jwks, deviceId, pluginId, expectedReleaseId);
+          const expectedReleaseId = installedReleases[pluginId];
+          if (!expectedReleaseId) throw new Error('unexpected plugin in lease response');
+          const leasePayload = verifyLeaseJwt(entry.lease, jwks, deviceId, pluginId, expectedReleaseId);
           if (entry.release_id !== expectedReleaseId) {
             throw new Error('lease response release_id mismatch');
           }
           contentKeys[pluginId] = unwrapDek(entry.wrapped_dek, privateKeyPem);
+          leaseExpirations.push(Number(leasePayload.exp) * 1000);
         } catch (err) {
           // Un lease individuel invalide/expiré ne doit pas faire échouer les
           // autres plugins — celui-ci reste simplement absent des content_keys.
           this._log(`lease invalide pour ${pluginId}: ${err.message}`);
         }
       }
-      // Le round-trip enroll+lease+jwks a réussi (indépendamment du nombre de
-      // plugins autorisés) : c'est ce qui fait repartir la fenêtre offline à
-      // zéro, pas le fait d'avoir des content_keys à écrire.
-      await this.secrets.store(KEY_LEASE_SYNCED_AT, String(Date.now()));
       // Remplace aussi le cache par un objet vide : une release installée sans
       // clé correspondante ne doit jamais continuer à utiliser le DEK précédent.
       await this.secrets.store(KEY_CONTENT_KEYS, JSON.stringify(contentKeys));
+      if (leaseExpirations.length > 0) {
+        await this.secrets.store(KEY_LEASE_EXPIRES_AT, String(Math.min(...leaseExpirations)));
+      } else {
+        await this.secrets.delete(KEY_LEASE_EXPIRES_AT);
+      }
     } catch (err) {
-      this._log(`sync licence par installation ignorée: ${err.message}`);
+      this._log(`sync licence par installation échouée: ${err.message}`);
     }
   }
 

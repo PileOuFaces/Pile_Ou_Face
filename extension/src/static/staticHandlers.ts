@@ -568,38 +568,11 @@ function staticHandlers(config) {
       // AuthService non disponible — aucune clé injectée.
     }
 
+    // ONLINE_STANDARD refuse toujours les fichiers de licence et les
+    // fallbacks locaux. AIRGAP_ENTERPRISE utilisera une distribution séparée.
+    base[AUTH_STRICT_LICENSE_ENV] = '1';
     if (hasOnlineKeys) {
-      // MODE 1 — en ligne : bloquer les fichiers licence offline.
-      base[AUTH_STRICT_LICENSE_ENV] = '1';
       base[AUTH_CONTENT_KEYS_STDIN_ENV] = '1';
-    } else {
-      // Pas de clés en ligne : vérifier la présence de fichiers licence offline signés.
-      // On cherche dans storageDir/licenses ET dans ~/.pile-ou-face/licenses (même
-      // logique que le runtime Python : default_license_search_paths).
-      const licenseDirs = [
-        ...(storageDir ? [path.join(storageDir, 'licenses')] : []),
-        path.join(os.homedir(), '.pile-ou-face', 'licenses'),
-      ];
-      let hasOfflineLicenses = false;
-      for (const licenseDir of licenseDirs) {
-        try {
-          const files = fs.readdirSync(licenseDir);
-          if (files.some((f) => String(f).endsWith('.license.json'))) {
-            hasOfflineLicenses = true;
-            break;
-          }
-        } catch (_e) {
-          // Répertoire absent → continuer.
-        }
-      }
-
-      if (!hasOfflineLicenses) {
-        // Ni clés en ligne, ni licences offline → plugin verrouillé.
-        // BINHOST_DISABLE_LICENSE_FALLBACK=1 empêche tout fallback fichier.
-        base[AUTH_STRICT_LICENSE_ENV] = '1';
-      }
-      // MODE 3 — offline contractuel : hasOfflineLicenses=true, flag absent,
-      // le runtime Python lira les fichiers .license.json signés.
     }
 
     return { env: base, stdin: encodePluginRuntimeStdin(contentKeys) };
