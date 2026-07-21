@@ -458,17 +458,17 @@ jobs:
         continue-on-error: true
 
   # ══════════════════════════════════════════════════════════════
-  # 🔑 Auth Licensing Interop E2E — PRs uniquement, filtré par chemin
+  # 🔑 Auth Licensing Interop E2E — toutes les PRs couvertes par cette CI
   # Test réel host<->auth (XSYNC-LIC-001, Pile_Ou_Face#70) : démarre un vrai
   # serveur Pile_ou_Face_auth (repo privé, sibling) et fait dialoguer le vrai
-  # AuthService avec lui. Ne tourne que si un fichier pertinent a changé (pas
-  # de sens à répéter ce test pour une PR qui ne touche pas ce chemin) — voir
-  # extension/scripts/e2e/authLicensingInteropE2E.js pour ce que ça couvre.
+  # AuthService avec lui. Il tourne sur chaque PR qui déclenche ci.yml : une
+  # régression indirecte (bundling, dépendances, runtime, stockage) peut casser
+  # le licensing même sans modifier directement authService.ts.
   #
   # Nécessite un PAT en lecture seule sur Pile_ou_Face_auth stocké dans le
   # secret AUTH_REPO_READONLY_PAT de CE repo (Settings > Secrets and
-  # variables > Actions). Absent : le job est ignoré avec un avertissement
-  # plutôt que d'échouer silencieusement ou de bloquer les PRs.
+  # variables > Actions). Absent : le job échoue fermé ; un succès sans avoir
+  # exécuté l'interop réel serait un faux vert.
   # ══════════════════════════════════════════════════════════════
   auth-licensing-e2e:
     name: Auth Licensing Interop E2E
@@ -481,17 +481,6 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-
-      - name: Detect relevant changes
-        id: filter
-        run: |
-          git fetch origin "${{ github.base_ref }}" --depth=50
-          if git diff --name-only "origin/${{ github.base_ref }}...HEAD" \
-              | grep -qE '^extension/(src/shared/(authService|deviceLicensing)\.ts|scripts/e2e/authLicensingInteropE2E\.js|package(-lock)?\.json)$'; then
-            echo "relevant=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "relevant=false" >> "$GITHUB_OUTPUT"
-          fi
 
       # La condition ne peut pas référencer `secrets` directement dans un `if:`
       # (context non disponible à cet endroit) — on le teste ici et on
@@ -508,12 +497,14 @@ jobs:
             echo "has_pat=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Report missing secret
-        if: steps.filter.outputs.relevant == 'true' && steps.secret_check.outputs.has_pat == 'false'
-        run: echo "::warning::AUTH_REPO_READONLY_PAT non configuré — interop e2e ignoré pour cette PR malgré un changement pertinent."
+      - name: Require Auth checkout capability
+        if: steps.secret_check.outputs.has_pat == 'false'
+        run: |
+          echo "::error::AUTH_REPO_READONLY_PAT non configuré — impossible d'exécuter l'interop host↔Auth obligatoire."
+          exit 1
 
       - name: Setup Node.js
-        if: steps.filter.outputs.relevant == 'true' && steps.secret_check.outputs.has_pat == 'true'
+        if: steps.secret_check.outputs.has_pat == 'true'
         uses: actions/setup-node@v6
         with:
           node-version: '22.x'
@@ -521,13 +512,13 @@ jobs:
           cache-dependency-path: extension/package-lock.json
 
       - name: Setup Python
-        if: steps.filter.outputs.relevant == 'true' && steps.secret_check.outputs.has_pat == 'true'
+        if: steps.secret_check.outputs.has_pat == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Checkout sibling auth repo
-        if: steps.filter.outputs.relevant == 'true' && steps.secret_check.outputs.has_pat == 'true'
+        if: steps.secret_check.outputs.has_pat == 'true'
         uses: actions/checkout@v5
         with:
           repository: PileOuFaces/Pile_ou_Face_auth
@@ -541,7 +532,7 @@ jobs:
           path: pof-auth-sibling
 
       - name: Install dependencies
-        if: steps.filter.outputs.relevant == 'true' && steps.secret_check.outputs.has_pat == 'true'
+        if: steps.secret_check.outputs.has_pat == 'true'
         run: |
           python3 -m venv pof-auth-sibling/.venv
           # Installe les dépendances runtime directement plutôt que `pip install -e .` :
@@ -560,7 +551,7 @@ jobs:
           cd extension && npm ci
 
       - name: Run real host<->auth interop e2e
-        if: steps.filter.outputs.relevant == 'true' && steps.secret_check.outputs.has_pat == 'true'
+        if: steps.secret_check.outputs.has_pat == 'true'
         working-directory: ./extension
         env:
           AUTH_REPO_PATH: ${{ github.workspace }}/pof-auth-sibling
@@ -618,10 +609,6 @@ jobs:
             fail_if_bad "$DYNAMIC_UNICORN" "Dynamic Unicorn Regression"
             fail_if_bad "$REAL_CORPUS" "Real Corpus ARM64"
             fail_if_bad "$E2E_AUDIT" "E2E Runtime Audit"
-            # auth-licensing-e2e est filtré par chemin : "skipped" n'existe pas
-            # en pratique tant que le job lui-même s'exécute (if: pull_request),
-            # seuls ses steps internes sont conditionnels — pas de check "not
-            # skipped" ici, contrairement aux jobs ci-dessus qui tournent toujours.
             fail_if_bad "$AUTH_LICENSING_E2E" "Auth Licensing Interop E2E"
             fail_if_bad "$AUTH_LICENSING_WINDOWS" "Auth Licensing Windows Unit Tests"
             # security-scan est informatif uniquement (continue-on-error sur tous ses steps)
