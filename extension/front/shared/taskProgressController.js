@@ -5,7 +5,7 @@
 (function initTaskProgressController(global) {
   const TASK_TIMEOUT_MS = 120000;
   const HIDE_DELAY_MS = 700;
-  const PROGRESS_MESSAGES = new Set(['hubDecompilerPullProgress', 'hubPluginProgress']);
+  const PROGRESS_MESSAGES = new Set(['hubDecompilerPullProgress', 'hubPluginProgress', 'hubAutoTriageEvent']);
   const FINISH_MESSAGES = new Set([
     'accountState',
     'compileResult',
@@ -13,6 +13,7 @@
     'hubAiProvidersResult',
     'hubAttck',
     'hubAutoFromCmpResult',
+    'hubAutoTriageDone',
     'hubCallGraph',
     'hubCfg',
     'hubCommandResult',

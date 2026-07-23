@@ -1332,6 +1332,129 @@ function staticHandlers(config) {
         }
       });
     },
+    hubAutoTriageStart: async (message = {}) => {
+      const requestId = String(message.requestId || '').trim() || `triage-${Date.now()}`;
+      const binaryPath = String(message.binaryPath || '').trim();
+      const provider = String(message.provider || 'ollama').trim() || 'ollama';
+      const model = message.model ? String(message.model).trim() : '';
+      const maxFunctions = Number.isInteger(message.maxFunctions) && message.maxFunctions > 0 ? message.maxFunctions : 200;
+      const maxSeconds = Number.isFinite(message.maxSeconds) && message.maxSeconds > 0 ? message.maxSeconds : 600;
+
+      const fail = (error) => {
+        panel.webview.postMessage({ type: 'hubAutoTriageDone', requestId, ok: false, error });
+      };
+
+      if (!binaryPath || !fs.existsSync(binaryPath) || fs.statSync(binaryPath).isDirectory()) {
+        fail('Binaire introuvable.');
+        return;
+      }
+      const baseName = path.basename(binaryPath, path.extname(binaryPath)) || 'binary';
+      const mappingPath = path.join(storageDir, `${baseName}.disasm.mapping.json`);
+      if (!fs.existsSync(mappingPath)) {
+        fail("Ce binaire n'a pas encore été désassemblé — ouvrez-le dans le hub statique avant de lancer le triage.");
+        return;
+      }
+
+      let consented = false;
+      try {
+        const { stdout } = await runPython(['backends/mcp/ai_consent.py', '--provider', provider, '--check']);
+        consented = JSON.parse(stdout).consented === true;
+      } catch (err) {
+        if (typeof err?.stdout === 'string' && err.stdout.trim()) {
+          try { consented = JSON.parse(err.stdout).consented === true; } catch (_) { consented = false; }
+        } else {
+          fail(`Vérification du consentement impossible: ${err.message || err}`);
+          return;
+        }
+      }
+      if (!consented) {
+        const choice = await vscode.window.showWarningMessage(
+          `Le code de ce binaire sera envoyé à "${provider}" pour analyse. Continuer ?`,
+          { modal: true },
+          'Autoriser',
+        );
+        if (choice !== 'Autoriser') {
+          fail('Triage annulé : consentement refusé.');
+          return;
+        }
+        try {
+          await runPython(['backends/mcp/ai_consent.py', '--provider', provider, '--grant']);
+        } catch (err) {
+          fail(`Impossible d'enregistrer le consentement: ${err.message || err}`);
+          return;
+        }
+      }
+
+      const cancelFlagPath = path.join(os.tmpdir(), `pof-triage-cancel-${requestId}.flag`);
+      try { fs.rmSync(cancelFlagPath, { force: true }); } catch (_) {}
+      const reportPath = path.join(getHostArtifactRoot('triage-reports'), `${baseName}.triage-report.md`);
+
+      const scriptArgs = [
+        '--binary-path', binaryPath,
+        '--mapping-path', mappingPath,
+        '--provider', provider,
+        '--max-functions', String(maxFunctions),
+        '--max-seconds', String(maxSeconds),
+        '--cancel-flag-path', cancelFlagPath,
+        '--report-out', reportPath,
+      ];
+      if (model) scriptArgs.push('--model', model);
+      const scriptPath = path.join(extensionPath, 'backends/mcp/auto_triage.py');
+      const proc = cp.spawn(getPythonExecutable(), [scriptPath, ...scriptArgs], { cwd: root, env: buildPythonEnv() });
+
+      let resultSent = false;
+      let stderrBuf = '';
+      proc.stderr.on('data', (chunk) => { stderrBuf += String(chunk); });
+
+      const cancelRequest = () => {
+        try { fs.writeFileSync(cancelFlagPath, '1', 'utf8'); } catch (_) {}
+        setTimeout(() => {
+          if (!resultSent) {
+            try { proc.kill('SIGTERM'); } catch (_) {}
+          }
+        }, 5000);
+      };
+      registerAiProcess(requestId, cancelRequest);
+
+      const rl = readline.createInterface({ input: proc.stdout, crlfDelay: Infinity });
+      rl.on('line', (line) => {
+        const trimmed = line.trim();
+        if (!trimmed) return;
+        let event;
+        try { event = JSON.parse(trimmed); } catch { return; }
+        panel.webview.postMessage({ type: 'hubAutoTriageEvent', requestId, event });
+      });
+
+      proc.on('close', (code) => {
+        if (resultSent) return;
+        resultSent = true;
+        clearAiProcess(requestId);
+        try { fs.rmSync(cancelFlagPath, { force: true }); } catch (_) {}
+        panel.webview.postMessage({
+          type: 'hubAutoTriageDone',
+          requestId,
+          ok: code === 0,
+          reportPath: code === 0 ? reportPath : null,
+          error: code === 0 ? null : (stderrBuf.trim() || `Processus terminé avec le code ${code}`),
+        });
+      });
+
+      proc.on('error', (err) => {
+        if (resultSent) return;
+        resultSent = true;
+        clearAiProcess(requestId);
+        fail(String(err.message || err));
+      });
+    },
+    hubAutoTriageOpenReport: async (message = {}) => {
+      const reportPath = String(message.reportPath || '').trim();
+      if (!reportPath || !fs.existsSync(reportPath)) {
+        vscode.window.showErrorMessage('Rapport de triage introuvable.');
+        return;
+      }
+      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(reportPath));
+      await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Beside, preview: false });
+    },
     compilerBrowseSource: async (message = {}) => {
       const lang = String(message.lang || 'c');
       const filters: Record<string, string[]> = {

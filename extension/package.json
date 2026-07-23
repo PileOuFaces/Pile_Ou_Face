@@ -75,6 +75,11 @@
         "category": "Pile ou Face"
       },
       {
+        "command": "pileOuFace.autoTriage",
+        "title": "Pile ou Face: Auto-triage IA",
+        "category": "Pile ou Face"
+      },
+      {
         "command": "pileOuFace.goToSymbolInDisasm",
         "title": "Aller au symbole"
       },
