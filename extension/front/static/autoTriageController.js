@@ -128,13 +128,27 @@
       currentBinaryPath = binaryPath || currentBinaryPath;
       panel.querySelector('#autoTriageBinaryLabel').textContent = currentBinaryPath;
       panel.querySelector('#autoTriageExport').disabled = true;
+      return panel;
+    }
+
+    function startRun(panel) {
+      if (panel.querySelector('#autoTriageStart').disabled) return;
+      currentRequestId = `triage-${Date.now()}`;
+      panel.querySelector('#autoTriageLog').replaceChildren();
+      panel.querySelector('#autoTriageStart').disabled = true;
+      panel.querySelector('#autoTriageCancel').disabled = false;
+      panel.querySelector('#autoTriageExport').disabled = true;
+      total = 0;
+      done = 0;
+      bus.postMessage({ type: 'hubAutoTriageStart', requestId: currentRequestId, binaryPath: currentBinaryPath });
     }
 
     bus.onMessage((event) => {
       const msg = event.data;
       if (!msg?.type) return;
       if (msg.type === 'hubAutoTriageOpenPanel') {
-        openForBinary(msg.binaryPath);
+        const panel = openForBinary(msg.binaryPath);
+        if (msg.autoStart) startRun(panel);
         return;
       }
       if (msg.type === 'hubAutoTriageEvent') {
@@ -163,14 +177,7 @@
       const panel = document.getElementById('autoTriagePanel');
       if (!panel || !panel.contains(e.target)) return;
       if (e.target.id === 'autoTriageStart') {
-        currentRequestId = `triage-${Date.now()}`;
-        panel.querySelector('#autoTriageLog').replaceChildren();
-        panel.querySelector('#autoTriageStart').disabled = true;
-        panel.querySelector('#autoTriageCancel').disabled = false;
-        panel.querySelector('#autoTriageExport').disabled = true;
-        total = 0;
-        done = 0;
-        bus.postMessage({ type: 'hubAutoTriageStart', requestId: currentRequestId, binaryPath: currentBinaryPath });
+        startRun(panel);
       } else if (e.target.id === 'autoTriageCancel') {
         bus.postMessage({ type: 'hubAiCancel', requestId: currentRequestId });
         e.target.disabled = true;
