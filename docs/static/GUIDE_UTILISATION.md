@@ -631,7 +631,8 @@ A quoi ca sert :
 Comment l'utiliser :
 
 - Commande palette : `Pile ou Face: Auto-triage IA`. Si aucun `.asm` n'est ouvert, choisir le binaire dans le dialogue.
-- Un consentement explicite est demande avant tout envoi de code au provider IA configure (y compris les providers locaux comme Ollama) : rien ne part sans validation.
+- Reglage `pileOuFace.autoTriage.enabled` (desactive par defaut) : une fois active, l'auto-triage se lance automatiquement juste apres chaque desassemblage reussi, sans repasser par la commande.
+- Un consentement explicite est demande avant tout envoi de code au provider IA configure (y compris les providers locaux comme Ollama) : rien ne part sans validation, meme avec ce reglage active.
 - Le panneau affiche la progression fonction par fonction, un budget borne (nombre de fonctions / temps) et un bouton Annuler qui termine proprement la fonction en cours avant d'arreter (pas d'etat partiel).
 - Une fois termine, "Ouvrir le rapport" ouvre le Markdown genere (resume, classification, fonctions prioritaires, detail par fonction).
 
