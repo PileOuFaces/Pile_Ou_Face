@@ -620,6 +620,31 @@ Pieges frequents :
 - Cette vue peut produire du bruit ou des faux positifs lisibles.
 - Une sortie "propre" doit etre validee par xrefs ou logique de code.
 
+## IA
+
+### Auto-triage IA
+
+A quoi ca sert :
+
+- Faire nommer/commenter automatiquement par un LLM les fonctions les plus interessantes d'un binaire charge (I/O fichier, reseau, crypto, license check, entree utilisateur...), avec un resume executif et un rapport Markdown exportable.
+
+Comment l'utiliser :
+
+- Commande palette : `Pile ou Face: Auto-triage IA`. Si aucun `.asm` n'est ouvert, choisir le binaire dans le dialogue.
+- Un consentement explicite est demande avant tout envoi de code au provider IA configure (y compris les providers locaux comme Ollama) : rien ne part sans validation.
+- Le panneau affiche la progression fonction par fonction, un budget borne (nombre de fonctions / temps) et un bouton Annuler qui termine proprement la fonction en cours avant d'arreter (pas d'etat partiel).
+- Une fois termine, "Ouvrir le rapport" ouvre le Markdown genere (resume, classification, fonctions prioritaires, detail par fonction).
+
+Comment interpreter :
+
+- Les noms et commentaires ecrits par ce flux sont marques comme annotations IA (distinctes des annotations manuelles) et n'ecrasent jamais une annotation deja posee a la main.
+- Le rapport est genere par un LLM : a verifier avant de s'y fier, notamment sur la classification (I/O, reseau, crypto...).
+
+Pieges frequents :
+
+- Sans cle API/provider configure, la commande echoue au demarrage — configurer l'assistant IA avant de lancer un auto-triage.
+- Le consentement est par provider : changer de provider redemande une validation.
+
 ## OFFENSIF
 
 Ces vues apparaissent seulement si le plugin `OFFENSIF` est installe et actif.
