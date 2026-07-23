@@ -802,7 +802,7 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
 .task-progress-shell[hidden] { display: none; }
 .task-progress-card {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto;
+  grid-template-columns: 18px minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 10px;
   min-height: 48px;
@@ -892,6 +892,27 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+.task-progress-cancel {
+  align-self: center;
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid var(--text-muted);
+  color: var(--text-muted);
+  border-radius: 4px;
+  font-size: 10px;
+  line-height: 1;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+.task-progress-cancel:hover:not(:disabled) {
+  color: var(--text-active);
+  border-color: var(--text-active);
+}
+.task-progress-cancel:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.task-progress-cancel[hidden] { display: none; }
 .task-progress-details {
   margin-top: 2px;
   color: var(--text-muted);

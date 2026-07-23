@@ -1404,6 +1404,7 @@ function staticHandlers(config) {
 
       let resultSent = false;
       let stderrBuf = '';
+      let wasCancelled = false;
       proc.stderr.on('data', (chunk) => { stderrBuf += String(chunk); });
 
       const cancelRequest = () => {
@@ -1422,6 +1423,7 @@ function staticHandlers(config) {
         if (!trimmed) return;
         let event;
         try { event = JSON.parse(trimmed); } catch { return; }
+        if (event?.type === 'cancelled') wasCancelled = true;
         panel.webview.postMessage({ type: 'hubAutoTriageEvent', requestId, event });
       });
 
@@ -1430,13 +1432,26 @@ function staticHandlers(config) {
         resultSent = true;
         clearAiProcess(requestId);
         try { fs.rmSync(cancelFlagPath, { force: true }); } catch (_) {}
+        const ok = code === 0;
         panel.webview.postMessage({
           type: 'hubAutoTriageDone',
           requestId,
-          ok: code === 0,
-          reportPath: code === 0 ? reportPath : null,
-          error: code === 0 ? null : (stderrBuf.trim() || `Processus terminé avec le code ${code}`),
+          ok,
+          reportPath: ok ? reportPath : null,
+          error: ok ? null : (stderrBuf.trim() || `Processus terminé avec le code ${code}`),
         });
+        if (ok) {
+          const message = wasCancelled ? 'Auto-triage IA annulé (rapport partiel disponible).' : 'Auto-triage IA terminé.';
+          vscode.window.showInformationMessage(message, 'Ouvrir le rapport').then((choice) => {
+            if (choice === 'Ouvrir le rapport') {
+              vscode.workspace.openTextDocument(vscode.Uri.file(reportPath)).then((doc) => {
+                vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Beside, preview: false });
+              });
+            }
+          });
+        } else {
+          vscode.window.showWarningMessage(`Auto-triage IA : échec (code ${code}).`);
+        }
       });
 
       proc.on('error', (err) => {
