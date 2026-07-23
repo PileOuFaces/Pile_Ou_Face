@@ -20,7 +20,20 @@
     const bus = global.POFHubMessageBus;
     if (!bus) return;
 
+    let activeRequestId = '';
+
     function startRun(binaryPath) {
+      if (activeRequestId) {
+        if (typeof _showToast === 'function') {
+          _showToast({
+            title: 'Auto-triage IA',
+            sub: 'Un auto-triage est déjà en cours — attends sa fin ou annule-le avant de relancer.',
+            icon: 'ℹ️',
+            variant: 'info',
+          });
+        }
+        return;
+      }
       const { provider, model } = resolveProviderAndModel();
       if (!model) {
         if (typeof _showToast === 'function') {
@@ -33,9 +46,10 @@
         }
         return;
       }
+      activeRequestId = `triage-${Date.now()}`;
       bus.postMessage({
         type: 'hubAutoTriageStart',
-        requestId: `triage-${Date.now()}`,
+        requestId: activeRequestId,
         binaryPath,
         provider,
         model,
@@ -46,6 +60,10 @@
       const msg = event.data;
       if (msg?.type === 'hubAutoTriageOpenPanel') {
         startRun(msg.binaryPath);
+        return;
+      }
+      if ((msg?.type === 'hubAutoTriageDone' || msg?.type === 'hubError') && msg?.requestId === activeRequestId) {
+        activeRequestId = '';
       }
     });
   }

@@ -30,6 +30,7 @@ const AUTH_CONTENT_KEYS_STDIN_ENV = 'BINHOST_CONTENT_KEYS_STDIN';
 const DOCKER_IMAGE_UPDATE_CACHE_TTL_MS = 10 * 60 * 1000;
 const _dockerImageUpdateCache = new Map();
 let _dockerRuntimeStatusCache = null;
+const _activeTriageRuns = new Map(); // binaryPath -> requestId
 
 function encodePluginRuntimeStdin(contentKeys) {
   const entries = Object.entries(contentKeys || {}).filter(([, value]) => String(value || '').trim());
@@ -1341,6 +1342,7 @@ function staticHandlers(config) {
       const maxSeconds = Number.isFinite(message.maxSeconds) && message.maxSeconds > 0 ? message.maxSeconds : 600;
 
       const fail = (error) => {
+        if (_activeTriageRuns.get(binaryPath) === requestId) _activeTriageRuns.delete(binaryPath);
         panel.webview.postMessage({ type: 'hubAutoTriageDone', requestId, ok: false, error });
       };
 
@@ -1348,6 +1350,11 @@ function staticHandlers(config) {
         fail('Binaire introuvable.');
         return;
       }
+      if (_activeTriageRuns.has(binaryPath)) {
+        fail('Un auto-triage est déjà en cours pour ce binaire.');
+        return;
+      }
+      _activeTriageRuns.set(binaryPath, requestId);
       const baseName = path.basename(binaryPath, path.extname(binaryPath)) || 'binary';
       const mappingPath = path.join(storageDir, `${baseName}.disasm.mapping.json`);
       if (!fs.existsSync(mappingPath)) {
@@ -1431,6 +1438,7 @@ function staticHandlers(config) {
         if (resultSent) return;
         resultSent = true;
         clearAiProcess(requestId);
+        if (_activeTriageRuns.get(binaryPath) === requestId) _activeTriageRuns.delete(binaryPath);
         try { fs.rmSync(cancelFlagPath, { force: true }); } catch (_) {}
         const ok = code === 0;
         panel.webview.postMessage({
@@ -1458,6 +1466,7 @@ function staticHandlers(config) {
         if (resultSent) return;
         resultSent = true;
         clearAiProcess(requestId);
+        if (_activeTriageRuns.get(binaryPath) === requestId) _activeTriageRuns.delete(binaryPath);
         fail(String(err.message || err));
       });
     },
