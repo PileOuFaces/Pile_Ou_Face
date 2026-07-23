@@ -194,6 +194,7 @@ function createHub(config) {
   let hubDispatchRef = null;
   let hubWebviewDispatchRef = null;
   let pendingAiPrompt = '';
+  let pendingAutoTriageBinary = '';
   let latestTraceRunId = 0;
   const perfDiagnosticsEnabled = () => {
     try {
@@ -252,6 +253,7 @@ function createHub(config) {
 
   return function openHub(initialPanel = 'dashboard', options = {}) {
     if (options.aiPrompt) pendingAiPrompt = String(options.aiPrompt);
+    if (options.autoTriageBinary) pendingAutoTriageBinary = String(options.autoTriageBinary);
     const folders = vscode.workspace.workspaceFolders;
     if (!folders || folders.length === 0) {
       vscode.window.showErrorMessage('Aucun workspace ouvert.');
@@ -398,6 +400,10 @@ function createHub(config) {
       if (pendingAiPrompt) {
         hubPanelRef.webview.postMessage({ type: 'hubPrefillAiPrompt', prompt: pendingAiPrompt });
         pendingAiPrompt = '';
+      }
+      if (pendingAutoTriageBinary) {
+        hubPanelRef.webview.postMessage({ type: 'hubAutoTriageOpenPanel', binaryPath: pendingAutoTriageBinary });
+        pendingAutoTriageBinary = '';
       }
       globalThis.setTimeout(() => {
         runHubStartupAction(hubHandlersRef).catch((error) => {
@@ -926,9 +932,14 @@ function createHub(config) {
       clearDynamicTraceHistory: traceHistoryHandlers.clearDynamicTraceHistory,
       hubReady: () => {
         panel.webview.postMessage({ type: 'hubPerfDiagnosticsConfig', enabled: perfDiagnosticsEnabled() });
-        if (!pendingAiPrompt) return;
-        panel.webview.postMessage({ type: 'hubPrefillAiPrompt', prompt: pendingAiPrompt });
-        pendingAiPrompt = '';
+        if (pendingAiPrompt) {
+          panel.webview.postMessage({ type: 'hubPrefillAiPrompt', prompt: pendingAiPrompt });
+          pendingAiPrompt = '';
+        }
+        if (pendingAutoTriageBinary) {
+          panel.webview.postMessage({ type: 'hubAutoTriageOpenPanel', binaryPath: pendingAutoTriageBinary });
+          pendingAutoTriageBinary = '';
+        }
       },
     };
     hubDispatchRef = hubDispatchMap;
@@ -1521,6 +1532,13 @@ function createHub(config) {
         if (!pendingAiPrompt || !hubPanelRef || hubPanelRef.disposed) return;
         panel.webview.postMessage({ type: 'hubPrefillAiPrompt', prompt: pendingAiPrompt });
         pendingAiPrompt = '';
+      }, 500);
+    }
+    if (pendingAutoTriageBinary) {
+      globalThis.setTimeout(() => {
+        if (!pendingAutoTriageBinary || !hubPanelRef || hubPanelRef.disposed) return;
+        panel.webview.postMessage({ type: 'hubAutoTriageOpenPanel', binaryPath: pendingAutoTriageBinary });
+        pendingAutoTriageBinary = '';
       }, 500);
     }
     return panel;

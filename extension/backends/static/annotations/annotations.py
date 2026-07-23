@@ -74,6 +74,36 @@ class AnnotationStore:
         self._cache.save_annotation(self._binary_path, addr, KIND_RENAME, name)
         logger.debug("Rename set: %s → %r", addr, name)
 
+    def ai_comment(self, addr: str, text: str) -> bool:
+        """Suggère un commentaire au nom de l'IA, sans écraser une note humaine.
+
+        Returns:
+            True si écrit, False si une annotation manuelle occupait déjà
+            ce (addr, kind) et a été préservée.
+        """
+        written = self._cache.save_ai_annotation(
+            self._binary_path, addr, KIND_COMMENT, text
+        )
+        logger.debug(
+            "AI comment %s: %s → %r", "set" if written else "skipped (user)", addr, text
+        )
+        return written
+
+    def ai_rename(self, addr: str, name: str) -> bool:
+        """Suggère un renommage au nom de l'IA, sans écraser un renommage humain.
+
+        Returns:
+            True si écrit, False si une annotation manuelle occupait déjà
+            ce (addr, kind) et a été préservée.
+        """
+        written = self._cache.save_ai_annotation(
+            self._binary_path, addr, KIND_RENAME, name
+        )
+        logger.debug(
+            "AI rename %s: %s → %r", "set" if written else "skipped (user)", addr, name
+        )
+        return written
+
     def get(self, addr: str) -> builtins.list[dict]:
         """Retourne toutes les annotations pour une adresse.
 
@@ -229,9 +259,11 @@ def _grouped_export(store: AnnotationStore) -> dict:
         entry = out.setdefault(row["addr"], {})
         if row["kind"] == KIND_COMMENT:
             entry["comment"] = row["value"]
+            entry["commentSource"] = row["source"]
             entry["updated"] = row["updated_at"]
         elif row["kind"] == KIND_RENAME:
             entry["name"] = row["value"]
+            entry["nameSource"] = row["source"]
             entry["updated"] = row["updated_at"]
         elif row["kind"] == KIND_REVIEW_STATUS:
             entry["reviewStatus"] = row["value"]

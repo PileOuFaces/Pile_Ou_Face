@@ -167,6 +167,35 @@ class TestAnnotationStore(unittest.TestCase):
         self.assertEqual(bookmarks, [])
         self.assertEqual(comment, "kept")
 
+    def test_ai_comment_written_on_empty_slot(self):
+        with self._store() as store:
+            written = store.ai_comment("0x401000", "ai guess")
+            comment = store.get_comment("0x401000")
+        self.assertTrue(written)
+        self.assertEqual(comment, "ai guess")
+
+    def test_ai_comment_does_not_overwrite_user_comment(self):
+        with self._store() as store:
+            store.comment("0x401000", "human note")
+            written = store.ai_comment("0x401000", "ai guess")
+            comment = store.get_comment("0x401000")
+        self.assertFalse(written)
+        self.assertEqual(comment, "human note")
+
+    def test_ai_rename_does_not_overwrite_user_rename(self):
+        with self._store() as store:
+            store.rename("0x401000", "human_name")
+            written = store.ai_rename("0x401000", "ai_name")
+            name = store.get_name("0x401000")
+        self.assertFalse(written)
+        self.assertEqual(name, "human_name")
+
+    def test_export_json_surfaces_source(self):
+        with self._store() as store:
+            store.comment("0x401000", "human note")
+            rows = store.export_json()
+        self.assertEqual(rows[0]["source"], "user")
+
 
 if __name__ == "__main__":
     unittest.main()

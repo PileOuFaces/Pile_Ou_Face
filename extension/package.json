@@ -75,6 +75,11 @@
         "category": "Pile ou Face"
       },
       {
+        "command": "pileOuFace.autoTriage",
+        "title": "Pile ou Face: Auto-triage IA",
+        "category": "Pile ou Face"
+      },
+      {
         "command": "pileOuFace.goToSymbolInDisasm",
         "title": "Aller au symbole"
       },
@@ -280,6 +285,14 @@
           "type": "boolean",
           "default": false,
           "description": "Active les snapshots de diagnostic performance webview/extension host dans les logs Pile ou Face. Désactivé par défaut pour les versions publiées."
+        },
+        "pileOuFace.autoTriage.enabled": {
+          "type": "boolean",
+          "default": false,
+          "tags": [
+            "usesOnlineServices"
+          ],
+          "description": "Lance automatiquement l'auto-triage IA (nommage/commentaires de fonctions par un LLM) juste après un désassemblage réussi. Désactivé par défaut : le code du binaire n'est envoyé au provider IA qu'après consentement explicite, désassemblage manuel via la commande « Pile ou Face: Auto-triage IA » ou activation de ce réglage."
         },
         "pileOuFace.telemetry.enabled": {
           "type": "boolean",

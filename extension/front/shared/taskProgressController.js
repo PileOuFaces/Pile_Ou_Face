@@ -5,7 +5,7 @@
 (function initTaskProgressController(global) {
   const TASK_TIMEOUT_MS = 120000;
   const HIDE_DELAY_MS = 700;
-  const PROGRESS_MESSAGES = new Set(['hubDecompilerPullProgress', 'hubPluginProgress']);
+  const PROGRESS_MESSAGES = new Set(['hubDecompilerPullProgress', 'hubPluginProgress', 'hubAutoTriageEvent']);
   const FINISH_MESSAGES = new Set([
     'accountState',
     'compileResult',
@@ -13,6 +13,7 @@
     'hubAiProvidersResult',
     'hubAttck',
     'hubAutoFromCmpResult',
+    'hubAutoTriageDone',
     'hubCallGraph',
     'hubCfg',
     'hubCommandResult',
@@ -64,6 +65,7 @@
     hubAiProviderSet: task('Configuration IA', ['hubAiProvidersResult', 'hubError']),
     hubAiProvidersGet: task('Chargement fournisseurs IA', ['hubAiProvidersResult']),
     hubAutoFromCmp: task('Recherche payload CMP', ['hubAutoFromCmpResult', 'hubError']),
+    hubAutoTriageStart: task('Auto-triage IA', ['hubAutoTriageDone', 'hubError'], { timeoutMs: 900000, cancelable: true }),
     hubExecuteCommand: task('Execution commande', ['hubCommandResult', 'hubDecompilerList', 'hubError']),
     hubInstallDecompiler: task('Installation decompilateur', ['hubDecompilerList', 'hubError']),
     hubListDecompilers: task('Etat des decompilateurs', ['hubDecompilerList', 'hubError']),
@@ -109,6 +111,7 @@
       label,
       doneTypes: new Set(doneTypes || []),
       timeoutMs: Number(options?.timeoutMs || TASK_TIMEOUT_MS),
+      cancelable: Boolean(options?.cancelable),
     };
   }
 
@@ -142,6 +145,7 @@
       '    </details>',
       '  </div>',
       '  <div class="task-progress-count" aria-hidden="true"></div>',
+      '  <button type="button" class="task-progress-cancel" title="Annuler" hidden>Annuler</button>',
       '</div>',
     ].join('');
     global.document.body.appendChild(root);
@@ -153,7 +157,16 @@
       count: root.querySelector('.task-progress-count'),
       details: root.querySelector('.task-progress-details'),
       list: root.querySelector('.task-progress-list'),
+      cancelBtn: root.querySelector('.task-progress-cancel'),
     };
+    state.els.cancelBtn.addEventListener('click', () => {
+      const active = getCurrentTask();
+      if (!active?.cancelable) return;
+      const bus = global.POFHubMessageBus;
+      if (bus?.postMessage) bus.postMessage({ type: 'hubAiCancel', requestId: active.requestId });
+      active.cancelRequested = true;
+      state.els.cancelBtn.disabled = true;
+    });
     return state.els;
   }
 
@@ -178,6 +191,7 @@
       detail: getInitialDetail(message, definition.label),
       doneTypes: definition.doneTypes,
       percent: null,
+      cancelable: definition.cancelable,
       timeoutId,
       startedAt: Date.now(),
     });
@@ -231,6 +245,13 @@
       if (binaryPath) parts.push(binaryPath.split(/[\\/]/).pop());
       return parts.length ? parts.join(' - ') : 'Execution en arriere-plan';
     }
+    if (normalizeMessageType(message) === 'hubAutoTriageStart') {
+      const binaryPath = String(message?.binaryPath || '').trim();
+      const model = String(message?.model || '').trim();
+      if (binaryPath) parts.push(binaryPath.split(/[\\/]/).pop());
+      if (model) parts.push(model);
+      return parts.length ? parts.join(' - ') : 'Selection des fonctions...';
+    }
     if (message?.decompiler) parts.push(String(message.decompiler));
     if (message?.command) parts.push(String(message.command).replace(/^pileOuFace\./, ''));
     if (message?.symbol) parts.push(String(message.symbol));
@@ -274,6 +295,39 @@
         updated = true;
         return;
       }
+      if (messageType === 'hubAutoTriageEvent') {
+        if (!entry.doneTypes.has('hubAutoTriageDone')) return;
+        const requestId = String(message?.requestId || '');
+        if (requestId && entry.requestId && entry.requestId !== requestId) return;
+        const ev = message.event || {};
+        if (ev.type === 'selection_done') {
+          entry.autoTriageTotal = Number(ev.count) || 0;
+          entry.autoTriageDone = 0;
+          entry.autoTriageErrors = 0;
+        } else if (ev.type === 'function_done') {
+          entry.autoTriageDone = (entry.autoTriageDone || 0) + 1;
+        } else if (ev.type === 'function_error') {
+          entry.autoTriageDone = (entry.autoTriageDone || 0) + 1;
+          entry.autoTriageErrors = (entry.autoTriageErrors || 0) + 1;
+        }
+        const total = entry.autoTriageTotal || 0;
+        const done = entry.autoTriageDone || 0;
+        const errors = entry.autoTriageErrors || 0;
+        entry.percent = total > 0 ? Math.max(0, Math.min(100, Math.round((done / total) * 100))) : null;
+        const name = String(ev.name || ev.addr || '').trim();
+        const errSuffix = errors > 0 ? ` (${errors} erreur(s))` : '';
+        if (ev.type === 'budget_warning') {
+          entry.detail = `⚠ ${String(ev.message || 'budget bientot atteint')}`;
+        } else if (total > 0) {
+          entry.detail = `${done}/${total} fonction(s)${errSuffix}${name ? ` - ${name}` : ''}`;
+        } else if (name) {
+          entry.detail = `→ ${name}`;
+        } else {
+          entry.detail = entry.detail || entry.label;
+        }
+        updated = true;
+        return;
+      }
       if (!entry.doneTypes.has('hubDecompilerPullDone')) return;
       if (message.decompiler && entry.id.indexOf(`:${message.decompiler}`) === -1) return;
       const percent = Number(message.percent);
@@ -306,6 +360,8 @@
       }, HIDE_DELAY_MS);
       return;
     }
+    els.cancelBtn.hidden = !active.cancelable;
+    els.cancelBtn.disabled = Boolean(active.cancelRequested);
     if (state.hideTimer) {
       global.clearTimeout(state.hideTimer);
       state.hideTimer = 0;
