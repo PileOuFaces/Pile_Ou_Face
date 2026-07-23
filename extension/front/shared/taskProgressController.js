@@ -65,6 +65,7 @@
     hubAiProviderSet: task('Configuration IA', ['hubAiProvidersResult', 'hubError']),
     hubAiProvidersGet: task('Chargement fournisseurs IA', ['hubAiProvidersResult']),
     hubAutoFromCmp: task('Recherche payload CMP', ['hubAutoFromCmpResult', 'hubError']),
+    hubAutoTriageStart: task('Auto-triage IA', ['hubAutoTriageDone', 'hubError'], { timeoutMs: 900000 }),
     hubExecuteCommand: task('Execution commande', ['hubCommandResult', 'hubDecompilerList', 'hubError']),
     hubInstallDecompiler: task('Installation decompilateur', ['hubDecompilerList', 'hubError']),
     hubListDecompilers: task('Etat des decompilateurs', ['hubDecompilerList', 'hubError']),
@@ -272,6 +273,27 @@
         const percent = Number(message.percent);
         entry.percent = Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : null;
         entry.detail = String(message.message || entry.detail || entry.label);
+        updated = true;
+        return;
+      }
+      if (messageType === 'hubAutoTriageEvent') {
+        if (!entry.doneTypes.has('hubAutoTriageDone')) return;
+        const requestId = String(message?.requestId || '');
+        if (requestId && entry.requestId && entry.requestId !== requestId) return;
+        const ev = message.event || {};
+        if (ev.type === 'selection_done') {
+          entry.autoTriageTotal = Number(ev.count) || 0;
+          entry.autoTriageDone = 0;
+        } else if (ev.type === 'function_done' || ev.type === 'function_error') {
+          entry.autoTriageDone = (entry.autoTriageDone || 0) + 1;
+        }
+        const total = entry.autoTriageTotal || 0;
+        const done = entry.autoTriageDone || 0;
+        entry.percent = total > 0 ? Math.max(0, Math.min(100, Math.round((done / total) * 100))) : null;
+        const name = String(ev.name || ev.addr || '').trim();
+        entry.detail = total > 0
+          ? `${done}/${total} fonction(s)${name ? ` - ${name}` : ''}`
+          : (name ? `→ ${name}` : entry.detail || entry.label);
         updated = true;
         return;
       }
