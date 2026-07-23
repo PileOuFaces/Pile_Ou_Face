@@ -131,8 +131,24 @@
       return panel;
     }
 
+    function resolveProviderAndModel() {
+      // Mirrors submitOllamaChatPrompt's "provider@model" convention (front/shared/outils.js)
+      const selected = typeof getCurrentOllamaModel === 'function' ? getCurrentOllamaModel() : '';
+      const raw = String(selected || (typeof ollamaUiState !== 'undefined' ? ollamaUiState.lastModel : '') || '').trim();
+      const atIdx = raw.indexOf('@');
+      if (atIdx > 0) {
+        return { provider: raw.slice(0, atIdx), model: raw.slice(atIdx + 1) };
+      }
+      return { provider: 'ollama', model: raw };
+    }
+
     function startRun(panel) {
       if (panel.querySelector('#autoTriageStart').disabled) return;
+      const { provider, model } = resolveProviderAndModel();
+      if (!model) {
+        appendLog(panel, "Aucun modèle sélectionné : choisis un modèle IA dans l'onglet Assistant avant de lancer l'auto-triage.");
+        return;
+      }
       currentRequestId = `triage-${Date.now()}`;
       panel.querySelector('#autoTriageLog').replaceChildren();
       panel.querySelector('#autoTriageStart').disabled = true;
@@ -140,7 +156,13 @@
       panel.querySelector('#autoTriageExport').disabled = true;
       total = 0;
       done = 0;
-      bus.postMessage({ type: 'hubAutoTriageStart', requestId: currentRequestId, binaryPath: currentBinaryPath });
+      bus.postMessage({
+        type: 'hubAutoTriageStart',
+        requestId: currentRequestId,
+        binaryPath: currentBinaryPath,
+        provider,
+        model,
+      });
     }
 
     bus.onMessage((event) => {
