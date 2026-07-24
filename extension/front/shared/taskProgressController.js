@@ -334,25 +334,33 @@
         if (requestId && entry.requestId && entry.requestId !== requestId) return;
         const ev = message.event || {};
         if (ev.type === 'selection_done') {
-          entry.autoTriageTotal = Number(ev.count) || 0;
+          entry.autoTriageTotal = Number(ev.total) || 0;
+          entry.autoTriageIndex = 0;
           entry.autoTriageDone = 0;
           entry.autoTriageErrors = 0;
+        } else if (ev.type === 'function_start') {
+          entry.autoTriageTotal = Number(ev.total) || entry.autoTriageTotal || 0;
+          entry.autoTriageIndex = Number(ev.index) || 0;
         } else if (ev.type === 'function_done') {
           entry.autoTriageDone = (entry.autoTriageDone || 0) + 1;
         } else if (ev.type === 'function_error') {
           entry.autoTriageDone = (entry.autoTriageDone || 0) + 1;
           entry.autoTriageErrors = (entry.autoTriageErrors || 0) + 1;
+        } else if (ev.type === 'cancelled') {
+          entry.autoTriageTotal = Number(ev.total) || entry.autoTriageTotal || 0;
+          entry.autoTriageIndex = Number(ev.processed) || entry.autoTriageIndex || 0;
         }
         const total = entry.autoTriageTotal || 0;
-        const done = entry.autoTriageDone || 0;
         const errors = entry.autoTriageErrors || 0;
-        entry.percent = total > 0 ? Math.max(0, Math.min(100, Math.round((done / total) * 100))) : null;
+        const position = Math.min(total, Math.max(entry.autoTriageIndex || 0, entry.autoTriageDone || 0) + (ev.type === 'function_start' ? 1 : 0));
+        entry.percent = total > 0 ? Math.max(0, Math.min(100, Math.round((position / total) * 100))) : null;
         const name = String(ev.name || ev.addr || '').trim();
         const errSuffix = errors > 0 ? ` (${errors} erreur(s))` : '';
         if (ev.type === 'budget_warning') {
-          entry.detail = `⚠ ${String(ev.message || 'budget bientot atteint')}`;
+          const elapsed = Number(ev.elapsed_s);
+          entry.detail = `⚠ Budget de temps bientot atteint${Number.isFinite(elapsed) ? ` (${Math.round(elapsed)}s ecoulees)` : ''}`;
         } else if (total > 0) {
-          entry.detail = `${done}/${total} fonction(s)${errSuffix}${name ? ` - ${name}` : ''}`;
+          entry.detail = `${position}/${total} fonction(s)${errSuffix}${name ? ` - ${name}` : ''}`;
         } else if (name) {
           entry.detail = `→ ${name}`;
         } else {

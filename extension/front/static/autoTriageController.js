@@ -23,17 +23,10 @@
     let activeRequestId = '';
 
     function startRun(binaryPath) {
-      if (activeRequestId) {
-        if (typeof _showToast === 'function') {
-          _showToast({
-            title: 'Auto-triage IA',
-            sub: 'Un auto-triage est déjà en cours — attends sa fin ou annule-le avant de relancer.',
-            icon: 'ℹ️',
-            variant: 'info',
-          });
-        }
-        return;
-      }
+      // Un run est deja en cours pour cette webview : le widget de suivi (bas
+      // gauche) l'affiche deja - pas besoin d'un second popup ici, et un toast
+      // redeclenche a chaque tentative finirait par s'empiler a l'infini.
+      if (activeRequestId) return;
       // Le host peut appliquer un modèle dédié (pileOuFace.autoTriage.model) même si
       // aucun modèle de chat n'est sélectionné ici — la validation finale se fait
       // côté host, qui remonte l'erreur via hubAutoTriageDone (widget de suivi).
