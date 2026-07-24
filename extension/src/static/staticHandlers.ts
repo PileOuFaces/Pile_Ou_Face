@@ -1336,8 +1336,21 @@ function staticHandlers(config) {
     hubAutoTriageStart: async (message = {}) => {
       const requestId = String(message.requestId || '').trim() || `triage-${Date.now()}`;
       const binaryPath = String(message.binaryPath || '').trim();
-      const provider = String(message.provider || 'ollama').trim() || 'ollama';
-      const model = message.model ? String(message.model).trim() : '';
+      let provider = String(message.provider || 'ollama').trim() || 'ollama';
+      let model = message.model ? String(message.model).trim() : '';
+      const configuredTriageModel = String(
+        vscode.workspace.getConfiguration('pileOuFace').get('autoTriage.model', '') || '',
+      ).trim();
+      if (configuredTriageModel) {
+        const atIdx = configuredTriageModel.indexOf('@');
+        if (atIdx > 0) {
+          provider = configuredTriageModel.slice(0, atIdx);
+          model = configuredTriageModel.slice(atIdx + 1);
+        } else {
+          provider = 'ollama';
+          model = configuredTriageModel;
+        }
+      }
       const maxFunctions = Number.isInteger(message.maxFunctions) && message.maxFunctions > 0 ? message.maxFunctions : 200;
       const maxSeconds = Number.isFinite(message.maxSeconds) && message.maxSeconds > 0 ? message.maxSeconds : 600;
 
@@ -1445,21 +1458,10 @@ function staticHandlers(config) {
           type: 'hubAutoTriageDone',
           requestId,
           ok,
+          cancelled: wasCancelled,
           reportPath: ok ? reportPath : null,
           error: ok ? null : (stderrBuf.trim() || `Processus terminé avec le code ${code}`),
         });
-        if (ok) {
-          const message = wasCancelled ? 'Auto-triage IA annulé (rapport partiel disponible).' : 'Auto-triage IA terminé.';
-          vscode.window.showInformationMessage(message, 'Ouvrir le rapport').then((choice) => {
-            if (choice === 'Ouvrir le rapport') {
-              vscode.workspace.openTextDocument(vscode.Uri.file(reportPath)).then((doc) => {
-                vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Beside, preview: false });
-              });
-            }
-          });
-        } else {
-          vscode.window.showWarningMessage(`Auto-triage IA : échec (code ${code}).`);
-        }
       });
 
       proc.on('error', (err) => {

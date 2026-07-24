@@ -151,6 +151,7 @@
     global.document.body.appendChild(root);
     state.els = {
       root,
+      copy: root.querySelector('.task-progress-copy'),
       title: root.querySelector('.task-progress-title'),
       detail: root.querySelector('.task-progress-detail'),
       bar: root.querySelector('.task-progress-bar'),
@@ -166,6 +167,12 @@
       if (bus?.postMessage) bus.postMessage({ type: 'hubAiCancel', requestId: active.requestId });
       active.cancelRequested = true;
       state.els.cancelBtn.disabled = true;
+    });
+    state.els.copy.addEventListener('click', () => {
+      const active = getCurrentTask();
+      if (!active?.reportPath) return;
+      const bus = global.POFHubMessageBus;
+      if (bus?.postMessage) bus.postMessage({ type: 'hubAutoTriageOpenReport', reportPath: active.reportPath });
     });
     return state.els;
   }
@@ -277,7 +284,33 @@
       if (messageType === 'hubPluginResult' && entry.messageType !== 'hubPluginInvoke') return;
       if (entry.doneTypes.has(messageType) || messageType === 'hubError') matching.push(id);
     });
-    matching.forEach(finishTask);
+    matching.forEach((id) => {
+      if (messageType === 'hubAutoTriageDone') {
+        finalizeAutoTriage(id, message);
+        return;
+      }
+      finishTask(id);
+    });
+  }
+
+  function finalizeAutoTriage(id, message) {
+    const entry = state.tasks.get(id);
+    if (!entry) return;
+    if (entry.timeoutId) global.clearTimeout(entry.timeoutId);
+    entry.reportPath = String(message?.reportPath || '');
+    entry.cancelable = false;
+    entry.percent = message?.ok ? 100 : entry.percent;
+    if (message?.ok) {
+      entry.detail = message?.cancelled
+        ? 'Annulé - rapport partiel disponible (cliquer pour ouvrir)'
+        : entry.reportPath
+          ? 'Terminé - cliquer pour ouvrir le rapport'
+          : 'Terminé.';
+    } else {
+      entry.detail = `Échec : ${String(message?.error || 'erreur inconnue')}`;
+    }
+    render();
+    entry.timeoutId = global.setTimeout(() => finishTask(id), 6000);
   }
 
   function updateProgress(message) {
@@ -373,6 +406,7 @@
     els.title.textContent = active.label || 'Traitement en cours';
     els.detail.textContent = active.detail || active.label || '';
     els.count.textContent = count > 1 ? `${count} taches` : '';
+    els.copy.classList.toggle('is-clickable', Boolean(active.reportPath));
     renderTaskList(els);
     if (Number.isFinite(active.percent)) {
       els.root.classList.add('has-percent');

@@ -849,6 +849,12 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
   flex-direction: column;
   gap: 3px;
 }
+.task-progress-copy.is-clickable {
+  cursor: pointer;
+}
+.task-progress-copy.is-clickable:hover .task-progress-detail {
+  text-decoration: underline;
+}
 .task-progress-title {
   overflow: hidden;
   color: var(--text-active);

@@ -34,18 +34,10 @@
         }
         return;
       }
+      // Le host peut appliquer un modèle dédié (pileOuFace.autoTriage.model) même si
+      // aucun modèle de chat n'est sélectionné ici — la validation finale se fait
+      // côté host, qui remonte l'erreur via hubAutoTriageDone (widget de suivi).
       const { provider, model } = resolveProviderAndModel();
-      if (!model) {
-        if (typeof _showToast === 'function') {
-          _showToast({
-            title: 'Auto-triage IA',
-            sub: "Aucun modèle sélectionné : choisis un modèle IA dans l'onglet Assistant avant de lancer l'auto-triage.",
-            icon: '⚠️',
-            variant: 'error',
-          });
-        }
-        return;
-      }
       activeRequestId = `triage-${Date.now()}`;
       bus.postMessage({
         type: 'hubAutoTriageStart',
