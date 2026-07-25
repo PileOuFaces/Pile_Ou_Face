@@ -1356,7 +1356,7 @@ function staticHandlers(config) {
 
       const fail = (error) => {
         if (_activeTriageRuns.get(binaryPath) === requestId) _activeTriageRuns.delete(binaryPath);
-        panel.webview.postMessage({ type: 'hubAutoTriageDone', requestId, ok: false, error });
+        panel.webview.postMessage({ type: 'hubAutoTriageDone', requestId, binaryPath, ok: false, error });
       };
 
       if (!binaryPath || !fs.existsSync(binaryPath) || fs.statSync(binaryPath).isDirectory()) {
@@ -1458,6 +1458,7 @@ function staticHandlers(config) {
         panel.webview.postMessage({
           type: 'hubAutoTriageDone',
           requestId,
+          binaryPath,
           ok,
           cancelled: wasCancelled,
           reportPath: ok ? reportPath : null,

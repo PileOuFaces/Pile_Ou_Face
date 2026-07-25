@@ -49,6 +49,14 @@
       }
       if ((msg?.type === 'hubAutoTriageDone' || msg?.type === 'hubError') && msg?.requestId === activeRequestId) {
         activeRequestId = '';
+        // Les renommages/commentaires IA sont ecrits en base au fil du run (par
+        // fonction), mais la vue disasm ouverte n'est jamais notifiee toute
+        // seule : on force un rechargement des annotations une fois le run
+        // termine (succes, erreur ou annulation) pour rendre visible ce qui a
+        // deja ete ecrit.
+        if (msg?.type === 'hubAutoTriageDone' && msg.binaryPath) {
+          bus.postMessage({ type: 'hubLoadAnnotations', binaryPath: msg.binaryPath });
+        }
       }
     });
   }
