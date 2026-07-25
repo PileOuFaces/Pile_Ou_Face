@@ -50,6 +50,23 @@ class TestSelectCandidateFunctions(unittest.TestCase):
         addrs = {c.addr for c in candidates}
         self.assertEqual(addrs, {"0x2000"})
 
+    def test_filters_previously_ai_annotated_addresses(self):
+        """A re-run after cancellation must resume, not redo already-annotated work."""
+        call_graph = {
+            "nodes": [
+                {"addr": "0x1000", "name": "_start"},
+                {"addr": "0x2000", "name": "done_by_ai"},
+                {"addr": "0x3000", "name": "not_yet_processed"},
+            ],
+            "edges": [],
+        }
+        existing = [{"addr": "0x2000", "source": "ai"}]
+        candidates = at.select_candidate_functions(
+            call_graph, [], {}, {}, existing, self._budget()
+        )
+        addrs = {c.addr for c in candidates}
+        self.assertEqual(addrs, {"0x3000"})
+
     def test_sensitive_keyword_callee_boosts_score_and_reason(self):
         call_graph = {
             "nodes": [

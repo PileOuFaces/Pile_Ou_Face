@@ -20,12 +20,26 @@
     const bus = global.POFHubMessageBus;
     if (!bus) return;
 
-    // Suivi par binaire (pas un seul verrou global) : le host supporte deja
-    // des runs concurrents par binaryPath (_activeTriageRuns cote staticHandlers.ts),
-    // donc changer de fichier de travail pendant qu'un run tourne sur l'ancien
-    // ne doit pas bloquer le declenchement d'un nouveau run sur le nouveau fichier.
+    // Un seul run actif a la fois : changer de fichier de travail annule le
+    // run de l'ancien binaire (meme mecanisme hubAiCancel que le bouton
+    // Annuler du widget de suivi) plutot que de le laisser tourner en
+    // parallele. Les annotations sont ecrites fonction par fonction cote
+    // backend, donc rien n'est perdu ; relancer plus tard sur ce binaire
+    // reprend automatiquement a la prochaine fonction non annotee
+    // (select_candidate_functions exclut toute fonction deja annotee, cote
+    // auto_triage.py).
     const activeRuns = new Map(); // binaryPath -> requestId
     let seq = 0;
+
+    function cancelRun(path) {
+      const requestId = activeRuns.get(path);
+      if (!requestId) return;
+      bus.postMessage({ type: 'hubAiCancel', requestId });
+      // On ne retire pas l'entree ici : tant que hubAutoTriageDone (cancelled:
+      // true) n'est pas revenu, le host garde ce binaryPath comme actif
+      // (_activeTriageRuns cote staticHandlers.ts) et rejetterait un restart
+      // premature.
+    }
 
     function startRun(binaryPath) {
       const path = String(binaryPath || '').trim();
@@ -34,6 +48,11 @@
       // gauche) l'affiche deja - pas besoin d'un second popup ici, et un toast
       // redeclenche a chaque tentative finirait par s'empiler a l'infini.
       if (activeRuns.has(path)) return;
+      // Changer de fichier de travail : on stoppe le run de l'ancien binaire
+      // (un seul actif a la fois), il reprendra plus tard la ou il s'est arrete.
+      for (const other of Array.from(activeRuns.keys())) {
+        if (other !== path) cancelRun(other);
+      }
       // Le host peut appliquer un modèle dédié (pileOuFace.autoTriage.model) même si
       // aucun modèle de chat n'est sélectionné ici — la validation finale se fait
       // côté host, qui remonte l'erreur via hubAutoTriageDone (widget de suivi).

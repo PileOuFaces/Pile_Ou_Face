@@ -167,12 +167,13 @@ def select_candidate_functions(
 ) -> list[FunctionCandidate]:
     """Rank and truncate candidate functions to analyze.
 
-    Excludes ignored runtime-startup symbols and any address already
-    carrying a human-authored ("user") annotation.
+    Excludes ignored runtime-startup symbols and any address that already
+    carries an annotation, human-authored or from a previous auto-triage
+    run. This is what lets a run resumed after cancellation (e.g. the user
+    switched to a different working file mid-run) pick up only the
+    functions that were not yet processed, instead of redoing work.
     """
-    user_annotated_addrs = {
-        row["addr"] for row in existing_annotations if row.get("source") == "user"
-    }
+    already_annotated_addrs = {row["addr"] for row in existing_annotations}
 
     by_addr: dict[str, str] = {}
     for node in call_graph.get("nodes", []):
@@ -195,7 +196,7 @@ def select_candidate_functions(
 
     candidates: list[FunctionCandidate] = []
     for addr, name in by_addr.items():
-        if name in IGNORE_FOCUS_FUNCTIONS or addr in user_annotated_addrs:
+        if name in IGNORE_FOCUS_FUNCTIONS or addr in already_annotated_addrs:
             continue
 
         reasons: list[str] = []
