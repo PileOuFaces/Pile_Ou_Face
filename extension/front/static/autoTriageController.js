@@ -20,22 +20,30 @@
     const bus = global.POFHubMessageBus;
     if (!bus) return;
 
-    let activeRequestId = '';
+    // Suivi par binaire (pas un seul verrou global) : le host supporte deja
+    // des runs concurrents par binaryPath (_activeTriageRuns cote staticHandlers.ts),
+    // donc changer de fichier de travail pendant qu'un run tourne sur l'ancien
+    // ne doit pas bloquer le declenchement d'un nouveau run sur le nouveau fichier.
+    const activeRuns = new Map(); // binaryPath -> requestId
+    let seq = 0;
 
     function startRun(binaryPath) {
-      // Un run est deja en cours pour cette webview : le widget de suivi (bas
+      const path = String(binaryPath || '').trim();
+      if (!path) return;
+      // Un run est deja en cours pour CE binaire : le widget de suivi (bas
       // gauche) l'affiche deja - pas besoin d'un second popup ici, et un toast
       // redeclenche a chaque tentative finirait par s'empiler a l'infini.
-      if (activeRequestId) return;
+      if (activeRuns.has(path)) return;
       // Le host peut appliquer un modèle dédié (pileOuFace.autoTriage.model) même si
       // aucun modèle de chat n'est sélectionné ici — la validation finale se fait
       // côté host, qui remonte l'erreur via hubAutoTriageDone (widget de suivi).
       const { provider, model } = resolveProviderAndModel();
-      activeRequestId = `triage-${Date.now()}`;
+      const requestId = `triage-${Date.now()}-${++seq}`;
+      activeRuns.set(path, requestId);
       bus.postMessage({
         type: 'hubAutoTriageStart',
-        requestId: activeRequestId,
-        binaryPath,
+        requestId,
+        binaryPath: path,
         provider,
         model,
       });
@@ -47,16 +55,26 @@
         startRun(msg.binaryPath);
         return;
       }
-      if ((msg?.type === 'hubAutoTriageDone' || msg?.type === 'hubError') && msg?.requestId === activeRequestId) {
-        activeRequestId = '';
-        // Les renommages/commentaires IA sont ecrits en base au fil du run (par
-        // fonction), mais la vue disasm ouverte n'est jamais notifiee toute
-        // seule : on force un rechargement des annotations une fois le run
-        // termine (succes, erreur ou annulation) pour rendre visible ce qui a
-        // deja ete ecrit.
-        if (msg?.type === 'hubAutoTriageDone' && msg.binaryPath) {
-          bus.postMessage({ type: 'hubLoadAnnotations', binaryPath: msg.binaryPath });
+      if (msg?.type !== 'hubAutoTriageDone' && msg?.type !== 'hubError') return;
+      const path = String(msg?.binaryPath || '').trim();
+      if (path) {
+        if (activeRuns.get(path) !== msg?.requestId) return;
+        activeRuns.delete(path);
+      } else {
+        let matched = '';
+        for (const [p, id] of activeRuns) {
+          if (id === msg?.requestId) { matched = p; break; }
         }
+        if (!matched) return;
+        activeRuns.delete(matched);
+      }
+      // Les renommages/commentaires IA sont ecrits en base au fil du run (par
+      // fonction), mais la vue disasm ouverte n'est jamais notifiee toute
+      // seule : on force un rechargement des annotations une fois le run
+      // termine (succes, erreur ou annulation) pour rendre visible ce qui a
+      // deja ete ecrit.
+      if (msg?.type === 'hubAutoTriageDone' && msg.binaryPath) {
+        bus.postMessage({ type: 'hubLoadAnnotations', binaryPath: msg.binaryPath });
       }
     });
   }
