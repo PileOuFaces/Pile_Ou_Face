@@ -1417,6 +1417,7 @@ function staticHandlers(config) {
         '--max-seconds', String(maxSeconds),
         '--cancel-flag-path', cancelFlagPath,
         '--report-out', reportPath,
+        '--language', vscode.env.language,
       ];
       if (model) scriptArgs.push('--model', model);
       logChannel?.appendLine(`[auto-triage] start requestId=${requestId} provider=${provider} model=${model || '(default)'}`);
