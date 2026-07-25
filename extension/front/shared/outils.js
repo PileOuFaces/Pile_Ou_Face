@@ -1299,6 +1299,14 @@ document.querySelectorAll('.action-card').forEach((card) => {
       showPanel('dynamic');
     } else if (card.dataset.action === 'outils-open') {
       showPanel('outils');
+    } else if (card.dataset.action === 'auto-triage') {
+      const binaryPath = getStaticBinaryPath();
+      if (!binaryPath) {
+        showPanel('static');
+        openBinaryMenu();
+        return;
+      }
+      window.POFHubAutoTriageController?.startRun?.(binaryPath);
     }
   });
 });

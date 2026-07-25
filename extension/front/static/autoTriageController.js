@@ -16,6 +16,8 @@
     return { provider: 'ollama', model: raw };
   }
 
+  const controller = { initAutoTriage, startRun: null };
+
   function initAutoTriage() {
     const bus = global.POFHubMessageBus;
     if (!bus) return;
@@ -96,7 +98,12 @@
         bus.postMessage({ type: 'hubLoadAnnotations', binaryPath: msg.binaryPath });
       }
     });
+
+    // Expose startRun so a UI button (ex. le bouton "Auto-triage IA" du
+    // dashboard) peut declencher un run directement, sans repasser par
+    // hubAutoTriageOpenPanel (qui n'existe que dans le sens host -> webview).
+    controller.startRun = startRun;
   }
 
-  global.POFHubAutoTriageController = { initAutoTriage };
+  global.POFHubAutoTriageController = controller;
 })(window);
