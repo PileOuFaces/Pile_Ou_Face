@@ -1419,6 +1419,7 @@ function staticHandlers(config) {
         '--report-out', reportPath,
       ];
       if (model) scriptArgs.push('--model', model);
+      logChannel?.appendLine(`[auto-triage] start requestId=${requestId} provider=${provider} model=${model || '(default)'}`);
       const scriptPath = path.join(extensionPath, 'backends/mcp/auto_triage.py');
       const proc = cp.spawn(getPythonExecutable(), [scriptPath, ...scriptArgs], { cwd: root, env: buildPythonEnv() });
 

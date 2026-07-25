@@ -390,12 +390,16 @@ def render_markdown_report(
     analyses: list[FunctionAnalysis],
     summary: dict[str, Any],
     stats: dict[str, Any],
+    provider: str = "",
+    model: str | None = None,
 ) -> str:
     lines = [
         f"# Rapport d'auto-triage IA — {Path(binary_path).name}",
         "",
         "> Généré automatiquement par IA. Toutes les annotations sont réversibles "
         "et n'écrasent jamais une annotation manuelle — à vérifier avant usage.",
+        "",
+        f"Modèle utilisé : `{provider}{f'@{model}' if model else ''}`",
         "",
         "## Résumé exécutif",
         "",
@@ -474,7 +478,14 @@ def run_auto_triage(
             existing_annotations,
             budget,
         )
-        on_event({"type": "selection_done", "total": len(candidates)})
+        on_event(
+            {
+                "type": "selection_done",
+                "total": len(candidates),
+                "provider": provider,
+                "model": model or "",
+            }
+        )
 
         analyses: list[FunctionAnalysis] = []
         annotated_count = 0
@@ -545,7 +556,9 @@ def run_auto_triage(
             "elapsed_s": time.monotonic() - start,
             "cancelled": cancelled,
         }
-        report = render_markdown_report(binary_path, analyses, summary, stats)
+        report = render_markdown_report(
+            binary_path, analyses, summary, stats, provider, model
+        )
 
     on_event({"type": "summary", "summary": summary})
     done_event = {"type": "done", "report_markdown": report, "stats": stats}

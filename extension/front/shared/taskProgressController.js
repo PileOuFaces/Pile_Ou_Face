@@ -338,6 +338,9 @@
           entry.autoTriageIndex = 0;
           entry.autoTriageDone = 0;
           entry.autoTriageErrors = 0;
+          const provider = String(ev.provider || '').trim();
+          const model = String(ev.model || '').trim();
+          entry.autoTriageModelLabel = provider ? `${provider}${model ? `@${model}` : ''}` : '';
         } else if (ev.type === 'function_start') {
           entry.autoTriageTotal = Number(ev.total) || entry.autoTriageTotal || 0;
           entry.autoTriageIndex = Number(ev.index) || 0;
@@ -356,13 +359,14 @@
         entry.percent = total > 0 ? Math.max(0, Math.min(100, Math.round((position / total) * 100))) : null;
         const name = String(ev.name || ev.addr || '').trim();
         const errSuffix = errors > 0 ? ` (${errors} erreur(s))` : '';
+        const modelSuffix = entry.autoTriageModelLabel ? ` [${entry.autoTriageModelLabel}]` : '';
         if (ev.type === 'budget_warning') {
           const elapsed = Number(ev.elapsed_s);
           entry.detail = `⚠ Budget de temps bientot atteint${Number.isFinite(elapsed) ? ` (${Math.round(elapsed)}s ecoulees)` : ''}`;
         } else if (total > 0) {
-          entry.detail = `${position}/${total} fonction(s)${errSuffix}${name ? ` - ${name}` : ''}`;
+          entry.detail = `${position}/${total} fonction(s)${errSuffix}${name ? ` - ${name}` : ''}${modelSuffix}`;
         } else if (name) {
-          entry.detail = `→ ${name}`;
+          entry.detail = `→ ${name}${modelSuffix}`;
         } else {
           entry.detail = entry.detail || entry.label;
         }
