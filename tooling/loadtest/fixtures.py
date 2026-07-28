@@ -26,7 +26,11 @@ class FixtureSpec:
 
 
 def _generate_c_source(spec: FixtureSpec) -> str:
-    lines = ["extern const unsigned char pof_padding[];", "extern const long pof_padding_len;", ""]
+    lines = [
+        "extern const unsigned char pof_padding[];",
+        "extern const long pof_padding_len;",
+        "",
+    ]
     for i in range(spec.num_functions):
         lines.append(f"int pof_fn_{i}(int x) {{ return x * {i + 1} + (x ^ {i}); }}")
     lines.append("")
@@ -88,7 +92,9 @@ def build_fixture(spec: FixtureSpec, cache_dir: Path) -> Path:
                 f.write(b"\x00" * remaining)
 
         asm_path = work_dir / "padding.s"
-        asm_path.write_text(_generate_asm_source(spec.padding_bytes, blob_path), encoding="utf-8")
+        asm_path.write_text(
+            _generate_asm_source(spec.padding_bytes, blob_path), encoding="utf-8"
+        )
 
         c_path = work_dir / "main.c"
         c_path.write_text(_generate_c_source(spec), encoding="utf-8")
@@ -100,7 +106,9 @@ def build_fixture(spec: FixtureSpec, cache_dir: Path) -> Path:
             timeout=120,
         )
         if result.returncode != 0 or not binary_path.exists():
-            raise RuntimeError(f"Échec de compilation de la fixture {spec.name}: {result.stderr}")
+            raise RuntimeError(
+                f"Échec de compilation de la fixture {spec.name}: {result.stderr}"
+            )
         return binary_path
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)

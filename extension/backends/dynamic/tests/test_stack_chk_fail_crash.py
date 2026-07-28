@@ -197,9 +197,7 @@ class TestStackChkFailCorpus(unittest.TestCase):
             )
 
         self.assertEqual(
-            result["meta"].get("simulated_external_calls", {}).get(
-                "__stack_chk_fail"
-            ),
+            result["meta"].get("simulated_external_calls", {}).get("__stack_chk_fail"),
             1,
         )
         self.assertIsNotNone(

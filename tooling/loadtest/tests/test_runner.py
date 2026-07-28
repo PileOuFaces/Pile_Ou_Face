@@ -8,7 +8,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from loadtest.runner import parse_time_output_macos, parse_time_output_linux, run_measured
+from loadtest.runner import (
+    parse_time_output_macos,
+    parse_time_output_linux,
+    run_measured,
+)
 
 
 class TestParseTimeOutput(unittest.TestCase):
@@ -49,11 +53,15 @@ class TestRunMeasured(unittest.TestCase):
         self.assertGreaterEqual(result["elapsed_s"], 0)
 
     def test_captures_nonzero_exit_code_without_raising(self):
-        result = run_measured([sys.executable, "-c", "import sys; sys.exit(3)"], timeout_s=30)
+        result = run_measured(
+            [sys.executable, "-c", "import sys; sys.exit(3)"], timeout_s=30
+        )
         self.assertEqual(result["returncode"], 3)
 
     def test_times_out_gracefully(self):
-        result = run_measured([sys.executable, "-c", "import time; time.sleep(5)"], timeout_s=1)
+        result = run_measured(
+            [sys.executable, "-c", "import time; time.sleep(5)"], timeout_s=1
+        )
         self.assertTrue(result["timed_out"])
 
     def test_timeout_actually_kills_the_underlying_process(self):

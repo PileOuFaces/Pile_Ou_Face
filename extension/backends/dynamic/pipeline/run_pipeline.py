@@ -478,13 +478,22 @@ def _build_crash_report(
                 _slot_value_text(ret_slot_data, analysis, "return_address")
             )
     code_ranges = _build_code_ranges(meta, disasm_lines or [])
-    classification = _classify_crash(
-        fault_addr=fault_address,
-        ret_target=ret_target,
-        ip_after=ip_after,
-        meta=meta,
-        code_ranges=code_ranges,
-    )
+    if crash_type == "stack_chk_fail":
+        # The traced program's own stack protector already confirmed a
+        # corrupted canary -- this is stronger evidence than anything
+        # _classify_crash can infer from ret_target/fault_addr/code-address,
+        # and running it through that generic heuristic would misclassify
+        # a successful protection as "control_hijack" (the instruction
+        # pointer at the call site still sits inside known code).
+        classification = "stack_chk_fail"
+    else:
+        classification = _classify_crash(
+            fault_addr=fault_address,
+            ret_target=ret_target,
+            ip_after=ip_after,
+            meta=meta,
+            code_ranges=code_ranges,
+        )
     if classification == "fatal_crash" and not _has_control_corruption_evidence(
         analysis or {}, payload_offset
     ):

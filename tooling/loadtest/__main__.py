@@ -34,10 +34,14 @@ DEFAULT_MAX_RATIO = 500.0
 
 
 def _script_path(script: str) -> Path:
-    return REPO_ROOT / script if script.startswith("tooling/") else EXTENSION_ROOT / script
+    return (
+        REPO_ROOT / script if script.startswith("tooling/") else EXTENSION_ROOT / script
+    )
 
 
-def _run_prepare_commands(scenario, binary_path: Path, out_dir: Path, env: dict[str, str]) -> bool:
+def _run_prepare_commands(
+    scenario, binary_path: Path, out_dir: Path, env: dict[str, str]
+) -> bool:
     if scenario.prepare is None:
         return True
     for script, cmd_args in scenario.prepare(binary_path, out_dir):
@@ -58,12 +62,22 @@ def _run_prepare_commands(scenario, binary_path: Path, out_dir: Path, env: dict[
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Test de charge des fonctionnalités backend")
-    parser.add_argument("--scenario", help="Nom d'un seul scénario à exécuter (défaut: tous)")
-    parser.add_argument("--size", help="Nom d'un seul profil de fixture à utiliser (défaut: tous)")
+    parser = argparse.ArgumentParser(
+        description="Test de charge des fonctionnalités backend"
+    )
+    parser.add_argument(
+        "--scenario", help="Nom d'un seul scénario à exécuter (défaut: tous)"
+    )
+    parser.add_argument(
+        "--size", help="Nom d'un seul profil de fixture à utiliser (défaut: tous)"
+    )
     parser.add_argument("--results-dir", default=str(DEFAULT_RESULTS_DIR))
-    parser.add_argument("--max-ratio", type=float, default=DEFAULT_MAX_RATIO,
-                         help="Ratio pic RSS / taille binaire au-delà duquel un résultat est signalé")
+    parser.add_argument(
+        "--max-ratio",
+        type=float,
+        default=DEFAULT_MAX_RATIO,
+        help="Ratio pic RSS / taille binaire au-delà duquel un résultat est signalé",
+    )
     args = parser.parse_args(argv)
 
     scenarios = [s for s in SCENARIOS if not args.scenario or s.name == args.scenario]
@@ -89,16 +103,20 @@ def main(argv: list[str] | None = None) -> int:
             script_path = _script_path(scenario.script)
             with tempfile.TemporaryDirectory() as out_tmp:
                 out_dir = Path(out_tmp)
-                if not _run_prepare_commands(scenario, binary_path, out_dir, script_env):
-                    results.append(Result(
-                        scenario=scenario.name,
-                        fixture=profile.name,
-                        binary_size_bytes=binary_size,
-                        peak_rss_bytes=0,
-                        elapsed_s=0.0,
-                        returncode=1,
-                        timed_out=False,
-                    ))
+                if not _run_prepare_commands(
+                    scenario, binary_path, out_dir, script_env
+                ):
+                    results.append(
+                        Result(
+                            scenario=scenario.name,
+                            fixture=profile.name,
+                            binary_size_bytes=binary_size,
+                            peak_rss_bytes=0,
+                            elapsed_s=0.0,
+                            returncode=1,
+                            timed_out=False,
+                        )
+                    )
                     continue
                 cmd_args = scenario.build_args(binary_path, out_dir)
                 measured = run_measured(
@@ -106,15 +124,17 @@ def main(argv: list[str] | None = None) -> int:
                     timeout_s=scenario.timeout_s,
                     env=script_env,
                 )
-                results.append(Result(
-                    scenario=scenario.name,
-                    fixture=profile.name,
-                    binary_size_bytes=binary_size,
-                    peak_rss_bytes=measured["peak_rss_bytes"],
-                    elapsed_s=measured["elapsed_s"],
-                    returncode=measured["returncode"],
-                    timed_out=measured["timed_out"],
-                ))
+                results.append(
+                    Result(
+                        scenario=scenario.name,
+                        fixture=profile.name,
+                        binary_size_bytes=binary_size,
+                        peak_rss_bytes=measured["peak_rss_bytes"],
+                        elapsed_s=measured["elapsed_s"],
+                        returncode=measured["returncode"],
+                        timed_out=measured["timed_out"],
+                    )
+                )
 
     results_dir = Path(args.results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)

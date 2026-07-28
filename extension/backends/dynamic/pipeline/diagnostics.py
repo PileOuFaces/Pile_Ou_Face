@@ -454,6 +454,16 @@ def _diagnose_crash(
         confidence = 0.96
         ret_target = None
         message = str(crash.get("reason") or "Crash fatal Unicorn.").strip()
+    elif classification == "stack_chk_fail":
+        # The program's own stack protector detected a corrupted canary and
+        # called __stack_chk_fail -- direct evidence, not a heuristic guess.
+        kind = "stack_chk_fail"
+        severity = "error"
+        confidence = 0.97
+        ret_target = None
+        message = str(
+            crash.get("reason") or "Protecteur de pile declenche (__stack_chk_fail)."
+        ).strip()
     elif classification in ("benign_termination", "emulator_stop"):
         # run_pipeline._build_crash_report already downgraded this from
         # fatal_crash after finding zero corruption evidence (no overflow

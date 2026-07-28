@@ -15,10 +15,16 @@ import sys
 
 def parse_time_output_macos(output: str) -> dict:
     elapsed_match = re.search(r"^\s*([\d.]+)\s+real", output, re.MULTILINE)
-    footprint_match = re.search(r"^\s*(\d+)\s+peak memory footprint", output, re.MULTILINE)
-    max_rss_match = re.search(r"^\s*(\d+)\s+maximum resident set size", output, re.MULTILINE)
-    peak_rss = int(footprint_match.group(1)) if footprint_match else (
-        int(max_rss_match.group(1)) if max_rss_match else 0
+    footprint_match = re.search(
+        r"^\s*(\d+)\s+peak memory footprint", output, re.MULTILINE
+    )
+    max_rss_match = re.search(
+        r"^\s*(\d+)\s+maximum resident set size", output, re.MULTILINE
+    )
+    peak_rss = (
+        int(footprint_match.group(1))
+        if footprint_match
+        else (int(max_rss_match.group(1)) if max_rss_match else 0)
     )
     return {
         "elapsed_s": float(elapsed_match.group(1)) if elapsed_match else 0.0,
