@@ -175,24 +175,54 @@ Rules:
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **Pile_Ou_Face** (19649 symbols, 33073 relationships, 268 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **Pile_Ou_Face** (19649 symbols, 33073 relationships, 268 execution flows). GitNexus is the current implementation of the preferred repository-analysis tool, when it is actually available in the session and usable for this repository.
 
-> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
+## Availability Gate
 
-## Always Do
+Before requiring the preferred repository-analysis tool, explicitly verify at least one usable access path:
 
-- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus_impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST run `gitnexus_detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows.
-- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
-- When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
-- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
+- its MCP tools or resources are accessible in the current session;
+- a functional CLI is installed;
+- the repository contains a configuration that can actually be executed with the runtimes available in the session.
 
-## Never Do
+A configuration or skill directory that points to a missing executable does not make the tool available. Report the availability result before relying on it.
 
-- NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
-- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
-- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
-- NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
+An optional tool must not block work when it is not installed, accessible, or configured and no installation procedure has been provided. In that case, use the documented manual fallback below.
+
+If GitNexus is available but warns that its index is stale, run `npx gitnexus analyze` in the terminal before using its results.
+
+## When the Preferred Tool Is Available
+
+- Before modifying a public symbol, shared function, class, contract, route, model, or schema, run upstream impact analysis and inspect its context.
+- Summarize incoming and outgoing dependencies and identify affected tests.
+- Warn the user before editing when the reported risk is HIGH or CRITICAL.
+- Run the tool's changed-symbol or changed-flow analysis before committing when supported.
+- Prefer graph-aware rename and navigation operations over blind find-and-replace.
+
+With the current GitNexus implementation, use `gitnexus_impact`, `gitnexus_context`, `gitnexus_query`, `gitnexus_rename`, and `gitnexus_detect_changes` for those operations.
+
+## Manual Fallback When the Preferred Tool Is Unavailable
+
+State clearly that the preferred repository-analysis tool is unavailable. The following procedure is then mandatory:
+
+1. Search all definitions and references with the available tools, including `rg` or `grep`, IDE search, imports, direct calls, tests, templates, URLs, configuration, and documentation.
+2. For every modified symbol, document:
+   - its definition file;
+   - references found;
+   - primary callers;
+   - possible side effects;
+   - existing tests;
+   - tests to add or modify.
+3. Run, at minimum:
+   - targeted tests;
+   - the complete test suite of the affected module;
+   - lint;
+   - format checks;
+   - compilation or type checking when available.
+4. If the remaining impact is ambiguous or affects a cross-cutting contract, stop before editing and request human validation.
+5. Never describe this manual analysis as equivalent to the preferred repository-analysis tool. It is an explicit, documented fallback.
+
+Before committing without the preferred tool, record the changed-symbol review and validation results in place of the tool-specific changed-flow analysis.
 
 ## Resources
 
