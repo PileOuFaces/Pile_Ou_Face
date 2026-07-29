@@ -141,11 +141,9 @@ describe('dynamic/workflows clear trace history', () => {
       type: 'hubDebugLog',
       scope: 'dynamic-trace-ready',
       event: 'ignored-stale-response',
-      details: {
-        currentBinaryPath: '/repo/current.bin',
-        responseBinaryPath: '/repo/old.bin',
-      },
+      details: { pathsDiffer: true },
     }]);
+    expect(JSON.stringify(posted)).to.not.include('/repo/');
   });
 
   it('deleting-active-history-trace-notifies-hub-and-standalone-visualizer-clear', async () => {

@@ -91,13 +91,14 @@ function activate(context) {
   setExtensionPath(context.extensionPath);
   _registerGlobalErrorHandlers();
   const productConfig = getProductConfig();
+  const extensionVersion = String(context.extension?.packageJSON?.version || '0.0.0');
   const telemetry = createTelemetryService({
     vscode,
     context,
     endpoint: productConfig.telemetryProviderUrl,
   });
   telemetry.trackEvent(EVENT_NAMES.EXTENSION_ACTIVATED, {
-    extensionVersion: String(context.extension?.packageJSON?.version || '0.0.0'),
+    extensionVersion,
     vscodeVersionMajor: String(vscode.version || '0').split('.')[0],
     platform: mapPlatform(process.platform),
   });
@@ -161,6 +162,7 @@ function activate(context) {
     check32BitToolchain,
     openVisualizerWebview,
     telemetry,
+    extensionVersion,
   };
   const openHub = createHub(hubConfig);
 

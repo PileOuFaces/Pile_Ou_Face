@@ -60,7 +60,7 @@ function createVisualizer(config) {
           preview: true
         });
       } catch (err) {
-        logChannel.appendLine('[pile-ou-face] open disasm failed: ' + String(err));
+        logChannel.appendLine('[pile-ou-face] open disasm failed');
       }
     };
 
@@ -108,7 +108,8 @@ function createVisualizer(config) {
           await telemetryHandlers['pof.telemetry'](message);
           return;
         }
-        logChannel.appendLine('[pile-ou-face] webview message: ' + JSON.stringify(message));
+        const messageType = String(message?.type || 'unknown').replace(/[^a-z0-9_.:-]/gi, '_');
+        logChannel.appendLine(`[pile-ou-face] webview message: type=${messageType}`);
         const traceForHandler = getActiveTrace();
         const currentTraceRunId = getTraceRunId(traceForHandler);
 
@@ -138,7 +139,7 @@ function createVisualizer(config) {
               }
             }
           } catch (err) {
-            logChannel.appendLine('[pile-ou-face] readTextFile failed: ' + String(err));
+            logChannel.appendLine('[pile-ou-face] readTextFile failed');
           }
 
           visualizerPanel.webview.postMessage({
@@ -188,7 +189,7 @@ function createVisualizer(config) {
               ...mcp
             });
           } catch (err) {
-            logChannel.appendLine('[pile-ou-face] mcpUpdate failed: ' + String(err));
+            logChannel.appendLine('[pile-ou-face] mcpUpdate failed');
           }
           return;
         }
@@ -196,7 +197,7 @@ function createVisualizer(config) {
         if (message.type === 'goToLine') {
           const line = message.line ?? 1;
           let targetFile = message.file;
-          logChannel.appendLine(`[goToLine] line=${line} file=${targetFile ?? ''}`);
+          logChannel.appendLine(`[goToLine] line=${Number.isFinite(Number(line)) ? Number(line) : 1}`);
           const folders = vscode.workspace.workspaceFolders;
           const root = folders && folders.length ? resolveProjectRoot(folders[0].uri.fsPath) : '';
 

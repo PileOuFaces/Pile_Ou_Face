@@ -75,12 +75,13 @@ const { createGraphRenderers } = require('./hub/graphRenderers');
 const { createLoaders } = require('./hub/loaders');
 const { createTraceHistory } = require('./hub/traceHistory');
 const { createActions } = require('./hub/actions');
-const { createRunTraceTelemetry } = require('../dynamic/runTraceTelemetry');
+const { cpuBucket, createRunTraceTelemetry, rssBucket } = require('../dynamic/runTraceTelemetry');
 const archSupport = require('./hub/archSupport');
 const { getRuntimeAuditState, recordRuntimeEvent } = require('../shared/runtimeAudit');
 const { EVENT_NAMES } = require('../shared/telemetry/telemetryEvents');
 const {
   mapArch,
+  mapBinaryFormat,
   mapPanel,
   mapPayloadMode,
   mapTarget,
@@ -148,6 +149,7 @@ function createHub(config) {
     refreshSidebar,
     setSidebarMode,
     telemetry,
+    extensionVersion,
   } = config;
 
   const SETTINGS_DEFAULTS = {
@@ -195,6 +197,7 @@ function createHub(config) {
   let hubWebviewDispatchRef = null;
   let pendingAiPrompt = '';
   let latestTraceRunId = 0;
+  let activeDynamicAbortController = null;
   const perfDiagnosticsEnabled = () => {
     try {
       return Boolean(vscode.workspace.getConfiguration?.('pileOuFace')?.get?.('perfDiagnostics', false));
@@ -787,6 +790,7 @@ function createHub(config) {
       staticLink = false,
       strip = false,
       extraFlags = '',
+      commandOptions = {},
     }) => {
       if (!sourcePath) throw new Error('Source C requise.');
       if (!binaryPath) throw new Error('Chemin binaire requis.');
@@ -861,7 +865,7 @@ function createHub(config) {
       }
 
       gccArgs.push('-o', absoluteBinaryPath, absoluteSourcePath);
-      await runCommand('gcc', gccArgs, root, logChannel);
+      await runCommand('gcc', gccArgs, root, logChannel, {}, commandOptions);
       // macOS crée un bundle .dSYM à côté du binaire — on le supprime
       if (process.platform === 'darwin') {
         const dSYMPath = absoluteBinaryPath + '.dSYM';
@@ -1261,8 +1265,13 @@ function createHub(config) {
       const maxSteps = String(payload.maxSteps || '800');
       const telemetryInput = payload.input && typeof payload.input === 'object' ? payload.input : {};
       const telemetryPayloadMode = mapPayloadMode(telemetryInput.mode || payload.payloadMode);
+      const telemetryBinaryInfo = useExistingBinary && binaryPath
+        ? inspectBinaryInput(resolvePathFromWorkspace(binaryPath))
+        : { format: 'ELF' };
       const runTelemetry = createRunTraceTelemetry({
-        telemetry,
+        telemetry: traceMode === 'dynamic' ? telemetry : null,
+        extensionVersion,
+        binaryFormat: mapBinaryFormat(telemetryBinaryInfo.format),
         arch: mapArch(payload.arch || '', payload.archBits),
         payloadMode: telemetryPayloadMode,
         target: mapTarget(
@@ -1273,6 +1282,14 @@ function createHub(config) {
       });
       let runTraceResult = 'failed';
       let failureCategory = 'backend_failed';
+      let runAbortController = null;
+      activeDynamicAbortController?.abort();
+      if (traceMode === 'dynamic') {
+        runAbortController = new AbortController();
+        activeDynamicAbortController = runAbortController;
+      } else {
+        activeDynamicAbortController = null;
+      }
       runTelemetry.start();
 
       let startSymbol = String(payload.startSymbol || 'main').trim();
@@ -1324,7 +1341,7 @@ function createHub(config) {
             origin: 'fresh_run', surface: 'standalone',
           });
           traceHistoryHandlers.postDynamicTraceHistory();
-          runTelemetry.complete(false);
+          runTelemetry.complete();
           runTraceResult = 'completed';
         } else {
           if (useExistingBinary && !binaryPath) {
@@ -1342,7 +1359,7 @@ function createHub(config) {
           if (useExistingBinary) {
             const absoluteBinaryPath = resolvePathFromWorkspace(binaryPath);
             if (!fs.existsSync(absoluteBinaryPath)) {
-              runTelemetry.fail('unsupported_binary');
+              runTelemetry.fail('invalid_input');
               vscode.window.showErrorMessage(`Binaire introuvable: ${absoluteBinaryPath}`);
               return;
             }
@@ -1360,6 +1377,13 @@ function createHub(config) {
               pieChoice,
               useLegacyFlags: true,
               includeExecstack: true,
+              commandOptions: {
+                logArguments: false,
+                onStderrData: () => false,
+                onStdoutData: () => false,
+                signal: runAbortController?.signal,
+                timeoutMs: 30000,
+              },
             });
             binaryOutPath = compileResult.absoluteBinaryPath;
           }
@@ -1414,7 +1438,7 @@ function createHub(config) {
             vscode.window.showErrorMessage('Payload invalide pour argv[1]: contient un octet NUL. Utilisez stdin ou Fichier.');
             return;
           }
-          logChannel.appendLine(`[payload] runTrace mode=${stagedInputFile ? 'file' : inputMeta.mode} target=${payloadTarget} inject=${injectPayload} size=${payloadHex ? payloadHex.length / 2 : payloadString.length} hex=${payloadHex ? payloadHex.slice(0, 160) : ''}`);
+          logChannel.appendLine(`[payload] runTrace mode=${stagedInputFile ? 'file' : inputMeta.mode} target=${payloadTarget} inject=${injectPayload} size=${payloadHex ? payloadHex.length / 2 : payloadString.length}`);
 
           const pythonArgs = [
             getRunPipelineScript(root),
@@ -1439,7 +1463,20 @@ function createHub(config) {
           if (useInterp) pythonArgs.push('--start-interp');
 
           failureCategory = 'backend_failed';
-          await runCommand(pythonExe, pythonArgs, root, logChannel, { PYTHONPATH: getExtensionPath() || root });
+          await runCommand(
+            pythonExe,
+            pythonArgs,
+            root,
+            logChannel,
+            { PYTHONPATH: getExtensionPath() || root },
+            {
+              logArguments: false,
+              onStderrData: () => false,
+              onStdoutData: () => false,
+              signal: runAbortController?.signal,
+              timeoutMs: 60000,
+            },
+          );
           if (!fs.existsSync(isolatedJsonPath)) {
             throw new Error(`Trace dynamique introuvable: ${path.basename(isolatedJsonPath)}`);
           }
@@ -1501,14 +1538,32 @@ function createHub(config) {
             origin: 'fresh_run', surface: 'embedded',
           });
           traceHistoryHandlers.postDynamicTraceHistory();
-          runTelemetry.complete(Boolean(trace?.crash));
+          const observability = trace?.meta?.observability || {};
+          runTelemetry.complete({
+            terminationCategory: observability.termination_category,
+            cpuBucket: cpuBucket(observability.cpu_time_ms),
+            rssBucket: rssBucket(observability.peak_rss_bytes),
+          });
           runTraceResult = 'completed';
         }
       } catch (err) {
-        runTelemetry.fail(failureCategory);
-        vscode.window.showErrorMessage(`Trace failed: ${err.message || err}`);
+        if (err?.code === 'COMMAND_CANCELLED' || runAbortController?.signal?.aborted) {
+          runTraceResult = 'cancelled';
+          runTelemetry.cancel();
+          vscode.window.showInformationMessage('Trace dynamique annulée.');
+        } else if (err?.code === 'COMMAND_TIMEOUT') {
+          failureCategory = 'timeout';
+          runTelemetry.fail(failureCategory);
+          vscode.window.showErrorMessage('Trace dynamique interrompue après expiration du délai.');
+        } else {
+          runTelemetry.fail(failureCategory);
+          vscode.window.showErrorMessage(`Trace failed: ${err.message || err}`);
+        }
       } finally {
         if (!runTelemetry.getOutcome()) runTelemetry.fail('unknown');
+        if (activeDynamicAbortController === runAbortController) {
+          activeDynamicAbortController = null;
+        }
         if (traceRunId === latestTraceRunId) {
           panel.webview.postMessage({ type: 'runTraceDone', binaryPath, result: runTraceResult });
         }

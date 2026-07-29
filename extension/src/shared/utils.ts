@@ -281,13 +281,20 @@ function runCommand(command, args, cwd, output, envOverrides = {}, streamHooks =
   const startedAt = Date.now();
   let stdoutBytes = 0;
   let stderrBytes = 0;
-  output.appendLine(`[cmd] ${command} ${args.join(' ')}`);
+  output.appendLine(
+    streamHooks?.logArguments === false
+      ? `[cmd] ${command} [arguments redacted]`
+      : `[cmd] ${command} ${args.join(' ')}`
+  );
   return new Promise((resolve, reject) => {
     let settled = false;
     let cancelled = false;
+    let timedOut = false;
     let processAuditRecorded = false;
     let cancelSubscription = null;
     let forceKillTimer = null;
+    let timeoutTimer = null;
+    let abortListener = null;
     const child = cp.spawn(command, args, { cwd, env });
     const recordProcessAudit = ({ ok, exitCode = -1 } = {}) => {
       if (processAuditRecorded) return;
@@ -311,6 +318,14 @@ function runCommand(command, args, cwd, output, envOverrides = {}, streamHooks =
         cancelSubscription.dispose();
         cancelSubscription = null;
       }
+      if (timeoutTimer) {
+        clearTimeout(timeoutTimer);
+        timeoutTimer = null;
+      }
+      if (abortListener && streamHooks?.signal?.removeEventListener) {
+        streamHooks.signal.removeEventListener('abort', abortListener);
+        abortListener = null;
+      }
     };
     const finish = (err = null) => {
       if (settled) return;
@@ -322,10 +337,11 @@ function runCommand(command, args, cwd, output, envOverrides = {}, streamHooks =
         resolve();
       }
     };
-    const cancel = () => {
+    const terminate = (reason = 'cancelled') => {
       if (settled || cancelled) return;
       cancelled = true;
-      output.appendLine(`[cmd] cancelled: ${command}`);
+      timedOut = reason === 'timeout';
+      output.appendLine(`[cmd] ${reason}: ${command}`);
       try {
         child.kill('SIGTERM');
       } catch (_) { /* process may already be gone */ }
@@ -336,11 +352,24 @@ function runCommand(command, args, cwd, output, envOverrides = {}, streamHooks =
         } catch (_) { /* process may already be gone */ }
       }, 2000);
     };
+    const cancel = () => terminate('cancelled');
     const token = streamHooks?.cancelToken;
     if (token?.isCancellationRequested) {
       cancel();
     } else if (typeof token?.onCancellationRequested === 'function') {
       cancelSubscription = token.onCancellationRequested(cancel);
+    }
+    const signal = streamHooks?.signal;
+    abortListener = cancel;
+    if (signal?.aborted) {
+      cancel();
+    } else if (typeof signal?.addEventListener === 'function') {
+      signal.addEventListener('abort', abortListener, { once: true });
+    }
+    const timeoutMs = Number(streamHooks?.timeoutMs);
+    if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+      timeoutTimer = setTimeout(() => terminate('timeout'), timeoutMs);
+      timeoutTimer.unref?.();
     }
     const handleChunk = (hook, chunk, streamName) => {
       if (streamName === 'stdout') stdoutBytes += chunk.length || 0;
@@ -371,7 +400,9 @@ function runCommand(command, args, cwd, output, envOverrides = {}, streamHooks =
     child.on('close', (code) => {
       recordProcessAudit({ ok: !cancelled && code === 0, exitCode: Number.isFinite(code) ? code : -1 });
       if (cancelled) {
-        finish(new Error(`${command} cancelled`));
+        const error = new Error(timedOut ? `${command} timed out` : `${command} cancelled`);
+        error.code = timedOut ? 'COMMAND_TIMEOUT' : 'COMMAND_CANCELLED';
+        finish(error);
         return;
       }
       finish(code === 0 ? null : new Error(`${command} exited with code ${code}`));

@@ -5,7 +5,7 @@
  */
 import { dom } from './dom.js';
 import { diagnosticsForStackSlot } from './diagnostics.js';
-import { addrKey, readPointer, readU32, toBigIntAddr } from './memory.js';
+import { readPointer, readU32, toBigIntAddr } from './memory.js';
 import { buildSimplifiedStackViewModel } from './stackSimpleModel.js';
 import { buildStackWorkspaceModel } from './stackWorkspaceModel.js';
 import { isFrameReadyAtCurrentStep } from './stackWorkspaceCore.js';
@@ -104,15 +104,6 @@ export function renderStack(stackItems, regMap, meta, options = {}) {
   const retValueBig = retRawValueBig === 0n ? null : retRawValueBig;
   const retValue = retValueBig !== null ? `0x${retValueBig.toString(16)}` : '(unavailable)';
 
-  if (options.debugMemory && retAddrAddr !== null) {
-    console.log('[RET]', {
-      bp: rbp !== null ? addrKey(rbp) : null,
-      retSlot: addrKey(retAddrAddr),
-      lookupKey: addrKey(retAddrAddr),
-      foundBytes: retRawValueBig !== null,
-      found: retValueBig !== null
-    });
-  }
   const stackWithControl = semanticSlots.length
     ? semanticSlots
     : injectControlSlots(stackItems, {

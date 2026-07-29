@@ -50,6 +50,75 @@ describe('static analysis cancellation', () => {
     expect(output.appendLine.calledWith('[cmd] cancelled: python3')).to.equal(true);
   });
 
+  it('redacts arguments and reports a bounded timeout error', async () => {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = sinon.spy();
+    const spawn = sinon.stub().returns(child);
+    const output = { appendLine: sinon.spy(), append: sinon.spy() };
+    const { runCommand } = proxyquire('../shared/utils', {
+      vscode: { window: { createOutputChannel: () => output } },
+      child_process: { spawn },
+    });
+
+    const promise = runCommand(
+      'python3',
+      ['/private/challenge', '--stdin-hex', '41414141'],
+      '/tmp',
+      output,
+      {},
+      { logArguments: false, timeoutMs: 5 },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    child.emit('close', null);
+
+    try {
+      await promise;
+      throw new Error('expected runCommand to time out');
+    } catch (error) {
+      expect(error.code).to.equal('COMMAND_TIMEOUT');
+    }
+    expect(output.appendLine.firstCall.args[0]).to.equal(
+      '[cmd] python3 [arguments redacted]',
+    );
+    expect(JSON.stringify(output.appendLine.args)).to.not.include('41414141');
+    expect(child.kill.calledWith('SIGTERM')).to.equal(true);
+  });
+
+  it('terminates runCommand when an AbortSignal replaces an active trace', async () => {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = sinon.spy();
+    const spawn = sinon.stub().returns(child);
+    const output = { appendLine: sinon.spy(), append: sinon.spy() };
+    const { runCommand } = proxyquire('../shared/utils', {
+      vscode: { window: { createOutputChannel: () => output } },
+      child_process: { spawn },
+    });
+    const controller = new AbortController();
+
+    const promise = runCommand(
+      'python3',
+      ['run_pipeline.py'],
+      '/tmp',
+      output,
+      {},
+      { signal: controller.signal },
+    );
+    controller.abort();
+    child.emit('close', null);
+
+    try {
+      await promise;
+      throw new Error('expected runCommand to reject after abort');
+    } catch (error) {
+      expect(error.code).to.equal('COMMAND_CANCELLED');
+    }
+    expect(child.kill.calledWith('SIGTERM')).to.equal(true);
+  });
+
   it('makes disassembly progress cancellable and passes the token to runCommand', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pof-cancellable-analysis-'));
     const binaryPath = path.join(root, 'sample.elf');

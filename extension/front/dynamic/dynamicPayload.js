@@ -37,34 +37,26 @@ const POF_PREVIEW_OPEN_KEY = 'pof-preview-open';
 
 let dynamicPayloadPreviewState = null;
 
-function truncateDebugValue(value, limit = 160) {
-  const text = String(value ?? '');
-  return text.length > limit ? `${text.slice(0, limit)}...` : text;
-}
-
 function sanitizeDebugDetails(details = {}) {
-  const out = {};
-  Object.entries(details && typeof details === 'object' ? details : {}).forEach(([key, value]) => {
-    if (Array.isArray(value)) {
-      out[key] = value.slice(0, 12).map((item) => (
-        item && typeof item === 'object' ? sanitizeDebugDetails(item) : truncateDebugValue(item)
-      ));
-    } else if (value && typeof value === 'object') {
-      out[key] = sanitizeDebugDetails(value);
-    } else {
-      out[key] = truncateDebugValue(value);
-    }
-  });
+  const source = details && typeof details === 'object' ? details : {};
+  const out = {
+    errorPresent: Boolean(source.error),
+    warningCount: Array.isArray(source.warnings) ? source.warnings.length : 0,
+  };
+  for (const key of ['captures', 'size']) {
+    const value = Number(source[key]);
+    if (Number.isFinite(value) && value >= 0) out[key] = Math.trunc(value);
+  }
+  for (const key of ['mode', 'reason', 'targetMode']) {
+    const value = String(source[key] || '').replace(/[^a-z0-9_.:-]/gi, '_').slice(0, 48);
+    if (value) out[key] = value;
+  }
+  if (typeof source.ok === 'boolean') out.ok = source.ok;
   return out;
 }
 
 function debugDynamicPayload(event, details = {}) {
   const payload = sanitizeDebugDetails(details);
-  try {
-    console.debug(`[pof:payload] ${event}`, payload);
-  } catch (_) {
-    // ignore console failures in restricted webviews
-  }
   try {
     vscode.postMessage({
       type: 'hubDebugLog',

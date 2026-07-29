@@ -48,7 +48,7 @@
         type: 'hubDebugLog',
         scope,
         event: 'ignored-stale-response',
-        details: { currentBinaryPath, responseBinaryPath },
+        details: { pathsDiffer: true },
       });
       return true;
     }

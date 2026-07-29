@@ -83,11 +83,9 @@ describe('dynamic/workflows run trace submit dispatch', () => {
       type: 'hubDebugLog',
       scope: 'dynamic-init',
       event: 'ignored-stale-response',
-      details: {
-        currentBinaryPath: '/tmp/current.bin',
-        responseBinaryPath: '/tmp/old.bin',
-      },
+      details: { pathsDiffer: true },
     }]);
+    expect(JSON.stringify(posted)).to.not.include('/tmp/');
   });
 
   it('re-enables the run button but does not mark stale runTraceDone as completed', () => {
@@ -124,11 +122,9 @@ describe('dynamic/workflows run trace submit dispatch', () => {
       type: 'hubDebugLog',
       scope: 'dynamic-run-trace-done',
       event: 'ignored-stale-response',
-      details: {
-        currentBinaryPath: '/tmp/current.bin',
-        responseBinaryPath: '/tmp/old.bin',
-      },
+      details: { pathsDiffer: true },
     }]);
+    expect(JSON.stringify(posted)).to.not.include('/tmp/');
   });
 
   it('renders the terminal Run Trace outcome without treating failures as completed', () => {

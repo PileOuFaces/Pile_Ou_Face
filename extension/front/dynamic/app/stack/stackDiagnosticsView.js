@@ -1,5 +1,4 @@
 const STACK_FRAME_DEBUG = false;
-let lastStackFrameDebugConsoleKey = '';
 
 export function isStackFrameDebugEnabled() {
   return STACK_FRAME_DEBUG || globalThis.__POF_STACK_FRAME_DEBUG === true;
@@ -37,7 +36,6 @@ export function renderStackFrameDebugPanel(container, frameModel) {
   }
 
   container.appendChild(details);
-  logStackFrameDebug(frameModel);
 }
 
 export function formatStackFrameDebugItems(items) {
@@ -68,20 +66,6 @@ export function formatStackFrameDebugSeeds(seeds) {
     ].filter(Boolean).join('   ')
   ));
   return lines.length ? lines.join('\n') : '(no seeds)';
-}
-
-function logStackFrameDebug(frameModel) {
-  const debugModel = frameModel?.debug;
-  if (!debugModel) return;
-  const consoleKey = [
-    frameModel?.functionName || 'frame',
-    frameModel?.currentStep || 'na',
-    Array.isArray(debugModel.items) ? debugModel.items.length : 0,
-    Array.isArray(debugModel.seeds) ? debugModel.seeds.length : 0
-  ].join(':');
-  if (consoleKey === lastStackFrameDebugConsoleKey) return;
-  lastStackFrameDebugConsoleKey = consoleKey;
-  console.debug('[stack-frame-debug]', debugModel);
 }
 
 function padRight(value, width) {
