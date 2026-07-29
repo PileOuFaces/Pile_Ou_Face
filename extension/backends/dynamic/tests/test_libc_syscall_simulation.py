@@ -220,6 +220,21 @@ class TestLibcSyscallSimulation(unittest.TestCase):
             result["meta"]["stop_addr"],
         )
 
+    def test_stack_chk_fail_records_only_bounded_canary_termination(self):
+        source = """
+            extern void __stack_chk_fail(void);
+            int main(void) {
+                __stack_chk_fail();
+                return 0;
+            }
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            binary = _compile_c(source, tmpdir, "canary_failure")
+            result = _trace(binary, _config(stop_symbol=""))
+
+        self.assertEqual(result["meta"]["termination_category"], "canary_failure")
+        self.assertNotIn("canary", result["meta"].get("simulated_external_calls", {}))
+
 
 if __name__ == "__main__":
     unittest.main()

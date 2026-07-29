@@ -15,6 +15,12 @@ import re
 import shutil
 import subprocess
 import sys
+import time
+
+try:
+    import resource
+except ImportError:  # pragma: no cover - unavailable on Windows
+    resource = None
 
 # ROOT: backends/dynamic/pipeline/ -> project root (three levels up)
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -84,6 +90,37 @@ def _normalize_path(path: str) -> str:
 def _load_binary(path: str) -> bytes:
     with open(path, "rb") as handle:
         return handle.read()
+
+
+def _peak_rss_bytes() -> int | None:
+    if resource is None:
+        return None
+    usage = resource.getrusage(resource.RUSAGE_SELF)
+    raw = int(usage.ru_maxrss)
+    return raw if sys.platform == "darwin" else raw * 1024
+
+
+def _termination_category(
+    trace_meta: dict,
+    crash: dict | None,
+    max_steps_reached: bool,
+) -> str:
+    explicit = str(trace_meta.get("termination_category") or "").strip()
+    if explicit == "canary_failure":
+        return explicit
+    if max_steps_reached:
+        return "instruction_limit"
+    classification = str((crash or {}).get("classification") or "").strip()
+    if classification == "fatal_crash":
+        return "target_crash"
+    if classification in {
+        "control_hijack",
+        "ret2win_success",
+        "benign_termination",
+        "emulator_stop",
+    }:
+        return classification
+    return "normal"
 
 
 def _load_function_symbols(binary_path: str) -> list[dict]:
@@ -547,6 +584,7 @@ def run_pipeline(
     output_path: str | None,
     engine: ExecutionEngine | None = None,
 ) -> dict:
+    cpu_started = time.process_time()
     code = _load_binary(binary_path)
     runtime = engine if engine is not None else _default_engine()
     write_audit_json(output_path, "02-trace-config.json", config)
@@ -666,6 +704,15 @@ def run_pipeline(
         crash=crash,
         max_steps_reached=max_steps_reached,
     )
+    meta["observability"] = {
+        "cpu_time_ms": max(0, round((time.process_time() - cpu_started) * 1000)),
+        "peak_rss_bytes": _peak_rss_bytes(),
+        "termination_category": _termination_category(
+            trace_meta,
+            crash,
+            max_steps_reached,
+        ),
+    }
     write_audit_json(
         output_path,
         "07-diagnostics-input-output.json",

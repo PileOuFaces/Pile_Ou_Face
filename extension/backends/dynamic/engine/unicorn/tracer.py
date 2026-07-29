@@ -745,6 +745,8 @@ def _simulate_symbol_with_args(
         return 1
 
     if key in {"exit", "_exit", "abort", "__stack_chk_fail"}:
+        if key == "__stack_chk_fail":
+            state["termination_category"] = "canary_failure"
         with contextlib.suppress(UcError):
             uc.emu_stop()
         mark()
@@ -1273,6 +1275,7 @@ def trace_raw(
             "virtual_file_warnings": external_skip_state.get(
                 "virtual_file_warnings", []
             ),
+            "termination_category": external_skip_state.get("termination_category"),
             "stop_addr": (
                 hex(config.stop_addr) if config.stop_addr is not None else None
             ),
@@ -1588,6 +1591,7 @@ def trace_elf(
             "virtual_file_warnings": external_skip_state.get(
                 "virtual_file_warnings", []
             ),
+            "termination_category": external_skip_state.get("termination_category"),
             "stop_addr": (
                 hex(config.stop_addr) if config.stop_addr is not None else None
             ),

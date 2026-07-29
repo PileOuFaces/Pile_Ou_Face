@@ -29,3 +29,19 @@ Les anciens modules plats de `backends.dynamic` restent des wrappers de
 compatibilite temporaires. Le nouveau code doit importer depuis
 `backends.dynamic.core`, `backends.dynamic.pipeline` ou
 `backends.dynamic.engine`.
+
+## Observabilite
+
+Le pipeline ajoute dans `meta.observability` uniquement trois valeurs
+techniques locales : temps CPU du processus, pic RSS et categorie de
+terminaison bornee. Le client convertit CPU et RSS en buckets avant tout envoi
+de telemetrie. Les valeurs brutes restent dans l'artefact local de trace.
+
+La categorie `canary_failure` est posee lorsque le stub Unicorn
+`__stack_chk_fail` est atteint. Elle documente la terminaison existante sans
+modifier le comportement d'emulation.
+
+Les sous-processus de compilation et de trace ont des delais maximum et la
+nouvelle trace dynamique annule la precedente. Leurs arguments et sorties ne
+sont pas ecrits dans les journaux, car ils peuvent contenir un binaire, un
+payload, un chemin ou des donnees utilisateur.
