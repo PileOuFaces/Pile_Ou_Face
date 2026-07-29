@@ -1,6 +1,11 @@
 const { expect } = require('chai');
 
-const { EVENT_NAMES, EVENT_SCHEMAS } = require('../shared/telemetry/telemetryEvents');
+const {
+  EVENT_NAMES,
+  EVENT_SCHEMAS,
+  EVENT_SCHEMAS_V1,
+  EVENT_SCHEMAS_V2,
+} = require('../shared/telemetry/telemetryEvents');
 const { validateTelemetryEvent } = require('../shared/telemetry/telemetrySchema');
 const { sanitizeTelemetryEvent } = require('../shared/telemetry/telemetrySanitizer');
 
@@ -16,13 +21,18 @@ const VALID_EVENTS = Object.freeze({
   [EVENT_NAMES.PAYLOAD_MODE_USED]: { payloadMode: 'builder' },
   [EVENT_NAMES.PAYLOAD_BUILDER_LEVEL_CHANGED]: { level: 'beginner' },
   [EVENT_NAMES.RUN_TRACE_STARTED]: {
-    arch: 'x64', payloadMode: 'builder', target: 'stdin', sourceProvided: false,
+    extensionVersion: '0.3.0', binaryFormat: 'elf', arch: 'x64',
+    payloadMode: 'builder', target: 'stdin', sourceProvided: false,
   },
   [EVENT_NAMES.RUN_TRACE_COMPLETED]: {
-    payloadMode: 'builder', durationBucket: '1-5s', crashDetected: false,
+    extensionVersion: '0.3.0', binaryFormat: 'elf', arch: 'x64',
+    payloadMode: 'builder', durationBucket: '1-5s',
+    terminationCategory: 'normal', cpuBucket: '100ms-1s', rssBucket: '64-256MiB',
   },
   [EVENT_NAMES.RUN_TRACE_FAILED]: {
+    extensionVersion: '0.3.0', binaryFormat: 'elf', arch: 'x64',
     payloadMode: 'builder', durationBucket: '<1s', errorCategory: 'invalid_input',
+    cpuBucket: 'unavailable', rssBucket: 'unavailable',
   },
   [EVENT_NAMES.VISUALIZER_OPENED]: { origin: 'fresh_run', surface: 'embedded' },
   [EVENT_NAMES.STACK_MODE_CHANGED]: { stackMode: 'simple', surface: 'embedded' },
@@ -39,15 +49,17 @@ const SENSITIVE_VALUES = Object.freeze([
 ]);
 
 describe('privacy telemetry schema', () => {
-  it('contains exactly the validated V1 registry', () => {
+  it('keeps exactly thirteen event names in both registry versions', () => {
     expect(Object.keys(EVENT_SCHEMAS)).to.have.length(13);
     expect(Object.keys(EVENT_SCHEMAS)).to.have.members(Object.values(EVENT_NAMES));
+    expect(Object.keys(EVENT_SCHEMAS_V1)).to.have.members(Object.values(EVENT_NAMES));
+    expect(Object.keys(EVENT_SCHEMAS_V2)).to.have.members(Object.values(EVENT_NAMES));
     expect(EVENT_SCHEMAS).to.not.have.property('dynamic.history.opened');
   });
 
   for (const [eventName, properties] of Object.entries(VALID_EVENTS)) {
     it(`accepts ${eventName} with its exact schema`, () => {
-      expect(validateTelemetryEvent(eventName, properties)).to.deep.equal({ ok: true });
+      expect(validateTelemetryEvent(eventName, properties, 2)).to.deep.equal({ ok: true });
     });
   }
 
@@ -63,9 +75,29 @@ describe('privacy telemetry schema', () => {
     expect(validateTelemetryEvent(EVENT_NAMES.PANEL_OPENED, { panel: 1 })).to.include({ ok: false, reason: 'invalid_type' });
     expect(validateTelemetryEvent(EVENT_NAMES.PANEL_OPENED, { panel: 'account' })).to.include({ ok: false, reason: 'invalid_value' });
     expect(validateTelemetryEvent(EVENT_NAMES.RUN_TRACE_FAILED, {
-      ...VALID_EVENTS[EVENT_NAMES.RUN_TRACE_FAILED],
-      errorCategory: 'cancelled',
+      ...VALID_EVENTS[EVENT_NAMES.RUN_TRACE_FAILED], errorCategory: 'raw unicorn error',
     })).to.include({ ok: false, reason: 'invalid_value' });
+  });
+
+  it('accepts the legacy V1 run contract but rejects V2-only properties in V1', () => {
+    const legacy = {
+      payloadMode: 'builder', durationBucket: '1-5s', crashDetected: false,
+    };
+    expect(validateTelemetryEvent(EVENT_NAMES.RUN_TRACE_COMPLETED, legacy, 1))
+      .to.deep.equal({ ok: true });
+    expect(validateTelemetryEvent(EVENT_NAMES.RUN_TRACE_COMPLETED, {
+      ...legacy, terminationCategory: 'normal',
+    }, 1)).to.include({ ok: false, reason: 'unknown_property' });
+    expect(validateTelemetryEvent(EVENT_NAMES.RUN_TRACE_FAILED, {
+      payloadMode: 'builder',
+      durationBucket: '<1s',
+      errorCategory: 'cancelled',
+    }, 1)).to.include({ ok: false, reason: 'invalid_value' });
+  });
+
+  it('rejects unsupported schema versions', () => {
+    expect(validateTelemetryEvent(EVENT_NAMES.PANEL_OPENED, { panel: 'static' }, 3))
+      .to.include({ ok: false, reason: 'invalid_schema_version' });
   });
 
   it('never accepts the sensitive corpus as an extra property', () => {

@@ -3,11 +3,15 @@
 
 const { validateTelemetryEvent } = require('./telemetrySchema');
 
-const TELEMETRY_SCHEMA_VERSION = 1;
+const TELEMETRY_SCHEMA_VERSION = 2;
 const MAX_TELEMETRY_BODY_BYTES = 4 * 1024;
 
 function sanitizeTelemetryEvent(eventName, properties) {
-  const validation = validateTelemetryEvent(eventName, properties);
+  const validation = validateTelemetryEvent(
+    eventName,
+    properties,
+    TELEMETRY_SCHEMA_VERSION,
+  );
   if (!validation.ok) return validation;
 
   const event = {

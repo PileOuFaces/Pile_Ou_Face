@@ -20,7 +20,7 @@ describe('privacy telemetry transport', () => {
     const transport = createTelemetryTransport({
       endpoint: 'https://telemetry.example/ingest', fetchImpl,
     });
-    const body = '{"schemaVersion":1,"eventName":"panel.opened","properties":{"panel":"static"}}';
+    const body = '{"schemaVersion":2,"eventName":"panel.opened","properties":{"panel":"static"}}';
     expect(await transport.sendBody(body)).to.equal(true);
     expect(fetchImpl.calledOnce).to.equal(true);
     expect(fetchImpl.firstCall.args[1]).to.include({ method: 'POST', body });

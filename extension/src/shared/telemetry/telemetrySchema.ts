@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // @ts-nocheck
 
-const { EVENT_SCHEMAS } = require('./telemetryEvents');
+const { EVENT_SCHEMAS_BY_VERSION } = require('./telemetryEvents');
 
 const VALIDATION_ERRORS = Object.freeze({
   UNKNOWN_EVENT: 'unknown_event',
@@ -26,8 +26,10 @@ function validateProperty(value, descriptor) {
   return descriptor.pattern.test(value);
 }
 
-function validateTelemetryEvent(eventName, properties) {
-  const schema = EVENT_SCHEMAS[eventName];
+function validateTelemetryEvent(eventName, properties, schemaVersion = 2) {
+  const registry = EVENT_SCHEMAS_BY_VERSION[schemaVersion];
+  if (!registry) return { ok: false, reason: 'invalid_schema_version' };
+  const schema = registry[eventName];
   if (!schema) return { ok: false, reason: VALIDATION_ERRORS.UNKNOWN_EVENT };
   if (!isPlainObject(properties)) {
     return { ok: false, reason: VALIDATION_ERRORS.INVALID_PROPERTIES };

@@ -33,9 +33,23 @@ const ENUMS = Object.freeze({
   payloadBuilderLevel: Object.freeze(['beginner', 'advanced']),
   target: Object.freeze(['stdin', 'argv1', 'both', 'file', 'auto']),
   durationBucket: Object.freeze(['<1s', '1-5s', '5-15s', '15-60s', '>60s']),
-  errorCategory: Object.freeze([
+  cpuBucket: Object.freeze([
+    'unavailable', '<100ms', '100ms-1s', '1-5s', '5-15s', '15-60s', '>60s',
+  ]),
+  rssBucket: Object.freeze([
+    'unavailable', '<64MiB', '64-256MiB', '256-512MiB', '512MiB-1GiB', '>1GiB',
+  ]),
+  errorCategoryV1: Object.freeze([
     'invalid_input', 'unsupported_binary', 'compilation_failed',
     'backend_failed', 'timeout', 'unknown',
+  ]),
+  errorCategory: Object.freeze([
+    'invalid_input', 'unsupported_binary', 'compilation_failed',
+    'backend_failed', 'timeout', 'cancelled', 'unknown',
+  ]),
+  terminationCategory: Object.freeze([
+    'normal', 'target_crash', 'control_hijack', 'ret2win_success',
+    'canary_failure', 'benign_termination', 'emulator_stop', 'instruction_limit',
   ]),
   visualizerOrigin: Object.freeze(['fresh_run', 'history']),
   visualizerSurface: Object.freeze(['embedded', 'standalone']),
@@ -57,7 +71,7 @@ const majorVersionProperty = Object.freeze({
   pattern: /^\d{1,3}$/,
 });
 
-const EVENT_SCHEMAS = Object.freeze({
+const EVENT_SCHEMAS_V1 = Object.freeze({
   [EVENT_NAMES.EXTENSION_ACTIVATED]: Object.freeze({
     extensionVersion: versionProperty,
     vscodeVersionMajor: majorVersionProperty,
@@ -100,7 +114,7 @@ const EVENT_SCHEMAS = Object.freeze({
   [EVENT_NAMES.RUN_TRACE_FAILED]: Object.freeze({
     payloadMode: enumProperty(ENUMS.payloadMode),
     durationBucket: enumProperty(ENUMS.durationBucket),
-    errorCategory: enumProperty(ENUMS.errorCategory),
+    errorCategory: enumProperty(ENUMS.errorCategoryV1),
   }),
   [EVENT_NAMES.VISUALIZER_OPENED]: Object.freeze({
     origin: enumProperty(ENUMS.visualizerOrigin),
@@ -112,4 +126,49 @@ const EVENT_SCHEMAS = Object.freeze({
   }),
 });
 
-module.exports = { ENUMS, EVENT_NAMES, EVENT_SCHEMAS };
+const EVENT_SCHEMAS_V2 = Object.freeze({
+  ...EVENT_SCHEMAS_V1,
+  [EVENT_NAMES.RUN_TRACE_STARTED]: Object.freeze({
+    extensionVersion: versionProperty,
+    binaryFormat: enumProperty(ENUMS.binaryFormat),
+    arch: enumProperty(ENUMS.arch),
+    payloadMode: enumProperty(ENUMS.payloadMode),
+    target: enumProperty(ENUMS.target),
+    sourceProvided: booleanProperty,
+  }),
+  [EVENT_NAMES.RUN_TRACE_COMPLETED]: Object.freeze({
+    extensionVersion: versionProperty,
+    binaryFormat: enumProperty(ENUMS.binaryFormat),
+    arch: enumProperty(ENUMS.arch),
+    payloadMode: enumProperty(ENUMS.payloadMode),
+    durationBucket: enumProperty(ENUMS.durationBucket),
+    terminationCategory: enumProperty(ENUMS.terminationCategory),
+    cpuBucket: enumProperty(ENUMS.cpuBucket),
+    rssBucket: enumProperty(ENUMS.rssBucket),
+  }),
+  [EVENT_NAMES.RUN_TRACE_FAILED]: Object.freeze({
+    extensionVersion: versionProperty,
+    binaryFormat: enumProperty(ENUMS.binaryFormat),
+    arch: enumProperty(ENUMS.arch),
+    payloadMode: enumProperty(ENUMS.payloadMode),
+    durationBucket: enumProperty(ENUMS.durationBucket),
+    errorCategory: enumProperty(ENUMS.errorCategory),
+    cpuBucket: enumProperty(ENUMS.cpuBucket),
+    rssBucket: enumProperty(ENUMS.rssBucket),
+  }),
+});
+
+const EVENT_SCHEMAS_BY_VERSION = Object.freeze({
+  1: EVENT_SCHEMAS_V1,
+  2: EVENT_SCHEMAS_V2,
+});
+const EVENT_SCHEMAS = EVENT_SCHEMAS_V2;
+
+module.exports = {
+  ENUMS,
+  EVENT_NAMES,
+  EVENT_SCHEMAS,
+  EVENT_SCHEMAS_BY_VERSION,
+  EVENT_SCHEMAS_V1,
+  EVENT_SCHEMAS_V2,
+};
