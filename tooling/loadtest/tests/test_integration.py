@@ -3,6 +3,7 @@
 (strings, le plus rapide), pour vérifier que le pipeline complet
 (génération -> exécution mesurée -> rapport) fonctionne réellement, sans
 faire tourner la matrice complète (trop lent pour une suite de tests normale)."""
+
 import shutil
 import subprocess
 import sys
@@ -19,8 +20,17 @@ class TestEndToEnd(unittest.TestCase):
     def test_single_scenario_single_fixture_produces_a_result(self):
         with tempfile.TemporaryDirectory() as tmp:
             result = subprocess.run(
-                [sys.executable, "-m", "tooling.loadtest", "--scenario", "strings", "--size", "small",
-                 "--results-dir", tmp],
+                [
+                    sys.executable,
+                    "-m",
+                    "tooling.loadtest",
+                    "--scenario",
+                    "strings",
+                    "--size",
+                    "small",
+                    "--results-dir",
+                    tmp,
+                ],
                 cwd=str(REPO_ROOT),
                 capture_output=True,
                 text=True,

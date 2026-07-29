@@ -51,5 +51,7 @@ def format_summary_table(results: list[Result], max_ratio: float) -> str:
     for r in results:
         status = check_threshold(r, max_ratio)
         rss_mb = r.peak_rss_bytes / (1024 * 1024)
-        lines.append(f"{r.scenario:<12} {r.fixture:<8} {rss_mb:>14.1f} {r.elapsed_s:>10.2f} {status:>10}")
+        lines.append(
+            f"{r.scenario:<12} {r.fixture:<8} {rss_mb:>14.1f} {r.elapsed_s:>10.2f} {status:>10}"
+        )
     return "\n".join(lines)

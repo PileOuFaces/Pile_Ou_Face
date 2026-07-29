@@ -750,7 +750,20 @@ def _simulate_symbol_with_args(
         mark()
         return 1
 
-    if key in {"exit", "_exit", "abort", "__stack_chk_fail"}:
+    if key == "__stack_chk_fail":
+        # The traced program's own stack protector detected a corrupted
+        # canary and is about to abort. Record this as a typed crash context
+        # instead of silently stopping like a normal exit()/abort() -- until
+        # this fix, that signal was discarded here, making a real stack-smash
+        # detection indistinguishable from a benign program exit in the
+        # final trace (see dynamic-engine stabilization audit).
+        _record_crash_context(state, "stack_chk_fail", uc)
+        with contextlib.suppress(UcError):
+            uc.emu_stop()
+        mark()
+        return 0
+
+    if key in {"exit", "_exit", "abort"}:
         with contextlib.suppress(UcError):
             uc.emu_stop()
         mark()
@@ -1245,15 +1258,23 @@ def trace_raw(
     finally:
         collector.finalize_pending(uc)
 
+    # A stack-protector trigger (__stack_chk_fail) stops the emulator cleanly
+    # via emu_stop(), so `error` stays None here even though it is a real
+    # crash -- surface it as a typed crash using the crash_context recorded
+    # in _simulate_symbol_with_args instead of dropping it as a benign stop.
+    stack_chk_fail_hit = (
+        isinstance(external_skip_state.get("crash_context"), dict)
+        and external_skip_state["crash_context"].get("type") == "stack_chk_fail"
+    )
     crash = (
         _finalize_crash_report(
             collector,
             uc,
             config.arch_bits,
-            error,
+            error or "",
             external_skip_state,
         )
-        if error
+        if error or stack_chk_fail_hit
         else None
     )
 
@@ -1538,15 +1559,23 @@ def trace_elf(
     finally:
         collector.finalize_pending(uc)
 
+    # A stack-protector trigger (__stack_chk_fail) stops the emulator cleanly
+    # via emu_stop(), so `error` stays None here even though it is a real
+    # crash -- surface it as a typed crash using the crash_context recorded
+    # in _simulate_symbol_with_args instead of dropping it as a benign stop.
+    stack_chk_fail_hit = (
+        isinstance(external_skip_state.get("crash_context"), dict)
+        and external_skip_state["crash_context"].get("type") == "stack_chk_fail"
+    )
     crash = (
         _finalize_crash_report(
             collector,
             uc,
             config.arch_bits,
-            error,
+            error or "",
             external_skip_state,
         )
-        if error
+        if error or stack_chk_fail_hit
         else None
     )
 

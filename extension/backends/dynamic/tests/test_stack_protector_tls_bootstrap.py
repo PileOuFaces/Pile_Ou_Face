@@ -10,12 +10,10 @@ making it impossible to trace a canary-protected binary at all, corrupted or
 not. `init_tls()` (engine/unicorn/stack.py) maps a small TLS page and points
 FS_BASE at it so this read succeeds.
 
-This PR deliberately does NOT fix the __stack_chk_fail signal-loss bug
-(tracer.py still treats it like exit()/abort(): a clean stop, no crash
-recorded) -- that is the subject of the next PR. The second test below is a
-characterization test that documents this precisely: it proves
-__stack_chk_fail is now *reached* (simulated_external_calls confirms it),
-while `crash` still stays None. It must not be "fixed" by this PR's scope.
+The __stack_chk_fail signal itself (tracer.py used to treat it like
+exit()/abort(): a clean stop, no crash recorded) was fixed in a follow-up PR
+(fix/dynamic-stack-chk-fail-crash) -- see test_stack_chk_fail_crash.py for
+the dedicated coverage of that fix.
 """
 
 from __future__ import annotations
@@ -135,21 +133,17 @@ class TestStackProtectorTlsBootstrap(unittest.TestCase):
             result["meta"]["stop_addr"],
         )
 
-    def test_canary_corrupted_program_reaches_stack_chk_fail_but_signal_is_still_lost(
+    def test_canary_corrupted_program_reaches_stack_chk_fail_and_is_now_reported(
         self,
     ):
-        """Characterization test -- documents the CURRENT state after the
-        TLS fix, intentionally not corrected here (deferred to the next PR).
+        """Updated by the stack_chk_fail follow-up PR (fix/dynamic-stack-chk-fail-crash).
 
-        With TLS bootstrapped, the overflow now runs far enough to actually
-        smash the canary and reach __stack_chk_fail (proven by
-        simulated_external_calls). But tracer.py still treats
-        __stack_chk_fail exactly like exit()/abort(): a clean emu_stop with
-        no crash recorded. `crash` and `meta.error` must therefore still be
-        None here -- if this assertion ever breaks because someone fixed the
-        signal without updating this test, that is exactly the follow-up PR
-        this comment describes, and this test should be rewritten (not
-        deleted) to assert crash["type"] == "stack_chk_fail" instead.
+        This test used to document that __stack_chk_fail was reached but
+        its signal discarded (crash stayed None) -- that bug is now fixed
+        (see test_stack_chk_fail_crash.py for the dedicated coverage of the
+        fix itself). Kept here, adapted rather than deleted, so this file's
+        own canary_intact/canary_corrupted corpus stays a complete,
+        self-contained TLS regression pair.
         """
         overflow_payload = "A" * 64
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -168,11 +162,8 @@ class TestStackProtectorTlsBootstrap(unittest.TestCase):
             "expected the corrupted canary to actually reach "
             "__stack_chk_fail now that TLS/fs:0x28 no longer faults",
         )
-        self.assertIsNone(
-            result.get("crash"),
-            "the __stack_chk_fail signal-loss bug is NOT fixed by this PR "
-            "(infrastructure only) -- see the next PR",
-        )
+        self.assertIsNotNone(result.get("crash"))
+        self.assertEqual(result["crash"]["type"], "stack_chk_fail")
 
 
 if __name__ == "__main__":

@@ -54,7 +54,9 @@ class TestScenarioRegistry(unittest.TestCase):
                 if scenario.script.startswith("tooling/")
                 else EXTENSION_ROOT / scenario.script
             )
-            self.assertTrue(script_path.exists(), f"{scenario.name} script missing: {script_path}")
+            self.assertTrue(
+                script_path.exists(), f"{scenario.name} script missing: {script_path}"
+            )
 
     def test_each_scenario_builds_args_referencing_the_binary(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -66,7 +68,11 @@ class TestScenarioRegistry(unittest.TestCase):
                 args = scenario.build_args(binary_path, out_dir)
                 prepare_args = [
                     arg
-                    for _, command_args in (scenario.prepare(binary_path, out_dir) if scenario.prepare else ())
+                    for _, command_args in (
+                        scenario.prepare(binary_path, out_dir)
+                        if scenario.prepare
+                        else ()
+                    )
                     for arg in command_args
                 ]
                 self.assertIn(
@@ -74,12 +80,18 @@ class TestScenarioRegistry(unittest.TestCase):
                     args + prepare_args,
                     f"{scenario.name} doit référencer le binaire",
                 )
-                self.assertTrue(scenario.script, f"{scenario.name} doit avoir un script")
+                self.assertTrue(
+                    scenario.script, f"{scenario.name} doit avoir un script"
+                )
                 if scenario.writes_output:
-                    self.assertIn("--output", args, f"{scenario.name} doit passer --output")
+                    self.assertIn(
+                        "--output", args, f"{scenario.name} doit passer --output"
+                    )
                     output_index = args.index("--output") + 1
                     self.assertLess(
-                        output_index, len(args), f"{scenario.name} doit avoir une valeur après --output"
+                        output_index,
+                        len(args),
+                        f"{scenario.name} doit avoir une valeur après --output",
                     )
                     output_value = args[output_index]
                     self.assertTrue(

@@ -39,8 +39,14 @@ class TestBuildFixture(unittest.TestCase):
 
     def test_different_specs_produce_different_files(self):
         cache_dir = Path(self._tmpdir)
-        path_a = build_fixture(FixtureSpec(name="a", num_functions=2, padding_bytes=10_000), cache_dir=cache_dir)
-        path_b = build_fixture(FixtureSpec(name="b", num_functions=5, padding_bytes=10_000), cache_dir=cache_dir)
+        path_a = build_fixture(
+            FixtureSpec(name="a", num_functions=2, padding_bytes=10_000),
+            cache_dir=cache_dir,
+        )
+        path_b = build_fixture(
+            FixtureSpec(name="b", num_functions=5, padding_bytes=10_000),
+            cache_dir=cache_dir,
+        )
         self.assertNotEqual(path_a, path_b)
 
 
