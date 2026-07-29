@@ -83,7 +83,13 @@ from .memory_mapping import (
 )
 from .regs import get_pc_sp, get_rbp, get_reg_order
 from .resolve import addr2line_map, resolve_symbol_addr
-from .stack import align_up, build_initial_stack, init_stack, inject_stack_payload
+from .stack import (
+    align_up,
+    build_initial_stack,
+    init_stack,
+    init_tls,
+    inject_stack_payload,
+)
 from .syscalls import ReadSyscallEmulator
 
 _FAKE_GETPID = 1337
@@ -1181,6 +1187,7 @@ def trace_raw(
 
     # Initialise la pile + prépare hooks/snapshots.
     sp = init_stack(uc, config)
+    init_tls(uc, config)
     inject_stack_payload(uc, sp, config)
 
     sp_reg = get_pc_sp(config.arch_bits)[1]
@@ -1424,6 +1431,7 @@ def trace_elf(
         )
     # Initialise la pile et prépare argc/argv/auxv.
     init_stack(uc, config)
+    init_tls(uc, config)
     auxv = [
         (3, phdr_vaddr),  # AT_PHDR
         (4, header["phentsize"]),  # AT_PHENT

@@ -229,6 +229,7 @@ jobs:
         run: |
           PYTHONPATH=. python3 -m pytest \
             backends/dynamic/tests/test_libc_syscall_simulation.py \
+            backends/dynamic/tests/test_stack_protector_tls_bootstrap.py \
             -q
 
   # ══════════════════════════════════════════════════════════════
