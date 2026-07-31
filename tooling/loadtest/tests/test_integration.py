@@ -4,6 +4,7 @@
 (génération -> exécution mesurée -> rapport) fonctionne réellement, sans
 faire tourner la matrice complète (trop lent pour une suite de tests normale)."""
 
+import json
 import shutil
 import subprocess
 import sys
@@ -39,6 +40,12 @@ class TestEndToEnd(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("strings", result.stdout)
             self.assertIn("small", result.stdout)
+            reports = list(Path(tmp).glob("loadtest_*.json"))
+            self.assertEqual(len(reports), 1)
+            payload = json.loads(reports[0].read_text(encoding="utf-8"))
+            self.assertEqual(payload["schema_version"], 2)
+            self.assertIn(payload["results"][0]["status"], {"ok", "warning"})
+            self.assertIn("os", payload["metadata"])
 
 
 if __name__ == "__main__":

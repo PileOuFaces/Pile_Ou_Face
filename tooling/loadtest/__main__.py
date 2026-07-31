@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import platform
 import subprocess
 import sys
 import tempfile
@@ -14,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from loadtest.fixtures import build_fixture
-from loadtest.report import Result, all_ok, format_summary_table, to_json
+from loadtest.report import Budget, Result, all_ok, format_summary_table, to_json
 from loadtest.runner import run_measured
 from loadtest.scenarios import FIXTURE_PROFILES, SCENARIOS
 
@@ -22,15 +23,37 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 EXTENSION_ROOT = REPO_ROOT / "extension"
 DEFAULT_FIXTURE_CACHE = Path(__file__).resolve().parent / ".fixture_cache"
 DEFAULT_RESULTS_DIR = Path(__file__).resolve().parent / ".results"
-# Mesuré empiriquement : sur la fixture "small" (~1 Mo), le pic RSS d'un
-# script Python (interpréteur + imports du backend) tourne autour de
-# 200-230 Mo — un overhead fixe qui domine largement pour les petits
-# binaires et n'indique aucun problème réel. Un ratio de 10 ferait
-# échouer systématiquement le cas le plus courant (petite fixture).
-# 500 laisse de la marge sur les petites fixtures tout en restant capable
-# de détecter une vraie dérive mémoire sur les fixtures medium/large où le
-# binaire lui-même pèse bien plus lourd que l'overhead de l'interpréteur.
-DEFAULT_MAX_RATIO = 500.0
+MIB = 1024 * 1024
+DEFAULT_BUDGETS = {
+    "small": Budget(192 * MIB, 256 * MIB, 1.5, 3.0),
+    "medium": Budget(256 * MIB, 384 * MIB, 2.0, 5.0),
+    "large": Budget(768 * MIB, 1024 * MIB, 10.0, 30.0),
+}
+SCENARIO_BUDGETS = {
+    # Le scan entropie parcourt chaque octet : sur les runners GitHub Linux,
+    # sa variance est supérieure aux autres scénarios medium (mesuré à 5,85 s).
+    ("entropy", "medium"): Budget(256 * MIB, 384 * MIB, 4.0, 8.0),
+}
+
+
+def _git_commit() -> str:
+    if commit := os.environ.get("GITHUB_SHA"):
+        return commit
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def _total_memory_bytes() -> int | None:
+    try:
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    except (AttributeError, OSError, ValueError):
+        return None
 
 
 def _script_path(script: str) -> Path:
@@ -75,8 +98,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--max-ratio",
         type=float,
-        default=DEFAULT_MAX_RATIO,
-        help="Ratio pic RSS / taille binaire au-delà duquel un résultat est signalé",
+        default=None,
+        help="Garde ratio historique optionnelle, en complément des budgets absolus",
     )
     args = parser.parse_args(argv)
 
@@ -139,12 +162,47 @@ def main(argv: list[str] | None = None) -> int:
     results_dir = Path(args.results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
     report_path = results_dir / f"loadtest_{int(time.time())}.json"
-    report_path.write_text(to_json(results), encoding="utf-8")
+    metadata = {
+        "generated_at_unix": int(time.time()),
+        "commit": _git_commit(),
+        "os": platform.platform(),
+        "machine": platform.machine(),
+        "processor": platform.processor(),
+        "python": platform.python_version(),
+        "cpu_count": os.cpu_count(),
+        "total_memory_bytes": _total_memory_bytes(),
+    }
+    report_path.write_text(
+        to_json(
+            results,
+            DEFAULT_BUDGETS,
+            metadata,
+            scenario_budgets=SCENARIO_BUDGETS,
+            max_ratio=args.max_ratio,
+        ),
+        encoding="utf-8",
+    )
 
-    print(format_summary_table(results, args.max_ratio))
+    print(
+        format_summary_table(
+            results,
+            DEFAULT_BUDGETS,
+            scenario_budgets=SCENARIO_BUDGETS,
+            max_ratio=args.max_ratio,
+        )
+    )
     print(f"\nRapport JSON: {report_path}")
 
-    return 0 if all_ok(results, args.max_ratio) else 1
+    return (
+        0
+        if all_ok(
+            results,
+            DEFAULT_BUDGETS,
+            scenario_budgets=SCENARIO_BUDGETS,
+            max_ratio=args.max_ratio,
+        )
+        else 1
+    )
 
 
 if __name__ == "__main__":

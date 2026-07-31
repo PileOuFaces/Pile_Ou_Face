@@ -561,12 +561,47 @@ jobs:
         run: npm run test:e2e:auth-licensing
 
   # ══════════════════════════════════════════════════════════════
+  # 📊 Backend Loadtest — budgets RAM/temps bloquants sur fixture 20 Mo
+  # ══════════════════════════════════════════════════════════════
+  backend-loadtest:
+    name: Backend Performance Budgets
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install toolchain and Python dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential binutils
+          pip install -r extension/backends/requirements-ci.txt
+
+      - name: Enforce medium backend performance budgets
+        run: python3 -m tooling.loadtest --size medium --results-dir "${{ runner.temp }}/backend-loadtest"
+
+      - name: Upload loadtest report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-loadtest-report
+          path: ${{ runner.temp }}/backend-loadtest/loadtest_*.json
+          if-no-files-found: error
+
+  # ══════════════════════════════════════════════════════════════
   # ✅ Status Check — required check pour les PRs
   # ══════════════════════════════════════════════════════════════
   ci-success:
     name: CI Success
     if: always()
-    needs: [lint, full-test, dynamic-unicorn, real-corpus-arm64, e2e-runtime-audit, security-scan, auth-licensing-e2e, auth-licensing-windows]
+    needs: [lint, full-test, dynamic-unicorn, real-corpus-arm64, e2e-runtime-audit, backend-loadtest, security-scan, auth-licensing-e2e, auth-licensing-windows]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -578,6 +613,7 @@ jobs:
           DYNAMIC_UNICORN="${{ needs.dynamic-unicorn.result }}"
           REAL_CORPUS="${{ needs.real-corpus-arm64.result }}"
           E2E_AUDIT="${{ needs.e2e-runtime-audit.result }}"
+          BACKEND_LOADTEST="${{ needs.backend-loadtest.result }}"
           SECURITY="${{ needs.security-scan.result }}"
           AUTH_LICENSING_E2E="${{ needs.auth-licensing-e2e.result }}"
           AUTH_LICENSING_WINDOWS="${{ needs.auth-licensing-windows.result }}"
@@ -587,6 +623,7 @@ jobs:
           echo "Unicorn    : $DYNAMIC_UNICORN"
           echo "Corpus ARM : $REAL_CORPUS"
           echo "E2E Audit  : $E2E_AUDIT"
+          echo "Loadtest   : $BACKEND_LOADTEST"
           echo "Security   : $SECURITY"
           echo "Auth Win   : $AUTH_LICENSING_WINDOWS"
           echo "Auth E2E   : $AUTH_LICENSING_E2E"
@@ -602,7 +639,8 @@ jobs:
           fail_if_bad "$DYNAMIC_UNICORN" "Dynamic Unicorn Regression"
           fail_if_bad "$REAL_CORPUS" "Real Corpus ARM64"
           fail_if_bad "$E2E_AUDIT" "E2E Runtime Audit"
+          fail_if_bad "$BACKEND_LOADTEST" "Backend Performance Budgets"
           fail_if_bad "$AUTH_LICENSING_E2E" "Auth Licensing Interop E2E"
           fail_if_bad "$AUTH_LICENSING_WINDOWS" "Auth Licensing Windows Unit Tests"
           # security-scan est informatif uniquement (continue-on-error sur tous ses steps)
-          echo "✅ PR checks passed (lint=$LINT, full=$FULL, unicorn=$DYNAMIC_UNICORN, real-corpus-arm64=$REAL_CORPUS, security=$SECURITY, auth-licensing-e2e=$AUTH_LICENSING_E2E, auth-licensing-windows=$AUTH_LICENSING_WINDOWS)"
+          echo "✅ PR checks passed (lint=$LINT, full=$FULL, unicorn=$DYNAMIC_UNICORN, real-corpus-arm64=$REAL_CORPUS, e2e-audit=$E2E_AUDIT, backend-loadtest=$BACKEND_LOADTEST, security=$SECURITY, auth-licensing-e2e=$AUTH_LICENSING_E2E, auth-licensing-windows=$AUTH_LICENSING_WINDOWS)"

@@ -6,6 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
+from loadtest.__main__ import DEFAULT_BUDGETS
 from loadtest.scenarios import FIXTURE_PROFILES, SCENARIOS
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
@@ -21,6 +22,14 @@ class TestFixtureProfiles(unittest.TestCase):
         by_name = {p.name: p for p in FIXTURE_PROFILES}
         self.assertLess(by_name["small"].padding_bytes, by_name["medium"].padding_bytes)
         self.assertLess(by_name["medium"].padding_bytes, by_name["large"].padding_bytes)
+
+    def test_every_profile_has_a_valid_budget(self):
+        self.assertEqual(
+            {profile.name for profile in FIXTURE_PROFILES}, set(DEFAULT_BUDGETS)
+        )
+        for budget in DEFAULT_BUDGETS.values():
+            self.assertLess(budget.warn_rss_bytes, budget.fail_rss_bytes)
+            self.assertLess(budget.warn_duration_s, budget.fail_duration_s)
 
 
 class TestScenarioRegistry(unittest.TestCase):

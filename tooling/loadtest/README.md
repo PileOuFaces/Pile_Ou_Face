@@ -4,8 +4,9 @@ Load-testing tool for the public backend analysis scripts in
 `extension/backends/`. It generates synthetic binaries at a few sizes, runs
 each backend script against them as a real subprocess, and measures peak RSS
 and wall-clock time via `/usr/bin/time`. Results are reported as a summary
-table and a JSON file, with a pass/fail threshold on the RAM ratio (peak RSS
-/ binary size).
+table and a versioned JSON file. Each fixture profile has explicit warning and
+failure budgets for peak RSS and wall-clock duration. The historical RAM ratio
+can still be enabled as an optional additional guard.
 
 ## Why this exists
 
@@ -47,12 +48,27 @@ python3 -m tooling.loadtest --max-ratio 50
   Default: run all of them.
 - `--results-dir DIR` — where the JSON report is written. Default:
   `tooling/loadtest/.results/` (gitignored).
-- `--max-ratio RATIO` — the peak-RSS/binary-size ratio above which a
-  result is flagged as `exceeded`. Default: `500.0`.
+- `--max-ratio RATIO` — optional legacy peak-RSS/binary-size guard. It is
+  disabled by default because fixed Python startup costs make this ratio
+  misleading, especially for small files.
 
-Exit code: `0` if every result is `ok`, `1` if any scenario `exceeded` its
-ratio or crashed (`returncode != 0`) or timed out, `2` for a bad
-`--scenario`/`--size` name (unknown scenario/profile).
+Default budgets:
+
+| Profile | RSS warning | RSS failure | Duration warning | Duration failure |
+|---|---:|---:|---:|---:|
+| `small` (~1 MB) | 192 MB | 256 MB | 1.5 s | 3 s |
+| `medium` (~20 MB) | 256 MB | 384 MB | 2 s | 5 s |
+| `large` (~200 MB) | 768 MB | 1 GB | 10 s | 30 s |
+
+Scenario-specific calibration: `entropy` on the `medium` profile uses a 4 s
+duration warning and an 8 s failure limit. Its full byte-by-byte scan measured
+5.85 s on the GitHub-hosted Linux runner; the other medium scenarios keep the
+stricter generic 2 s / 5 s limits.
+
+Exit code: `0` for `ok` and `warning` results, `1` for `memory_limit`,
+`duration_limit`, `error`, or `timeout`, and `2` for an unknown scenario or
+profile. The JSON records the exact reasons, budgets, environment metadata,
+RSS ratio, and status for every result.
 
 The JSON report (one file per run, under the results dir) and the printed
 summary table both retain each result's binary size, peak RSS, elapsed
@@ -84,39 +100,21 @@ plugin-aware registry rather than mixing them into this public host matrix.
 These are deliberate, known gaps — not oversights — flagged during review
 and deferred rather than fixed as part of the current scope.
 
-1. **The default RAM ratio threshold is nearly blind on the `small`
-   fixture profile.** `DEFAULT_MAX_RATIO = 500.0` in `__main__.py` is a pure
-   ratio (peak RSS / binary size), with no baseline subtraction. A bare
-   Python interpreter running any of these backend scripts has roughly
-   200-230MB of fixed overhead (module imports, etc.), which dwarfs the
-   `small` fixture's ~1MB size. That means a script would need to leak
-   ~500MB above its already-large fixed overhead before the tool would
-   ever flag it as `exceeded` on `small`. If you're relying on this tool
-   to catch small regressions on the `small` profile specifically, it
-   won't today — the ratio-based check is only meaningfully sensitive on
-   `medium` and `large`, where the binary itself is large enough to
-   dominate the interpreter's fixed overhead. A better design would
-   measure the interpreter's baseline overhead once and ratio only the
-   delta above that baseline; that wasn't built here.
+1. **The budgets include Python's fixed startup/import overhead.** They are
+   deliberately absolute and initially generous. A future baseline system
+   should compare median and p95 regressions on equivalent CI runners.
 
-2. **The CLI's exit code collapses two different severities into exit
-   code `1`.** A scenario that genuinely crashed (`returncode != 0`) and a
-   scenario that merely exceeded the RAM ratio (a softer signal) both
-   produce exit code `1`. If you're wiring this into CI and only look at
-   the exit code, you can't tell a real crash from a soft RAM-ratio
-   warning. The distinction is preserved in the JSON report and the
-   summary table via `check_threshold`'s four possible statuses — `ok`,
-   `exceeded`, `error`, `timeout` — so check the JSON report (or the
-   printed table) if you need to react differently to a crash than to a
-   ratio warning.
-
-3. **Some large-profile scenarios currently expose real performance
+2. **Some large-profile scenarios currently expose real performance
    pressure.** On local validation, `strings` in its default auto-encoding
    mode timed out on the `large` profile even with a 300s timeout, and
    `function_radar` reached tens of GB of peak RSS. That is not hidden by
    the tool: those results should be treated as audit findings unless the
    backend behavior is intentionally changed or the scenario is deliberately
    split into a faster bounded variant.
+
+3. **Synthetic padding controls size, not representative complexity.** A
+   real 100–200 MB corpus per architecture is still required before #56 can
+   claim production performance coverage.
 
 ## Adding a new scenario
 
