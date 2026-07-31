@@ -1,194 +1,133 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+import json
 import sys
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from loadtest.report import (
+from loadtest.report import (  # noqa: E402
+    Budget,
     Result,
     all_ok,
     check_threshold,
+    evaluate_result,
     format_summary_table,
     to_json,
 )
 
+MIB = 1024 * 1024
+BUDGETS = {
+    "small": Budget(192 * MIB, 256 * MIB, 1.5, 3.0),
+    "medium": Budget(256 * MIB, 384 * MIB, 2.0, 5.0),
+    "large": Budget(768 * MIB, 1024 * MIB, 10.0, 30.0),
+}
 
-class TestCheckThreshold(unittest.TestCase):
-    def test_within_threshold_is_ok(self):
-        result = Result(
-            scenario="disasm",
-            fixture="small",
-            binary_size_bytes=1_000_000,
-            peak_rss_bytes=5_000_000,
-            elapsed_s=0.5,
-            returncode=0,
-            timed_out=False,
-        )
-        status = check_threshold(result, max_ratio=10.0)
-        self.assertEqual(status, "ok")
 
-    def test_exceeding_threshold_is_flagged(self):
-        result = Result(
-            scenario="disasm",
-            fixture="large",
-            binary_size_bytes=1_000_000,
-            peak_rss_bytes=50_000_000,
-            elapsed_s=0.5,
-            returncode=0,
-            timed_out=False,
-        )
-        status = check_threshold(result, max_ratio=10.0)
-        self.assertEqual(status, "exceeded")
+def make_result(**overrides):
+    values = {
+        "scenario": "disasm",
+        "fixture": "medium",
+        "binary_size_bytes": 20_000_000,
+        "peak_rss_bytes": 100 * MIB,
+        "elapsed_s": 0.5,
+        "returncode": 0,
+        "timed_out": False,
+    }
+    values.update(overrides)
+    return Result(**values)
 
-    def test_crash_is_flagged_regardless_of_ratio(self):
-        result = Result(
-            scenario="disasm",
-            fixture="small",
-            binary_size_bytes=1_000_000,
-            peak_rss_bytes=0,
-            elapsed_s=0.1,
-            returncode=1,
-            timed_out=False,
-        )
-        status = check_threshold(result, max_ratio=10.0)
-        self.assertEqual(status, "error")
 
-    def test_timeout_is_flagged(self):
-        result = Result(
-            scenario="disasm",
-            fixture="large",
-            binary_size_bytes=1_000_000,
-            peak_rss_bytes=0,
-            elapsed_s=120.0,
-            returncode=None,
-            timed_out=True,
-        )
-        status = check_threshold(result, max_ratio=10.0)
-        self.assertEqual(status, "timeout")
+class TestEvaluateResult(unittest.TestCase):
+    def test_within_budget_is_ok(self):
+        self.assertEqual(evaluate_result(make_result(), BUDGETS["medium"]).status, "ok")
 
-    def test_ratio_exactly_at_threshold_is_ok(self):
-        result = Result(
-            scenario="disasm",
-            fixture="small",
-            binary_size_bytes=1_000_000,
-            peak_rss_bytes=10_000_000,
-            elapsed_s=0.5,
-            returncode=0,
-            timed_out=False,
+    def test_warning_is_non_blocking_and_keeps_reasons(self):
+        evaluation = evaluate_result(
+            make_result(peak_rss_bytes=300 * MIB, elapsed_s=3.0),
+            BUDGETS["medium"],
         )
-        status = check_threshold(result, max_ratio=10.0)
-        self.assertEqual(status, "ok")
+        self.assertEqual(evaluation.status, "warning")
+        self.assertEqual(evaluation.reasons, ("rss_warn", "duration_warn"))
+        self.assertFalse(evaluation.blocking)
+
+    def test_memory_limit_has_priority_and_reports_duration_too(self):
+        evaluation = evaluate_result(
+            make_result(peak_rss_bytes=400 * MIB, elapsed_s=6.0),
+            BUDGETS["medium"],
+        )
+        self.assertEqual(evaluation.status, "memory_limit")
+        self.assertEqual(evaluation.reasons, ("rss_fail", "duration_fail"))
+        self.assertTrue(evaluation.blocking)
+
+    def test_duration_limit_is_blocking(self):
+        evaluation = evaluate_result(
+            make_result(elapsed_s=5.01),
+            BUDGETS["medium"],
+        )
+        self.assertEqual(evaluation.status, "duration_limit")
+
+    def test_exact_fail_limits_are_allowed(self):
+        evaluation = evaluate_result(
+            make_result(peak_rss_bytes=384 * MIB, elapsed_s=5.0),
+            BUDGETS["medium"],
+        )
+        self.assertEqual(evaluation.status, "warning")
+
+    def test_crash_and_timeout_have_distinct_statuses(self):
+        crash = evaluate_result(make_result(returncode=1), BUDGETS["medium"])
+        timeout = evaluate_result(
+            make_result(returncode=None, timed_out=True), BUDGETS["medium"]
+        )
+        self.assertEqual(crash.status, "error")
+        self.assertEqual(timeout.status, "timeout")
+
+    def test_legacy_ratio_remains_an_optional_extra_gate(self):
+        result = make_result(binary_size_bytes=1 * MIB, peak_rss_bytes=20 * MIB)
+        without_ratio = evaluate_result(result, BUDGETS["medium"])
+        with_ratio = evaluate_result(result, BUDGETS["medium"], max_ratio=10.0)
+        self.assertEqual(without_ratio.status, "ok")
+        self.assertEqual(with_ratio.status, "memory_limit")
+        self.assertIn("ratio_fail", with_ratio.reasons)
+
+    def test_legacy_check_threshold_contract(self):
+        result = make_result(binary_size_bytes=1 * MIB, peak_rss_bytes=20 * MIB)
+        self.assertEqual(check_threshold(result, max_ratio=10.0), "exceeded")
 
 
 class TestAllOk(unittest.TestCase):
-    def test_all_results_ok_returns_true(self):
-        results = [
-            Result(
-                scenario="disasm",
-                fixture="small",
-                binary_size_bytes=1_000_000,
-                peak_rss_bytes=5_000_000,
-                elapsed_s=0.5,
-                returncode=0,
-                timed_out=False,
-            ),
-            Result(
-                scenario="strings",
-                fixture="medium",
-                binary_size_bytes=20_000_000,
-                peak_rss_bytes=40_000_000,
-                elapsed_s=1.2,
-                returncode=0,
-                timed_out=False,
-            ),
-        ]
-        self.assertTrue(all_ok(results, max_ratio=10.0))
-
-    def test_one_exceeded_result_returns_false(self):
-        results = [
-            Result(
-                scenario="disasm",
-                fixture="small",
-                binary_size_bytes=1_000_000,
-                peak_rss_bytes=5_000_000,
-                elapsed_s=0.5,
-                returncode=0,
-                timed_out=False,
-            ),
-            Result(
-                scenario="disasm",
-                fixture="large",
-                binary_size_bytes=1_000_000,
-                peak_rss_bytes=50_000_000,
-                elapsed_s=0.5,
-                returncode=0,
-                timed_out=False,
-            ),
-        ]
-        self.assertFalse(all_ok(results, max_ratio=10.0))
-
-    def test_one_error_result_returns_false(self):
-        results = [
-            Result(
-                scenario="disasm",
-                fixture="small",
-                binary_size_bytes=1_000_000,
-                peak_rss_bytes=0,
-                elapsed_s=0.1,
-                returncode=1,
-                timed_out=False,
-            ),
-        ]
-        self.assertFalse(all_ok(results, max_ratio=10.0))
-
-    def test_one_timeout_result_returns_false(self):
-        results = [
-            Result(
-                scenario="disasm",
-                fixture="large",
-                binary_size_bytes=1_000_000,
-                peak_rss_bytes=0,
-                elapsed_s=120.0,
-                returncode=None,
-                timed_out=True,
-            ),
-        ]
-        self.assertFalse(all_ok(results, max_ratio=10.0))
+    def test_warnings_pass_but_limits_fail(self):
+        warning = make_result(peak_rss_bytes=300 * MIB)
+        failure = make_result(peak_rss_bytes=400 * MIB)
+        self.assertTrue(all_ok([warning], BUDGETS))
+        self.assertFalse(all_ok([warning, failure], BUDGETS))
 
     def test_empty_list_returns_true(self):
-        # Vérité vacueuse : aucun résultat ne peut avoir échoué.
-        self.assertTrue(all_ok([], max_ratio=10.0))
+        self.assertTrue(all_ok([], BUDGETS))
 
 
 class TestFormatting(unittest.TestCase):
-    def test_json_roundtrip(self):
-        result = Result(
-            scenario="strings",
-            fixture="medium",
-            binary_size_bytes=20_000_000,
-            peak_rss_bytes=40_000_000,
-            elapsed_s=1.2,
-            returncode=0,
-            timed_out=False,
+    def test_json_contains_metadata_budgets_status_and_ratio(self):
+        payload = json.loads(
+            to_json(
+                [make_result()],
+                BUDGETS,
+                {"commit": "abc", "python": "3.11"},
+            )
         )
-        payload = to_json([result])
-        self.assertIn("strings", payload)
-        self.assertIn("medium", payload)
+        self.assertEqual(payload["schema_version"], 2)
+        self.assertEqual(payload["metadata"]["commit"], "abc")
+        self.assertEqual(payload["results"][0]["status"], "ok")
+        self.assertEqual(payload["results"][0]["budget"]["fail_duration_s"], 5.0)
+        self.assertGreater(payload["results"][0]["rss_ratio"], 0)
 
-    def test_summary_table_includes_status_column(self):
-        result = Result(
-            scenario="disasm",
-            fixture="small",
-            binary_size_bytes=1_000_000,
-            peak_rss_bytes=5_000_000,
-            elapsed_s=0.5,
-            returncode=0,
-            timed_out=False,
+    def test_summary_table_includes_explicit_status(self):
+        table = format_summary_table(
+            [make_result(elapsed_s=6.0)],
+            BUDGETS,
         )
-        table = format_summary_table([result], max_ratio=10.0)
         self.assertIn("disasm", table)
-        self.assertIn("ok", table)
+        self.assertIn("duration_limit", table)
 
 
 if __name__ == "__main__":
