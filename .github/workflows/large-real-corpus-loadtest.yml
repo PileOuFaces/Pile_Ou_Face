@@ -1,0 +1,59 @@
+name: Large Real Corpus Loadtest
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 3 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  large-real-corpus:
+    name: Large corpus (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, arm64]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install native and cross toolchains
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential binutils gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+          pip install -r extension/backends/requirements-ci.txt
+
+      - name: Build 100 MiB compiled corpus
+        run: >-
+          python3 -m tooling.loadtest.real_corpus
+          --arch "${{ matrix.arch }}"
+          --size-mib 100
+          --output "${{ runner.temp }}/corpus-${{ matrix.arch }}.elf"
+
+      - name: Enforce guarded large budgets
+        run: >-
+          python3 -m tooling.loadtest
+          --binary "${{ runner.temp }}/corpus-${{ matrix.arch }}.elf"
+          --size large
+          --memory-limit-mib 1536
+          --timeout-cap-s 60
+          --results-dir "${{ runner.temp }}/large-real-corpus-results"
+
+      - name: Upload performance report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: large-real-corpus-${{ matrix.arch }}
+          path: ${{ runner.temp }}/large-real-corpus-results/loadtest_*.json
+          if-no-files-found: error

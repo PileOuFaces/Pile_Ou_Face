@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import platform
 import subprocess
@@ -37,6 +38,14 @@ SCENARIO_BUDGETS = {
     # sa variance est supérieure aux autres scénarios medium (mesuré à 5,85 s).
     ("entropy", "medium"): Budget(256 * MIB, 384 * MIB, 4.0, 8.0),
 }
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _git_commit() -> str:
@@ -97,6 +106,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--size", help="Nom d'un seul profil de fixture à utiliser (défaut: tous)"
     )
+    parser.add_argument(
+        "--binary",
+        type=Path,
+        help="Binaire externe à mesurer (requiert --size pour choisir les budgets)",
+    )
     parser.add_argument("--results-dir", default=str(DEFAULT_RESULTS_DIR))
     parser.add_argument(
         "--memory-limit-mib", type=int, default=DEFAULT_MEMORY_LIMIT_MIB
@@ -118,6 +132,10 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--memory-limit-mib doit être strictement positif")
     if args.timeout_cap_s <= 0:
         parser.error("--timeout-cap-s doit être strictement positif")
+    if args.binary is not None and args.size is None:
+        parser.error("--binary requiert --size pour choisir les budgets")
+    if args.binary is not None and not args.binary.is_file():
+        parser.error(f"binaire externe introuvable : {args.binary}")
 
     try:
         baselines = (
@@ -149,7 +167,11 @@ def main(argv: list[str] | None = None) -> int:
 
     results: list[Result] = []
     for profile in profiles:
-        binary_path = build_fixture(profile.to_spec(), cache_dir=DEFAULT_FIXTURE_CACHE)
+        binary_path = (
+            args.binary.resolve()
+            if args.binary is not None
+            else build_fixture(profile.to_spec(), cache_dir=DEFAULT_FIXTURE_CACHE)
+        )
         binary_size = binary_path.stat().st_size
         for scenario in scenarios:
             script_path = _script_path(scenario.script)
@@ -215,6 +237,11 @@ def main(argv: list[str] | None = None) -> int:
         "python": platform.python_version(),
         "cpu_count": os.cpu_count(),
         "total_memory_bytes": _total_memory_bytes(),
+        "fixture_kind": "external" if args.binary is not None else "synthetic",
+        "fixture_name": binary_path.name if args.binary is not None else None,
+        "fixture_sha256": _sha256_file(binary_path)
+        if args.binary is not None
+        else None,
     }
     report_path.write_text(
         to_json(
