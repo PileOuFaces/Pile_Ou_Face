@@ -8,6 +8,7 @@
 
 const vscode = require('vscode');
 const cp = require('child_process');
+const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -30,6 +31,7 @@ const AUTH_CONTENT_KEYS_STDIN_ENV = 'BINHOST_CONTENT_KEYS_STDIN';
 const DOCKER_IMAGE_UPDATE_CACHE_TTL_MS = 10 * 60 * 1000;
 const _dockerImageUpdateCache = new Map();
 let _dockerRuntimeStatusCache = null;
+const _activeTriageRuns = new Map(); // binaryPath -> requestId
 
 function encodePluginRuntimeStdin(contentKeys) {
   const entries = Object.entries(contentKeys || {}).filter(([, value]) => String(value || '').trim());
@@ -449,6 +451,23 @@ function staticHandlers(config) {
     const ghidraPath = String(localPaths.ghidra || '').trim();
     if (ghidraPath) env.GHIDRA_INSTALL_DIR = ghidraPath;
     return env;
+  };
+  const resolveAutoTriageProviderModel = (message, pythonEnv) => {
+    let provider = String(message.provider || pythonEnv.POF_DEFAULT_AI_PROVIDER || 'ollama').trim() || 'ollama';
+    let model = String(message.model || '').trim();
+    const configuredModel = String(
+      vscode.workspace.getConfiguration('pileOuFace').get('autoTriage.model', '') || '',
+    ).trim();
+    if (configuredModel) {
+      const atIdx = configuredModel.indexOf('@');
+      provider = atIdx > 0 ? configuredModel.slice(0, atIdx) : 'ollama';
+      model = atIdx > 0 ? configuredModel.slice(atIdx + 1) : configuredModel;
+    }
+    if (!model) {
+      const modelKey = provider === 'ollama' ? 'OLLAMA_MODEL' : `POF_${provider.toUpperCase()}_MODEL`;
+      model = String(pythonEnv[modelKey] || '').trim();
+    }
+    return { provider, model };
   };
   const getPreferredPluginArtifactDir = (artifactKind) => {
     const kind = String(artifactKind || '').trim();
@@ -1330,6 +1349,239 @@ function staticHandlers(config) {
             _logDecompilerDocker(logChannel, 'pull.refresh.error', { decompiler, error: _e?.message || String(_e) });
           }
         }
+      });
+    },
+    hubAutoTriageStart: async (message = {}) => {
+      const requestId = String(message.requestId || '').trim() || `triage-${Date.now()}`;
+      const binaryPath = String(message.binaryPath || '').trim();
+      const pythonEnv = buildPythonEnv();
+      const { provider, model } = resolveAutoTriageProviderModel(message, pythonEnv);
+      const autoTriageConfig = vscode.workspace.getConfiguration('pileOuFace.autoTriage');
+      const configuredMaxFunctions = Number(autoTriageConfig.get('maxFunctions', 200));
+      const configuredMaxSeconds = Number(autoTriageConfig.get('maxSeconds', 600));
+      const configuredMaxTokens = Number(autoTriageConfig.get('maxTokensPerRequest', 2048));
+      const configuredMaxTotalTokens = Number(autoTriageConfig.get('maxTotalTokens', 100000));
+      const maxFunctions = Number.isInteger(message.maxFunctions) && message.maxFunctions > 0
+        ? message.maxFunctions
+        : configuredMaxFunctions;
+      const maxSeconds = Number.isFinite(message.maxSeconds) && message.maxSeconds > 0
+        ? message.maxSeconds
+        : configuredMaxSeconds;
+      const maxTokens = Number.isInteger(message.maxTokens) && message.maxTokens > 0
+        ? message.maxTokens
+        : configuredMaxTokens;
+      const maxTotalTokens = Number.isInteger(message.maxTotalTokens) && message.maxTotalTokens > 0
+        ? message.maxTotalTokens
+        : configuredMaxTotalTokens;
+
+      const fail = (error) => {
+        if (_activeTriageRuns.get(binaryPath) === requestId) _activeTriageRuns.delete(binaryPath);
+        panel.webview.postMessage({ type: 'hubAutoTriageDone', requestId, binaryPath, ok: false, error });
+      };
+
+      if (!binaryPath || !fs.existsSync(binaryPath) || fs.statSync(binaryPath).isDirectory()) {
+        fail('Binaire introuvable.');
+        return;
+      }
+      if (_activeTriageRuns.has(binaryPath)) {
+        fail('Un auto-triage est déjà en cours pour ce binaire.');
+        return;
+      }
+      _activeTriageRuns.set(binaryPath, requestId);
+      const baseName = path.basename(binaryPath, path.extname(binaryPath)) || 'binary';
+      const mappingPath = path.join(storageDir, `${baseName}.disasm.mapping.json`);
+      if (!fs.existsSync(mappingPath)) {
+        fail("Ce binaire n'a pas encore été désassemblé — ouvrez-le dans le hub statique avant de lancer le triage.");
+        return;
+      }
+
+      let consented = false;
+      try {
+        const { stdout } = await runPython(['backends/mcp/ai_consent.py', '--provider', provider, '--check']);
+        consented = JSON.parse(stdout).consented === true;
+      } catch (err) {
+        if (typeof err?.stdout === 'string' && err.stdout.trim()) {
+          try { consented = JSON.parse(err.stdout).consented === true; } catch (_) { consented = false; }
+        } else {
+          fail(`Vérification du consentement impossible: ${err.message || err}`);
+          return;
+        }
+      }
+      if (!consented) {
+        const choice = await vscode.window.showWarningMessage(
+          `Le code de ce binaire sera envoyé à "${provider}" pour analyse. Continuer ?`,
+          { modal: true },
+          'Autoriser',
+        );
+        if (choice !== 'Autoriser') {
+          fail('Triage annulé : consentement refusé.');
+          return;
+        }
+        try {
+          await runPython(['backends/mcp/ai_consent.py', '--provider', provider, '--grant']);
+        } catch (err) {
+          fail(`Impossible d'enregistrer le consentement: ${err.message || err}`);
+          return;
+        }
+      }
+
+      const cancelFlagPath = path.join(os.tmpdir(), `pof-triage-cancel-${requestId}.flag`);
+      try { fs.rmSync(cancelFlagPath, { force: true }); } catch (err) {
+        logDebug(`[auto-triage] cleanup cancel flag failed: ${err.message || err}`);
+      }
+      const binaryKey = crypto.createHash('sha256').update(path.resolve(binaryPath)).digest('hex').slice(0, 12);
+      const reportPath = path.join(getHostArtifactRoot('triage-reports'), `${baseName}-${binaryKey}.triage-report.md`);
+
+      const scriptArgs = [
+        '--binary-path', binaryPath,
+        '--mapping-path', mappingPath,
+        '--provider', provider,
+        '--max-functions', String(maxFunctions),
+        '--max-seconds', String(maxSeconds),
+        '--max-tokens', String(maxTokens),
+        '--max-total-tokens', String(maxTotalTokens),
+        '--cancel-flag-path', cancelFlagPath,
+        '--report-out', reportPath,
+        '--language', vscode.env.language,
+      ];
+      if (model) scriptArgs.push('--model', model);
+      logChannel?.appendLine(`[auto-triage] start requestId=${requestId} provider=${provider} model=${model || '(default)'}`);
+      const scriptPath = path.join(extensionPath, 'backends/mcp/auto_triage.py');
+      const proc = cp.spawn(getPythonExecutable(), [scriptPath, ...scriptArgs], { cwd: root, env: pythonEnv });
+
+      let resultSent = false;
+      let stderrBuf = '';
+      let wasCancelled = false;
+      let finalStats = null;
+      let resolvedModel = model;
+      proc.stderr.on('data', (chunk) => { stderrBuf += String(chunk); });
+
+      const cancelRequest = () => {
+        try { fs.writeFileSync(cancelFlagPath, '1', 'utf8'); } catch (err) {
+          logWarning(`[auto-triage] cannot write cancel flag: ${err.message || err}`);
+        }
+        setTimeout(() => {
+          if (!resultSent) {
+            try { proc.kill('SIGTERM'); } catch (err) {
+              logWarning(`[auto-triage] cannot terminate process: ${err.message || err}`);
+            }
+          }
+        }, 5000);
+      };
+      registerAiProcess(requestId, cancelRequest);
+
+      const rl = readline.createInterface({ input: proc.stdout, crlfDelay: Infinity });
+      rl.on('line', (line) => {
+        const trimmed = line.trim();
+        if (!trimmed) return;
+        let event;
+        try { event = JSON.parse(trimmed); } catch { return; }
+        if (event?.type === 'cancelled') wasCancelled = true;
+        if (event?.type === 'selection_done' && event.model) resolvedModel = String(event.model);
+        if (event?.type === 'done') finalStats = event.stats || null;
+        panel.webview.postMessage({ type: 'hubAutoTriageEvent', requestId, binaryPath, event });
+      });
+
+      proc.on('close', (code) => {
+        if (resultSent) return;
+        resultSent = true;
+        clearAiProcess(requestId);
+        if (_activeTriageRuns.get(binaryPath) === requestId) _activeTriageRuns.delete(binaryPath);
+        try { fs.rmSync(cancelFlagPath, { force: true }); } catch (err) {
+          logDebug(`[auto-triage] cleanup cancel flag failed: ${err.message || err}`);
+        }
+        const ok = code === 0;
+        if (ok) {
+          // Persiste au-delà de la session webview (le widget de suivi se
+          // referme apres un delai) pour permettre de rouvrir le rapport
+          // plus tard depuis le dashboard.
+          const reports = context.globalState.get('pof.autoTriage.reports', {} as Record<string, string>);
+          reports[binaryPath] = reportPath;
+          context.globalState.update('pof.autoTriage.reports', reports);
+          const results = context.globalState.get('pof.autoTriage.results', {} as Record<string, unknown>);
+          results[binaryPath] = {
+            reportPath,
+            completedAt: new Date().toISOString(),
+            provider,
+            model: resolvedModel,
+            stats: finalStats,
+            cancelled: wasCancelled,
+          };
+          context.globalState.update('pof.autoTriage.results', results);
+        }
+        panel.webview.postMessage({
+          type: 'hubAutoTriageDone',
+          requestId,
+          binaryPath,
+          ok,
+          cancelled: wasCancelled,
+          reportPath: ok ? reportPath : null,
+          error: ok ? null : (stderrBuf.trim() || `Processus terminé avec le code ${code}`),
+        });
+      });
+
+      proc.on('error', (err) => {
+        if (resultSent) return;
+        resultSent = true;
+        clearAiProcess(requestId);
+        if (_activeTriageRuns.get(binaryPath) === requestId) _activeTriageRuns.delete(binaryPath);
+        fail(String(err.message || err));
+      });
+    },
+    hubAutoTriageOpenReport: async (message = {}) => {
+      const reportPath = String(message.reportPath || '').trim();
+      if (!reportPath || !fs.existsSync(reportPath)) {
+        vscode.window.showErrorMessage('Rapport de triage introuvable.');
+        return;
+      }
+      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(reportPath));
+      await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Beside, preview: false });
+    },
+    hubAutoTriageExportReport: async (message = {}) => {
+      const reportPath = String(message.reportPath || '').trim();
+      if (!reportPath || !fs.existsSync(reportPath)) {
+        vscode.window.showErrorMessage('Rapport de triage introuvable.');
+        return;
+      }
+      const destination = await vscode.window.showSaveDialog({
+        defaultUri: vscode.Uri.file(path.basename(reportPath)),
+        filters: { Markdown: ['md'] },
+        saveLabel: 'Exporter le rapport',
+      });
+      if (!destination) return;
+      await fs.promises.copyFile(reportPath, destination.fsPath);
+      vscode.window.showInformationMessage(`Rapport exporté : ${destination.fsPath}`);
+    },
+    hubAutoTriageGetReport: async (message = {}) => {
+      const binaryPath = String(message.binaryPath || '').trim();
+      const reports = context.globalState.get('pof.autoTriage.reports', {} as Record<string, string>);
+      const reportPath = String(reports[binaryPath] || '').trim();
+      const exists = Boolean(reportPath) && fs.existsSync(reportPath);
+      const results = context.globalState.get('pof.autoTriage.results', {} as Record<string, any>);
+      panel.webview.postMessage({
+        type: 'hubAutoTriageReportInfo',
+        binaryPath,
+        reportPath: exists ? reportPath : null,
+        result: exists ? (results[binaryPath] || null) : null,
+      });
+    },
+    hubAutoTriagePreflight: async (message = {}) => {
+      const binaryPath = String(message.binaryPath || '').trim();
+      const baseName = binaryPath ? (path.basename(binaryPath, path.extname(binaryPath)) || 'binary') : '';
+      const mappingPath = baseName ? path.join(storageDir, `${baseName}.disasm.mapping.json`) : '';
+      const pythonEnv = buildPythonEnv();
+      const { provider, model } = resolveAutoTriageProviderModel(message, pythonEnv);
+      const config = vscode.workspace.getConfiguration('pileOuFace.autoTriage');
+      panel.webview.postMessage({
+        type: 'hubAutoTriagePreflight',
+        binaryPath,
+        available: Boolean(binaryPath) && fs.existsSync(binaryPath) && Boolean(mappingPath) && fs.existsSync(mappingPath),
+        provider,
+        model: model || 'sélection automatique',
+        maxFunctions: Number(config.get('maxFunctions', 200)),
+        maxSeconds: Number(config.get('maxSeconds', 600)),
+        maxTokens: Number(config.get('maxTokensPerRequest', 2048)),
+        maxTotalTokens: Number(config.get('maxTotalTokens', 100000)),
       });
     },
     compilerBrowseSource: async (message = {}) => {

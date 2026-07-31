@@ -51,6 +51,14 @@ function makeAnnotationsBridge(ctx) {
     deleteBookmark: (binaryPath, addr) => invokeMutation(binaryPath, ['delete-bookmark', '--addr', addr]),
     clearBookmarks: (binaryPath) => invokeMutation(binaryPath, ['clear-bookmarks']),
     deleteAnnotation: (binaryPath, addr) => invokeMutation(binaryPath, ['delete-annotation', '--addr', addr]),
+    rejectAiAnnotations: (binaryPath, addr = '') => invokeMutation(
+      binaryPath,
+      ['reject-ai', ...(addr ? ['--addr', addr] : [])],
+    ),
+    validateAiAnnotations: (binaryPath, addr = '') => invokeMutation(
+      binaryPath,
+      ['validate-ai', ...(addr ? ['--addr', addr] : [])],
+    ),
   };
 }
 

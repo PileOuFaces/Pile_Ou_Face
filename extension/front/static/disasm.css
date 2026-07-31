@@ -359,10 +359,14 @@
 .annotation-item { display: flex; align-items: center; gap: 8px; padding: 4px 8px; background: var(--bg-hover); border-radius: var(--radius-sm); cursor: default; flex-wrap: wrap; }
 .annotation-item-function { border-left: 2px solid var(--accent-blue); }
 .annotation-item-note { border-left: 2px solid var(--border-color); }
+.annotation-item-ai { background: rgba(214, 153, 46, 0.08); border-left-color: #d6992e; }
+.annotations-ai-toolbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 7px 8px; margin-bottom: 4px; border: 1px solid rgba(214, 153, 46, 0.28); border-radius: var(--radius-sm); background: rgba(214, 153, 46, 0.06); }
+.annotations-ai-toolbar strong { margin-right: auto; color: #f0bd61; font-size: 11px; }
 .annotation-item .addr-link { font-family: var(--font-mono); color: var(--accent-blue); font-size: 11px; flex-shrink: 0; }
 .ann-kind { padding: 1px 6px; border-radius: 999px; font-size: 10px; font-weight: 600; line-height: 1.4; flex-shrink: 0; }
 .ann-kind-function { color: var(--accent-blue); background: rgba(79, 163, 209, 0.14); border: 1px solid rgba(79, 163, 209, 0.35); }
 .ann-kind-note { color: var(--text-muted); background: rgba(255, 255, 255, 0.04); border: 1px solid var(--border-color); }
+.ann-kind-ai { color: #f0bd61; background: rgba(214, 153, 46, 0.12); border: 1px solid rgba(214, 153, 46, 0.45); }
 .ann-meta { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
 .ann-name { color: var(--accent-blue-soft); font-weight: 600; font-size: 11px; }
 .ann-comment { color: var(--text-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

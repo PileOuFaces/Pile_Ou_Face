@@ -175,6 +175,12 @@ function _loadStoredOllamaConversation() {
 let ollamaUiState = {
   models: [],
   lastModel: _loadStorage().ollamaModel || '',
+  // True only once the user explicitly picks a model in a chat dropdown this
+  // session. lastModel above gets auto-filled with a default (first model in
+  // the list) even when nobody chose anything, so features that must fall
+  // back to the provider's configured default (ex. auto-triage) need to tell
+  // "explicit choice" apart from "never touched" — see autoTriageController.js.
+  modelUserSelected: false,
   baseUrl: _loadStorage().ollamaBaseUrl || 'http://127.0.0.1:11434',
   busy: false,
   conversation: _loadStoredOllamaConversation(),

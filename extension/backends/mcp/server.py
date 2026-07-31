@@ -596,6 +596,15 @@ AI_TOOLS: list[dict] = [
                 "provider": {"type": "string"},
                 "model": {"type": "string"},
                 "binary_path": {"type": "string"},
+                "write_annotation": {
+                    "type": "object",
+                    "properties": {
+                        "addr": {"type": "string"},
+                        "kind": {"type": "string", "enum": ["comment", "rename"]},
+                    },
+                    "required": ["addr", "kind"],
+                    "additionalProperties": False,
+                },
             },
             "required": ["prompt", "context"],
             "additionalProperties": False,
@@ -1168,9 +1177,10 @@ def _parse_float_arg(
 
 
 def _load_mapping_lines(mapping_path: str) -> tuple[list[dict[str, Any]], str | None]:
+    from backends.static.disasm.mapping_db import load_mapping_with_lines
+
     try:
-        with open(mapping_path, encoding="utf-8") as f:
-            payload = json.load(f)
+        payload = load_mapping_with_lines(mapping_path)
     except Exception as exc:
         raise ValueError(f"Cannot read mapping file: {exc}") from exc
 
@@ -1782,16 +1792,30 @@ def _call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             "POF_DEFAULT_AI_PROVIDER", "ollama"
         )
         model = args.get("model")
+        write_annotation = args.get("write_annotation")
         try:
             response = call_provider(
                 provider, args.get("prompt", ""), args.get("context", ""), model
             )
-            return {
+            result = {
                 "ok": True,
                 "provider": provider,
                 "model": model,
                 "response": response,
             }
+            if isinstance(write_annotation, dict):
+                from backends.static.annotations.annotations import AnnotationStore
+
+                addr = _required_string(write_annotation, "addr")
+                kind = _required_string(write_annotation, "kind")
+                binary_path = _binary_path_from(args)
+                with AnnotationStore(binary_path) as store:
+                    if kind == "rename":
+                        written = store.ai_rename(addr, response)
+                    else:
+                        written = store.ai_comment(addr, response)
+                result["written"] = written
+            return result
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 

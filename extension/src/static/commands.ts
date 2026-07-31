@@ -105,6 +105,30 @@ function registerStaticCommands(context, deps, providers) {
   });
   subs.push(askAiAboutDisasm);
 
+  const autoTriage = vscode.commands.registerCommand('pileOuFace.autoTriage', async () => {
+    let binaryPath = '';
+    const editor = vscode.window.activeTextEditor;
+    const docPath = editor?.document?.uri?.fsPath;
+    if (docPath && /\.asm$/i.test(docPath)) {
+      const baseName = path.basename(docPath, '.asm').replace(/\.disasm$/, '');
+      const mappingPath = path.join(path.dirname(docPath), `${baseName}.disasm.mapping.json`);
+      if (fs.existsSync(mappingPath)) binaryPath = readMappingBinary(mappingPath);
+    }
+    if (!binaryPath) {
+      const picked = await vscode.window.showOpenDialog({
+        title: 'Choisir le binaire à trianger',
+        canSelectMany: false,
+        openLabel: 'Auto-triage IA',
+      });
+      binaryPath = picked?.[0]?.fsPath || '';
+    }
+    if (!binaryPath) return;
+    if (typeof openHub === 'function') {
+      openHub('dashboard', { autoTriageBinary: binaryPath });
+    }
+  });
+  subs.push(autoTriage);
+
   const exportDisasm = vscode.commands.registerCommand('pileOuFace.exportDisasm', async () => {
     const editor = vscode.window.activeTextEditor;
     if (!editor || !editor.document) {

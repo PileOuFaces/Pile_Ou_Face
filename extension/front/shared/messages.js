@@ -100,8 +100,11 @@ function focusAnnotationEditor(addr, annotation = null, options = {}) {
 function renderAnnotationsList(annotations = window._annotations || {}) {
   const listEl = document.getElementById('annotationsList');
   if (!listEl) return false;
-  const entries = Object.entries(annotations).filter(([, v]) => v && (v.comment || v.name));
-  if (entries.length === 0) {
+  const allEntries = Object.entries(annotations).filter(([, v]) => v && (v.comment || v.name));
+  const aiEntries = allEntries.filter(([, v]) => v.nameSource === 'ai' || v.commentSource === 'ai');
+  const aiOnly = Boolean(window._annotationAiOnly);
+  const entries = aiOnly ? aiEntries : allEntries;
+  if (allEntries.length === 0) {
     listEl.replaceChildren();
     const p = document.createElement('p');
     p.className = 'hint annotations-empty';
@@ -110,6 +113,45 @@ function renderAnnotationsList(annotations = window._annotations || {}) {
     return true;
   }
   listEl.replaceChildren();
+  if (aiEntries.length) {
+    const toolbar = document.createElement('div');
+    toolbar.className = 'annotations-ai-toolbar';
+    const count = document.createElement('strong');
+    count.textContent = `${aiEntries.length} suggestion(s) IA à vérifier`;
+    toolbar.appendChild(count);
+    const filterBtn = document.createElement('button');
+    filterBtn.className = `btn btn-sm${aiOnly ? ' btn-primary' : ' btn-secondary'}`;
+    filterBtn.textContent = aiOnly ? 'Afficher toutes' : 'Afficher uniquement les IA';
+    filterBtn.addEventListener('click', () => {
+      window._annotationAiOnly = !aiOnly;
+      renderAnnotationsList(annotations);
+    });
+    toolbar.appendChild(filterBtn);
+    const validateAll = document.createElement('button');
+    validateAll.className = 'btn btn-sm btn-secondary';
+    validateAll.textContent = 'Tout valider';
+    validateAll.addEventListener('click', () => vscode.postMessage({
+      type: 'hubValidateAiAnnotations', binaryPath: getStaticBinaryPath(),
+    }));
+    toolbar.appendChild(validateAll);
+    const rejectAll = document.createElement('button');
+    rejectAll.className = 'btn btn-sm btn-secondary';
+    rejectAll.textContent = 'Tout rejeter';
+    rejectAll.addEventListener('click', () => {
+      if (window.confirm(`Rejeter ${aiEntries.length} suggestion(s) IA ? Les annotations utilisateur seront conservées.`)) {
+        vscode.postMessage({ type: 'hubRejectAiAnnotations', binaryPath: getStaticBinaryPath() });
+      }
+    });
+    toolbar.appendChild(rejectAll);
+    listEl.appendChild(toolbar);
+  }
+  if (entries.length === 0) {
+    const p = document.createElement('p');
+    p.className = 'hint annotations-empty';
+    p.textContent = 'Aucune suggestion IA à vérifier.';
+    listEl.appendChild(p);
+    return true;
+  }
   entries.forEach(([addr, v]) => {
     const item = document.createElement('div');
     const isFunctionAnnotation = isAnnotatedFunctionAddress(addr);
@@ -128,6 +170,30 @@ function renderAnnotationsList(annotations = window._annotations || {}) {
       ? 'Rename/commentaire posé sur une adresse de fonction'
       : 'Annotation posée sur une instruction ou adresse interne';
     item.appendChild(kindBadge);
+
+    const isAiAuthored = v.nameSource === 'ai' || v.commentSource === 'ai';
+    if (isAiAuthored) {
+      item.classList.add('annotation-item-ai');
+      const sourceBadge = document.createElement('span');
+      sourceBadge.className = 'ann-kind ann-kind-ai';
+      sourceBadge.textContent = 'IA · à vérifier';
+      sourceBadge.title = 'Nom ou commentaire proposé par l’IA — vérifiez-le avant de vous y fier';
+      item.appendChild(sourceBadge);
+
+      const validateBtn = document.createElement('button');
+      validateBtn.className = 'btn btn-sm ann-validate-ai';
+      validateBtn.textContent = 'Valider IA';
+      validateBtn.title = 'Valider cette suggestion et la convertir en annotation utilisateur';
+      validateBtn.dataset.addr = addr;
+      item.appendChild(validateBtn);
+
+      const rejectBtn = document.createElement('button');
+      rejectBtn.className = 'btn btn-sm ann-reject-ai';
+      rejectBtn.textContent = 'Rejeter IA';
+      rejectBtn.title = 'Rejeter uniquement les champs proposés par l’IA';
+      rejectBtn.dataset.addr = addr;
+      item.appendChild(rejectBtn);
+    }
 
     const meta = document.createElement('div');
     meta.className = 'ann-meta';
@@ -178,6 +244,29 @@ function renderAnnotationsList(annotations = window._annotations || {}) {
       e.stopPropagation();
       const a = btn.dataset.addr;
       focusAnnotationEditor(a, annotations[a]);
+    });
+  });
+
+  listEl.querySelectorAll('.ann-validate-ai').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const addr = btn.dataset.addr;
+      vscode.postMessage({
+        type: 'hubValidateAiAnnotations',
+        binaryPath: getStaticBinaryPath(),
+        addr,
+      });
+    });
+  });
+
+  listEl.querySelectorAll('.ann-reject-ai').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      vscode.postMessage({
+        type: 'hubRejectAiAnnotations',
+        binaryPath: getStaticBinaryPath(),
+        addr: btn.dataset.addr,
+      });
     });
   });
 

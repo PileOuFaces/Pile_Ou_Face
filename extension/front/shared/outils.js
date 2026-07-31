@@ -1299,6 +1299,14 @@ document.querySelectorAll('.action-card').forEach((card) => {
       showPanel('dynamic');
     } else if (card.dataset.action === 'outils-open') {
       showPanel('outils');
+    } else if (card.dataset.action === 'auto-triage') {
+      const binaryPath = getStaticBinaryPath();
+      if (!binaryPath) {
+        showPanel('static');
+        openBinaryMenu();
+        return;
+      }
+      window.POFHubAutoTriageController?.startRun?.(binaryPath);
     }
   });
 });
@@ -2044,6 +2052,7 @@ document.querySelectorAll('[data-ollama-model-select="true"]').forEach((selectEl
   selectEl.addEventListener('change', (event) => {
     const value = String(event.target?.value || '').trim();
     if (!value) return;
+    ollamaUiState.modelUserSelected = true;
     if (value.includes('@')) {
       // Cloud model selected — just sync state without re-rendering Ollama list
       rememberOllamaModel(value, true);
