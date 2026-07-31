@@ -19,6 +19,7 @@ Capture un modele d'execution coherent par step:
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -84,7 +85,29 @@ class SnapshotCollector:
         self._external_state = external_state if external_state is not None else {}
         self.snapshots: list[dict] = []
         self.step = 0
+        self.trace_bytes = 0
+        self.trace_limit_reached = False
         self._pending: dict[str, Any] | None = None
+
+    @staticmethod
+    def _serialized_size(snapshot: dict) -> int:
+        return len(
+            json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        )
+
+    def _retain_snapshot(self, snapshot: dict, uc_engine) -> bool:
+        snapshot_bytes = self._serialized_size(snapshot)
+        max_trace_bytes = int(getattr(self._config, "max_trace_bytes", 0) or 0)
+        if max_trace_bytes and self.trace_bytes + snapshot_bytes > max_trace_bytes:
+            self.trace_limit_reached = True
+            uc_engine.emu_stop()
+            return False
+        self.snapshots.append(snapshot)
+        self.trace_bytes += snapshot_bytes
+        self.step = len(self.snapshots)
+        return True
 
     def _in_capture_ranges(self, addr: int) -> bool:
         ranges = self._config.capture_ranges
@@ -529,14 +552,17 @@ class SnapshotCollector:
             snapshot["eip"] = hex(instruction_addr)
             snapshot["esp"] = _hex(active_sp)
 
-        self.snapshots.append(snapshot)
-        self.step = len(self.snapshots)
+        self._retain_snapshot(snapshot, uc_engine)
         self._pending = None
 
     def hook_code(self, uc_engine, addr: int, size: int, _user_data: object) -> None:
         # Finalize the previous instruction when Unicorn is about to execute the next one.
         if self._pending is not None:
             self.finalize_pending(uc_engine)
+
+        if self.trace_limit_reached:
+            uc_engine.emu_stop()
+            return
 
         stop_here = (
             self._config.stop_addr is not None and addr == self._config.stop_addr

@@ -973,6 +973,35 @@ class TestBenignTerminationClassification(unittest.TestCase):
         )
         self.assertNotIn("max_steps_reached", {diag["kind"] for diag in diagnostics})
 
+    def test_trace_size_limit_produces_distinct_non_crash_diagnostic(self):
+        snap = _snapshot(step=12, instr="mov eax, ebx", mnemonic="mov")
+        diagnostics = build_diagnostics(
+            [snap],
+            {"12": _base_analysis()},
+            {"arch_bits": 64, "word_size": 8},
+            crash=None,
+            trace_size_reached=True,
+        )
+
+        size_diagnostic = next(
+            diag for diag in diagnostics if diag["kind"] == "trace_size_limit_reached"
+        )
+        self.assertEqual(size_diagnostic["severity"], "info")
+        self.assertIn("trace partielle", size_diagnostic["message"])
+
+    def test_trace_size_limit_is_suppressed_by_real_crash(self):
+        diagnostics = build_diagnostics(
+            [],
+            {},
+            {"arch_bits": 64, "word_size": 8},
+            crash={"type": "unmapped_fetch", "step": 1},
+            trace_size_reached=True,
+        )
+
+        self.assertNotIn(
+            "trace_size_limit_reached", {diag["kind"] for diag in diagnostics}
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
