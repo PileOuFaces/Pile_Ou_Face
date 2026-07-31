@@ -827,11 +827,13 @@ async function run() {
     const sourcePath = path.join(workspaceDir, 'e2e-runtime-audit-source.c');
     const rulePath = path.join(workspaceDir, 'e2e-runtime-audit-rule.yar');
     const pluginBundlePath = path.join(workspaceDir, 'e2e-runtime-audit-plugin.pofplug');
+    const licensePath = path.join(workspaceDir, 'e2e-runtime-audit-plugin.license');
     const patchBinaryPath = path.join(workspaceDir, 'e2e-runtime-audit-patch-copy.bin');
     fs.writeFileSync(scriptPath, 'print({"ok": True})\n', 'utf8');
     fs.writeFileSync(sourcePath, 'int main(void) { return 0; }\n', 'utf8');
     fs.writeFileSync(rulePath, 'rule E2ERuntimeAuditRule { condition: true }\n', 'utf8');
     fs.writeFileSync(pluginBundlePath, 'not a real plugin bundle\n', 'utf8');
+    fs.writeFileSync(licensePath, 'not a real plugin license\n', 'utf8');
     fs.copyFileSync(binaryPath, patchBinaryPath);
 
     await vscode.commands.executeCommand('pileOuFace.goToAddress');

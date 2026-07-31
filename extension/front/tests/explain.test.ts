@@ -100,10 +100,30 @@ describe('dynamic/explain — crash classification must match the backend, never
     expect(card._classes).to.not.include('explain-section-error');
   });
 
+  it('keeps an explicit benign classification authoritative when a legacy step is missing', () => {
+    const card = renderAndGetCard({ classification: 'benign_termination', reason: 'test reason' });
+
+    expect(card._classes).to.include('explain-section-info');
+    expect(card.children[0].textContent).to.not.equal('CRASH DETECTE');
+  });
+
   it('a real fatal_crash (real overflow) still renders as CRASH DETECTE / error', () => {
     const card = renderAndGetCard(crashOf('fatal_crash'));
     expect(card._classes).to.include('explain-section-error');
     expect(card.children[0].textContent).to.equal('CRASH DETECTE');
+  });
+
+  it('a legacy unmapped ret without corruption evidence renders as an informational termination', () => {
+    const card = renderAndGetCard({
+      type: 'unmapped_fetch',
+      step: 1,
+      instructionText: 'ret',
+      reason: 'Invalid fetch',
+    });
+
+    expect(card.children[0].textContent).to.equal("FIN D'EXECUTION NORMALE");
+    expect(card._classes).to.include('explain-section-info');
+    expect(card._classes).to.not.include('explain-section-error');
   });
 
   it('control_hijack is unaffected by the new classifications', () => {
