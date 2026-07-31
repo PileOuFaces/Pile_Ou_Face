@@ -18,6 +18,19 @@ HAS_CC = shutil.which("cc") is not None
 
 @unittest.skipUnless(HAS_CC, "cc introuvable")
 class TestEndToEnd(unittest.TestCase):
+    def test_rejects_non_positive_safety_guards(self):
+        for flag in ("--memory-limit-mib", "--timeout-cap-s"):
+            with self.subTest(flag=flag):
+                result = subprocess.run(
+                    [sys.executable, "-m", "tooling.loadtest", flag, "0"],
+                    cwd=str(REPO_ROOT),
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("strictement positif", result.stderr)
+
     def test_single_scenario_single_fixture_produces_a_result(self):
         with tempfile.TemporaryDirectory() as tmp:
             result = subprocess.run(

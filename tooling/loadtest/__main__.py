@@ -25,6 +25,8 @@ EXTENSION_ROOT = REPO_ROOT / "extension"
 DEFAULT_FIXTURE_CACHE = Path(__file__).resolve().parent / ".fixture_cache"
 DEFAULT_RESULTS_DIR = Path(__file__).resolve().parent / ".results"
 MIB = 1024 * 1024
+DEFAULT_MEMORY_LIMIT_MIB = 1536
+DEFAULT_TIMEOUT_CAP_S = 60
 DEFAULT_BUDGETS = {
     "small": Budget(192 * MIB, 256 * MIB, 1.5, 3.0),
     "medium": Budget(256 * MIB, 384 * MIB, 2.0, 5.0),
@@ -97,6 +99,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--results-dir", default=str(DEFAULT_RESULTS_DIR))
     parser.add_argument(
+        "--memory-limit-mib", type=int, default=DEFAULT_MEMORY_LIMIT_MIB
+    )
+    parser.add_argument("--timeout-cap-s", type=int, default=DEFAULT_TIMEOUT_CAP_S)
+    parser.add_argument(
         "--baseline",
         type=Path,
         help="Baseline médiane (minimum trois runs) pour les gates +20 %% / +35 %%",
@@ -108,6 +114,10 @@ def main(argv: list[str] | None = None) -> int:
         help="Garde ratio historique optionnelle, en complément des budgets absolus",
     )
     args = parser.parse_args(argv)
+    if args.memory_limit_mib <= 0:
+        parser.error("--memory-limit-mib doit être strictement positif")
+    if args.timeout_cap_s <= 0:
+        parser.error("--timeout-cap-s doit être strictement positif")
 
     try:
         baselines = (
@@ -163,8 +173,9 @@ def main(argv: list[str] | None = None) -> int:
                 cmd_args = scenario.build_args(binary_path, out_dir)
                 measured = run_measured(
                     [sys.executable, str(script_path), *cmd_args],
-                    timeout_s=scenario.timeout_s,
+                    timeout_s=min(scenario.timeout_s, args.timeout_cap_s),
                     env=script_env,
+                    memory_limit_bytes=args.memory_limit_mib * MIB,
                 )
                 results.append(
                     Result(
@@ -175,6 +186,7 @@ def main(argv: list[str] | None = None) -> int:
                         elapsed_s=measured["elapsed_s"],
                         returncode=measured["returncode"],
                         timed_out=measured["timed_out"],
+                        memory_limited=measured["memory_limited"],
                     )
                 )
 

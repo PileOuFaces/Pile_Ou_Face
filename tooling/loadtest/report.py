@@ -20,6 +20,7 @@ class Result:
     elapsed_s: float
     returncode: int | None
     timed_out: bool
+    memory_limited: bool = False
 
 
 @dataclass(frozen=True)
@@ -76,6 +77,8 @@ def evaluate_result(
     """
     if result.timed_out:
         return Evaluation("timeout", ("timeout",))
+    if result.memory_limited:
+        return Evaluation("memory_limit", ("process_memory_limit",))
     if result.returncode != 0:
         return Evaluation("error", ("returncode",))
 
