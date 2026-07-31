@@ -1269,7 +1269,8 @@ function createHub(config) {
       const hasBufferSize = payload.bufferSize !== null && payload.bufferSize !== undefined && payload.bufferSize !== '';
       const bufferOffset = hasBufferOffset ? String(payload.bufferOffset) : null;
       const bufferSize = hasBufferSize ? String(payload.bufferSize) : null;
-      const maxSteps = String(payload.maxSteps || '800');
+      const requestedMaxSteps = Number(payload.maxSteps ?? 800);
+      const maxSteps = String(requestedMaxSteps);
       const telemetryInput = payload.input && typeof payload.input === 'object' ? payload.input : {};
       const telemetryPayloadMode = mapPayloadMode(telemetryInput.mode || payload.payloadMode);
       const runTelemetry = createRunTraceTelemetry({
@@ -1338,6 +1339,11 @@ function createHub(config) {
           runTelemetry.complete(false);
           runTraceResult = 'completed';
         } else {
+          if (!Number.isInteger(requestedMaxSteps) || requestedMaxSteps < 1 || requestedMaxSteps > 10000) {
+            runTelemetry.fail('invalid_input');
+            vscode.window.showErrorMessage('Le nombre de pas doit etre compris entre 1 et 10 000.');
+            return;
+          }
           if (useExistingBinary && !binaryPath) {
             runTelemetry.fail('invalid_input');
             vscode.window.showErrorMessage('Chemin binaire requis.');

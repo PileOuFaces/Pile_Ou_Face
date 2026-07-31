@@ -1283,6 +1283,12 @@ def trace_raw(
         "crash": crash,
         "meta": {
             "steps": collector.step,
+            "trace_bytes": collector.trace_bytes,
+            "trace_limit_reached": collector.trace_limit_reached,
+            "trace_limit_bytes": config.max_trace_bytes,
+            "truncation_reason": (
+                "max_trace_bytes" if collector.trace_limit_reached else None
+            ),
             "error": error,
             "base": hex(load_base),
             "stack_base": hex(config.stack_base),
@@ -1598,6 +1604,12 @@ def trace_elf(
         "crash": crash,
         "meta": {
             "steps": collector.step,
+            "trace_bytes": collector.trace_bytes,
+            "trace_limit_reached": collector.trace_limit_reached,
+            "trace_limit_bytes": config.max_trace_bytes,
+            "truncation_reason": (
+                "max_trace_bytes" if collector.trace_limit_reached else None
+            ),
             "error": error,
             "base": hex(base),
             "stack_base": hex(config.stack_base),

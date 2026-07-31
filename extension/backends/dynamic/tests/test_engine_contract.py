@@ -39,6 +39,25 @@ class FakeEngine:
         }
 
 
+class SizeLimitedFakeEngine(FakeEngine):
+    def trace_binary(
+        self,
+        code_bytes: bytes,
+        config: TraceConfigLike,
+        binary_path: str | None,
+    ) -> dict:
+        result = super().trace_binary(code_bytes, config, binary_path)
+        result["meta"].update(
+            {
+                "trace_bytes": 63,
+                "trace_limit_bytes": 64,
+                "trace_limit_reached": True,
+                "truncation_reason": "max_trace_bytes",
+            }
+        )
+        return result
+
+
 class TestDynamicEngineContract(unittest.TestCase):
     def test_pipeline_accepts_execution_engine_contract(self):
         with TemporaryDirectory() as tmp:
@@ -62,6 +81,22 @@ class TestDynamicEngineContract(unittest.TestCase):
 
         self.assertIsInstance(engine, ExecutionEngine)
         self.assertEqual(engine.name, "unicorn")
+
+    def test_pipeline_exposes_size_truncation_as_non_crash_diagnostic(self):
+        with TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "sample.bin"
+            binary.write_bytes(b"\x90\xc3")
+
+            result = run_pipeline(
+                str(binary), None, object(), None, engine=SizeLimitedFakeEngine()
+            )
+
+        self.assertIsNone(result["crash"])
+        self.assertEqual(result["meta"]["truncation_reason"], "max_trace_bytes")
+        self.assertEqual(
+            [diag["kind"] for diag in result["diagnostics"]],
+            ["trace_size_limit_reached"],
+        )
 
     def test_unicorn_trace_config_satisfies_config_contract(self):
         config = TraceConfig(
