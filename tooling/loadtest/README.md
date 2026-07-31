@@ -36,6 +36,7 @@ python3 -m tooling.loadtest --scenario strings
 python3 -m tooling.loadtest --size large
 python3 -m tooling.loadtest --results-dir /tmp/my-results
 python3 -m tooling.loadtest --max-ratio 50
+python3 -m tooling.loadtest --baseline tooling/loadtest/baselines/ubuntu-medium.json
 ```
 
 - `--scenario NAME` — run a single scenario. Default: run all of them.
@@ -51,6 +52,9 @@ python3 -m tooling.loadtest --max-ratio 50
 - `--max-ratio RATIO` — optional legacy peak-RSS/binary-size guard. It is
   disabled by default because fixed Python startup costs make this ratio
   misleading, especially for small files.
+- `--baseline FILE` — compare each scenario/profile with a promoted median
+  baseline. More than +20% is a warning and more than +35% is a blocking
+  `regression_limit`, even when the absolute budget still passes.
 
 Default budgets:
 
@@ -64,6 +68,21 @@ Scenario-specific calibration: `entropy` on the `medium` profile uses a 4 s
 duration warning and an 8 s failure limit. Its full byte-by-byte scan measured
 5.85 s on the GitHub-hosted Linux runner; the other medium scenarios keep the
 stricter generic 2 s / 5 s limits.
+
+Promote a baseline only from at least three complete reports produced by the
+same machine architecture and Python minor version:
+
+```bash
+python3 -m tooling.loadtest.baseline run1.json run2.json run3.json \
+  --output tooling/loadtest/baselines/ubuntu-medium.json
+```
+
+The command uses the median RSS and duration for every scenario/profile. It
+rejects fewer than three samples, mixed environments, and different scenario
+sets. This prevents a single noisy run or an incomplete matrix from becoming
+the CI reference. Failed reports are rejected, and the loadtest refuses a
+baseline whose architecture, Python minor version, or scenario coverage does
+not match the current run.
 
 Exit code: `0` for `ok` and `warning` results, `1` for `memory_limit`,
 `duration_limit`, `error`, or `timeout`, and `2` for an unknown scenario or

@@ -5,6 +5,7 @@ on:
     branches: [main, develops]
     paths:
       - 'extension/**'
+      - 'tooling/loadtest/**'
       - '.github/workflows/ci.yml'
       - '.github/workflows/publish.yml'
 

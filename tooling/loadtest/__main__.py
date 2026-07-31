@@ -15,6 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from loadtest.fixtures import build_fixture
+from loadtest.baseline import load_baseline
 from loadtest.report import Budget, Result, all_ok, format_summary_table, to_json
 from loadtest.runner import run_measured
 from loadtest.scenarios import FIXTURE_PROFILES, SCENARIOS
@@ -96,12 +97,30 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--results-dir", default=str(DEFAULT_RESULTS_DIR))
     parser.add_argument(
+        "--baseline",
+        type=Path,
+        help="Baseline médiane (minimum trois runs) pour les gates +20 %% / +35 %%",
+    )
+    parser.add_argument(
         "--max-ratio",
         type=float,
         default=None,
         help="Garde ratio historique optionnelle, en complément des budgets absolus",
     )
     args = parser.parse_args(argv)
+
+    try:
+        baselines = (
+            load_baseline(
+                args.baseline,
+                expected_machine=platform.machine(),
+                expected_python=platform.python_version(),
+            )
+            if args.baseline
+            else None
+        )
+    except (OSError, ValueError) as error:
+        parser.error(str(error))
 
     scenarios = [s for s in SCENARIOS if not args.scenario or s.name == args.scenario]
     profiles = [p for p in FIXTURE_PROFILES if not args.size or p.name == args.size]
@@ -159,6 +178,19 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 )
 
+    if baselines:
+        missing = {
+            (result.scenario, result.fixture)
+            for result in results
+            if (result.scenario, result.fixture) not in baselines
+        }
+        if missing:
+            names = ", ".join(
+                f"{scenario}/{fixture}" for scenario, fixture in sorted(missing)
+            )
+            print(f"Baseline incomplète : {names}", file=sys.stderr)
+            return 2
+
     results_dir = Path(args.results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
     report_path = results_dir / f"loadtest_{int(time.time())}.json"
@@ -178,6 +210,7 @@ def main(argv: list[str] | None = None) -> int:
             DEFAULT_BUDGETS,
             metadata,
             scenario_budgets=SCENARIO_BUDGETS,
+            baselines=baselines,
             max_ratio=args.max_ratio,
         ),
         encoding="utf-8",
@@ -188,6 +221,7 @@ def main(argv: list[str] | None = None) -> int:
             results,
             DEFAULT_BUDGETS,
             scenario_budgets=SCENARIO_BUDGETS,
+            baselines=baselines,
             max_ratio=args.max_ratio,
         )
     )
@@ -199,6 +233,7 @@ def main(argv: list[str] | None = None) -> int:
             results,
             DEFAULT_BUDGETS,
             scenario_budgets=SCENARIO_BUDGETS,
+            baselines=baselines,
             max_ratio=args.max_ratio,
         )
         else 1

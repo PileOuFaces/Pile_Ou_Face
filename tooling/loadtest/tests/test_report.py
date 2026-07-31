@@ -7,6 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from loadtest.report import (  # noqa: E402
+    Baseline,
     Budget,
     Result,
     all_ok,
@@ -94,6 +95,36 @@ class TestEvaluateResult(unittest.TestCase):
         result = make_result(binary_size_bytes=1 * MIB, peak_rss_bytes=20 * MIB)
         self.assertEqual(check_threshold(result, max_ratio=10.0), "exceeded")
 
+    def test_baseline_warning_at_more_than_twenty_percent(self):
+        evaluation = evaluate_result(
+            make_result(peak_rss_bytes=121 * MIB, elapsed_s=1.21),
+            BUDGETS["medium"],
+            baseline=Baseline(100 * MIB, 1.0),
+        )
+        self.assertEqual(evaluation.status, "warning")
+        self.assertEqual(
+            evaluation.reasons,
+            ("rss_regression_warn", "duration_regression_warn"),
+        )
+
+    def test_baseline_failure_at_more_than_thirty_five_percent(self):
+        evaluation = evaluate_result(
+            make_result(peak_rss_bytes=136 * MIB),
+            BUDGETS["medium"],
+            baseline=Baseline(100 * MIB, 0.5),
+        )
+        self.assertEqual(evaluation.status, "regression_limit")
+        self.assertEqual(evaluation.reasons, ("rss_regression_fail",))
+        self.assertTrue(evaluation.blocking)
+
+    def test_exact_baseline_limits_are_allowed(self):
+        evaluation = evaluate_result(
+            make_result(peak_rss_bytes=135 * MIB, elapsed_s=1.35),
+            BUDGETS["medium"],
+            baseline=Baseline(100 * MIB, 1.0),
+        )
+        self.assertEqual(evaluation.status, "warning")
+
 
 class TestAllOk(unittest.TestCase):
     def test_warnings_pass_but_limits_fail(self):
@@ -113,6 +144,16 @@ class TestAllOk(unittest.TestCase):
         self.assertTrue(all_ok([slow_entropy], BUDGETS, scenario_budgets=overrides))
         self.assertFalse(all_ok([slow_disasm], BUDGETS, scenario_budgets=overrides))
 
+    def test_baseline_regression_is_blocking(self):
+        baselines = {("disasm", "medium"): Baseline(100 * MIB, 1.0)}
+        self.assertFalse(
+            all_ok(
+                [make_result(peak_rss_bytes=140 * MIB)],
+                BUDGETS,
+                baselines=baselines,
+            )
+        )
+
 
 class TestFormatting(unittest.TestCase):
     def test_json_contains_metadata_budgets_status_and_ratio(self):
@@ -123,11 +164,12 @@ class TestFormatting(unittest.TestCase):
                 {"commit": "abc", "python": "3.11"},
             )
         )
-        self.assertEqual(payload["schema_version"], 2)
+        self.assertEqual(payload["schema_version"], 3)
         self.assertEqual(payload["metadata"]["commit"], "abc")
         self.assertEqual(payload["results"][0]["status"], "ok")
         self.assertEqual(payload["results"][0]["budget"]["fail_duration_s"], 5.0)
         self.assertGreater(payload["results"][0]["rss_ratio"], 0)
+        self.assertEqual(payload["regression_thresholds"]["warn_ratio"], 1.2)
 
     def test_summary_table_includes_explicit_status(self):
         table = format_summary_table(
@@ -154,6 +196,15 @@ class TestFormatting(unittest.TestCase):
         self.assertEqual(payload["results"][0]["budget"]["fail_duration_s"], 8.0)
         self.assertEqual(payload["results"][0]["status"], "warning")
         self.assertIn("warning", table)
+
+    def test_json_exposes_baseline_ratios(self):
+        baselines = {("disasm", "medium"): Baseline(100 * MIB, 0.5)}
+        payload = json.loads(to_json([make_result()], BUDGETS, {}, baselines=baselines))
+        row = payload["results"][0]
+
+        self.assertEqual(row["baseline"]["peak_rss_bytes"], 100 * MIB)
+        self.assertEqual(row["baseline_rss_ratio"], 1.0)
+        self.assertEqual(row["baseline_duration_ratio"], 1.0)
 
 
 if __name__ == "__main__":
