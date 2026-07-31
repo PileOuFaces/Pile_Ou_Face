@@ -746,6 +746,7 @@ function renderDecompilePayload(container, payload) {
     addr: decompileUiState.renderedAddr,
     functionName: payload.funcName || '',
     code,
+    functions: Array.isArray(result.functions) ? result.functions : [],
   });
   const wrap = document.createElement('div');
   const callTargets = extractDecompileCallTargets(code, payload.addr);

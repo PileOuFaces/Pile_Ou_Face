@@ -36,8 +36,11 @@
       state.loading = Boolean(value);
       const button = el('btnAugmentDecompile');
       if (button) {
-        button.disabled = state.loading || !state.source?.addr;
+        button.disabled = state.loading || !state.source?.code;
         button.textContent = state.loading ? '✦ Analyse…' : '✦ Augmenter';
+        button.title = state.source?.addr
+          ? 'Proposer des noms, types et commentaires pour cette fonction'
+          : 'Choisissez une fonction avant de lancer l’augmentation';
       }
     }
 
@@ -81,7 +84,11 @@
     }
 
     function request() {
-      if (!state.source?.addr || state.loading) return false;
+      if (!state.source?.code || state.loading) return false;
+      if (!state.source.addr) {
+        setStatus('Choisissez une fonction dans la liste avant de lancer l’augmentation IA.', 'warning');
+        return false;
+      }
       setBusy(true);
       setStatus('Analyse structurée en cours…', 'progress');
       postMessage({ type: 'hubAugmentDecompile', ...state.source });
@@ -109,16 +116,31 @@
     }
 
     function setSource(source) {
+      const functions = Array.isArray(source?.functions) ? source.functions : [];
+      const singleFunction = functions.length === 1 ? functions[0] : null;
+      const normalized = source?.code ? {
+        ...source,
+        addr: source.addr || singleFunction?.addr || '',
+        functionName: source.functionName || singleFunction?.name || '',
+        code: source.addr || !singleFunction?.code ? source.code : String(singleFunction.code),
+      } : null;
       const changed = !state.source
-        || state.source.binaryPath !== source?.binaryPath
-        || state.source.addr !== source?.addr
-        || state.source.code !== source?.code;
-      state.source = source?.addr ? { ...source } : null;
+        || state.source.binaryPath !== normalized?.binaryPath
+        || state.source.addr !== normalized?.addr
+        || state.source.code !== normalized?.code;
+      state.source = normalized;
       if (changed) {
         state.result = null;
         const panel = el('decompileAugmentReview');
         if (panel) panel.hidden = true;
-        setStatus(state.source ? 'Optionnel : obtenez des noms, types et commentaires proposés par l’IA.' : 'Sélectionnez une fonction pour activer l’augmentation.', '');
+        setStatus(
+          state.source?.addr
+            ? 'Optionnel : obtenez des noms, types et commentaires proposés par l’IA.'
+            : state.source?.code
+              ? 'Pseudo-code prêt. Choisissez une fonction pour lancer l’augmentation IA.'
+              : 'Décompilez puis choisissez une fonction pour activer l’augmentation.',
+          '',
+        );
       }
       setBusy(false);
     }

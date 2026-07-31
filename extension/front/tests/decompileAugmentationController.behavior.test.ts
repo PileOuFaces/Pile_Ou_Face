@@ -56,12 +56,24 @@ describe('decompileAugmentationController', () => {
     expect(controllerModule.flattenItems(null)).to.deep.equal([]);
   });
 
-  it('keeps augmentation disabled until a single function is rendered', () => {
+  it('enables augmentation when code exists and explains when a function is still required', () => {
     const { controller, document } = fixture();
     controller.setSource({ binaryPath: '/tmp/a', addr: '', code: 'int main(){}' });
-    expect(document.getElementById('btnAugmentDecompile').disabled).to.equal(true);
+    expect(document.getElementById('btnAugmentDecompile').disabled).to.equal(false);
+    expect(controller.request()).to.equal(false);
+    expect(document.getElementById('decompileAugmentStatus').textContent).to.contain('Choisissez une fonction');
     controller.setSource({ binaryPath: '/tmp/a', addr: '0x1', code: 'int main(){}' });
     expect(document.getElementById('btnAugmentDecompile').disabled).to.equal(false);
+  });
+
+  it('uses the only function returned by a global decompilation', () => {
+    const { controller, posted } = fixture();
+    controller.setSource({
+      binaryPath: '/tmp/a', addr: '', code: '// 0x10\nint only(){}',
+      functions: [{ addr: '0x10', name: 'only', code: 'int only(){}' }],
+    });
+    expect(controller.request()).to.equal(true);
+    expect(posted[0]).to.include({ addr: '0x10', functionName: 'only', code: 'int only(){}' });
   });
 
   it('posts only the current function when requesting suggestions', () => {
