@@ -83,6 +83,13 @@ class TestEvaluateResult(unittest.TestCase):
         self.assertEqual(crash.status, "error")
         self.assertEqual(timeout.status, "timeout")
 
+    def test_process_memory_limit_is_distinct_from_crash(self):
+        evaluation = evaluate_result(
+            make_result(returncode=1, memory_limited=True), BUDGETS["medium"]
+        )
+        self.assertEqual(evaluation.status, "memory_limit")
+        self.assertEqual(evaluation.reasons, ("process_memory_limit",))
+
     def test_legacy_ratio_remains_an_optional_extra_gate(self):
         result = make_result(binary_size_bytes=1 * MIB, peak_rss_bytes=20 * MIB)
         without_ratio = evaluate_result(result, BUDGETS["medium"])

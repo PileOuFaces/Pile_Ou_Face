@@ -36,6 +36,7 @@ python3 -m tooling.loadtest --scenario strings
 python3 -m tooling.loadtest --size large
 python3 -m tooling.loadtest --results-dir /tmp/my-results
 python3 -m tooling.loadtest --max-ratio 50
+python3 -m tooling.loadtest --memory-limit-mib 1536 --timeout-cap-s 60
 python3 -m tooling.loadtest --baseline tooling/loadtest/baselines/ubuntu-medium.json
 ```
 
@@ -55,6 +56,11 @@ python3 -m tooling.loadtest --baseline tooling/loadtest/baselines/ubuntu-medium.
 - `--baseline FILE` — compare each scenario/profile with a promoted median
   baseline. More than +20% is a warning and more than +35% is a blocking
   `regression_limit`, even when the absolute budget still passes.
+- `--memory-limit-mib` and `--timeout-cap-s` — hard per-process safety guards,
+  defaulting to 1.5 GiB and 60 seconds. The memory guard watches the combined
+  RSS of the complete process tree and kills its process group at the limit.
+  A breach is reported as `memory_limit`, separately from `timeout` and a
+  normal backend error.
 
 Default budgets:
 
@@ -125,16 +131,15 @@ These are deliberate, known gaps — not oversights — flagged during review
 and deferred rather than fixed as part of the current scope.
 
 1. **The budgets include Python's fixed startup/import overhead.** They are
-   deliberately absolute and initially generous. A future baseline system
-   should compare median and p95 regressions on equivalent CI runners.
+   deliberately absolute and initially generous. The promoted median baseline
+   catches regressions on equivalent CI runners, but it does not remove that
+   fixed cost from the absolute RSS values.
 
-2. **Some large-profile scenarios currently expose real performance
-   pressure.** On local validation, `strings` in its default auto-encoding
-   mode timed out on the `large` profile even with a 300s timeout, and
-   `function_radar` reached tens of GB of peak RSS. That is not hidden by
-   the tool: those results should be treated as audit findings unless the
-   backend behavior is intentionally changed or the scenario is deliberately
-   split into a faster bounded variant.
+2. **`function_radar` on the large profile still exposes performance
+   pressure.** The guarded local validation completed below the blocking
+   limits, but remained above the 768 MiB warning budget. The hard 1.5 GiB
+   process-tree guard prevents the historical unbounded-memory failure mode;
+   the warning remains visible as an optimization target.
 
 3. **Synthetic padding controls size, not representative complexity.** A
    real 100–200 MB corpus per architecture is still required before #56 can

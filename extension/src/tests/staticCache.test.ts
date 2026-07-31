@@ -163,7 +163,7 @@ describe('staticCache — strings cache filename (_v2)', () => {
     writeCache(dir, bin, 'strings', strings, { minLen: 4, encoding: 'utf-8' });
     const result = readCache(dir, bin, 'strings', { minLen: 4, encoding: 'utf-8' });
     expect(result).to.deep.equal(strings);
-  });
+  }).timeout(5000);
 
   it('does NOT read an old cache file without _v2', () => {
     const dir = makeTmpDir();

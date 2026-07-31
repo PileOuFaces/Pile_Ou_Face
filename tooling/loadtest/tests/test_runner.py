@@ -11,11 +11,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from loadtest.runner import (
     parse_time_output_macos,
     parse_time_output_linux,
+    parse_process_tree_rss,
     run_measured,
 )
 
 
 class TestParseTimeOutput(unittest.TestCase):
+    def test_sums_only_the_selected_process_tree(self):
+        snapshot = "10 1 100\n11 10 200\n12 11 300\n20 1 999\ninvalid\n"
+        self.assertEqual(parse_process_tree_rss(snapshot, 10), 600 * 1024)
+
     def test_parses_macos_peak_memory_footprint(self):
         sample = (
             "        0.10 real         0.00 user         0.00 sys\n"
@@ -51,6 +56,17 @@ class TestRunMeasured(unittest.TestCase):
         self.assertEqual(result["returncode"], 0)
         self.assertGreater(result["peak_rss_bytes"], 5_000_000)
         self.assertGreaterEqual(result["elapsed_s"], 0)
+        self.assertFalse(result["memory_limited"])
+
+    def test_memory_limit_is_reported_separately(self):
+        script = "import time; x = bytearray(512 * 1024 * 1024); time.sleep(5)"
+        result = run_measured(
+            [sys.executable, "-c", script],
+            timeout_s=30,
+            memory_limit_bytes=256 * 1024 * 1024,
+        )
+        self.assertTrue(result["memory_limited"], result["stderr_tail"])
+        self.assertFalse(result["timed_out"])
 
     def test_captures_nonzero_exit_code_without_raising(self):
         result = run_measured(
