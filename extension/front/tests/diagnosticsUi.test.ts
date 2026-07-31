@@ -54,7 +54,7 @@ describe('dynamic diagnostics UI helpers', () => {
     expect(helpers.primaryDiagnostic(current)).to.equal(error);
   });
 
-  it('synthesizes a crash diagnostic from trace.crash for ASM and register highlights', () => {
+  it('treats a legacy unmapped ret without corruption evidence as a benign termination', () => {
     const crash = {
       type: 'unmapped_fetch',
       step: 4,
@@ -67,11 +67,77 @@ describe('dynamic diagnostics UI helpers', () => {
     const current = helpers.mergeCrashDiagnostic([], crash, 4);
 
     expect(current).to.have.length(1);
-    expect(current[0].kind).to.equal('fatal_crash');
+    expect(current[0].kind).to.equal('benign_termination');
+    expect(current[0].severity).to.equal('info');
     expect(helpers.diagnosticMatchesAddress(current[0], '0x401080', 'instructionAddress')).to.equal(true);
     const registers = helpers.diagnosticRegisters(current);
     expect(registers.has('rip')).to.equal(true);
     expect(registers.has('rsp')).to.equal(true);
+  });
+
+  it('keeps a legacy unmapped ret fatal when control corruption evidence exists', () => {
+    const crash = {
+      type: 'unmapped_fetch',
+      step: 4,
+      instructionAddress: '0x401080',
+      instructionText: 'ret',
+      suspectOverwrittenSlot: { kind: 'return_address', address: '0x7fffffffe008' },
+      payloadOffset: 72,
+    };
+
+    const diagnostic = helpers.crashDiagnosticForStep(crash, 4);
+
+    expect(diagnostic.kind).to.equal('fatal_crash');
+    expect(diagnostic.severity).to.equal('error');
+    expect(diagnostic.payloadOffset).to.equal(72);
+  });
+
+  it('removes unsupported source claims from legacy benign stops', () => {
+    const diagnostic = helpers.crashDiagnosticForStep({
+      type: 'unmapped_fetch',
+      step: 2,
+      instructionText: 'ret',
+      probableSource: 'argv[1]',
+    }, 2);
+
+    expect(diagnostic.kind).to.equal('benign_termination');
+    expect(diagnostic.probableSource).to.equal(null);
+    expect(diagnostic.payloadOffset).to.equal(null);
+  });
+
+  it('classifies a legacy control transfer without evidence as an emulator stop', () => {
+    const diagnostic = helpers.crashDiagnosticForStep({
+      type: 'unmapped_fetch',
+      step: 7,
+      instructionText: 'jmp rax',
+      payloadOffset: null,
+    }, 7);
+
+    expect(diagnostic.kind).to.equal('emulator_stop');
+    expect(diagnostic.severity).to.equal('info');
+  });
+
+  it('keeps a non-control legacy failure as a runtime crash', () => {
+    const diagnostic = helpers.crashDiagnosticForStep({
+      type: 'unmapped_write',
+      step: 8,
+      instructionText: 'mov [rax], ebx',
+    }, 8);
+
+    expect(diagnostic.kind).to.equal('runtime_crash');
+    expect(diagnostic.severity).to.equal('error');
+  });
+
+  it('preserves stack protector failures as explicit errors', () => {
+    const diagnostic = helpers.crashDiagnosticForStep({
+      classification: 'stack_chk_fail',
+      type: 'stack_chk_fail',
+      step: 9,
+    }, 9);
+
+    expect(diagnostic.kind).to.equal('stack_chk_fail');
+    expect(diagnostic.severity).to.equal('error');
+    expect(helpers.diagnosticKindLabel(diagnostic.kind)).to.equal('Protection de pile déclenchée');
   });
 
   it('keeps crash ASM diagnostics available outside the selected step', () => {
