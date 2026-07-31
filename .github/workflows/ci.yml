@@ -5,6 +5,7 @@ on:
     branches: [main, develops]
     paths:
       - 'extension/**'
+      - 'tooling/loadtest/**'
       - '.github/workflows/ci.yml'
       - '.github/workflows/publish.yml'
 
@@ -585,7 +586,11 @@ jobs:
           pip install -r extension/backends/requirements-ci.txt
 
       - name: Enforce medium backend performance budgets
-        run: python3 -m tooling.loadtest --size medium --results-dir "${{ runner.temp }}/backend-loadtest"
+        run: >-
+          python3 -m tooling.loadtest
+          --size medium
+          --baseline tooling/loadtest/baselines/ubuntu-latest-python311-medium.json
+          --results-dir "${{ runner.temp }}/backend-loadtest"
 
       - name: Upload loadtest report
         if: always()

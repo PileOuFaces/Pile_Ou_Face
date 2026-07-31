@@ -7,6 +7,9 @@ import json
 from dataclasses import asdict, dataclass
 from typing import Any
 
+REGRESSION_WARN_RATIO = 1.20
+REGRESSION_FAIL_RATIO = 1.35
+
 
 @dataclass
 class Result:
@@ -25,6 +28,12 @@ class Budget:
     fail_rss_bytes: int
     warn_duration_s: float
     fail_duration_s: float
+
+
+@dataclass(frozen=True)
+class Baseline:
+    peak_rss_bytes: int
+    elapsed_s: float
 
 
 @dataclass(frozen=True)
@@ -54,6 +63,9 @@ def evaluate_result(
     result: Result,
     budget: Budget,
     *,
+    baseline: Baseline | None = None,
+    regression_warn_ratio: float = REGRESSION_WARN_RATIO,
+    regression_fail_ratio: float = REGRESSION_FAIL_RATIO,
     max_ratio: float | None = None,
 ) -> Evaluation:
     """Évalue un résultat avec des plafonds absolus RAM et durée.
@@ -78,19 +90,30 @@ def evaluate_result(
         and result.peak_rss_bytes / result.binary_size_bytes > max_ratio
     ):
         reasons.append("ratio_fail")
+    if baseline is not None:
+        if result.peak_rss_bytes > baseline.peak_rss_bytes * regression_fail_ratio:
+            reasons.append("rss_regression_fail")
+        if result.elapsed_s > baseline.elapsed_s * regression_fail_ratio:
+            reasons.append("duration_regression_fail")
 
     if reasons:
-        status = (
-            "memory_limit"
-            if any(reason in {"rss_fail", "ratio_fail"} for reason in reasons)
-            else "duration_limit"
-        )
+        if any(reason in {"rss_fail", "ratio_fail"} for reason in reasons):
+            status = "memory_limit"
+        elif "duration_fail" in reasons:
+            status = "duration_limit"
+        else:
+            status = "regression_limit"
         return Evaluation(status, tuple(reasons))
 
     if result.peak_rss_bytes > budget.warn_rss_bytes:
         reasons.append("rss_warn")
     if result.elapsed_s > budget.warn_duration_s:
         reasons.append("duration_warn")
+    if baseline is not None:
+        if result.peak_rss_bytes > baseline.peak_rss_bytes * regression_warn_ratio:
+            reasons.append("rss_regression_warn")
+        if result.elapsed_s > baseline.elapsed_s * regression_warn_ratio:
+            reasons.append("duration_regression_warn")
     return Evaluation("warning" if reasons else "ok", tuple(reasons))
 
 
@@ -111,6 +134,7 @@ def all_ok(
     budgets: dict[str, Budget],
     *,
     scenario_budgets: dict[tuple[str, str], Budget] | None = None,
+    baselines: dict[tuple[str, str], Baseline] | None = None,
     max_ratio: float | None = None,
 ) -> bool:
     """True si aucun résultat ne dépasse un plafond bloquant."""
@@ -118,6 +142,9 @@ def all_ok(
         not evaluate_result(
             result,
             budget_for(result, budgets, scenario_budgets),
+            baseline=baselines.get((result.scenario, result.fixture))
+            if baselines
+            else None,
             max_ratio=max_ratio,
         ).blocking
         for result in results
@@ -130,16 +157,33 @@ def to_json(
     metadata: dict[str, Any],
     *,
     scenario_budgets: dict[tuple[str, str], Budget] | None = None,
+    baselines: dict[tuple[str, str], Baseline] | None = None,
     max_ratio: float | None = None,
 ) -> str:
     rows = []
     for result in results:
         budget = budget_for(result, budgets, scenario_budgets)
-        evaluation = evaluate_result(result, budget, max_ratio=max_ratio)
+        baseline = (
+            baselines.get((result.scenario, result.fixture)) if baselines else None
+        )
+        evaluation = evaluate_result(
+            result, budget, baseline=baseline, max_ratio=max_ratio
+        )
         rows.append(
             {
                 **asdict(result),
                 "budget": asdict(budget),
+                "baseline": asdict(baseline) if baseline else None,
+                "baseline_rss_ratio": (
+                    result.peak_rss_bytes / baseline.peak_rss_bytes
+                    if baseline and baseline.peak_rss_bytes > 0
+                    else None
+                ),
+                "baseline_duration_ratio": (
+                    result.elapsed_s / baseline.elapsed_s
+                    if baseline and baseline.elapsed_s > 0
+                    else None
+                ),
                 "status": evaluation.status,
                 "reasons": list(evaluation.reasons),
                 "rss_ratio": (
@@ -151,9 +195,13 @@ def to_json(
         )
     return json.dumps(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "metadata": metadata,
             "legacy_max_ratio": max_ratio,
+            "regression_thresholds": {
+                "warn_ratio": REGRESSION_WARN_RATIO,
+                "fail_ratio": REGRESSION_FAIL_RATIO,
+            },
             "results": rows,
         },
         indent=2,
@@ -165,6 +213,7 @@ def format_summary_table(
     budgets: dict[str, Budget],
     *,
     scenario_budgets: dict[tuple[str, str], Budget] | None = None,
+    baselines: dict[tuple[str, str], Baseline] | None = None,
     max_ratio: float | None = None,
 ) -> str:
     header = f"{'scenario':<18} {'fixture':<8} {'peak RSS (Mo)':>14} {'temps (s)':>10} {'statut':>16}"
@@ -176,6 +225,9 @@ def format_summary_table(
         evaluation = evaluate_result(
             result,
             budget_for(result, budgets, scenario_budgets),
+            baseline=baselines.get((result.scenario, result.fixture))
+            if baselines
+            else None,
             max_ratio=max_ratio,
         )
         rss_mb = result.peak_rss_bytes / (1024 * 1024)

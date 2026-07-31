@@ -43,7 +43,7 @@ class TestEndToEnd(unittest.TestCase):
             reports = list(Path(tmp).glob("loadtest_*.json"))
             self.assertEqual(len(reports), 1)
             payload = json.loads(reports[0].read_text(encoding="utf-8"))
-            self.assertEqual(payload["schema_version"], 2)
+            self.assertEqual(payload["schema_version"], 3)
             self.assertIn(payload["results"][0]["status"], {"ok", "warning"})
             self.assertIn("os", payload["metadata"])
 
