@@ -84,6 +84,11 @@ the CI reference. Failed reports are rejected, and the loadtest refuses a
 baseline whose architecture, Python minor version, or scenario coverage does
 not match the current run.
 
+The blocking Ubuntu medium job uses
+`baselines/ubuntu-latest-python311-medium.json`, promoted from three successful
+GitHub-hosted runner reports. Updating it requires the same three-report
+promotion process; a single faster or slower run must never replace it.
+
 Exit code: `0` for `ok` and `warning` results, `1` for `memory_limit`,
 `duration_limit`, `error`, or `timeout`, and `2` for an unknown scenario or
 profile. The JSON records the exact reasons, budgets, environment metadata,
