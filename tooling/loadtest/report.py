@@ -37,6 +37,19 @@ class Evaluation:
         return self.status not in {"ok", "warning"}
 
 
+def budget_for(
+    result: Result,
+    budgets: dict[str, Budget],
+    scenario_budgets: dict[tuple[str, str], Budget] | None = None,
+) -> Budget:
+    """Résout d'abord une exception scénario/profil, puis le budget du profil."""
+    if scenario_budgets is not None:
+        override = scenario_budgets.get((result.scenario, result.fixture))
+        if override is not None:
+            return override
+    return budgets[result.fixture]
+
+
 def evaluate_result(
     result: Result,
     budget: Budget,
@@ -97,12 +110,15 @@ def all_ok(
     results: list[Result],
     budgets: dict[str, Budget],
     *,
+    scenario_budgets: dict[tuple[str, str], Budget] | None = None,
     max_ratio: float | None = None,
 ) -> bool:
     """True si aucun résultat ne dépasse un plafond bloquant."""
     return all(
         not evaluate_result(
-            result, budgets[result.fixture], max_ratio=max_ratio
+            result,
+            budget_for(result, budgets, scenario_budgets),
+            max_ratio=max_ratio,
         ).blocking
         for result in results
     )
@@ -113,11 +129,12 @@ def to_json(
     budgets: dict[str, Budget],
     metadata: dict[str, Any],
     *,
+    scenario_budgets: dict[tuple[str, str], Budget] | None = None,
     max_ratio: float | None = None,
 ) -> str:
     rows = []
     for result in results:
-        budget = budgets[result.fixture]
+        budget = budget_for(result, budgets, scenario_budgets)
         evaluation = evaluate_result(result, budget, max_ratio=max_ratio)
         rows.append(
             {
@@ -147,6 +164,7 @@ def format_summary_table(
     results: list[Result],
     budgets: dict[str, Budget],
     *,
+    scenario_budgets: dict[tuple[str, str], Budget] | None = None,
     max_ratio: float | None = None,
 ) -> str:
     header = f"{'scenario':<18} {'fixture':<8} {'peak RSS (Mo)':>14} {'temps (s)':>10} {'statut':>16}"
@@ -157,7 +175,7 @@ def format_summary_table(
     for result in results:
         evaluation = evaluate_result(
             result,
-            budgets[result.fixture],
+            budget_for(result, budgets, scenario_budgets),
             max_ratio=max_ratio,
         )
         rss_mb = result.peak_rss_bytes / (1024 * 1024)

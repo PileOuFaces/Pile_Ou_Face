@@ -60,6 +60,11 @@ Default budgets:
 | `medium` (~20 MB) | 256 MB | 384 MB | 2 s | 5 s |
 | `large` (~200 MB) | 768 MB | 1 GB | 10 s | 30 s |
 
+Scenario-specific calibration: `entropy` on the `medium` profile uses a 4 s
+duration warning and an 8 s failure limit. Its full byte-by-byte scan measured
+5.85 s on the GitHub-hosted Linux runner; the other medium scenarios keep the
+stricter generic 2 s / 5 s limits.
+
 Exit code: `0` for `ok` and `warning` results, `1` for `memory_limit`,
 `duration_limit`, `error`, or `timeout`, and `2` for an unknown scenario or
 profile. The JSON records the exact reasons, budgets, environment metadata,

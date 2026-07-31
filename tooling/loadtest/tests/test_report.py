@@ -105,6 +105,14 @@ class TestAllOk(unittest.TestCase):
     def test_empty_list_returns_true(self):
         self.assertTrue(all_ok([], BUDGETS))
 
+    def test_scenario_budget_override_is_targeted(self):
+        slow_entropy = make_result(scenario="entropy", elapsed_s=6.0)
+        slow_disasm = make_result(scenario="disasm", elapsed_s=6.0)
+        overrides = {("entropy", "medium"): Budget(256 * MIB, 384 * MIB, 4.0, 8.0)}
+
+        self.assertTrue(all_ok([slow_entropy], BUDGETS, scenario_budgets=overrides))
+        self.assertFalse(all_ok([slow_disasm], BUDGETS, scenario_budgets=overrides))
+
 
 class TestFormatting(unittest.TestCase):
     def test_json_contains_metadata_budgets_status_and_ratio(self):
@@ -128,6 +136,24 @@ class TestFormatting(unittest.TestCase):
         )
         self.assertIn("disasm", table)
         self.assertIn("duration_limit", table)
+
+    def test_json_and_summary_use_scenario_override(self):
+        result = make_result(scenario="entropy", elapsed_s=6.0)
+        overrides = {("entropy", "medium"): Budget(256 * MIB, 384 * MIB, 4.0, 8.0)}
+
+        payload = json.loads(
+            to_json(
+                [result],
+                BUDGETS,
+                {},
+                scenario_budgets=overrides,
+            )
+        )
+        table = format_summary_table([result], BUDGETS, scenario_budgets=overrides)
+
+        self.assertEqual(payload["results"][0]["budget"]["fail_duration_s"], 8.0)
+        self.assertEqual(payload["results"][0]["status"], "warning")
+        self.assertIn("warning", table)
 
 
 if __name__ == "__main__":

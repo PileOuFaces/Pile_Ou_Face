@@ -585,14 +585,14 @@ jobs:
           pip install -r extension/backends/requirements-ci.txt
 
       - name: Enforce medium backend performance budgets
-        run: python3 -m tooling.loadtest --size medium --results-dir tooling/loadtest/.results
+        run: python3 -m tooling.loadtest --size medium --results-dir "${{ runner.temp }}/backend-loadtest"
 
       - name: Upload loadtest report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: backend-loadtest-report
-          path: tooling/loadtest/.results/loadtest_*.json
+          path: ${{ runner.temp }}/backend-loadtest/loadtest_*.json
           if-no-files-found: error
 
   # ══════════════════════════════════════════════════════════════
