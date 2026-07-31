@@ -25,6 +25,7 @@ describe('hubLoadDecompile parallel', () => {
     const staticHandlers = proxyquire('../static/staticHandlers', proxyStubs);
     return staticHandlers({
       root: '/workspace',
+      storageDir: '/storage',
       panel: { webview: { postMessage: (m) => posted.push(m) } },
       context: { globalState: { get: () => ({}), update: async () => {} } },
       logChannel: overrides.logChannel,
@@ -52,6 +53,58 @@ describe('hubLoadDecompile parallel', () => {
     const firstResult = posted.find(m => m.type === 'hubDecompile');
     expect(firstResult).to.exist;
     expect(firstResult.isSilentUpdate).to.equal(false);
+  });
+
+  it('augments one rendered function after checking provider consent', async () => {
+    const calls = [];
+    const execFile = sinon.stub().callsFake((bin, args, opts, cb) => {
+      calls.push(args);
+      if (args[0].endsWith('ai_consent.py')) {
+        cb(null, JSON.stringify({ consented: true }), '');
+        return;
+      }
+      cb(null, JSON.stringify({ ok: true, cache_key: 'a'.repeat(64), proposal: {}, raw_code: 'int f(){}', augmented_code: 'int f(){}' }), '');
+    });
+    const fsStub = {
+      existsSync: sinon.stub().returns(true),
+      statSync: sinon.stub().returns({ isDirectory: () => false }),
+      writeFileSync: sinon.stub(),
+      rmSync: sinon.stub(),
+    };
+    const posted = [];
+    const handlers = makeHandlers(execFile, posted, { fs: fsStub });
+    await handlers.hubAugmentDecompile({ binaryPath: '/bin/foo', addr: '0x1000', code: 'int f(){}' });
+    expect(calls.some(args => args.includes('--check'))).to.equal(true);
+    expect(calls.some(args => args.includes('suggest')), JSON.stringify({ calls, posted })).to.equal(true);
+    expect(fsStub.writeFileSync.calledOnce).to.equal(true);
+    expect(fsStub.rmSync.calledOnce).to.equal(true);
+    expect(posted.at(-1)).to.include({ type: 'hubDecompileAugmented', ok: true });
+  });
+
+  it('rejects augmentation before provider access when no function is selected', async () => {
+    const execFile = sinon.stub();
+    const posted = [];
+    const handlers = makeHandlers(execFile, posted);
+    await handlers.hubAugmentDecompile({ binaryPath: '/bin/foo', addr: '', code: 'int f(){}' });
+    expect(execFile.called).to.equal(false);
+    expect(posted[0]).to.include({ type: 'hubDecompileAugmented', ok: false });
+  });
+
+  it('persists accepted augmentation ids through the backend artifact', async () => {
+    const execFile = sinon.stub().callsFake((bin, args, opts, cb) => {
+      cb(null, JSON.stringify({ ok: true, accepted: true, accepted_ids: ['rename:v1'] }), '');
+    });
+    const fsStub = {
+      existsSync: sinon.stub().returns(true),
+      writeFileSync: sinon.stub(),
+      rmSync: sinon.stub(),
+    };
+    const posted = [];
+    const handlers = makeHandlers(execFile, posted, { fs: fsStub });
+    await handlers.hubAcceptDecompileAugmentation({ cacheKey: 'a'.repeat(64), selectedIds: ['rename:v1'] });
+    const written = JSON.parse(fsStub.writeFileSync.firstCall.args[1]);
+    expect(written.selected_ids).to.deep.equal(['rename:v1']);
+    expect(posted[0]).to.include({ type: 'hubDecompileAugmented', ok: true, accepted: true });
   });
 
   it('launches only one subprocess when decompiler is forced', async () => {

@@ -386,8 +386,29 @@
               </div>
               <div class="decompile-actions">
                 <button id="btnRebuildDecompile" type="button" class="btn btn-sm btn-secondary" title="Relancer la décompilation courante sans utiliser le cache webview">↻ Recalculer</button>
+                <button id="btnAugmentDecompile" type="button" class="btn btn-sm btn-secondary" disabled title="Proposer des renommages, types et commentaires sans réécrire librement le pseudo-C">✦ Augmenter</button>
                 <button type="button" class="btn btn-sm btn-primary" data-ai-context-view="decompile" title="Envoyer le pseudo-code visible dans le composeur IA">✦ Demander à l’IA</button>
               </div>
+            </div>
+            <div class="decompile-augment-shell" aria-live="polite">
+              <p id="decompileAugmentStatus" class="decompile-augment-status">Sélectionnez une fonction pour activer l’augmentation.</p>
+              <section id="decompileAugmentReview" class="decompile-augment-review modern-card" hidden>
+                <div class="decompile-augment-head">
+                  <div><p class="static-kicker">Revue IA</p><strong id="decompileAugmentSummary"></strong></div>
+                  <div class="decompile-augment-view-tabs" role="tablist" aria-label="Version du pseudo-code">
+                    <button type="button" class="btn btn-xs btn-secondary" data-augment-view="raw">Brut</button>
+                    <button type="button" class="btn btn-xs btn-secondary active" data-augment-view="augmented">Augmenté</button>
+                  </div>
+                </div>
+                <div class="decompile-augment-grid">
+                  <div id="decompileAugmentSuggestions" class="decompile-augment-suggestions"></div>
+                  <pre id="decompileAugmentCode" class="decompile-augment-code"></pre>
+                </div>
+                <div class="decompile-augment-footer">
+                  <span class="hint">L’IA propose uniquement des métadonnées ; le code et sa logique ne sont jamais réécrits librement.</span>
+                  <button id="btnAcceptDecompileAugment" type="button" class="btn btn-sm btn-primary">Accepter la sélection</button>
+                </div>
+              </section>
             </div>
             <div id="decompileContextBar" class="active-context-bar">
               <span class="active-context-chip active-context-chip-primary" data-role="function">Fonction: —</span>

@@ -1683,6 +1683,107 @@ function staticHandlers(config) {
         }
       }
     },
+    hubAugmentDecompile: async (message = {}) => {
+      const binaryPath = String(message.binaryPath || '').trim();
+      const addr = String(message.addr || '').trim();
+      const code = String(message.code || '');
+      const pythonEnv = buildPythonEnv();
+      const requestedProvider = String(message.aiProvider || '').trim();
+      const { provider, model } = resolveAutoTriageProviderModel(
+        { provider: requestedProvider && requestedProvider !== 'auto' ? requestedProvider : undefined, model: message.model },
+        pythonEnv,
+      );
+      const respond = (ok, resultOrError) => panel.webview.postMessage(ok
+        ? { type: 'hubDecompileAugmented', ok: true, result: resultOrError }
+        : { type: 'hubDecompileAugmented', ok: false, error: String(resultOrError || 'Augmentation impossible.') });
+      if (!binaryPath || !addr || !code.trim()) {
+        respond(false, 'Sélectionnez une fonction décompilée avant de lancer l’augmentation.');
+        return;
+      }
+      if (!fs.existsSync(binaryPath) || fs.statSync(binaryPath).isDirectory()) {
+        respond(false, 'Binaire introuvable.');
+        return;
+      }
+      let consented = false;
+      try {
+        const { stdout } = await runPython(['backends/mcp/ai_consent.py', '--provider', provider, '--check']);
+        consented = JSON.parse(stdout).consented === true;
+      } catch (err) {
+        if (typeof err?.stdout === 'string' && err.stdout.trim()) {
+          try { consented = JSON.parse(err.stdout).consented === true; } catch (_) { consented = false; }
+        } else {
+          respond(false, `Vérification du consentement impossible : ${err.message || err}`);
+          return;
+        }
+      }
+      if (!consented) {
+        const choice = await vscode.window.showWarningMessage(
+          `Le pseudo-code de cette fonction sera envoyé à "${provider}" pour proposer des annotations. Continuer ?`,
+          { modal: true },
+          'Autoriser',
+        );
+        if (choice !== 'Autoriser') {
+          respond(false, 'Augmentation annulée : consentement refusé.');
+          return;
+        }
+        try {
+          await runPython(['backends/mcp/ai_consent.py', '--provider', provider, '--grant']);
+        } catch (err) {
+          respond(false, `Impossible d’enregistrer le consentement : ${err.message || err}`);
+          return;
+        }
+      }
+      const inputPath = path.join(os.tmpdir(), `pof-decompile-augment-${crypto.randomUUID()}.json`);
+      try {
+        fs.writeFileSync(inputPath, JSON.stringify({
+          binary_path: binaryPath,
+          addr,
+          code: code.slice(0, 32000),
+          function_name: String(message.functionName || ''),
+          provider,
+          model,
+          language: vscode.env?.language?.toLowerCase().startsWith('fr') ? 'French' : 'English',
+          cache_dir: getHostArtifactRoot('static_cache'),
+          use_cache: message.useCache !== false,
+        }), { encoding: 'utf8', mode: 0o600 });
+        const { stdout } = await runPython(
+          ['backends/static/decompile/augment.py', '--input', inputPath, '--action', 'suggest'],
+          { timeout: 120000 },
+        );
+        const result = JSON.parse(stdout);
+        if (!result.ok) throw new Error(result.error || 'Réponse invalide');
+        respond(true, result);
+      } catch (err) {
+        respond(false, err.message || err);
+      } finally {
+        try { fs.rmSync(inputPath, { force: true }); } catch (err) {
+          logDebug(`[decompile-augment] cleanup failed: ${err.message || err}`);
+        }
+      }
+    },
+    hubAcceptDecompileAugmentation: async (message = {}) => {
+      const inputPath = path.join(os.tmpdir(), `pof-decompile-accept-${crypto.randomUUID()}.json`);
+      try {
+        fs.writeFileSync(inputPath, JSON.stringify({
+          cache_key: String(message.cacheKey || ''),
+          selected_ids: Array.isArray(message.selectedIds) ? message.selectedIds : [],
+          cache_dir: getHostArtifactRoot('static_cache'),
+        }), { encoding: 'utf8', mode: 0o600 });
+        const { stdout } = await runPython(
+          ['backends/static/decompile/augment.py', '--input', inputPath, '--action', 'accept'],
+          { timeout: 30000 },
+        );
+        const result = JSON.parse(stdout);
+        if (!result.ok) throw new Error(result.error || 'Réponse invalide');
+        panel.webview.postMessage({ type: 'hubDecompileAugmented', ok: true, accepted: true, result });
+      } catch (err) {
+        panel.webview.postMessage({ type: 'hubDecompileAugmented', ok: false, error: String(err.message || err) });
+      } finally {
+        try { fs.rmSync(inputPath, { force: true }); } catch (err) {
+          logDebug(`[decompile-augment] cleanup failed: ${err.message || err}`);
+        }
+      }
+    },
     hubLoadDecompile: async (message) => {
       const { binaryPath, addr, funcName, full, decompiler, provider, useCache = true } = message;
       const decompilersJsonPath = storageDir ? path.join(storageDir, 'decompilers.json') : '';

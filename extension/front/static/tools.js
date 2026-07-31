@@ -736,10 +736,17 @@ function renderDecompilePayload(container, payload) {
   decompileUiState.selectedAddr = payload.full ? '' : (payload.addr || decompileUiState.selectedAddr);
   if (result.error) {
     cancelPendingDecompileHighlight();
+    window.decompileAugmentationController?.setSource(null);
     container.textContent = `Erreur : ${_ERROR_TYPE_MESSAGES[result.error_type] || result.error}`;
     return;
   }
   const code = result.code || (result.functions || []).map((f) => `// ${f.addr}\n${f.code}`).join('\n\n');
+  window.decompileAugmentationController?.setSource({
+    binaryPath: decompileUiState.renderedBinaryPath,
+    addr: decompileUiState.renderedAddr,
+    functionName: payload.funcName || '',
+    code,
+  });
   const wrap = document.createElement('div');
   const callTargets = extractDecompileCallTargets(code, payload.addr);
   const addressTargets = extractDecompileAddressTargets(code, payload.addr);
