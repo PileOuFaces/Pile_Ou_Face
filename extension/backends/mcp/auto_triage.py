@@ -32,9 +32,13 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from backends.mcp.ai_provider import call_provider_result
+from backends.mcp.ai_provider import call_provider_result, resolve_provider_model
 from backends.mcp.server import _call_tool
-from backends.static.annotations.annotations import AnnotationStore
+from backends.static.annotations.annotations import (
+    KIND_COMMENT,
+    KIND_RENAME,
+    AnnotationStore,
+)
 
 # Keep in sync with src/dynamic/pedagogy.ts:IGNORE_FOCUS_FUNCTIONS
 IGNORE_FOCUS_FUNCTIONS = {
@@ -114,6 +118,8 @@ REPORT_STRINGS: dict[str, dict[str, str]] = {
         "no_function_analyzed": "Aucune fonction n'a pu être analysée avec succès.",
         "summary_unavailable": "résumé indisponible",
         "malformed_response": "Fonction non analysée (réponse IA invalide).",
+        "tokens_used": "Tokens consommés",
+        "token_budget_reached": "budget total de tokens atteint",
     },
     "en": {
         "title": "AI Auto-triage Report",
@@ -142,6 +148,8 @@ REPORT_STRINGS: dict[str, dict[str, str]] = {
         "no_function_analyzed": "No function could be successfully analyzed.",
         "summary_unavailable": "summary unavailable",
         "malformed_response": "Function not analyzed (invalid AI response).",
+        "tokens_used": "Tokens used",
+        "token_budget_reached": "total token budget reached",
     },
 }
 
@@ -171,6 +179,7 @@ class TriageBudget:
     max_functions: int = 200
     max_seconds: float = 600.0
     max_tokens: int | None = None
+    max_total_tokens: int | None = None
 
 
 @dataclass
@@ -189,6 +198,7 @@ class FunctionAnalysis:
     docstring: str
     tags: list[str] = field(default_factory=list)
     error: str | None = None
+    usage_tokens: int = 0
 
 
 def _addr_to_int(addr: str) -> int:
@@ -252,6 +262,47 @@ def _strings_by_function(
     return result
 
 
+def _build_addr_name_map(
+    call_graph: dict, discovered_functions: list[dict]
+) -> dict[str, str]:
+    by_addr: dict[str, str] = {}
+    for node in call_graph.get("nodes", []):
+        addr = str(node.get("addr", ""))
+        if addr:
+            by_addr[addr] = str(node.get("name", "") or addr)
+    for func in discovered_functions:
+        addr = str(func.get("addr", ""))
+        if addr and addr not in by_addr:
+            by_addr[addr] = str(func.get("name", "") or addr)
+
+    # call_graph nodes are keyed by call-instruction address, not necessarily
+    # a real function entry: find_caller() (call_graph.py) names a node after
+    # the nearest preceding symbol, so an obfuscated function with many
+    # internal call sites (e.g. "main") surfaces as one node per call site,
+    # all sharing that same name. Collapse those back to a single candidate:
+    # the real entry from discover_functions when known, otherwise the
+    # lowest address sharing the name (best-effort entry-point guess).
+    known_func_addr_by_name = {
+        str(f.get("name", "")): str(f.get("addr", ""))
+        for f in discovered_functions
+        if f.get("addr")
+    }
+    deduped: dict[str, str] = {}
+    lowest_addr_by_name: dict[str, str] = {}
+    for addr, name in by_addr.items():
+        known_addr = known_func_addr_by_name.get(name)
+        if known_addr is not None:
+            if addr == known_addr:
+                deduped[addr] = name
+            continue
+        current = lowest_addr_by_name.get(name)
+        if current is None or _addr_to_int(addr) < _addr_to_int(current):
+            lowest_addr_by_name[name] = addr
+    for name, addr in lowest_addr_by_name.items():
+        deduped[addr] = name
+    return deduped
+
+
 def select_candidate_functions(
     call_graph: dict,
     discovered_functions: list[dict],
@@ -262,23 +313,21 @@ def select_candidate_functions(
 ) -> list[FunctionCandidate]:
     """Rank and truncate candidate functions to analyze.
 
-    Excludes ignored runtime-startup symbols and any address that already
-    carries an annotation, human-authored or from a previous auto-triage
-    run. This is what lets a run resumed after cancellation (e.g. the user
-    switched to a different working file mid-run) pick up only the
-    functions that were not yet processed, instead of redoing work.
+    Excludes ignored runtime-startup symbols and addresses that already have
+    both a rename and a comment. Unrelated annotations (bookmark/review) and
+    partially annotated functions remain eligible so the missing slot can be
+    completed without overwriting a human-authored value.
     """
-    already_annotated_addrs = {row["addr"] for row in existing_annotations}
-
-    by_addr: dict[str, str] = {}
-    for node in call_graph.get("nodes", []):
-        addr = str(node.get("addr", ""))
-        if addr:
-            by_addr[addr] = str(node.get("name", "") or addr)
-    for func in discovered_functions:
-        addr = str(func.get("addr", ""))
-        if addr and addr not in by_addr:
-            by_addr[addr] = str(func.get("name", "") or addr)
+    completed_slots_by_addr: dict[str, set[str]] = {}
+    for row in existing_annotations:
+        if row.get("kind") in {KIND_RENAME, KIND_COMMENT}:
+            completed_slots_by_addr.setdefault(row["addr"], set()).add(row["kind"])
+    fully_annotated_addrs = {
+        addr
+        for addr, kinds in completed_slots_by_addr.items()
+        if {KIND_RENAME, KIND_COMMENT}.issubset(kinds)
+    }
+    by_addr = _build_addr_name_map(call_graph, discovered_functions)
 
     out_edges: dict[str, list[str]] = {}
     for edge in call_graph.get("edges", []):
@@ -291,7 +340,7 @@ def select_candidate_functions(
 
     candidates: list[FunctionCandidate] = []
     for addr, name in by_addr.items():
-        if name in IGNORE_FOCUS_FUNCTIONS or addr in already_annotated_addrs:
+        if name in IGNORE_FOCUS_FUNCTIONS or addr in fully_annotated_addrs:
             continue
 
         reasons: list[str] = []
@@ -352,6 +401,7 @@ def analyze_function(
     model: str | None,
     budget: TriageBudget,
     language: str = "en",
+    max_tokens_override: int | None = None,
 ) -> FunctionAnalysis:
     """Ask the configured AI provider to name/document one function.
 
@@ -380,20 +430,23 @@ def analyze_function(
         "You are analyzing a binary function for a reverse engineering tool.\n"
         "Respond STRICTLY in JSON with the keys: name (short, valid C identifier), "
         f"docstring (1-3 sentences, written in {language_name}), tags (list of keywords among: "
-        "network, crypto, filesystem, license, input, other).\n"
+        "network, crypto, filesystem, license, input, privilege-escalation, obfuscation, "
+        "anti-debug, persistence, other).\n"
         f"Address: {candidate.addr}\nSelection reasons: {', '.join(candidate.reasons) or 'none'}\n"
         "Code:\n" + code[:8000]
     )
 
     generation_options: dict[str, Any] = {}
-    if budget.max_tokens is not None:
-        generation_options["max_tokens"] = budget.max_tokens
+    request_max_tokens = max_tokens_override or budget.max_tokens
+    if request_max_tokens is not None:
+        generation_options["max_tokens"] = request_max_tokens
 
     try:
         result = call_provider_result(
             provider, prompt, code[:8000], model, None, generation_options or None
         )
         parsed = _extract_json_object(str(result.get("text", "")))
+        usage_tokens = int(result.get("usage", {}).get("total_tokens") or 0)
     except Exception as exc:  # provider/network failure must not abort the loop
         return FunctionAnalysis(
             addr=candidate.addr,
@@ -412,6 +465,7 @@ def analyze_function(
             docstring=_report_strings(language)["malformed_response"],
             tags=[],
             error="malformed_llm_response",
+            usage_tokens=usage_tokens,
         )
 
     generated_name = str(parsed.get("name", "") or "").strip()
@@ -425,6 +479,7 @@ def analyze_function(
         generated_name=generated_name,
         docstring=docstring,
         tags=tags,
+        usage_tokens=usage_tokens,
     )
 
 
@@ -443,11 +498,44 @@ def write_function_annotations(
     return {"name_written": name_written, "comment_written": comment_written}
 
 
+def _previously_annotated_analyses(
+    store: AnnotationStore, addr_to_name: dict[str, str], exclude_addrs: set[str]
+) -> list[FunctionAnalysis]:
+    """Reconstruct FunctionAnalysis entries for functions an earlier
+    auto-triage run already named/commented (source='ai' in the store).
+
+    Without this, a run resumed after everything is already annotated
+    (0 new candidates) would render a report from an empty `analyses`
+    list and overwrite the rich report from the earlier run with a
+    near-empty "no function analyzed" one, even though the store still
+    holds every annotation.
+    """
+    values_by_addr: dict[str, dict[str, str]] = {}
+    for row in store.list():
+        addr = row["addr"]
+        if row.get("source") != "ai" or addr in exclude_addrs:
+            continue
+        if row["kind"] == KIND_RENAME:
+            values_by_addr.setdefault(addr, {})["name"] = row["value"]
+        elif row["kind"] == KIND_COMMENT:
+            values_by_addr.setdefault(addr, {})["docstring"] = row["value"]
+    return [
+        FunctionAnalysis(
+            addr=addr,
+            name=addr_to_name.get(addr, addr),
+            generated_name=values.get("name", ""),
+            docstring=values.get("docstring", ""),
+        )
+        for addr, values in values_by_addr.items()
+    ]
+
+
 def synthesize_binary_summary(
     analyses: list[FunctionAnalysis],
     provider: str,
     model: str | None,
     language: str = "en",
+    max_tokens: int | None = None,
 ) -> dict[str, Any]:
     """Classify the binary from facts already extracted (heuristic tags),
     then make a single LLM call to phrase the summary — this bounds
@@ -469,6 +557,14 @@ def synthesize_binary_summary(
         return {
             "text": strings["no_function_analyzed"],
             "categories": categories,
+            "usage_tokens": 0,
+        }
+
+    if max_tokens is not None and max_tokens <= 0:
+        return {
+            "text": f"({strings['summary_unavailable']}: {strings['token_budget_reached']})",
+            "categories": categories,
+            "usage_tokens": 0,
         }
 
     language_name = LANGUAGE_NAMES.get(language, "English")
@@ -479,11 +575,16 @@ def synthesize_binary_summary(
         "any detail not present below:\n" + facts[:8000]
     )
     try:
-        result = call_provider_result(provider, prompt, facts[:8000], model)
+        options = {"max_tokens": max_tokens} if max_tokens is not None else None
+        result = call_provider_result(
+            provider, prompt, facts[:8000], model, None, options
+        )
         text = str(result.get("text", "")).strip()
+        usage_tokens = int(result.get("usage", {}).get("total_tokens") or 0)
     except Exception as exc:
         text = f"({strings['summary_unavailable']}: {exc})"
-    return {"text": text, "categories": categories}
+        usage_tokens = 0
+    return {"text": text, "categories": categories, "usage_tokens": usage_tokens}
 
 
 def render_markdown_report(
@@ -537,6 +638,7 @@ def render_markdown_report(
         f"- {s['processed']}: {stats.get('processed', 0)}",
         f"- {s['annotated']}: {stats.get('annotated', 0)}",
         f"- {s['duration']}: {stats.get('elapsed_s', 0):.1f}s",
+        f"- {s['tokens_used']}: {stats.get('tokens_used', 0)}",
     ]
     return "\n".join(lines)
 
@@ -553,6 +655,7 @@ def run_auto_triage(
     language: str = "en",
 ) -> dict[str, Any]:
     start = time.monotonic()
+    resolved_model = resolve_provider_model(provider, model)
 
     call_graph = _call_tool(
         "build_call_graph", {"mapping_path": mapping_path, "binary_path": binary_path}
@@ -586,13 +689,18 @@ def run_auto_triage(
                 "type": "selection_done",
                 "total": len(candidates),
                 "provider": provider,
-                "model": model or "",
+                "model": resolved_model,
+                "max_functions": budget.max_functions,
+                "max_seconds": budget.max_seconds,
+                "max_tokens": budget.max_tokens,
+                "max_total_tokens": budget.max_total_tokens,
             }
         )
 
         analyses: list[FunctionAnalysis] = []
         annotated_count = 0
         cancelled = False
+        tokens_used = 0
 
         for index, candidate in enumerate(candidates):
             if cancel_check():
@@ -611,6 +719,18 @@ def run_auto_triage(
                     }
                 )
                 break
+            if (
+                budget.max_total_tokens is not None
+                and tokens_used >= budget.max_total_tokens
+            ):
+                on_event(
+                    {
+                        "type": "budget_warning",
+                        "reason": "max_total_tokens",
+                        "tokens_used": tokens_used,
+                    }
+                )
+                break
 
             on_event(
                 {
@@ -621,10 +741,25 @@ def run_auto_triage(
                     "name": candidate.name,
                 }
             )
+            remaining_tokens = None
+            if budget.max_total_tokens is not None:
+                remaining_tokens = max(1, budget.max_total_tokens - tokens_used)
+            per_request_tokens = budget.max_tokens
+            if remaining_tokens is not None:
+                per_request_tokens = min(
+                    per_request_tokens or remaining_tokens, remaining_tokens
+                )
             analysis = analyze_function(
-                candidate, binary_path, provider, model, budget, language
+                candidate,
+                binary_path,
+                provider,
+                resolved_model,
+                budget,
+                language,
+                per_request_tokens,
             )
             analyses.append(analysis)
+            tokens_used += analysis.usage_tokens
 
             if cancel_check():
                 cancelled = True
@@ -654,15 +789,36 @@ def run_auto_triage(
                     }
                 )
 
-        summary = synthesize_binary_summary(analyses, provider, model, language)
+        addr_to_name = _build_addr_name_map(call_graph, discovered)
+        previous_analyses = _previously_annotated_analyses(
+            store, addr_to_name, {a.addr for a in analyses}
+        )
+        report_analyses = previous_analyses + analyses
+
+        summary_tokens = budget.max_tokens
+        if budget.max_total_tokens is not None:
+            remaining_tokens = max(0, budget.max_total_tokens - tokens_used)
+            summary_tokens = min(summary_tokens or remaining_tokens, remaining_tokens)
+        summary = synthesize_binary_summary(
+            report_analyses, provider, resolved_model, language, summary_tokens
+        )
+        tokens_used += int(summary.get("usage_tokens") or 0)
         stats = {
-            "processed": len(analyses),
-            "annotated": annotated_count,
+            "processed": len(report_analyses),
+            "annotated": annotated_count + len(previous_analyses),
             "elapsed_s": time.monotonic() - start,
             "cancelled": cancelled,
+            "tokens_used": tokens_used,
+            "max_total_tokens": budget.max_total_tokens,
         }
         report = render_markdown_report(
-            binary_path, analyses, summary, stats, provider, model, language
+            binary_path,
+            report_analyses,
+            summary,
+            stats,
+            provider,
+            resolved_model,
+            language,
         )
 
     on_event({"type": "summary", "summary": summary})
@@ -690,6 +846,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-functions", type=int, default=200)
     parser.add_argument("--max-seconds", type=float, default=600.0)
     parser.add_argument("--max-tokens", type=int, default=None)
+    parser.add_argument("--max-total-tokens", type=int, default=None)
     parser.add_argument("--cancel-flag-path", default=None)
     parser.add_argument("--report-out", default=None)
     parser.add_argument("--cache-db", default=None)
@@ -701,6 +858,7 @@ def main(argv: list[str] | None = None) -> int:
         max_functions=args.max_functions,
         max_seconds=args.max_seconds,
         max_tokens=args.max_tokens,
+        max_total_tokens=args.max_total_tokens,
     )
 
     def on_event(event: dict[str, Any]) -> None:

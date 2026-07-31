@@ -1,26 +1,139 @@
-/**
- * Auto-triage IA (#124) — pas d'UI dédiée : le suivi/cancel se fait via le
- * widget générique de front/shared/taskProgressController.js (en bas à
- * gauche). Ce contrôleur ne fait que résoudre le provider/modèle courant et
- * déclencher le run quand on lui demande d'ouvrir un binaire.
- */
+/** Auto-triage IA (#124) — carte, confirmation et synchronisation du suivi. */
 (function initAutoTriageController(global) {
   function resolveProviderAndModel() {
-    // Mirrors submitOllamaChatPrompt's "provider@model" convention (front/shared/outils.js)
-    const selected = typeof getCurrentOllamaModel === 'function' ? getCurrentOllamaModel() : '';
-    const raw = String(selected || (typeof ollamaUiState !== 'undefined' ? ollamaUiState.lastModel : '') || '').trim();
+    // Mirrors submitOllamaChatPrompt's "provider@model" convention (front/shared/outils.js).
+    // Only trust the chat widget's model if the user actually picked it this
+    // session (ollamaUiState.modelUserSelected) — otherwise it just holds an
+    // auto-filled default (first model in the Ollama list) that can diverge
+    // from the model the user actually configured/saved in AI Provider
+    // settings. Sending an empty provider/model lets the host/Python side
+    // resolve POF_DEFAULT_AI_PROVIDER and that provider's saved model.
+    const hasExplicitSelection = typeof ollamaUiState !== 'undefined' && ollamaUiState.modelUserSelected;
+    const selected = hasExplicitSelection && typeof getCurrentOllamaModel === 'function' ? getCurrentOllamaModel() : '';
+    const raw = String(selected || '').trim();
     const atIdx = raw.indexOf('@');
     if (atIdx > 0) {
       return { provider: raw.slice(0, atIdx), model: raw.slice(atIdx + 1) };
     }
-    return { provider: 'ollama', model: raw };
+    return raw ? { provider: 'ollama', model: raw } : { provider: '', model: '' };
   }
 
-  const controller = { initAutoTriage, startRun: null };
+  const controller = { initAutoTriage };
 
   function initAutoTriage() {
     const bus = global.POFHubMessageBus;
     if (!bus) return;
+
+    const reportBtn = document.querySelector('[data-action="auto-triage-open-report"]');
+    const exportReportBtn = document.querySelector('[data-action="auto-triage-export-report"]');
+    const prepareBtn = document.querySelector('[data-action="auto-triage"]');
+    const cancelBtn = document.querySelector('[data-action="auto-triage-cancel"]');
+    const modal = document.querySelector('[data-auto-triage-modal]');
+    const modalDialog = modal?.querySelector('[role="dialog"]');
+    const confirmBtn = document.querySelector('[data-action="auto-triage-confirm"]');
+    const stateBadge = document.querySelector('[data-auto-triage-state]');
+    const helpEl = document.querySelector('[data-auto-triage-help]');
+    const resultEl = document.querySelector('[data-auto-triage-result]');
+    let reportPath = '';
+    let preflight = null;
+    let pendingBinaryPath = '';
+    let functionCount = 0;
+    let previousFocus = null;
+
+    const currentBinaryPath = () => (
+      typeof getStaticBinaryPath === 'function' ? getStaticBinaryPath() : ''
+    );
+
+    const setText = (selector, value) => {
+      const el = document.querySelector(selector);
+      if (el) el.textContent = String(value ?? '—');
+    };
+
+    function setState(label, kind = '') {
+      if (!stateBadge) return;
+      stateBadge.textContent = label;
+      stateBadge.className = `auto-triage-state${kind ? ` is-${kind}` : ''}`;
+    }
+
+    function budgetLabel(data = preflight || {}) {
+      const fn = Number(data.maxFunctions || data.max_functions) || 0;
+      const seconds = Number(data.maxSeconds || data.max_seconds) || 0;
+      const tokens = Number(data.maxTotalTokens || data.max_total_tokens) || 0;
+      return `${fn || '—'} fonctions · ${seconds || '—'}s · ${tokens || '—'} tokens/run`;
+    }
+
+    function updateCard(path = currentBinaryPath()) {
+      const cleanPath = String(path || '').trim();
+      setText('[data-auto-triage-binary]', cleanPath ? cleanPath.split(/[\\/]/).pop() : 'Aucun binaire');
+      setText('[data-auto-triage-functions]', functionCount ? `${functionCount} détectée(s)` : 'À calculer');
+      if (preflight) {
+        setText('[data-auto-triage-model]', `${preflight.provider}@${preflight.model}`);
+        setText('[data-auto-triage-budget]', budgetLabel(preflight));
+      }
+      const available = Boolean(cleanPath && preflight?.available);
+      if (prepareBtn && !activeRuns.has(cleanPath)) prepareBtn.disabled = !available;
+      if (helpEl) helpEl.textContent = cleanPath
+        ? (preflight && !preflight.available ? 'Désassemble d’abord ce binaire pour activer l’auto-triage.' : '')
+        : 'Choisis d’abord un binaire dans l’analyse statique.';
+    }
+
+    function closePreflight() {
+      pendingBinaryPath = '';
+      if (!modal || modal.hidden) return;
+      modal.hidden = true;
+      previousFocus?.focus?.();
+    }
+
+    function openPreflight(path) {
+      if (!modal || !preflight?.available) return;
+      pendingBinaryPath = path;
+      previousFocus = document.activeElement;
+      setText('[data-auto-triage-confirm-binary]', path);
+      setText('[data-auto-triage-confirm-model]', `${preflight.provider}@${preflight.model}`);
+      setText('[data-auto-triage-confirm-functions]', functionCount ? `${functionCount} détectée(s), ${preflight.maxFunctions} maximum` : `${preflight.maxFunctions} maximum`);
+      setText('[data-auto-triage-confirm-budget]', budgetLabel(preflight));
+      setText('[data-auto-triage-confirm-warning]', `Le code décompilé sera transmis à « ${preflight.provider} ». Les suggestions resteront marquées IA jusqu’à validation.`);
+      modal.hidden = false;
+      modalDialog?.focus();
+    }
+
+    function setReportButton(path) {
+      reportPath = String(path || '').trim();
+      if (resultEl) resultEl.hidden = !reportPath;
+    }
+
+    function refreshReportButton() {
+      const path = currentBinaryPath();
+      if (!path) {
+        setReportButton('');
+        preflight = null;
+        functionCount = 0;
+        updateCard('');
+        return;
+      }
+      bus.postMessage({ type: 'hubAutoTriageGetReport', binaryPath: path });
+      bus.postMessage({ type: 'hubAutoTriagePreflight', binaryPath: path, ...resolveProviderAndModel() });
+      bus.postMessage({ type: 'hubLoadAnnotations', binaryPath: path });
+    }
+
+    reportBtn?.addEventListener('click', () => {
+      if (!reportPath) return;
+      bus.postMessage({ type: 'hubAutoTriageOpenReport', reportPath });
+    });
+    exportReportBtn?.addEventListener('click', () => {
+      if (!reportPath) return;
+      bus.postMessage({ type: 'hubAutoTriageExportReport', reportPath });
+    });
+    prepareBtn?.addEventListener('click', () => {
+      const path = currentBinaryPath();
+      if (path) openPreflight(path);
+    });
+    modal?.querySelectorAll('[data-action="auto-triage-close-preflight"]').forEach((button) => {
+      button.addEventListener('click', closePreflight);
+    });
+    modalDialog?.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') closePreflight();
+    });
 
     // Un seul run actif a la fois : changer de fichier de travail annule le
     // run de l'ancien binaire (meme mecanisme hubAiCancel que le bouton
@@ -43,7 +156,7 @@
       // premature.
     }
 
-    function startRun(binaryPath) {
+    function confirmRun(binaryPath) {
       const path = String(binaryPath || '').trim();
       if (!path) return;
       // Un run est deja en cours pour CE binaire : le widget de suivi (bas
@@ -61,6 +174,10 @@
       const { provider, model } = resolveProviderAndModel();
       const requestId = `triage-${Date.now()}-${++seq}`;
       activeRuns.set(path, requestId);
+      closePreflight();
+      setState('En cours', 'running');
+      if (prepareBtn) { prepareBtn.disabled = true; prepareBtn.textContent = 'Auto-triage en cours'; }
+      if (cancelBtn) cancelBtn.hidden = false;
       bus.postMessage({
         type: 'hubAutoTriageStart',
         requestId,
@@ -70,10 +187,79 @@
       });
     }
 
+    function startRun(binaryPath) {
+      const path = String(binaryPath || '').trim();
+      if (!path || activeRuns.has(path)) return;
+      if (!preflight || preflight.binaryPath !== path) {
+        pendingBinaryPath = path;
+        bus.postMessage({ type: 'hubAutoTriagePreflight', binaryPath: path, ...resolveProviderAndModel() });
+        return;
+      }
+      openPreflight(path);
+    }
+
+    confirmBtn?.addEventListener('click', () => confirmRun(pendingBinaryPath));
+    cancelBtn?.addEventListener('click', () => {
+      const path = currentBinaryPath();
+      cancelRun(path);
+      if (helpEl) helpEl.textContent = 'Annulation demandée…';
+    });
+
     bus.onMessage((event) => {
       const msg = event.data;
       if (msg?.type === 'hubAutoTriageOpenPanel') {
         startRun(msg.binaryPath);
+        return;
+      }
+      if (msg?.type === 'hubAutoTriageReportInfo') {
+        const path = currentBinaryPath();
+        if (String(msg?.binaryPath || '').trim() === path) {
+          setReportButton(msg.reportPath || '');
+          const result = msg.result || {};
+          if (result.completedAt) {
+            const stats = result.stats || {};
+            setText('[data-auto-triage-result-title]', result.cancelled ? 'Analyse interrompue — reprise disponible' : 'Dernier auto-triage terminé');
+            setText('[data-auto-triage-result-meta]', `${new Date(result.completedAt).toLocaleString()} · ${stats.processed || 0} fonction(s) · ${stats.tokens_used || 0} tokens · ${result.provider}${result.model ? `@${result.model}` : ''}`);
+            if (!activeRuns.has(path)) {
+              setState(result.cancelled ? 'À reprendre' : 'Terminé', result.cancelled ? 'running' : 'done');
+              if (prepareBtn) prepareBtn.textContent = result.cancelled ? 'Reprendre l’auto-triage' : 'Relancer l’auto-triage';
+            }
+          }
+        }
+        return;
+      }
+      if (msg?.type === 'hubAutoTriagePreflight') {
+        const path = currentBinaryPath();
+        if (String(msg.binaryPath || '') !== path) return;
+        preflight = msg;
+        updateCard(path);
+        if (pendingBinaryPath === path && modal?.hidden) openPreflight(path);
+        return;
+      }
+      if (msg?.type === 'hubAnnotations') {
+        const path = currentBinaryPath();
+        if (String(msg.binaryPath || '') !== path) return;
+        functionCount = Array.isArray(msg.functionAddrs) ? msg.functionAddrs.length : 0;
+        updateCard(path);
+        return;
+      }
+      if (msg?.type === 'hubAutoTriageEvent') {
+        // Rendre chaque nom/commentaire IA visible des qu'il est ecrit en
+        // base (function_done), au compte-goutte, plutot que d'attendre la
+        // fin du run entier (hubAutoTriageDone) pour tout afficher d'un coup.
+        const path = String(msg?.binaryPath || '').trim();
+        if (path && activeRuns.get(path) === msg?.requestId && msg.event?.type === 'function_done') {
+          bus.postMessage({ type: 'hubLoadAnnotations', binaryPath: path });
+        }
+        if (path && activeRuns.get(path) === msg?.requestId) {
+          const ev = msg.event || {};
+          const position = Math.min(Number(ev.total) || 0, (Number(ev.index) || 0) + 1);
+          if (prepareBtn && ev.type === 'function_start') prepareBtn.textContent = `Auto-triage en cours · ${position}/${ev.total}`;
+          if (ev.type === 'selection_done') {
+            setText('[data-auto-triage-model]', `${ev.provider}@${ev.model}`);
+            setText('[data-auto-triage-budget]', budgetLabel(ev));
+          }
+        }
         return;
       }
       if (msg?.type !== 'hubAutoTriageDone' && msg?.type !== 'hubError') return;
@@ -96,6 +282,15 @@
       // deja ete ecrit.
       if (msg?.type === 'hubAutoTriageDone' && msg.binaryPath) {
         bus.postMessage({ type: 'hubLoadAnnotations', binaryPath: msg.binaryPath });
+        const currentPath = currentBinaryPath();
+        if (msg.binaryPath === currentPath) {
+          setReportButton(msg.ok ? msg.reportPath : '');
+          setState(msg.ok ? (msg.cancelled ? 'À reprendre' : 'Terminé') : 'Échec', msg.ok ? (msg.cancelled ? 'running' : 'done') : 'error');
+          if (prepareBtn) { prepareBtn.disabled = false; prepareBtn.textContent = msg.cancelled ? 'Reprendre l’auto-triage' : 'Relancer l’auto-triage'; }
+          if (cancelBtn) cancelBtn.hidden = true;
+          if (helpEl) helpEl.textContent = msg.ok ? '' : String(msg.error || 'Échec de l’auto-triage.');
+          refreshReportButton();
+        }
       }
     });
 
@@ -103,6 +298,8 @@
     // dashboard) peut declencher un run directement, sans repasser par
     // hubAutoTriageOpenPanel (qui n'existe que dans le sens host -> webview).
     controller.startRun = startRun;
+    controller.refreshReportButton = refreshReportButton;
+    refreshReportButton();
   }
 
   global.POFHubAutoTriageController = controller;

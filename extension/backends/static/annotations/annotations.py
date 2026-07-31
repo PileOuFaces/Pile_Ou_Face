@@ -151,6 +151,34 @@ class AnnotationStore:
         logger.debug("Deleted %d annotation(s) at %s (kind=%s)", n, addr, kind)
         return n
 
+    def reject_ai(self, addr: str | None = None) -> int:
+        """Delete only AI-authored rename/comment suggestions."""
+        removed = 0
+        for row in self.list(addr=addr):
+            if row.get("source") != "ai" or row.get("kind") not in {
+                KIND_COMMENT,
+                KIND_RENAME,
+            }:
+                continue
+            removed += self._cache.delete_annotation(
+                self._binary_path, row["addr"], kind=row["kind"]
+            )
+        return removed
+
+    def validate_ai(self, addr: str | None = None) -> int:
+        """Promote AI suggestions to user-authored annotations in place."""
+        validated = 0
+        for row in self.list(addr=addr):
+            if row.get("source") != "ai":
+                continue
+            if row.get("kind") == KIND_COMMENT:
+                self.comment(row["addr"], row["value"])
+                validated += 1
+            elif row.get("kind") == KIND_RENAME:
+                self.rename(row["addr"], row["value"])
+                validated += 1
+        return validated
+
     def set_review(self, addr: str, status: str = "", notes: str = "") -> None:
         """Définit le statut de revue et/ou les notes sur une adresse.
 
@@ -339,6 +367,15 @@ def main() -> int:
     )
     p_del_annotation.add_argument("--addr", required=True)
 
+    p_reject_ai = sub.add_parser(
+        "reject-ai", help="Delete AI suggestions while preserving user annotations"
+    )
+    p_reject_ai.add_argument("--addr")
+    p_validate_ai = sub.add_parser(
+        "validate-ai", help="Promote AI suggestions to user annotations"
+    )
+    p_validate_ai.add_argument("--addr")
+
     # annotate (comment + rename in one call, used by the VS Code extension bridge)
     p_annotate = sub.add_parser(
         "annotate", help="Set comment and/or rename in one call"
@@ -403,6 +440,14 @@ def main() -> int:
             store.delete(args.addr, kind=KIND_COMMENT)
             store.delete(args.addr, kind=KIND_RENAME)
             _print_grouped(store, args, overlay_mutation={"deleted": True})
+
+        elif args.cmd == "reject-ai":
+            store.reject_ai(addr=getattr(args, "addr", None))
+            _print_grouped(store, args, overlay_mutation={"deleted": True})
+
+        elif args.cmd == "validate-ai":
+            store.validate_ai(addr=getattr(args, "addr", None))
+            _print_grouped(store, args, overlay_mutation=None)
 
         elif args.cmd == "annotate":
             if args.comment is not None:

@@ -310,7 +310,9 @@
       entry.detail = `Échec : ${String(message?.error || 'erreur inconnue')}`;
     }
     render();
-    entry.timeoutId = global.setTimeout(() => finishTask(id), 6000);
+    // Laisse le résultat d'un traitement long suffisamment visible pour que
+    // l'utilisateur puisse lire l'état et ouvrir le rapport.
+    entry.timeoutId = global.setTimeout(() => finishTask(id), 30000);
   }
 
   function updateProgress(message) {
@@ -341,6 +343,16 @@
           const provider = String(ev.provider || '').trim();
           const model = String(ev.model || '').trim();
           entry.autoTriageModelLabel = provider ? `${provider}${model ? `@${model}` : ''}` : '';
+          const maxFunctions = Number(ev.max_functions);
+          const maxSeconds = Number(ev.max_seconds);
+          const maxTokens = Number(ev.max_tokens);
+          const maxTotalTokens = Number(ev.max_total_tokens);
+          const budgetParts = [];
+          if (Number.isFinite(maxFunctions) && maxFunctions > 0) budgetParts.push(`${maxFunctions} fonctions max`);
+          if (Number.isFinite(maxSeconds) && maxSeconds > 0) budgetParts.push(`${Math.round(maxSeconds)}s max`);
+          if (Number.isFinite(maxTokens) && maxTokens > 0) budgetParts.push(`${maxTokens} tokens/réponse max`);
+          if (Number.isFinite(maxTotalTokens) && maxTotalTokens > 0) budgetParts.push(`${maxTotalTokens} tokens/run max`);
+          entry.autoTriageBudgetLabel = budgetParts.join(' · ');
         } else if (ev.type === 'function_start') {
           entry.autoTriageTotal = Number(ev.total) || entry.autoTriageTotal || 0;
           entry.autoTriageIndex = Number(ev.index) || 0;
@@ -360,11 +372,15 @@
         const name = String(ev.name || ev.addr || '').trim();
         const errSuffix = errors > 0 ? ` (${errors} erreur(s))` : '';
         const modelSuffix = entry.autoTriageModelLabel ? ` [${entry.autoTriageModelLabel}]` : '';
+        const budgetSuffix = entry.autoTriageBudgetLabel ? ` · ${entry.autoTriageBudgetLabel}` : '';
         if (ev.type === 'budget_warning') {
           const elapsed = Number(ev.elapsed_s);
-          entry.detail = `⚠ Budget de temps bientot atteint${Number.isFinite(elapsed) ? ` (${Math.round(elapsed)}s ecoulees)` : ''}`;
+          const tokensUsed = Number(ev.tokens_used);
+          entry.detail = ev.reason === 'max_total_tokens'
+            ? `⚠ Budget total de tokens atteint${Number.isFinite(tokensUsed) ? ` (${tokensUsed} consommés)` : ''}`
+            : `⚠ Budget de temps atteint${Number.isFinite(elapsed) ? ` (${Math.round(elapsed)}s écoulées)` : ''}`;
         } else if (total > 0) {
-          entry.detail = `${position}/${total} fonction(s)${errSuffix}${name ? ` - ${name}` : ''}${modelSuffix}`;
+          entry.detail = `${position}/${total} fonction(s)${errSuffix}${name ? ` - ${name}` : ''}${modelSuffix}${budgetSuffix}`;
         } else if (name) {
           entry.detail = `→ ${name}${modelSuffix}`;
         } else {

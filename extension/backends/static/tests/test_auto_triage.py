@@ -34,7 +34,7 @@ class TestSelectCandidateFunctions(unittest.TestCase):
     def _budget(self, max_functions: int = 200) -> at.TriageBudget:
         return at.TriageBudget(max_functions=max_functions)
 
-    def test_filters_ignored_and_user_annotated(self):
+    def test_filters_ignored_and_fully_user_annotated(self):
         call_graph = {
             "nodes": [
                 {"addr": "0x1000", "name": "_start"},
@@ -43,7 +43,10 @@ class TestSelectCandidateFunctions(unittest.TestCase):
             ],
             "edges": [],
         }
-        existing = [{"addr": "0x3000", "source": "user"}]
+        existing = [
+            {"addr": "0x3000", "source": "user", "kind": "rename"},
+            {"addr": "0x3000", "source": "user", "kind": "comment"},
+        ]
         candidates = at.select_candidate_functions(
             call_graph, [], {}, {}, existing, self._budget()
         )
@@ -60,12 +63,34 @@ class TestSelectCandidateFunctions(unittest.TestCase):
             ],
             "edges": [],
         }
-        existing = [{"addr": "0x2000", "source": "ai"}]
+        existing = [
+            {"addr": "0x2000", "source": "ai", "kind": "rename"},
+            {"addr": "0x2000", "source": "ai", "kind": "comment"},
+        ]
         candidates = at.select_candidate_functions(
             call_graph, [], {}, {}, existing, self._budget()
         )
         addrs = {c.addr for c in candidates}
         self.assertEqual(addrs, {"0x3000"})
+
+    def test_keeps_partially_or_unrelated_annotated_functions(self):
+        call_graph = {
+            "nodes": [
+                {"addr": "0x2000", "name": "only_named"},
+                {"addr": "0x3000", "name": "only_bookmarked"},
+            ],
+            "edges": [],
+        }
+        existing = [
+            {"addr": "0x2000", "source": "user", "kind": "rename"},
+            {"addr": "0x3000", "source": "user", "kind": "bookmark"},
+        ]
+        candidates = at.select_candidate_functions(
+            call_graph, [], {}, {}, existing, self._budget()
+        )
+        self.assertEqual(
+            {candidate.addr for candidate in candidates}, {"0x2000", "0x3000"}
+        )
 
     def test_sensitive_keyword_callee_boosts_score_and_reason(self):
         call_graph = {
@@ -103,7 +128,8 @@ class TestAnalyzeFunction(unittest.TestCase):
         mock_tool.return_value = {"ok": False}
         mock_call.return_value = {
             "text": '```json\n{"name": "parse_header", "docstring": "Parses the header.", '
-            '"tags": ["filesystem"]}\n```'
+            '"tags": ["filesystem"]}\n```',
+            "usage": {"total_tokens": 321},
         }
         analysis = at.analyze_function(
             self._candidate(), "/tmp/bin", "ollama", None, at.TriageBudget()
@@ -112,6 +138,7 @@ class TestAnalyzeFunction(unittest.TestCase):
         self.assertEqual(analysis.generated_name, "parse_header")
         self.assertEqual(analysis.docstring, "Parses the header.")
         self.assertEqual(analysis.tags, ["filesystem"])
+        self.assertEqual(analysis.usage_tokens, 321)
         mock_call.assert_called_once()
 
     @patch("backends.mcp.auto_triage._call_tool")
@@ -162,6 +189,93 @@ class TestNormalizeLanguage(unittest.TestCase):
         self.assertEqual(at.normalize_language(None), "en")
         self.assertEqual(at.normalize_language(""), "en")
         self.assertEqual(at.normalize_language("zz"), "en")  # unknown -> fallback
+
+
+class TestAutoTriageEdgeCases(unittest.TestCase):
+    def test_summary_handles_no_facts_exhausted_budget_and_provider_failure(self):
+        empty = at.synthesize_binary_summary([], "ollama", None)
+        self.assertEqual(empty["usage_tokens"], 0)
+
+        analysis = at.FunctionAnalysis(
+            addr="0x1", name="fn", generated_name="named", docstring="documented"
+        )
+        exhausted = at.synthesize_binary_summary(
+            [analysis], "ollama", None, max_tokens=0
+        )
+        self.assertIn("budget", exhausted["text"].lower())
+
+        with patch(
+            "backends.mcp.auto_triage.call_provider_result",
+            side_effect=RuntimeError("offline"),
+        ):
+            failed = at.synthesize_binary_summary([analysis], "ollama", None)
+        self.assertIn("offline", failed["text"])
+        self.assertEqual(failed["usage_tokens"], 0)
+
+    def test_address_and_string_helpers_ignore_invalid_entries(self):
+        self.assertEqual(at._addr_to_int("invalid"), -1)
+        self.assertEqual(
+            at._strings_by_function(
+                [
+                    {"addr": "", "value": "ignored"},
+                    {"addr": "0x5000", "value": "secret"},
+                ],
+                {"0x5000": [{"from_addr": "invalid"}, {"from_addr": "0x1001"}]},
+                ["0x1000"],
+            ),
+            {"0x1000": ["secret"]},
+        )
+
+    def test_default_cancel_check_tracks_a_flag(self):
+        self.assertFalse(at._default_cancel_check(None)())
+        with tempfile.NamedTemporaryFile() as flag:
+            self.assertTrue(at._default_cancel_check(flag.name)())
+
+    def test_main_builds_budget_emits_events_and_writes_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            report_path = Path(tmp) / "report.md"
+            captured = {}
+
+            def fake_run(*args, **kwargs):
+                captured["args"] = args
+                captured["kwargs"] = kwargs
+                args[5]({"type": "selection_done", "total": 0})
+                return {"report_markdown": "# generated"}
+
+            with patch(
+                "backends.mcp.auto_triage.run_auto_triage", side_effect=fake_run
+            ):
+                result = at.main(
+                    [
+                        "--binary-path",
+                        "/tmp/sample.bin",
+                        "--mapping-path",
+                        "/tmp/mapping.json",
+                        "--provider",
+                        "openai",
+                        "--model",
+                        "gpt-test",
+                        "--max-functions",
+                        "7",
+                        "--max-seconds",
+                        "12",
+                        "--max-tokens",
+                        "512",
+                        "--max-total-tokens",
+                        "4096",
+                        "--language",
+                        "fr-FR",
+                        "--report-out",
+                        str(report_path),
+                    ]
+                )
+
+            self.assertEqual(result, 0)
+            budget = captured["args"][4]
+            self.assertEqual(budget.max_functions, 7)
+            self.assertEqual(budget.max_total_tokens, 4096)
+            self.assertEqual(captured["kwargs"]["language"], "fr")
+            self.assertEqual(report_path.read_text(encoding="utf-8"), "# generated")
 
 
 class TestRenderMarkdownReport(unittest.TestCase):
@@ -255,9 +369,15 @@ class TestRunAutoTriageEndToEnd(unittest.TestCase):
     def _run(self, cache_path: str, cancel_check=lambda: False, budget=None):
         events: list[dict] = []
         call_count = [0]
-        with patch(
-            "backends.mcp.auto_triage.call_provider_result",
-            side_effect=_mocked_provider_result(call_count),
+        with (
+            patch(
+                "backends.mcp.auto_triage.call_provider_result",
+                side_effect=_mocked_provider_result(call_count),
+            ),
+            patch(
+                "backends.mcp.auto_triage.resolve_provider_model",
+                return_value="test-model",
+            ),
         ):
             result = at.run_auto_triage(
                 str(self.corpus.binary_path),
@@ -290,6 +410,33 @@ class TestRunAutoTriageEndToEnd(unittest.TestCase):
             self.assertIn("function_done", event_types)
             self.assertIn("summary", event_types)
             self.assertIn("done", event_types)
+        finally:
+            Path(cache_path).unlink(missing_ok=True)
+
+    def test_resumed_run_report_reflects_previous_ai_annotations(self):
+        # A run with nothing new to do (everything already AI-annotated by
+        # an earlier run) must still report the binary's full annotation
+        # state, not overwrite it with an empty "no function analyzed" report.
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            cache_path = f.name
+        try:
+            first_result, _, first_calls = self._run(cache_path)
+            self.assertGreater(first_calls, 0)
+            self.assertGreater(first_result["stats"]["processed"], 0)
+
+            second_result, _, second_calls = self._run(cache_path)
+            # No function-analysis calls left (nothing new to triage), but
+            # synthesize_binary_summary still makes one call since the
+            # combined (cumulative) analyses list is non-empty.
+            self.assertEqual(second_calls, 1)
+            self.assertEqual(
+                second_result["stats"]["processed"], first_result["stats"]["processed"]
+            )
+            self.assertNotIn(
+                "No function could be successfully analyzed.",
+                second_result["report_markdown"],
+            )
+            self.assertIn("Priority Functions", second_result["report_markdown"])
         finally:
             Path(cache_path).unlink(missing_ok=True)
 
@@ -344,9 +491,15 @@ class TestRunAutoTriageEndToEnd(unittest.TestCase):
                     )
                 }
 
-            with patch(
-                "backends.mcp.auto_triage.call_provider_result",
-                side_effect=_tracking_provider,
+            with (
+                patch(
+                    "backends.mcp.auto_triage.call_provider_result",
+                    side_effect=_tracking_provider,
+                ),
+                patch(
+                    "backends.mcp.auto_triage.resolve_provider_model",
+                    return_value="test-model",
+                ),
             ):
                 result = at.run_auto_triage(
                     str(self.corpus.binary_path),

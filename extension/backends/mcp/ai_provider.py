@@ -61,6 +61,25 @@ def _provider_model_env(provider: str) -> str:
     return "OLLAMA_MODEL" if provider == "ollama" else f"POF_{provider.upper()}_MODEL"
 
 
+def resolve_provider_model(provider: str, model: str | None = None) -> str:
+    """Resolve the exact model a completion call will use."""
+    if model:
+        return model
+    configured = os.environ.get(_provider_model_env(provider), "").strip()
+    if configured:
+        return configured
+    if provider == "anthropic":
+        return "claude-opus-4-6"
+    if provider == "gemini":
+        return "gemini-2.5-flash"
+    if provider in _OPENAI_COMPATIBLE:
+        return _OPENAI_COMPATIBLE[provider]["default_model"]
+    if provider == "ollama":
+        base_url = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+        return _default_ollama_model(base_url)
+    return ""
+
+
 def _bearer_request(url: str, api_key: str) -> urllib.request.Request:
     return urllib.request.Request(
         url,
@@ -491,6 +510,17 @@ def _gemini_complete(
     }
 
 
+def _default_ollama_model(base_url: str) -> str:
+    """First locally pulled Ollama model, mirroring list_providers()'s own
+    fallback. "qwen3:8b" is a last-resort guess and is often not actually
+    pulled, which fails every request with HTTP 404 model-not-found."""
+    try:
+        models = _fetch_models("ollama", base_url=base_url)
+    except Exception:
+        models = []
+    return models[0] if models else "qwen3:8b"
+
+
 def _ollama_complete(
     prompt: str,
     context: str,
@@ -499,7 +529,7 @@ def _ollama_complete(
     generation_options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     base_url = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
-    model = model or os.environ.get("OLLAMA_MODEL", "qwen3:8b")
+    model = model or os.environ.get("OLLAMA_MODEL") or _default_ollama_model(base_url)
     payload = {
         "model": model,
         "prompt": f"Context:\n{context}\n\n{prompt}",

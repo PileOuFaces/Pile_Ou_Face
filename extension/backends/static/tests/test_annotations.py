@@ -190,6 +190,26 @@ class TestAnnotationStore(unittest.TestCase):
         self.assertFalse(written)
         self.assertEqual(name, "human_name")
 
+    def test_reject_ai_preserves_human_fields(self):
+        with self._store() as store:
+            store.rename("0x401000", "human_name")
+            store.ai_comment("0x401000", "ai comment")
+            removed = store.reject_ai("0x401000")
+            rows = store.list(addr="0x401000")
+        self.assertEqual(removed, 1)
+        self.assertEqual(
+            [(row["kind"], row["source"]) for row in rows], [(KIND_RENAME, "user")]
+        )
+
+    def test_validate_ai_promotes_suggestions_to_user_source(self):
+        with self._store() as store:
+            store.ai_rename("0x401000", "ai_name")
+            store.ai_comment("0x401000", "ai comment")
+            validated = store.validate_ai("0x401000")
+            rows = store.list(addr="0x401000")
+        self.assertEqual(validated, 2)
+        self.assertEqual({row["source"] for row in rows}, {"user"})
+
     def test_export_json_surfaces_source(self):
         with self._store() as store:
             store.comment("0x401000", "human note")

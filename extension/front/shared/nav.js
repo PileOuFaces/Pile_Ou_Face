@@ -42,6 +42,7 @@ function showPanel(id) {
   }
   if (id === 'dashboard') {
     if (!ollamaUiState.models.length) requestOllamaModels();
+    window.POFHubAutoTriageController?.refreshReportButton?.();
   }
   if (id === 'static') {
     const bp = getStaticBinaryPath();

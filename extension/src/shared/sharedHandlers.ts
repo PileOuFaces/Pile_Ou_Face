@@ -689,6 +689,28 @@ function sharedHandlers(ctx) {
         vscode.window.showErrorMessage(`Impossible de supprimer l'annotation : ${err?.message || err}`);
       }
     },
+    hubRejectAiAnnotations: async (message) => {
+      const { binaryPath, addr } = message;
+      if (!binaryPath) return;
+      const normAddr = addr ? (addr.startsWith('0x') ? addr : `0x${addr}`) : '';
+      try {
+        const { annotations, overlay } = await annotationsBridge.rejectAiAnnotations(binaryPath, normAddr);
+        notifyAnnotations(binaryPath, annotations, overlay);
+      } catch (err) {
+        vscode.window.showErrorMessage(`Impossible de rejeter les suggestions IA : ${err?.message || err}`);
+      }
+    },
+    hubValidateAiAnnotations: async (message) => {
+      const { binaryPath, addr } = message;
+      if (!binaryPath) return;
+      const normAddr = addr ? (addr.startsWith('0x') ? addr : `0x${addr}`) : '';
+      try {
+        const { annotations, overlay } = await annotationsBridge.validateAiAnnotations(binaryPath, normAddr);
+        notifyAnnotations(binaryPath, annotations, overlay);
+      } catch (err) {
+        vscode.window.showErrorMessage(`Impossible de valider les suggestions IA : ${err?.message || err}`);
+      }
+    },
     hubAiProvidersGet: () => {
       const getSavedSettings = () => {
         try { return context?.globalState?.get('pof-settings', {}) || {}; } catch (_) { return {}; }
