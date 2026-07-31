@@ -37,6 +37,7 @@ python3 -m tooling.loadtest --size large
 python3 -m tooling.loadtest --results-dir /tmp/my-results
 python3 -m tooling.loadtest --max-ratio 50
 python3 -m tooling.loadtest --memory-limit-mib 1536 --timeout-cap-s 60
+python3 -m tooling.loadtest --binary /path/to/corpus.elf --size large
 python3 -m tooling.loadtest --baseline tooling/loadtest/baselines/ubuntu-medium.json
 ```
 
@@ -61,6 +62,9 @@ python3 -m tooling.loadtest --baseline tooling/loadtest/baselines/ubuntu-medium.
   RSS of the complete process tree and kills its process group at the limit.
   A breach is reported as `memory_limit`, separately from `timeout` and a
   normal backend error.
+- `--binary FILE` — measure an existing binary instead of generating a
+  synthetic fixture. `--size` is then mandatory and selects the applicable
+  budget profile. The report records the external filename and SHA-256.
 
 Default budgets:
 
@@ -125,6 +129,24 @@ explicit plugin entrypoints, installed plugin bundles, license/auth state if
 required, and their external tool dependencies. Add those as a separate
 plugin-aware registry rather than mixing them into this public host matrix.
 
+## Large compiled corpus
+
+The `Large Real Corpus Loadtest` workflow runs every Monday and can also be
+started manually. It compiles the shared real-analysis corpus for x86_64 and
+ARM64, adds a deterministic ELF data section until the file reaches about
+100 MiB, then runs each architecture in its own guarded job. Generated
+binaries are never committed. Each job enforces the 1.5 GiB process-tree
+limit, the 60 second per-scenario cap, and the absolute `large` budgets.
+
+To build the same corpus on Ubuntu with the native and cross toolchains:
+
+```bash
+python3 -m tooling.loadtest.real_corpus \
+  --arch arm64 --size-mib 100 --output /tmp/corpus-arm64.elf
+python3 -m tooling.loadtest \
+  --binary /tmp/corpus-arm64.elf --size large
+```
+
 ## Known limitations
 
 These are deliberate, known gaps — not oversights — flagged during review
@@ -141,9 +163,10 @@ and deferred rather than fixed as part of the current scope.
    process-tree guard prevents the historical unbounded-memory failure mode;
    the warning remains visible as an optimization target.
 
-3. **Synthetic padding controls size, not representative complexity.** A
-   real 100–200 MB corpus per architecture is still required before #56 can
-   claim production performance coverage.
+3. **The compiled corpus combines real code with deterministic data.** It
+   covers binary format and architecture differences at 100 MiB, but does not
+   reproduce the code complexity of a naturally occurring 100 MiB program.
+   Curated redistributable production samples remain a useful future layer.
 
 ## Adding a new scenario
 

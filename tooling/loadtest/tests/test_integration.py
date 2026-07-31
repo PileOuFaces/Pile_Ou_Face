@@ -31,6 +31,48 @@ class TestEndToEnd(unittest.TestCase):
                 self.assertEqual(result.returncode, 2)
                 self.assertIn("strictement positif", result.stderr)
 
+    def test_external_binary_requires_a_budget_profile(self):
+        result = subprocess.run(
+            [sys.executable, "-m", "tooling.loadtest", "--binary", sys.executable],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("requiert --size", result.stderr)
+
+    def test_external_binary_is_measured_and_identified(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "external.bin"
+            binary.write_bytes(b"POF-real-corpus\x00" * 1024)
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "tooling.loadtest",
+                    "--binary",
+                    str(binary),
+                    "--scenario",
+                    "strings",
+                    "--size",
+                    "small",
+                    "--results-dir",
+                    tmp,
+                ],
+                cwd=str(REPO_ROOT),
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            reports = list(Path(tmp).glob("loadtest_*.json"))
+            self.assertEqual(len(reports), 1)
+            metadata = json.loads(reports[0].read_text())["metadata"]
+            self.assertEqual(metadata["fixture_kind"], "external")
+            self.assertEqual(metadata["fixture_name"], "external.bin")
+            self.assertEqual(len(metadata["fixture_sha256"]), 64)
+
     def test_single_scenario_single_fixture_produces_a_result(self):
         with tempfile.TemporaryDirectory() as tmp:
             result = subprocess.run(
