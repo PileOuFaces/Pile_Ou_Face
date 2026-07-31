@@ -150,13 +150,19 @@
     return { accept, bind, flattenItems, receive, request, setSource, state };
   }
 
-  const api = { createController, flattenItems, itemLabel };
-  if (typeof module !== 'undefined' && module.exports) module.exports = api;
-  if (root?.document && root?.vscode) {
-    root.decompileAugmentationController = createController({
-      document: root.document,
-      postMessage: (message) => root.vscode.postMessage(message),
+  function mountController(target) {
+    const vscodeApi = target?.POFHubMessageBus?.vscode;
+    if (!target?.document || !vscodeApi) return null;
+    const controller = createController({
+      document: target.document,
+      postMessage: (message) => vscodeApi.postMessage(message),
     });
-    root.decompileAugmentationController.bind();
+    controller.bind();
+    target.decompileAugmentationController = controller;
+    return controller;
   }
+
+  const api = { createController, flattenItems, itemLabel, mountController };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  mountController(root);
 })(typeof window !== 'undefined' ? window : globalThis);

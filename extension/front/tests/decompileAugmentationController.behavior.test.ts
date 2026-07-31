@@ -26,6 +26,22 @@ function fixture() {
 }
 
 describe('decompileAugmentationController', () => {
+  it('mounts with the real hub message bus instead of requiring window.vscode', () => {
+    const dom = new JSDOM('<button id="btnAugmentDecompile" disabled></button>');
+    const posted: any[] = [];
+    const target: any = {
+      document: dom.window.document,
+      POFHubMessageBus: { vscode: { postMessage: (message: any) => posted.push(message) } },
+    };
+    const mounted = controllerModule.mountController(target);
+    expect(mounted).to.exist;
+    expect(target.decompileAugmentationController).to.equal(mounted);
+    mounted.setSource({ binaryPath: '/tmp/a', addr: '0x1', code: 'int f(){}' });
+    mounted.request();
+    expect(posted[0].type).to.equal('hubAugmentDecompile');
+    expect(controllerModule.mountController({ document: dom.window.document })).to.equal(null);
+  });
+
   it('flattens every supported metadata kind with readable labels', () => {
     const items = controllerModule.flattenItems({
       summary: 'Parses input',
