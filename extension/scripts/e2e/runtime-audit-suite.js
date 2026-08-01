@@ -475,11 +475,11 @@ async function run() {
 
     const stopPerf = startPerfSampler('hub-startup');
     try {
-      await vscode.commands.executeCommand('pileOuFace.open');
+      await vscode.commands.executeCommand('pileOuFace.goToAddress');
 
       const { events } = await waitForAuditEvents(userDataDir, (candidateEvents) => (
         hasEvent(candidateEvents, 'audit', 'audit_start')
-        && hasEvent(candidateEvents, 'command', 'pileOuFace.open')
+        && hasEvent(candidateEvents, 'command', 'pileOuFace.goToAddress')
         && hasEvent(candidateEvents, 'webview_message', 'hubReady')
         && hasEvent(candidateEvents, 'webview_message', 'hubLoadPluginState')
       ));
@@ -497,7 +497,7 @@ async function run() {
     try {
       const [fixture] = readFixtureSpecs();
       assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
-      await vscode.commands.executeCommand('pileOuFace.open');
+      await vscode.commands.executeCommand('pileOuFace.goToAddress');
       target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
       const hub = new HubPage(target);
 
