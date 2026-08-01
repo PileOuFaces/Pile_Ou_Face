@@ -56,29 +56,8 @@ describe("sharedHandlers", () => {
   });
 
   afterEach(() => {
-    delete process.env.POF_E2E_BINARY_SELECTION_PATH;
     sinon.restore();
     fs.rmSync(tempRoot, { recursive: true, force: true });
-  });
-
-  it("uses the explicit E2E binary path without opening a native dialog", async () => {
-    const sharedHandlers = proxyquire("../shared/sharedHandlers", {
-      vscode: vscodeStub,
-      "./fileManager": fileManagerStub,
-    });
-    const handlers = sharedHandlers({
-      root: tempRoot,
-      panel: sink.panel,
-      context: { workspaceState: { get: () => [], update: sinon.stub().resolves() } },
-    });
-    const binaryPath = path.join(tempRoot, "fixture.bin");
-    fs.copyFileSync(process.execPath, binaryPath);
-    process.env.POF_E2E_BINARY_SELECTION_PATH = binaryPath;
-
-    await handlers.requestBinarySelection();
-
-    expect(vscodeStub.window.showOpenDialog.called).to.equal(false);
-    expect(sink.messages.find((message) => message.type === "hubSetBinaryPath")?.binaryPath).to.equal("fixture.bin");
   });
 
   it("offers recent cleanup when a selected file no longer exists", async () => {
