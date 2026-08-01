@@ -475,11 +475,11 @@ async function run() {
 
     const stopPerf = startPerfSampler('hub-startup');
     try {
-      await vscode.commands.executeCommand('pileOuFace.open');
+      await vscode.commands.executeCommand('pileOuFace.goToAddress');
 
       const { events } = await waitForAuditEvents(userDataDir, (candidateEvents) => (
         hasEvent(candidateEvents, 'audit', 'audit_start')
-        && hasEvent(candidateEvents, 'command', 'pileOuFace.open')
+        && hasEvent(candidateEvents, 'command', 'pileOuFace.goToAddress')
         && hasEvent(candidateEvents, 'webview_message', 'hubReady')
         && hasEvent(candidateEvents, 'webview_message', 'hubLoadPluginState')
       ));
@@ -495,13 +495,35 @@ async function run() {
   suite.addTest(new Mocha.Test('drives the hub through real webview controls', async () => {
     let target = null;
     try {
-      await vscode.commands.executeCommand('pileOuFace.open');
+      const [fixture] = readFixtureSpecs();
+      assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
+      await vscode.commands.executeCommand('pileOuFace.goToAddress');
       target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
       const hub = new HubPage(target);
+
+      await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+        type: 'hubUseBinaryPath',
+        binaryPath: fixture.path,
+      });
+      await hub.binaryPath().waitForValue(path.basename(fixture.path), 30000);
 
       await hub.openPanel('dashboard');
       await hub.openPanel('static');
       await hub.openStaticTab('data', 'typed_data');
+
+      await hub.openTypeManager();
+      await hub.typeEditorSource().fill('struct E2EUiType { int x; int y; };');
+      await hub.typeEditorSaveButton().click();
+      await sleep(250);
+      if (!String(await hub.typeEditorStatus().textContent() || '').trim()) {
+        await hub.typeEditorSaveButton().clickDom();
+      }
+      await hub.typeEditorStatus().waitForText('sauvegardé(s)', 30000);
+      await hub.typeEditorCatalog().waitForText('E2EUiType', 30000);
+
+      await hub.typeEditorCloseButton().click();
+      await hub.openTypeManager();
+      await hub.typeEditorCatalog().waitForText('E2EUiType', 30000);
 
       await hub.openPanel('dashboard');
       await hub.expectActive(hub.panel('dashboard'), 'dashboard panel after returning');

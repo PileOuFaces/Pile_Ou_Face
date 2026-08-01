@@ -86,6 +86,7 @@ describe('VS Code UI E2E driver', () => {
         if (expression.includes('aria-disabled')) return true;
         if (expression.includes('getAttribute')) return 'btn active';
         if (expression.includes('textContent')) return 'Résultat prêt';
+        if (expression.includes("String(el.value)")) return 'true';
         if (expression.includes('rect.left')) return { x: 12, y: 18 };
         return true;
       },
@@ -97,17 +98,22 @@ describe('VS Code UI E2E driver', () => {
     assert.equal(await locator.getAttribute('class'), 'btn active');
     assert.equal(await locator.isEnabled(), true);
     assert.equal(await locator.waitForText('prêt', 50), 'Résultat prêt');
+    assert.equal(await locator.inputValue(), 'true');
+    assert.equal(await locator.waitForValue('true', 50), 'true');
     await locator.fill('nouvelle valeur');
     await locator.click();
+    await locator.clickDom();
 
     assert.deepEqual(sent, ['Input.dispatchMouseEvent', 'Input.dispatchMouseEvent']);
     assert.ok(evaluations.some((expression) => expression.includes("scrollIntoView({ block: 'center', inline: 'center' })")));
+    assert.ok(evaluations.some((expression) => expression.includes('el.click()')));
   });
 
   it('reports disabled controls and inactive UI states', async () => {
     const disabledTarget = {
       async evaluate(expression: string) {
         if (expression.includes('rect.left')) return null;
+        if (expression.includes('el.click()')) return false;
         if (expression.includes("'value' in el")) return false;
         return true;
       },
@@ -121,6 +127,7 @@ describe('VS Code UI E2E driver', () => {
     };
     const locator = new CdpLocator(disabledTarget, '#disabled');
     await assert.rejects(locator.click(), /disabled or missing/);
+    await assert.rejects(locator.clickDom(), /disabled or missing/);
     await assert.rejects(locator.fill('x'), /cannot be filled/);
     const hub = new HubPage(disabledTarget);
     await assert.rejects(hub.expectActive(disabledTarget.locator(), 'inactive panel'), /not active/);
@@ -189,6 +196,33 @@ describe('VS Code UI E2E driver', () => {
     const locator = new CdpLocator(target, '#missing');
     await assert.rejects(locator.waitFor({ timeout: 1 }), /Timed out waiting/);
     await assert.rejects(locator.waitForText('never', 1), /Timed out waiting/);
+    await assert.rejects(locator.waitForValue('never', 1), /Timed out waiting/);
+  });
+
+  it('models the type manager journey with stable selectors', async () => {
+    const calls: string[] = [];
+    const target = {
+      locator(selector: string) {
+        return {
+          selector,
+          async click() { calls.push(`click:${selector}`); },
+          async waitFor() { calls.push(`wait:${selector}`); },
+        };
+      },
+    };
+    const hub = new HubPage(target);
+
+    await hub.openTypeManager();
+    assert.equal(hub.binaryPath().selector, '#staticBinaryPath');
+    assert.equal(hub.typeEditorSource().selector, '#pof-typed-struct-popup textarea');
+    assert.equal(hub.typeEditorCatalog().selector, '#pof-typed-struct-popup .typed-data-type-catalog');
+    assert.equal(hub.typeEditorStatus().selector, '#pof-typed-struct-popup .typed-data-struct-editor-status');
+    assert.equal(hub.typeEditorSaveButton().selector, '#pof-typed-struct-popup [data-action="save-types"]');
+    assert.equal(hub.typeEditorCloseButton().selector, '#pof-typed-struct-popup .typed-data-struct-editor-actions .btn:first-child');
+    assert.deepEqual(calls, [
+      'click:#btnTypedEditStructs',
+      'wait:#pof-typed-struct-popup',
+    ]);
   });
 
   it('discovers the hub webview target through the local CDP endpoint', async () => {
