@@ -521,7 +521,7 @@ async function run() {
       await hub.typeEditorStatus().waitForText('sauvegardé(s)', 30000);
       await hub.typeEditorCatalog().waitForText('E2EUiType', 30000);
 
-      await hub.typeEditorCloseButton().click();
+      await hub.typeEditorCloseButton().clickDom();
       await hub.openTypeManager();
       await hub.typeEditorCatalog().waitForText('E2EUiType', 30000);
 
@@ -539,7 +539,7 @@ async function run() {
         String(await hub.typeEditorStatus().getAttribute('class') || ''),
         /\bis-error\b/,
       );
-      await hub.typeEditorCloseButton().click();
+      await hub.typeEditorCloseButton().clickDom();
 
       await hub.openPanel('dashboard');
       await hub.expectActive(hub.panel('dashboard'), 'dashboard panel after returning');
