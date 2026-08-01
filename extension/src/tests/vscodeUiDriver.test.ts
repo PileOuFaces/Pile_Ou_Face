@@ -79,8 +79,10 @@ describe('VS Code UI E2E driver', () => {
 
   it('uses CDP to inspect, fill and physically click a DOM control', async () => {
     const sent: string[] = [];
+    const evaluations: string[] = [];
     const target = {
       async evaluate(expression: string) {
+        evaluations.push(expression);
         if (expression.includes('aria-disabled')) return true;
         if (expression.includes('getAttribute')) return 'btn active';
         if (expression.includes('textContent')) return 'Résultat prêt';
@@ -99,6 +101,7 @@ describe('VS Code UI E2E driver', () => {
     await locator.click();
 
     assert.deepEqual(sent, ['Input.dispatchMouseEvent', 'Input.dispatchMouseEvent']);
+    assert.ok(evaluations.some((expression) => expression.includes("scrollIntoView({ block: 'center', inline: 'center' })")));
   });
 
   it('reports disabled controls and inactive UI states', async () => {

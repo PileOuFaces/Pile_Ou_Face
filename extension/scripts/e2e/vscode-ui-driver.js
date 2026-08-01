@@ -146,6 +146,7 @@ class CdpLocator {
     await this.waitFor({ state: 'visible' });
     const point = await this.target.evaluate(this.expression(`
       if (!el || el.disabled) return null;
+      el.scrollIntoView({ block: 'center', inline: 'center' });
       const rect = el.getBoundingClientRect();
       return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
     `));
