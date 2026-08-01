@@ -183,23 +183,27 @@ describe('VS Code UI E2E driver', () => {
     const originalFetch = globalThis.fetch;
     const originalWebSocket = globalThis.WebSocket;
     const sockets: FakeSocket[] = [];
-    globalThis.fetch = (async () => ({
-      json: async () => [
-        {
-          type: 'page',
-          url: 'vscode-file://vscode-app/workbench.html',
-          webSocketDebuggerUrl: 'ws://local/page',
-        },
-        {
-          id: 'hub-frame',
-          type: 'iframe',
-          url: 'vscode-webview://pile-ou-face/index.html',
-        },
-      ],
+    const socketUrls: string[] = [];
+    globalThis.fetch = (async (url: string) => ({
+      json: async () => url.endsWith('/json/version')
+        ? { webSocketDebuggerUrl: 'ws://local/browser' }
+        : [
+          {
+            type: 'page',
+            url: 'vscode-file://vscode-app/workbench.html',
+            webSocketDebuggerUrl: 'ws://local/page',
+          },
+          {
+            id: 'hub-frame',
+            type: 'iframe',
+            url: 'vscode-webview://pile-ou-face/index.html',
+          },
+        ],
     })) as any;
     globalThis.WebSocket = class {
       socket: FakeSocket;
-      constructor() {
+      constructor(url: string) {
+        socketUrls.push(url);
         this.socket = new FakeSocket();
         this.socket.send = function send(payload: string) {
           this.sent.push(payload);
@@ -221,6 +225,7 @@ describe('VS Code UI E2E driver', () => {
       const target = await connectToHubWebview('http://127.0.0.1:9222', 100);
       assert.ok(target instanceof CdpTarget);
       assert.equal(target.sessionId, 'hub-session');
+      assert.deepEqual(socketUrls, ['ws://local/browser']);
       target.close();
       assert.equal(sockets[0].closed, true);
     } finally {

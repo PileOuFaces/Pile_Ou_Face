@@ -171,15 +171,16 @@ async function connectToHubWebview(endpoint, timeoutMs = DEFAULT_TIMEOUT_MS) {
     try {
       const response = await globalThis.fetch(`${endpoint}/json/list`);
       const targets = await response.json();
+      const versionResponse = await globalThis.fetch(`${endpoint}/json/version`);
+      const browser = await versionResponse.json();
       targetSummary = targets.map((target) => `${target.type}:${target.url || target.title || ''}`).join(', ');
       const webviewTargets = targets.filter((candidate) => (
         candidate.type === 'webview'
         || candidate.type === 'iframe'
         || String(candidate.url || '').startsWith('vscode-webview://')
       ));
-      const pageTarget = targets.find((candidate) => candidate.type === 'page' && candidate.webSocketDebuggerUrl);
       for (const candidate of webviewTargets) {
-        const socketUrl = candidate.webSocketDebuggerUrl || pageTarget?.webSocketDebuggerUrl;
+        const socketUrl = candidate.webSocketDebuggerUrl || browser.webSocketDebuggerUrl;
         if (!socketUrl) continue;
         const socket = await openSocket(socketUrl, Math.min(2000, timeoutMs));
         const connection = new CdpTarget(socket);
