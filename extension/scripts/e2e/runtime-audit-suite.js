@@ -525,6 +525,22 @@ async function run() {
       await hub.openTypeManager();
       await hub.typeEditorCatalog().waitForText('E2EUiType', 30000);
 
+      const invalidSource = 'struct E2EInvalidType { int; };';
+      await hub.typeEditorSource().fill(invalidSource);
+      await hub.typeEditorSaveButton().click();
+      await sleep(250);
+      if (!String(await hub.typeEditorStatus().textContent() || '').trim()) {
+        await hub.typeEditorSaveButton().clickDom();
+      }
+      await hub.typeEditorStatus().waitForText('Type manquant', 30000);
+      await hub.typeEditor().waitFor({ state: 'visible' });
+      assert.equal(await hub.typeEditorSource().inputValue(), invalidSource);
+      assert.match(
+        String(await hub.typeEditorStatus().getAttribute('class') || ''),
+        /\bis-error\b/,
+      );
+      await hub.typeEditorCloseButton().click();
+
       await hub.openPanel('dashboard');
       await hub.expectActive(hub.panel('dashboard'), 'dashboard panel after returning');
     } catch (error) {
