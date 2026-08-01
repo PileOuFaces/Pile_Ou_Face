@@ -16,12 +16,12 @@ const { recordRuntimeEvent } = require('./runtimeAudit');
 function makeRunPython({ root, extensionPath, getPythonExecutable, buildPythonEnv }) {
   const resolveExe = getPythonExecutable || (() => 'python3');
   const resolveEnv = buildPythonEnv || (() => process.env);
-  return (argsWithScript, { timeout = 60000, maxBuffer = 4 * 1024 * 1024 } = {}) =>
+  return (argsWithScript, { timeout = 60000, maxBuffer = 4 * 1024 * 1024, input = '' } = {}) =>
     new Promise((resolve, reject) => {
       const [scriptRelPath, ...rest] = argsWithScript;
       const scriptPath = path.join(extensionPath || root, scriptRelPath);
       const startedAt = Date.now();
-      cp.execFile(resolveExe(), [scriptPath, ...rest], {
+      const child = cp.execFile(resolveExe(), [scriptPath, ...rest], {
         encoding: 'utf8', cwd: root, maxBuffer, timeout, env: resolveEnv(),
       }, (err, stdout, stderr) => {
         recordRuntimeEvent('python', scriptRelPath, {
@@ -34,6 +34,7 @@ function makeRunPython({ root, extensionPath, getPythonExecutable, buildPythonEn
         });
         if (err) { err.stderr = stderr; reject(err); } else resolve({ stdout });
       });
+      if (input) child.stdin.end(String(input));
     });
 }
 

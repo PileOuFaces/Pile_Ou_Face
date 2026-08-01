@@ -313,6 +313,14 @@ window.addEventListener('message', (event) => {
     prefillOllamaPrompt(String(msg.prompt || ''));
     return;
   }
+  if (msg.type === 'hubChatHistory') {
+    applyOllamaConversationHistory(msg.conversations, msg.activeConversationId);
+    return;
+  }
+  if (msg.type === 'hubChatHistoryError') {
+    setOllamaStatus(`Historique SQLite indisponible : ${msg.error || 'erreur inconnue'}`, true);
+    return;
+  }
   if (msg.type === 'showPanel' && msg.panel) {
     showPanel(msg.panel);
     if (msg.focusGoToAddr) {

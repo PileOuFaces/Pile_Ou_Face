@@ -13,6 +13,7 @@ const readline = require('readline');
 const fileManager = require('./fileManager');
 const { detectPythonExecutable, getExtensionPath, buildRuntimeEnv } = require('./utils');
 const { makeAnnotationsBridge } = require('./annotationsBridge');
+const { makeChatHistoryBridge } = require('./chatHistoryBridge');
 const { makeMappingStore } = require('./mappingStore');
 const {
   cancelAiProcess,
@@ -269,6 +270,13 @@ function sharedHandlers(ctx) {
     buildPythonEnv: () => buildRuntimeEnv(root, storageDir),
     getOverlayMappingPath: (binaryPath) =>
       getDisasmMappingPathForBinary(binaryPath, { root, storageDir, getTempDir }),
+  });
+  const chatHistoryBridge = ctx.chatHistoryBridge || makeChatHistoryBridge({
+    root,
+    workspacePath: root,
+    extensionPath: context?.extensionPath || getExtensionPath() || root,
+    getPythonExecutable: () => detectPythonExecutable(root),
+    buildPythonEnv: () => buildRuntimeEnv(root, storageDir),
   });
   const safePostMessage = (message) => {
     try {
@@ -606,6 +614,30 @@ function sharedHandlers(ctx) {
     },
     hubError: (message) => {
       vscode.window.showErrorMessage(message.message || 'Erreur');
+    },
+    hubLoadChatHistory: async () => {
+      try {
+        const result = await chatHistoryBridge.loadHistory();
+        panel.webview.postMessage({ type: 'hubChatHistory', ...result });
+      } catch (err) {
+        panel.webview.postMessage({
+          type: 'hubChatHistoryError',
+          error: String(err?.message || err),
+        });
+      }
+    },
+    hubSaveChatHistory: async (message) => {
+      try {
+        await chatHistoryBridge.saveHistory({
+          conversations: message.conversations,
+          activeConversationId: message.activeConversationId,
+        });
+      } catch (err) {
+        panel.webview.postMessage({
+          type: 'hubChatHistoryError',
+          error: String(err?.message || err),
+        });
+      }
     },
     hubLoadAnnotations: async (message) => {
       const { binaryPath } = message;
