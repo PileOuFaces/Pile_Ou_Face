@@ -2942,24 +2942,26 @@ window.addEventListener('message', (event) => {
   }
   if (msg.type === 'hubStructsDone' || msg.type === 'hubStructsSaved') {
     const data = msg.data || {};
-    typedDataUiState.structSource = String(data.source || '');
     typedDataUiState.structsLoaded = true;
     typedDataUiState.loadingStructs = false;
-    syncTypedDataStructSelect(data.structs || [], typedDataUiState.appliedStructName || undefined);
     if (data.error) {
       setTypedDataStructStatus(String(data.error), true);
+      updateTypedStructEditorResult(data, data.error);
       typedDataUiState.pendingEditorOpen = false;
       updateHexSelectionSummary();
       return;
     }
+    typedDataUiState.structSource = String(data.source || '');
+    syncTypedDataStructSelect(data.structs || [], typedDataUiState.appliedStructName || undefined);
     if (typedDataUiState.pendingEditorOpen) {
       typedDataUiState.pendingEditorOpen = false;
-      openTypedStructEditor(typedDataUiState.structSource);
+      openTypedStructEditor(typedDataUiState.structSource, data.structs || []);
       return;
     }
     if (msg.type === 'hubStructsSaved') {
       const structCount = Array.isArray(data.structs) ? data.structs.length : 0;
       setTypedDataStructStatus(`${structCount} type(s) C disponible(s).`);
+      updateTypedStructEditorResult(data, null);
       const bp = getStaticBinaryPath();
       const section = document.getElementById('typedDataSection')?.value;
       if (bp && section) {
