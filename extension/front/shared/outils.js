@@ -320,6 +320,7 @@ function normalizeStoredOllamaHistory(raw) {
       updatedAt: Number.isFinite(updatedAt) ? updatedAt : Date.now(),
       messages,
       model: String(entry?.model || '').trim(),
+      binaryPath: String(entry?.binaryPath || '').trim(),
     });
   });
   normalized.sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
@@ -342,6 +343,7 @@ function syncActiveOllamaConversationInHistory(touch = true) {
       updatedAt: now,
       messages: [...ollamaUiState.conversation],
       model: getCurrentOllamaModel() || ollamaUiState.lastModel || '',
+      binaryPath: getStaticBinaryPath(),
     });
   } else {
     existing.messages = [...ollamaUiState.conversation];
@@ -349,6 +351,7 @@ function syncActiveOllamaConversationInHistory(touch = true) {
       existing.title = buildOllamaConversationTitle(existing.messages);
     }
     existing.model = getCurrentOllamaModel() || ollamaUiState.lastModel || existing.model || '';
+    existing.binaryPath = getStaticBinaryPath() || existing.binaryPath || '';
     if (touch) existing.updatedAt = now;
   }
   ollamaUiState.history.sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
@@ -358,33 +361,26 @@ function syncActiveOllamaConversationInHistory(touch = true) {
 }
 
 function persistOllamaConversation() {
-  _saveStorage({
-    ollamaConversation: ollamaUiState.conversation,
-    ollamaConversationHistory: ollamaUiState.history,
-    ollamaActiveConversationId: ollamaUiState.activeConversationId,
+  vscode.postMessage({
+    type: 'hubSaveChatHistory',
+    conversations: ollamaUiState.history,
+    activeConversationId: ollamaUiState.activeConversationId,
   });
 }
 
 function hydrateOllamaConversationHistory() {
-  const stored = _loadStorage();
-  let history = normalizeStoredOllamaHistory(stored.ollamaConversationHistory);
-  let changed = false;
-  if (!history.length) {
-    const legacyMessages = _normalizeOllamaConversationMessages(stored.ollamaConversation);
-    history = [
-      {
-        id: createOllamaConversationId(),
-        title: buildOllamaConversationTitle(legacyMessages),
-        customTitle: false,
-        generationSettings: null,
-        updatedAt: Date.now(),
-        messages: legacyMessages,
-        model: String(stored.ollamaModel || '').trim(),
-      },
-    ];
-    changed = true;
-  }
-  const savedActiveId = String(stored.ollamaActiveConversationId || '').trim();
+  window.POFHubState?.removeStorageKeys?.([
+    'ollamaConversation',
+    'ollamaConversationHistory',
+    'ollamaActiveConversationId',
+  ]);
+  applyOllamaConversationHistory([], '');
+  vscode.postMessage({ type: 'hubLoadChatHistory' });
+}
+
+function applyOllamaConversationHistory(rawHistory, activeConversationId) {
+  let history = normalizeStoredOllamaHistory(rawHistory);
+  const savedActiveId = String(activeConversationId || '').trim();
   let active = history.find((entry) => entry.id === savedActiveId) || history[0];
   if (!active) {
     active = {
@@ -394,15 +390,16 @@ function hydrateOllamaConversationHistory() {
       generationSettings: null,
       updatedAt: Date.now(),
       messages: [],
-      model: String(stored.ollamaModel || '').trim(),
+      model: getCurrentOllamaModel() || ollamaUiState.lastModel || '',
+      binaryPath: getStaticBinaryPath(),
     };
     history = [active];
-    changed = true;
   }
   ollamaUiState.history = history;
   ollamaUiState.activeConversationId = active.id;
   ollamaUiState.conversation = _normalizeOllamaConversationMessages(active.messages);
-  if (changed) persistOllamaConversation();
+  renderOllamaConversation();
+  renderOllamaConversationHistory();
 }
 
 function switchOllamaConversation(conversationId) {

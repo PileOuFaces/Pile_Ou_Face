@@ -205,6 +205,58 @@ describe("sharedHandlers", () => {
     });
   });
 
+  it("loads AI chat history through the SQLite bridge", async () => {
+    const chatHistoryBridge = {
+      loadHistory: sinon.stub().resolves({
+        conversations: [{ id: "conv-1", messages: [] }],
+        activeConversationId: "conv-1",
+      }),
+      saveHistory: sinon.stub().resolves(),
+    };
+    const sharedHandlers = proxyquire("../shared/sharedHandlers", {
+      vscode: vscodeStub,
+      "./fileManager": fileManagerStub,
+    });
+    const handlers = sharedHandlers({
+      root: tempRoot,
+      panel: sink.panel,
+      chatHistoryBridge,
+    });
+
+    await handlers.hubLoadChatHistory();
+
+    expect(chatHistoryBridge.loadHistory.calledOnce).to.equal(true);
+    expect(sink.messages).to.deep.include({
+      type: "hubChatHistory",
+      conversations: [{ id: "conv-1", messages: [] }],
+      activeConversationId: "conv-1",
+    });
+  });
+
+  it("saves AI chat history through the SQLite bridge", async () => {
+    const chatHistoryBridge = {
+      loadHistory: sinon.stub().resolves({}),
+      saveHistory: sinon.stub().resolves(),
+    };
+    const sharedHandlers = proxyquire("../shared/sharedHandlers", {
+      vscode: vscodeStub,
+      "./fileManager": fileManagerStub,
+    });
+    const handlers = sharedHandlers({
+      root: tempRoot,
+      panel: sink.panel,
+      chatHistoryBridge,
+    });
+    const conversations = [{ id: "conv-1", messages: [] }];
+
+    await handlers.hubSaveChatHistory({ conversations, activeConversationId: "conv-1" });
+
+    expect(chatHistoryBridge.saveHistory.calledOnceWithExactly({
+      conversations,
+      activeConversationId: "conv-1",
+    })).to.equal(true);
+  });
+
   it("exports an AI conversation in the selected format", async () => {
     const sharedHandlers = proxyquire("../shared/sharedHandlers", {
       vscode: vscodeStub,

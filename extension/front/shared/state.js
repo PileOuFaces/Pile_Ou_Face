@@ -168,10 +168,6 @@ function _normalizeOllamaConversationMessages(raw) {
     .slice(-OLLAMA_CHAT_MAX_MESSAGES);
 }
 
-function _loadStoredOllamaConversation() {
-  return _normalizeOllamaConversationMessages(_loadStorage().ollamaConversation);
-}
-
 let ollamaUiState = {
   models: [],
   lastModel: _loadStorage().ollamaModel || '',
@@ -183,7 +179,7 @@ let ollamaUiState = {
   modelUserSelected: false,
   baseUrl: _loadStorage().ollamaBaseUrl || 'http://127.0.0.1:11434',
   busy: false,
-  conversation: _loadStoredOllamaConversation(),
+  conversation: [],
   history: [],
   activeConversationId: '',
   historyQuery: '',

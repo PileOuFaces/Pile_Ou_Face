@@ -29,9 +29,17 @@
     return next;
   }
 
+  function removeStorageKeys(keys) {
+    const current = loadStorage();
+    (Array.isArray(keys) ? keys : []).forEach((key) => delete current[key]);
+    global.localStorage.setItem(STORAGE_KEY, JSON.stringify(current));
+    return current;
+  }
+
   global.POFHubState = {
     STORAGE_KEY,
     loadStorage,
-    saveStorage
+    saveStorage,
+    removeStorageKeys
   };
 })(window);
