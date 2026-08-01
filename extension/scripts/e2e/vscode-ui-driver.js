@@ -143,6 +143,16 @@ class CdpLocator {
     throw new Error(`Timed out waiting for ${this.selector} value to contain ${JSON.stringify(expected)}`);
   }
 
+  async waitForAttribute(name, expected, timeout = DEFAULT_TIMEOUT_MS) {
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+      const value = String(await this.getAttribute(name) || '');
+      if (value.includes(expected)) return value;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error(`Timed out waiting for ${this.selector} attribute ${JSON.stringify(name)} to contain ${JSON.stringify(expected)}`);
+  }
+
   async fill(value) {
     await this.waitFor({ state: 'visible' });
     const filled = await this.target.evaluate(this.expression(`
@@ -306,6 +316,38 @@ class HubPage {
 
   typeEditorCloseButton() {
     return this.target.locator('#pof-typed-struct-popup .typed-data-struct-editor-actions .btn:first-child');
+  }
+
+  entryPointButton() {
+    return this.target.locator('#btnGoToEntry');
+  }
+
+  annotationAddress() {
+    return this.target.locator('#annotationAddrBadge');
+  }
+
+  annotationName() {
+    return this.target.locator('#annotationName');
+  }
+
+  annotationComment() {
+    return this.target.locator('#annotationComment');
+  }
+
+  annotationSubmitButton() {
+    return this.target.locator('#btnAddAnnotation');
+  }
+
+  annotationsList() {
+    return this.target.locator('#annotationsList');
+  }
+
+  firstAnnotationEditButton() {
+    return this.target.locator('#annotationsList .annotation-item .ann-edit');
+  }
+
+  firstAnnotationDeleteButton() {
+    return this.target.locator('#annotationsList .annotation-item .ann-delete');
   }
 
   async expectActive(locator, description) {

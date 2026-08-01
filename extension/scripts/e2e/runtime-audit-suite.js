@@ -556,6 +556,68 @@ async function run() {
     }
   }));
 
+  suite.addTest(new Mocha.Test('creates, restores, updates and deletes an annotation through the UI', async () => {
+    let target = null;
+    try {
+      const [fixture] = readFixtureSpecs();
+      assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
+      await vscode.commands.executeCommand('pileOuFace.goToAddress');
+      target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+      const hub = new HubPage(target);
+
+      await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+        type: 'hubUseBinaryPath',
+        binaryPath: fixture.path,
+      });
+      await hub.binaryPath().waitForValue(path.basename(fixture.path), 30000);
+      await hub.openPanel('static');
+      await hub.openStaticTab('code', 'disasm');
+
+      await hub.entryPointButton().click();
+      await hub.annotationAddress().waitForAttribute('data-addr', '0x', 30000);
+      await hub.annotationName().fill('e2e_entry');
+      await hub.annotationComment().fill('Annotation créée depuis l’interface');
+      await hub.annotationSubmitButton().click();
+      await sleep(250);
+      if (!String(await hub.annotationsList().textContent() || '').includes('e2e_entry')) {
+        await hub.annotationSubmitButton().clickDom();
+      }
+      await hub.annotationsList().waitForText('e2e_entry', 30000);
+      await hub.annotationsList().waitForText('Annotation créée depuis l’interface', 30000);
+
+      await hub.openPanel('dashboard');
+      await hub.openPanel('static');
+      await hub.openStaticTab('code', 'disasm');
+      await hub.annotationsList().waitForText('e2e_entry', 30000);
+
+      await hub.firstAnnotationEditButton().clickDom();
+      await hub.annotationName().waitForValue('e2e_entry', 30000);
+      await hub.annotationName().fill('e2e_entry_updated');
+      await hub.annotationComment().fill('Annotation modifiée depuis l’interface');
+      await hub.annotationSubmitButton().clickDom();
+      await hub.annotationsList().waitForText('e2e_entry_updated', 30000);
+      await hub.annotationsList().waitForText('Annotation modifiée depuis l’interface', 30000);
+
+      await hub.firstAnnotationDeleteButton().clickDom();
+      await hub.annotationsList().waitForText('Aucune annotation.', 30000);
+
+      await hub.openPanel('dashboard');
+      await hub.openPanel('static');
+      await hub.openStaticTab('code', 'disasm');
+      await hub.annotationsList().waitForText('Aucune annotation.', 30000);
+    } catch (error) {
+      const artifacts = await captureUiFailure(
+        target,
+        process.env.POF_E2E_ARTIFACTS_DIR,
+        'hub-annotation-lifecycle',
+      );
+      error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
+      throw error;
+    } finally {
+      target?.close();
+    }
+  }));
+
   suite.addTest(new Mocha.Test('records static disassembly commands across fixture sizes', async () => {
     const userDataDir = process.env.POF_E2E_USER_DATA_DIR;
     assert.ok(userDataDir, 'POF_E2E_USER_DATA_DIR is required');
