@@ -134,6 +134,14 @@ describe('VS Code UI E2E driver', () => {
     assert.equal(socket.closed, true);
   });
 
+  it('routes attached target commands through their CDP session', async () => {
+    const socket = new FakeSocket();
+    const target = new CdpTarget(socket, 'iframe-session');
+
+    assert.equal(await target.evaluate('true'), true);
+    assert.equal(JSON.parse(socket.sent[0]).sessionId, 'iframe-session');
+  });
+
   it('surfaces CDP protocol errors, evaluation exceptions and closed requests', async () => {
     const protocolSocket = new FakeSocket();
     protocolSocket.send = function send(payload: string) {
@@ -176,16 +184,35 @@ describe('VS Code UI E2E driver', () => {
     const originalWebSocket = globalThis.WebSocket;
     const sockets: FakeSocket[] = [];
     globalThis.fetch = (async () => ({
-      json: async () => [{
-        type: 'iframe',
-        url: 'https://file+.vscode-resource.vscode-cdn.net/index.html',
-        webSocketDebuggerUrl: 'ws://local/webview',
-      }],
+      json: async () => [
+        {
+          type: 'page',
+          url: 'vscode-file://vscode-app/workbench.html',
+          webSocketDebuggerUrl: 'ws://local/page',
+        },
+        {
+          id: 'hub-frame',
+          type: 'iframe',
+          url: 'vscode-webview://pile-ou-face/index.html',
+        },
+      ],
     })) as any;
     globalThis.WebSocket = class {
       socket: FakeSocket;
       constructor() {
         this.socket = new FakeSocket();
+        this.socket.send = function send(payload: string) {
+          this.sent.push(payload);
+          const request = JSON.parse(payload);
+          queueMicrotask(() => this.emit('message', {
+            data: JSON.stringify({
+              id: request.id,
+              result: request.method === 'Target.attachToTarget'
+                ? { sessionId: 'hub-session' }
+                : { result: { value: true } },
+            }),
+          }));
+        };
         sockets.push(this.socket);
         return this.socket as any;
       }
@@ -193,6 +220,7 @@ describe('VS Code UI E2E driver', () => {
     try {
       const target = await connectToHubWebview('http://127.0.0.1:9222', 100);
       assert.ok(target instanceof CdpTarget);
+      assert.equal(target.sessionId, 'hub-session');
       target.close();
       assert.equal(sockets[0].closed, true);
     } finally {

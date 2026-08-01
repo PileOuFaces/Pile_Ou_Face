@@ -5,8 +5,9 @@ const path = require('path');
 const DEFAULT_TIMEOUT_MS = 15000;
 
 class CdpTarget {
-  constructor(socket) {
+  constructor(socket, sessionId = null) {
     this.socket = socket;
+    this.sessionId = sessionId;
     this.nextId = 1;
     this.pending = new Map();
     socket.addEventListener('message', (event) => {
@@ -40,7 +41,12 @@ class CdpTarget {
           reject(error);
         },
       });
-      this.socket.send(JSON.stringify({ id, method, params }));
+      this.socket.send(JSON.stringify({
+        id,
+        method,
+        params,
+        ...(this.sessionId ? { sessionId: this.sessionId } : {}),
+      }));
     });
   }
 
@@ -171,16 +177,28 @@ async function connectToHubWebview(endpoint, timeoutMs = DEFAULT_TIMEOUT_MS) {
         || candidate.type === 'iframe'
         || String(candidate.url || '').startsWith('vscode-webview://')
       ));
+      const pageTarget = targets.find((candidate) => candidate.type === 'page' && candidate.webSocketDebuggerUrl);
       for (const candidate of webviewTargets) {
-        if (!candidate.webSocketDebuggerUrl) continue;
-        const socket = await openSocket(candidate.webSocketDebuggerUrl, Math.min(2000, timeoutMs));
-        const target = new CdpTarget(socket);
+        const socketUrl = candidate.webSocketDebuggerUrl || pageTarget?.webSocketDebuggerUrl;
+        if (!socketUrl) continue;
+        const socket = await openSocket(socketUrl, Math.min(2000, timeoutMs));
+        const connection = new CdpTarget(socket);
+        let target = connection;
         try {
+          if (!candidate.webSocketDebuggerUrl) {
+            if (!candidate.id) throw new Error('CDP iframe target has no id');
+            const attached = await connection.send('Target.attachToTarget', {
+              targetId: candidate.id,
+              flatten: true,
+            });
+            if (!attached.sessionId) throw new Error('CDP iframe attachment returned no session');
+            target = new CdpTarget(socket, attached.sessionId);
+          }
           if (await target.evaluate('Boolean(document.querySelector("#panel-dashboard"))')) return target;
         } catch {
           // Non-page targets may reject Runtime.evaluate.
         }
-        target.close();
+        connection.close();
       }
     } catch {
       // VS Code or its webview target may still be starting.
