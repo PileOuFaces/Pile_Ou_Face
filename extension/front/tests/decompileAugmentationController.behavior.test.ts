@@ -17,12 +17,14 @@ function fixture() {
       <button data-augment-view="augmented"></button>
     </section>`);
   const posted: any[] = [];
+  const applied: any[] = [];
   const controller = controllerModule.createController({
     document: dom.window.document,
     postMessage: (message: any) => posted.push(message),
+    applyAccepted: (result: any) => applied.push(result),
   });
   controller.bind();
-  return { controller, document: dom.window.document, posted };
+  return { applied, controller, document: dom.window.document, posted };
 }
 
 describe('decompileAugmentationController', () => {
@@ -38,7 +40,7 @@ describe('decompileAugmentationController', () => {
     expect(target.decompileAugmentationController).to.equal(mounted);
     mounted.setSource({ binaryPath: '/tmp/a', addr: '0x1', code: 'int f(){}' });
     mounted.request();
-    expect(posted[0].type).to.equal('hubAugmentDecompile');
+    expect(posted.at(-1).type).to.equal('hubAugmentDecompile');
     expect(controllerModule.mountController({ document: dom.window.document })).to.equal(null);
   });
 
@@ -73,14 +75,14 @@ describe('decompileAugmentationController', () => {
       functions: [{ addr: '0x10', name: 'only', code: 'int only(){}' }],
     });
     expect(controller.request()).to.equal(true);
-    expect(posted[0]).to.include({ addr: '0x10', functionName: 'only', code: 'int only(){}' });
+    expect(posted.at(-1)).to.include({ addr: '0x10', functionName: 'only', code: 'int only(){}' });
   });
 
   it('posts only the current function when requesting suggestions', () => {
     const { controller, document, posted } = fixture();
     controller.setSource({ binaryPath: '/tmp/a', addr: '0x1', code: 'int v1;', functionName: 'sub_1' });
     (document.getElementById('btnAugmentDecompile') as HTMLElement).click();
-    expect(posted[0]).to.include({ type: 'hubAugmentDecompile', addr: '0x1', code: 'int v1;' });
+    expect(posted.at(-1)).to.include({ type: 'hubAugmentDecompile', addr: '0x1', code: 'int v1;' });
     expect(controller.request()).to.equal(false);
   });
 
@@ -111,7 +113,7 @@ describe('decompileAugmentationController', () => {
     expect(controller.accept()).to.equal(false);
     checkbox.checked = true;
     expect(controller.accept()).to.equal(true);
-    expect(posted[0]).to.deep.include({ type: 'hubAcceptDecompileAugmentation', selectedIds: ['rename:v1'] });
+    expect(posted.at(-1)).to.deep.include({ type: 'hubAcceptDecompileAugmentation', selectedIds: ['rename:v1'] });
   });
 
   it('surfaces backend errors without opening the review', () => {
@@ -122,7 +124,7 @@ describe('decompileAugmentationController', () => {
   });
 
   it('restores an accepted cached selection and handles the accept button binding', () => {
-    const { controller, document, posted } = fixture();
+    const { applied, controller, document, posted } = fixture();
     const source = { binaryPath: '/tmp/a', addr: '0x1', code: 'int v1;' };
     controller.setSource(source);
     controller.setSource(source);
@@ -133,6 +135,22 @@ describe('decompileAugmentationController', () => {
     }});
     expect((document.querySelector('[data-suggestion-id]') as HTMLInputElement).checked).to.equal(true);
     (document.getElementById('btnAcceptDecompileAugment') as HTMLElement).click();
-    expect(posted[0].cacheKey).to.equal('b'.repeat(64));
+    expect(posted.at(-1).cacheKey).to.equal('b'.repeat(64));
+    controller.receive({ type: 'hubDecompileAugmented', ok: true, accepted: true, ...source, result: {
+      cache_key: 'b'.repeat(64), raw_code: 'int v1;', augmented_code: 'int count;',
+      proposal: {}, accepted_ids: ['rename:v1'],
+    }});
+    expect(applied.at(-1).augmented_code).to.equal('int count;');
+    expect(document.getElementById('decompileAugmentReview').hidden).to.equal(true);
+  });
+
+  it('loads an accepted cache entry locally and ignores stale responses', () => {
+    const { applied, controller, posted } = fixture();
+    controller.setSource({ binaryPath: '/tmp/a', addr: '0x1', code: 'int v1;' });
+    expect(posted[0]).to.include({ type: 'hubLoadDecompileAugmentationCache', addr: '0x1' });
+    controller.receive({ type: 'hubDecompileAugmentationCache', ok: true, binaryPath: '/tmp/old', addr: '0x1', result: { found: true, augmented_code: 'stale' } });
+    expect(applied).to.have.length(0);
+    controller.receive({ type: 'hubDecompileAugmentationCache', ok: true, binaryPath: '/tmp/a', addr: '0x1', result: { found: true, augmented_code: 'int count;' } });
+    expect(applied).to.deep.equal([{ found: true, augmented_code: 'int count;' }]);
   });
 });

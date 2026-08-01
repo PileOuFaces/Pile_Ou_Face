@@ -331,14 +331,45 @@ def accept(payload: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def lookup(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return an accepted augmentation from the local cache without calling AI."""
+    code = str(payload.get("code", ""))[:32000]
+    if not code.strip():
+        return {"ok": True, "found": False}
+    provider = str(payload.get("provider") or "ollama")
+    model = resolve_provider_model(provider, str(payload.get("model") or "") or None)
+    key = cache_key(
+        str(payload.get("binary_path", "")),
+        str(payload.get("addr", "")),
+        code,
+        provider,
+        model,
+    )
+    path = _cache_path(str(payload["cache_dir"]), key)
+    if not path.is_file():
+        return {"ok": True, "found": False, "cache_key": key}
+    result = json.loads(path.read_text(encoding="utf-8"))
+    if result.get("accepted") is not True or not result.get("accepted_ids"):
+        return {"ok": True, "found": False, "cache_key": key}
+    result.update({"ok": True, "found": True, "cached": True})
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", required=True)
-    parser.add_argument("--action", choices=("suggest", "accept"), default="suggest")
+    parser.add_argument(
+        "--action", choices=("suggest", "accept", "lookup"), default="suggest"
+    )
     args = parser.parse_args()
     try:
         payload = json.loads(Path(args.input).read_text(encoding="utf-8"))
-        result = suggest(payload) if args.action == "suggest" else accept(payload)
+        if args.action == "suggest":
+            result = suggest(payload)
+        elif args.action == "accept":
+            result = accept(payload)
+        else:
+            result = lookup(payload)
         print(json.dumps(result, ensure_ascii=False))
         return 0
     except Exception as exc:

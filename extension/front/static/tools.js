@@ -984,6 +984,22 @@ function renderDecompilePayload(container, payload) {
   tabDataCache.decompile = { binaryPath: decompileUiState.renderedBinaryPath || getStaticBinaryPath() };
 }
 
+function applyAcceptedDecompileAugmentation(result) {
+  const pre = document.querySelector('#decompileContent .decompile-output');
+  const code = String(result?.augmented_code || '');
+  if (!pre || !code) return false;
+  scheduleDecompileHighlight(pre, code, {
+    binaryPath: decompileUiState.renderedBinaryPath,
+    decompiler: decompileUiState.renderedDecompiler,
+    addr: decompileUiState.renderedAddr,
+    activeStackName: decompileUiState.pendingStackEntryName || decompileUiState.activeStackEntryName,
+    searchQuery: decompileUiState.searchQuery || '',
+  });
+  return true;
+}
+
+window.applyAcceptedDecompileAugmentation = applyAcceptedDecompileAugmentation;
+
 function resetHexActiveUiState() {
   (hexActiveUiState.selectedRowEls || []).forEach((el) => {
     if (el?.isConnected) el.classList.remove('hex-row-selected');

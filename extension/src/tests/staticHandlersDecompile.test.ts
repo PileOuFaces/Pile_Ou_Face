@@ -9,6 +9,12 @@ describe('hubLoadDecompile parallel', () => {
   // Helper to build a stub staticHandlers
   function makeHandlers(execFile, posted = [], overrides = {}) {
     const proxyStubs = {
+      vscode: {
+        workspace: { getConfiguration: () => ({ get: () => undefined }) },
+        window: { showWarningMessage: async () => 'Autoriser', showErrorMessage: () => {} },
+        commands: { executeCommand: async () => {} },
+        env: { language: 'fr' },
+      },
       child_process: { execFile, ...(overrides.child_process || {}) },
       '../shared/utils': {
         detectPythonExecutable: () => '/usr/bin/python3',
@@ -101,10 +107,38 @@ describe('hubLoadDecompile parallel', () => {
     };
     const posted = [];
     const handlers = makeHandlers(execFile, posted, { fs: fsStub });
-    await handlers.hubAcceptDecompileAugmentation({ cacheKey: 'a'.repeat(64), selectedIds: ['rename:v1'] });
+    await handlers.hubAcceptDecompileAugmentation({
+      cacheKey: 'a'.repeat(64), selectedIds: ['rename:v1'], binaryPath: '/bin/foo', addr: '0x1000',
+    });
     const written = JSON.parse(fsStub.writeFileSync.firstCall.args[1]);
     expect(written.selected_ids).to.deep.equal(['rename:v1']);
-    expect(posted[0]).to.include({ type: 'hubDecompileAugmented', ok: true, accepted: true });
+    expect(posted[0]).to.include({
+      type: 'hubDecompileAugmented', ok: true, accepted: true, binaryPath: '/bin/foo', addr: '0x1000',
+    });
+  });
+
+  it('loads accepted augmentation from local cache without consent or provider calls', async () => {
+    const calls = [];
+    const execFile = sinon.stub().callsFake((bin, args, opts, cb) => {
+      calls.push(args);
+      cb(null, JSON.stringify({ ok: true, found: true, augmented_code: 'int count;' }), '');
+    });
+    const fsStub = {
+      existsSync: sinon.stub().returns(true),
+      writeFileSync: sinon.stub(),
+      rmSync: sinon.stub(),
+    };
+    const posted = [];
+    const handlers = makeHandlers(execFile, posted, { fs: fsStub });
+    await handlers.hubLoadDecompileAugmentationCache({
+      binaryPath: '/bin/foo', addr: '0x1000', code: 'int v1;',
+    });
+    expect(calls).to.have.length(1);
+    expect(calls[0]).to.include('lookup');
+    expect(calls[0]).not.to.include('--check');
+    expect(posted[0]).to.deep.include({
+      type: 'hubDecompileAugmentationCache', ok: true, binaryPath: '/bin/foo', addr: '0x1000',
+    });
   });
 
   it('launches only one subprocess when decompiler is forced', async () => {

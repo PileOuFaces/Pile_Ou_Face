@@ -1775,9 +1775,54 @@ function staticHandlers(config) {
         );
         const result = JSON.parse(stdout);
         if (!result.ok) throw new Error(result.error || 'Réponse invalide');
-        panel.webview.postMessage({ type: 'hubDecompileAugmented', ok: true, accepted: true, result });
+        panel.webview.postMessage({
+          type: 'hubDecompileAugmented', ok: true, accepted: true, result,
+          binaryPath: String(message.binaryPath || ''), addr: String(message.addr || ''),
+        });
       } catch (err) {
         panel.webview.postMessage({ type: 'hubDecompileAugmented', ok: false, error: String(err.message || err) });
+      } finally {
+        try { fs.rmSync(inputPath, { force: true }); } catch (err) {
+          logDebug(`[decompile-augment] cleanup failed: ${err.message || err}`);
+        }
+      }
+    },
+    hubLoadDecompileAugmentationCache: async (message = {}) => {
+      const binaryPath = String(message.binaryPath || '').trim();
+      const addr = String(message.addr || '').trim();
+      const code = String(message.code || '');
+      const respond = (ok, resultOrError) => panel.webview.postMessage(ok
+        ? { type: 'hubDecompileAugmentationCache', ok: true, binaryPath, addr, result: resultOrError }
+        : { type: 'hubDecompileAugmentationCache', ok: false, binaryPath, addr, error: String(resultOrError || '') });
+      if (!binaryPath || !addr || !code.trim()) {
+        respond(true, { ok: true, found: false });
+        return;
+      }
+      const pythonEnv = buildPythonEnv();
+      const requestedProvider = String(message.aiProvider || '').trim();
+      const { provider, model } = resolveAutoTriageProviderModel(
+        { provider: requestedProvider && requestedProvider !== 'auto' ? requestedProvider : undefined, model: message.model },
+        pythonEnv,
+      );
+      const inputPath = path.join(os.tmpdir(), `pof-decompile-cache-${crypto.randomUUID()}.json`);
+      try {
+        fs.writeFileSync(inputPath, JSON.stringify({
+          binary_path: binaryPath,
+          addr,
+          code: code.slice(0, 32000),
+          provider,
+          model,
+          cache_dir: getHostArtifactRoot('static_cache'),
+        }), { encoding: 'utf8', mode: 0o600 });
+        const { stdout } = await runPython(
+          ['backends/static/decompile/augment.py', '--input', inputPath, '--action', 'lookup'],
+          { timeout: 30000 },
+        );
+        const result = JSON.parse(stdout);
+        if (!result.ok) throw new Error(result.error || 'Cache invalide');
+        respond(true, result);
+      } catch (err) {
+        respond(false, err.message || err);
       } finally {
         try { fs.rmSync(inputPath, { force: true }); } catch (err) {
           logDebug(`[decompile-augment] cleanup failed: ${err.message || err}`);

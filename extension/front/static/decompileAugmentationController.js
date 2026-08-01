@@ -22,6 +22,7 @@
   function createController(options) {
     const document = options.document;
     const postMessage = options.postMessage;
+    const applyAccepted = options.applyAccepted || (() => {});
     const state = { source: null, result: null, loading: false, view: 'augmented' };
     const el = (id) => document.getElementById(id);
 
@@ -141,19 +142,38 @@
               : 'Décompilez puis choisissez une fonction pour activer l’augmentation.',
           '',
         );
+        if (state.source?.binaryPath && state.source?.addr && state.source?.code) {
+          postMessage({ type: 'hubLoadDecompileAugmentationCache', ...state.source });
+        }
       }
       setBusy(false);
     }
 
     function receive(message) {
-      if (message.type !== 'hubDecompileAugmented') return false;
+      if (!['hubDecompileAugmented', 'hubDecompileAugmentationCache'].includes(message.type)) return false;
+      if (message.binaryPath && message.binaryPath !== state.source?.binaryPath) return true;
+      if (message.addr && message.addr !== state.source?.addr) return true;
       setBusy(false);
       if (!message.ok) {
+        if (message.type === 'hubDecompileAugmentationCache') return true;
         setStatus(message.error || 'Augmentation impossible.', 'error');
         return true;
       }
+      if (message.type === 'hubDecompileAugmentationCache') {
+        if (message.result?.found) {
+          state.result = message.result;
+          applyAccepted(message.result);
+          setStatus('Version IA acceptée restaurée depuis le cache.', 'success');
+        }
+        return true;
+      }
       renderResult(message.result);
-      if (message.accepted) setStatus('Sélection enregistrée et réutilisable.', 'success');
+      if (message.accepted) {
+        applyAccepted(message.result);
+        const panel = el('decompileAugmentReview');
+        if (panel) panel.hidden = true;
+        setStatus('Version IA appliquée et enregistrée dans le cache.', 'success');
+      }
       return true;
     }
 
@@ -178,6 +198,7 @@
     const controller = createController({
       document: target.document,
       postMessage: (message) => vscodeApi.postMessage(message),
+      applyAccepted: (result) => target.applyAcceptedDecompileAugmentation?.(result),
     });
     controller.bind();
     target.decompileAugmentationController = controller;

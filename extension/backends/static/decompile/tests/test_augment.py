@@ -147,7 +147,26 @@ def test_accept_persists_selected_version(tmp_path):
     assert "incremented_value" in accepted["augmented_code"]
     assert accepted["versions"][0]["version"] == 1
     assert accepted["versions"][0]["selected_ids"] == ["rename:v1"]
+    restored = augment.lookup(payload)
+    assert restored["found"] is True
+    assert restored["cached"] is True
+    assert restored["accepted_ids"] == ["rename:v1"]
     with pytest.raises(ValueError, match="introuvable"):
         augment.accept(
             {"cache_dir": str(tmp_path), "cache_key": "bad", "selected_ids": []}
         )
+
+
+def test_lookup_is_local_and_ignores_missing_or_unaccepted_cache(tmp_path):
+    payload = {
+        "binary_path": "missing",
+        "addr": "0x1",
+        "code": CODE,
+        "provider": "ollama",
+        "model": "unit",
+        "cache_dir": str(tmp_path),
+    }
+    with patch.object(augment, "call_provider_result") as call:
+        assert augment.lookup(payload)["found"] is False
+        assert augment.lookup({**payload, "code": ""}) == {"ok": True, "found": False}
+    call.assert_not_called()
