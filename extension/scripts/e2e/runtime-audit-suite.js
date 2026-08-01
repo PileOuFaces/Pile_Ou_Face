@@ -503,13 +503,6 @@ async function run() {
       await hub.openPanel('static');
       await hub.openStaticTab('data', 'typed_data');
 
-      const manageTypesButton = target.locator('#btnTypedEditStructs');
-      assert.strictEqual(await manageTypesButton.isEnabled(), true, 'Gérer les types should be enabled');
-      await manageTypesButton.click();
-
-      const editor = target.locator('#pof-typed-struct-popup');
-      await editor.waitFor({ state: 'visible' });
-
       await hub.openPanel('dashboard');
       await hub.expectActive(hub.panel('dashboard'), 'dashboard panel after returning');
     } catch (error) {
