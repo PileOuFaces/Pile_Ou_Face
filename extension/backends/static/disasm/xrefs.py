@@ -9,6 +9,7 @@ import re
 from backends.shared.log import configure_logging, get_logger
 from backends.shared.utils import normalize_addr as _normalize_addr
 from backends.shared.utils import parse_addr as _addr_to_int
+from backends.static.annotations.annotation_db import AnnotationDb
 from backends.static.annotations.typed_struct_refs import (
     build_typed_struct_index,
     collect_typed_struct_hints,
@@ -348,10 +349,15 @@ def _enrich_refs_with_binary_context(
     if not binary_path or not os.path.exists(binary_path):
         return _enrich_refs_with_function_context(refs, functions)
     try:
+        with AnnotationDb() as annotation_db:
+            annotations = annotation_db.get_annotations(binary_path)
+    except Exception as exc:
+        logger.debug("Annotations unavailable for %s: %s", binary_path, exc)
+        annotations = []
+    try:
         with DisasmCache(default_cache_path(binary_path)) as cache:
             functions = functions or cache.get_functions(binary_path) or []
             symbols = cache.get_symbols(binary_path) or []
-            annotations = cache.get_annotations(binary_path) or []
             function_ranges = _build_function_ranges(functions)
             rename_map = _annotation_name_map(annotations)
             symbol_map = _symbol_name_map(symbols)

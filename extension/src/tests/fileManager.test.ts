@@ -90,27 +90,17 @@ describe("fileManager", () => {
     expect(pruneSpy.calledOnce).to.equal(true);
   });
 
-  it("purges stale annotations, legacy decompile cache, stale patches and stale pfdb files", () => {
+  it("purges legacy decompile cache, stale patches and stale pfdb files", () => {
     const workspaceFile = path.join(tempRoot, "examples", "demo.elf");
     fs.mkdirSync(path.dirname(workspaceFile), { recursive: true });
     fs.writeFileSync(workspaceFile, Buffer.from("demo"));
-    const stat = fs.statSync(workspaceFile);
 
-    const annotationsDir = path.join(mockStorageDir, "annotations");
     const decompileDir = path.join(mockStorageDir, "decompile_cache");
     const patchesDir = path.join(mockStorageDir, "patches");
     const pfdbDir = path.join(mockStorageDir, "pfdb");
-    fs.mkdirSync(annotationsDir, { recursive: true });
     fs.mkdirSync(decompileDir, { recursive: true });
     fs.mkdirSync(patchesDir, { recursive: true });
     fs.mkdirSync(pfdbDir, { recursive: true });
-
-    const annKey = crypto.createHash("sha256")
-      .update(`${path.resolve(workspaceFile)}:${stat.mtimeMs}:${stat.size}`)
-      .digest("hex")
-      .slice(0, 16);
-    fs.writeFileSync(path.join(annotationsDir, `${annKey}.json`), '{"0x1000":{"bookmark":true}}');
-    fs.writeFileSync(path.join(annotationsDir, "deadbeefdeadbeef.json"), '{"0x1000":{"bookmark":true}}');
 
     fs.writeFileSync(path.join(decompileDir, "legacy.json"), '{"code":"old"}');
 
@@ -133,9 +123,7 @@ describe("fileManager", () => {
     });
 
     const result = fileManager.purgeStaleCache(mockStorageDir, tempRoot);
-    expect(result.removed).to.equal(5);
-    expect(fs.existsSync(path.join(annotationsDir, `${annKey}.json`))).to.equal(true);
-    expect(fs.existsSync(path.join(annotationsDir, "deadbeefdeadbeef.json"))).to.equal(false);
+    expect(result.removed).to.equal(4);
     expect(fs.existsSync(path.join(decompileDir, "legacy.json"))).to.equal(false);
     expect(fs.existsSync(path.join(patchesDir, `${patchKey}.json`))).to.equal(true);
     expect(fs.existsSync(path.join(patchesDir, "orphanpatch000000.json"))).to.equal(false);
@@ -176,7 +164,7 @@ describe("fileManager", () => {
 
     // ── Protected entries: directories ─────────────────────────────────────
 
-    const PROTECTED_DIRS = ["licenses", "plugins", "annotations", "patches", "pfdb"];
+    const PROTECTED_DIRS = ["licenses", "plugins", "patches", "pfdb"];
 
     for (const dirName of PROTECTED_DIRS) {
       it(`does NOT delete ${dirName}/`, () => {
@@ -198,7 +186,6 @@ describe("fileManager", () => {
         "compilers.json",
         "licenses",
         "plugins",
-        "annotations",
         "patches",
         "pfdb",
       ];

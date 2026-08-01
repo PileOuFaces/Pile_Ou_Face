@@ -190,7 +190,8 @@ stockees a part dans `~/.pile-ou-face/annotations.db` (base SQLite dediee, dans 
 de l'utilisateur — pas sous `storageUri`, pas dans le projet). Ce chemin fixe est
 resolu de la meme facon par l'extension VS Code (via subprocess CLI) et par le serveur
 MCP (process independant, sans acces aux API VS Code), qui partagent donc desormais
-les memes annotations. Voir `annotations.py` / `annotation_db.py` plus bas.
+les memes annotations. Aucun stockage JSON ni table d'annotations dans `DisasmCache`
+n'est conserve. Voir `annotations.py` / `annotation_db.py` plus bas.
 
 ## Formats supportes
 

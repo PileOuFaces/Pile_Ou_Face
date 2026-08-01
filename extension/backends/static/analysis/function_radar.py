@@ -21,6 +21,7 @@ from backends.shared.log import configure_logging, get_logger
 from backends.shared.utils import normalize_addr
 from backends.shared.utils import parse_addr as _addr_to_int
 from backends.static.analysis.analysis_index import build_analysis_index
+from backends.static.annotations.annotation_db import AnnotationDb
 from backends.static.binary.imports_analysis import analyze_imports
 from backends.static.binary.symbols import extract_symbols
 from backends.static.cache.cache import DisasmCache, default_cache_path
@@ -641,7 +642,12 @@ def build_function_radar(
         symbols = _load_or_compute_symbols(cache, binary_path)
         discovered = _load_or_compute_functions(cache, binary_path, lines, symbols)
         cfg = _load_or_compute_cfg(cache, binary_path, lines)
-        annotations = cache.get_annotations(binary_path)
+    try:
+        with AnnotationDb() as annotation_db:
+            annotations = annotation_db.get_annotations(binary_path)
+    except Exception as exc:
+        logger.debug("Annotations unavailable for %s: %s", binary_path, exc)
+        annotations = []
 
     catalog = _merge_function_catalog(symbols, discovered, annotations)
     function_ranges = _build_function_ranges(catalog)

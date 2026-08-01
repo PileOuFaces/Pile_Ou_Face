@@ -19,7 +19,6 @@ const {
 
 const CACHE_DIR_NAME = 'static_cache';
 const DECOMPILE_CACHE_DIR_NAME = 'decompile_cache';
-const ANNOTATIONS_DIR_NAME = 'annotations';
 const PATCHES_DIR_NAME = 'patches';
 const PFDB_DIR_NAME = 'pfdb';
 const MANIFEST_FILE = 'manifest.json';
@@ -32,7 +31,6 @@ const PROTECTED_NAMES = new Set([
   'compilers.json',
   'licenses',
   'plugins',
-  'annotations',
   'patches',
   'pfdb',
 ]);
@@ -127,15 +125,13 @@ function listWorkspaceFiles(root) {
 
 function buildWorkspaceStateFingerprints(root) {
   const files = listWorkspaceFiles(root);
-  const annotationKeys = new Set();
   const patchKeys = new Set();
   const pfdbNames = new Set();
   for (const file of files) {
-    annotationKeys.add(hash16(`${file.path}:${file.mtimeMs}:${file.size}`));
     patchKeys.add(hash16(file.path));
     pfdbNames.add(`${sanitizePfdbFilename(file.name)}.${hash16(file.path)}.pfdb`);
   }
-  return { files, annotationKeys, patchKeys, pfdbNames };
+  return { files, patchKeys, pfdbNames };
 }
 
 function readJsonFile(filePath) {
@@ -144,21 +140,6 @@ function readJsonFile(filePath) {
   } catch {
     return null;
   }
-}
-
-function purgeStaleAnnotations(storageDir, fingerprints) {
-  const dir = path.join(getBaseDir(storageDir), ANNOTATIONS_DIR_NAME);
-  if (!fs.existsSync(dir)) return 0;
-  let removed = 0;
-  for (const name of fs.readdirSync(dir)) {
-    if (!name.endsWith('.json')) continue;
-    const key = name.replace(/\.json$/i, '');
-    if (!fingerprints.annotationKeys.has(key)) {
-      removeRecursive(path.join(dir, name));
-      removed++;
-    }
-  }
-  return removed;
 }
 
 function purgeStalePatches(storageDir, fingerprints) {
@@ -467,7 +448,6 @@ function purgeStaleCache(storageDir, root) {
     }
   }
   pruneIndexedCacheEntries(storageDir);
-  removed += purgeStaleAnnotations(storageDir, fingerprints);
   removed += purgeStalePatches(storageDir, fingerprints);
   removed += purgeStaleDecompileCache(storageDir);
   removed += purgeStalePfdb(storageDir, fingerprints);

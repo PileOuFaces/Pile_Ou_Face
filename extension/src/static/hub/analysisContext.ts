@@ -179,7 +179,6 @@ function createAnalysisContext({
     rawArch = null,
     rawBaseAddr = null,
     rawEndian = null,
-    annotationsJson = null,
     dwarfLines = false,
     useCacheDb = false,
     cacheWriteOnly = false,
@@ -195,7 +194,6 @@ function createAnalysisContext({
       mappingPath,
     ];
     if (syntax) args.push('--syntax', syntax);
-    if (annotationsJson) args.push('--annotations-json', annotationsJson);
     if (section) args.push('--section', section);
     if (arch) args.push('--arch', arch);
     if (rawArch) args.push('--raw-arch', rawArch);
@@ -290,7 +288,6 @@ function createAnalysisContext({
     binaryMeta = null,
     section = '',
     syntax = 'intel',
-    annotationsJson = null,
     dwarfLines = false,
     emitProgress = false,
     progressTitle = '',
@@ -327,7 +324,6 @@ function createAnalysisContext({
             rawArch: artifacts.binaryMeta.rawConfig?.arch || null,
             rawBaseAddr: artifacts.binaryMeta.rawConfig?.baseAddr || null,
             rawEndian: artifacts.binaryMeta.rawConfig?.endian || null,
-            annotationsJson,
             dwarfLines,
             useCacheDb: shouldUseCacheDb,
             cacheWriteOnly: cacheWriteOnly && !!shouldUseCacheDb,
@@ -579,17 +575,6 @@ function createAnalysisContext({
     return { doc, editor };
   };
 
-  const getBinaryAnnotationsJsonPath = (absPath) => {
-    const hash = crypto
-      .createHash('sha256')
-      .update(absPath)
-      .update(fs.existsSync(absPath) ? String(fs.statSync(absPath).mtimeMs) : '')
-      .digest('hex')
-      .slice(0, 16);
-    const effectiveDir = storageDir || (ensureTempDir ? ensureTempDir(root) : '');
-    return path.join(effectiveDir, 'annotations', `${hash}.json`);
-  };
-
   const loadBinarySymbols = async (binaryPath, { includeAll = false, useCache = true } = {}) => {
     const cacheKey = includeAll ? 'symbols_all' : 'symbols';
     const cached = readAnalysisCacheEntry(binaryPath, useCache, cacheKey);
@@ -732,7 +717,6 @@ function createAnalysisContext({
     getMappingEntrySpanLength,
     findDisasmMappingEntryByAddress,
     openDisasmAtLine,
-    getBinaryAnnotationsJsonPath,
     loadBinaryHeaders,
     loadBinarySymbols,
     collectSymbolNames,

@@ -1298,14 +1298,12 @@ def _cache_key(
     addr: str,
     func_name: str = "",
     decompiler: str = "",
-    annotations_json: str | None = None,
     annotations_signature: str = "",
     stack_signature: str = "",
     typed_structs_signature: str = "",
 ) -> str:
     """Clé de cache 16 hex chars."""
     binary_signature = _file_signature(binary_path) or binary_path
-    ann_signature = _file_signature(annotations_json) or (annotations_json or "")
     raw = "|".join(
         [
             _DECOMPILE_CACHE_VERSION,
@@ -1313,7 +1311,6 @@ def _cache_key(
             addr.lower(),
             _normalize_symbol_lookup_name(func_name),
             decompiler,
-            ann_signature,
             annotations_signature,
             stack_signature,
             typed_structs_signature,
@@ -1518,31 +1515,6 @@ def _preferred_docker_platform_for_decompiler(decompiler: str) -> str:
         return forced
     entry = _load_decompilers().get(_normalize_decompiler_id(decompiler)) or {}
     return str(entry.get("docker_platform") or "").strip()
-
-
-def _load_annotations_payload(
-    annotations_json: str | None,
-) -> tuple[dict[str, str], dict[str, str]]:
-    """Charge ({addr_norm: name}, {addr_norm: comment}) depuis un fichier d'annotations."""
-    if not annotations_json:
-        return {}, {}
-    try:
-        data = json.loads(Path(annotations_json).read_text(encoding="utf-8"))
-        names: dict[str, str] = {}
-        comments: dict[str, str] = {}
-        for addr_str, entry in data.items():
-            if not isinstance(entry, dict):
-                continue
-            norm = addr_str.lower().lstrip("0x").lstrip("0") or "0"
-            name = (entry.get("name") or "").strip()
-            comment = (entry.get("comment") or "").strip()
-            if name:
-                names[norm] = name
-            if comment:
-                comments[norm] = comment
-        return names, comments
-    except Exception:
-        return {}, {}
 
 
 def _normalize_annotation_addr(value: str) -> str:
@@ -2664,7 +2636,6 @@ def decompile_function(
     addr: str,
     func_name: str = "",
     decompiler: str = "",
-    annotations_json: str | None = None,
     annotations_db: str | None = "auto",
     stack_vars: list[dict] | None = None,
     cache_dir: Path | None = None,
@@ -2683,12 +2654,9 @@ def decompile_function(
     if not Path(binary_path).exists():
         base["error"] = f"Fichier introuvable : {binary_path}"
         return base
-    ann_map, annotation_comments = _load_annotations_payload(annotations_json)
-    sqlite_ann_map, sqlite_annotation_comments, annotations_signature = (
+    ann_map, annotation_comments, annotations_signature = (
         _load_sqlite_annotations_payload(binary_path, annotations_db)
     )
-    ann_map.update(sqlite_ann_map)
-    annotation_comments.update(sqlite_annotation_comments)
     typed_struct_map, typed_struct_comments, typed_struct_note_catalog = (
         _load_typed_struct_annotation_payload(binary_path)
     )
@@ -2719,7 +2687,6 @@ def decompile_function(
         addr,
         func_name=func_name,
         decompiler=decompiler,
-        annotations_json=annotations_json,
         annotations_signature=annotations_signature,
         stack_signature=_stack_signature(stack_frame_data, stack_vars),
         typed_structs_signature=typed_struct_signature(binary_path),

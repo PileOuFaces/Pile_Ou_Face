@@ -58,12 +58,6 @@ def run_disasm(binary, extra_args, tmp_dir):
     return r, asm
 
 
-def make_ann(d, entries):
-    p = Path(d) / "ann.json"
-    p.write_text(json.dumps(entries))
-    return str(p)
-
-
 @unittest.skipUnless(_DISASM_AVAILABLE, "lief/capstone not installed")
 class TestLabelsInline(unittest.TestCase):
     def setUp(self):
@@ -72,7 +66,7 @@ class TestLabelsInline(unittest.TestCase):
         make_minimal_elf(self.binary)
 
     def test_no_annotations_no_crash(self):
-        """Disasm without --annotations-json works normally."""
+        """Disasm without annotations works normally."""
         r, asm = run_disasm(self.binary, [], self.tmp)
         self.assertEqual(r.returncode, 0, msg=f"stderr: {r.stderr}")
         self.assertGreater(len(asm), 0)
@@ -84,9 +78,10 @@ class TestLabelsInline(unittest.TestCase):
         if not lines:
             self.skipTest("No disasm lines found")
         addr_str = lines[0].strip().split(":")[0].strip()
-        with tempfile.TemporaryDirectory() as d:
-            ann = make_ann(d, {addr_str: {"name": "my_func", "comment": ""}})
-            _, asm2 = run_disasm(self.binary, ["--annotations-json", ann], self.tmp)
+        db_path = Path(self.tmp) / "labels.db"
+        with AnnotationDb(db_path) as db:
+            db.save_annotation(self.binary, addr_str, "rename", "my_func")
+        _, asm2 = run_disasm(self.binary, ["--annotations-db", str(db_path)], self.tmp)
         self.assertIn("my_func:", asm2)
 
     def test_sqlite_annotation_label_header_inserted(self):
@@ -147,9 +142,10 @@ class TestLabelsInline(unittest.TestCase):
                 break
         if not target:
             self.skipTest("Could not parse call target")
-        with tempfile.TemporaryDirectory() as d:
-            ann = make_ann(d, {target: {"name": "encrypt_payload", "comment": ""}})
-            _, asm2 = run_disasm(self.binary, ["--annotations-json", ann], self.tmp)
+        db_path = Path(self.tmp) / "calls.db"
+        with AnnotationDb(db_path) as db:
+            db.save_annotation(self.binary, target, "rename", "encrypt_payload")
+        _, asm2 = run_disasm(self.binary, ["--annotations-db", str(db_path)], self.tmp)
         self.assertIn("encrypt_payload", asm2)
 
 

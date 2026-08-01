@@ -1109,16 +1109,6 @@ function createHub(config) {
         const rawSymbols = await runPythonJson(getSymbolsScript(root), args).catch(() => []);
         return Array.isArray(rawSymbols) ? rawSymbols : (rawSymbols.symbols || []);
       };
-      const getBinaryAnnotationsJsonPath = (absPath) => {
-        const hash = crypto
-          .createHash('sha256')
-          .update(absPath)
-          .update(fs.existsSync(absPath) ? String(fs.statSync(absPath).mtimeMs) : '')
-          .digest('hex')
-          .slice(0, 16);
-        return path.join(storageDir, 'annotations', `${hash}.json`);
-      };
-
       const buildRunTraceInit = async (forcedBinaryPath = '', preset = null, forcedSourcePath = '', payloadTargetMode = 'auto') => {
         const requestedPayloadTargetMode = normalizePayloadTargetMode(preset?.payloadTargetMode || payloadTargetMode);
         const latestTrace = loadLatestTrace();

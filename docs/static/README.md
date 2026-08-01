@@ -1168,6 +1168,8 @@ statut/notes de revue) sur les adresses d'un binaire.
   entre machines/recompilations, prépare le terrain pour la synchro multi-utilisateur.
 - `AnnotationStore` reste la façade haut niveau, maintenant construite sur
   `annotation_db.AnnotationDb` (et non plus `DisasmCache`).
+- Il n'existe aucun lecteur ou stockage JSON de compatibilité, ni table
+  d'annotations dans les bases `.pfdb` : `AnnotationDb` est l'unique source de vérité.
 
 **Interface Python** :
 ```python
