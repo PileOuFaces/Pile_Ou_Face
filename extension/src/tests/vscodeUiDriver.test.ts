@@ -102,15 +102,18 @@ describe('VS Code UI E2E driver', () => {
     assert.equal(await locator.waitForValue('true', 50), 'true');
     await locator.fill('nouvelle valeur');
     await locator.click();
+    await locator.clickDom();
 
     assert.deepEqual(sent, ['Input.dispatchMouseEvent', 'Input.dispatchMouseEvent']);
     assert.ok(evaluations.some((expression) => expression.includes("scrollIntoView({ block: 'center', inline: 'center' })")));
+    assert.ok(evaluations.some((expression) => expression.includes('el.click()')));
   });
 
   it('reports disabled controls and inactive UI states', async () => {
     const disabledTarget = {
       async evaluate(expression: string) {
         if (expression.includes('rect.left')) return null;
+        if (expression.includes('el.click()')) return false;
         if (expression.includes("'value' in el")) return false;
         return true;
       },
@@ -124,6 +127,7 @@ describe('VS Code UI E2E driver', () => {
     };
     const locator = new CdpLocator(disabledTarget, '#disabled');
     await assert.rejects(locator.click(), /disabled or missing/);
+    await assert.rejects(locator.clickDom(), /disabled or missing/);
     await assert.rejects(locator.fill('x'), /cannot be filled/);
     const hub = new HubPage(disabledTarget);
     await assert.rejects(hub.expectActive(disabledTarget.locator(), 'inactive panel'), /not active/);

@@ -514,6 +514,10 @@ async function run() {
       await hub.openTypeManager();
       await hub.typeEditorSource().fill('struct E2EUiType { int x; int y; };');
       await hub.typeEditorSaveButton().click();
+      await sleep(250);
+      if (!String(await hub.typeEditorStatus().textContent() || '').trim()) {
+        await hub.typeEditorSaveButton().clickDom();
+      }
       await hub.typeEditorStatus().waitForText('sauvegardé(s)', 30000);
       await hub.typeEditorCatalog().waitForText('E2EUiType', 30000);
 

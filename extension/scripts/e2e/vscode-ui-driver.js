@@ -168,6 +168,16 @@ class CdpLocator {
     await this.target.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: point.x, y: point.y, button: 'left', clickCount: 1 });
     await this.target.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: point.x, y: point.y, button: 'left', clickCount: 1 });
   }
+
+  async clickDom() {
+    await this.waitFor({ state: 'visible' });
+    const clicked = await this.target.evaluate(this.expression(`
+      if (!el || el.disabled) return false;
+      el.click();
+      return true;
+    `));
+    if (!clicked) throw new Error(`Element is disabled or missing: ${this.selector}`);
+  }
 }
 
 async function openSocket(url, timeoutMs) {
