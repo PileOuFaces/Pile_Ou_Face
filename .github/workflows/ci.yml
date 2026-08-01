@@ -370,7 +370,10 @@ jobs:
             extension/.pile-ou-face/test-artifacts/e2e-runtime-audit/runtime-audit-workflow-report.md
             extension/.pile-ou-face/test-artifacts/e2e-runtime-audit/runtime-audit-workflow-report.json
             extension/.pile-ou-face/test-artifacts/e2e-runtime-audit/runtime-audit-feature-coverage.md
+            extension/.pile-ou-face/test-artifacts/e2e-runtime-audit/*.png
+            extension/.pile-ou-face/test-artifacts/e2e-runtime-audit/*.html
           if-no-files-found: warn
+          include-hidden-files: true
 
   # ══════════════════════════════════════════════════════════════
   # 🔐 Security Scan — PRs uniquement, ubuntu seulement

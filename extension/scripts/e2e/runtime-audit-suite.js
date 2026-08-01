@@ -12,6 +12,11 @@ const {
   requiresUiConsumed,
   responseTypesForMessage,
 } = require('./runtime-audit-feature-map');
+const {
+  HubPage,
+  captureUiFailure,
+  connectToHubWebview,
+} = require('./vscode-ui-driver');
 
 const AUDIT_FILE = 'audit-runtime-usage.jsonl';
 const E2E_AUDIT_MOCHA_TIMEOUT_MS = 120000;
@@ -484,6 +489,32 @@ async function run() {
     } catch (error) {
       stopPerf({ ok: false, error: String(error && error.message ? error.message : error) });
       throw error;
+    }
+  }));
+
+  suite.addTest(new Mocha.Test('drives the hub through real webview controls', async () => {
+    let target = null;
+    try {
+      await vscode.commands.executeCommand('pileOuFace.open');
+      target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+      const hub = new HubPage(target);
+
+      await hub.openPanel('dashboard');
+      await hub.openPanel('static');
+      await hub.openStaticTab('data', 'typed_data');
+
+      await hub.openPanel('dashboard');
+      await hub.expectActive(hub.panel('dashboard'), 'dashboard panel after returning');
+    } catch (error) {
+      const artifacts = await captureUiFailure(
+        target,
+        process.env.POF_E2E_ARTIFACTS_DIR,
+        'hub-real-webview-controls',
+      );
+      error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
+      throw error;
+    } finally {
+      target?.close();
     }
   }));
 
@@ -1132,6 +1163,10 @@ async function run() {
       });
     });
   }));
+
+  if (['1', 'true', 'yes'].includes(String(process.env.POF_E2E_UI_ONLY || '').toLowerCase())) {
+    mocha.grep(/real webview controls/);
+  }
 
   return new Promise((resolve, reject) => {
     mocha.run((failures) => {
