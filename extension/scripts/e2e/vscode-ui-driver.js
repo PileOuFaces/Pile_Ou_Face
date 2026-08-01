@@ -167,6 +167,7 @@ async function connectToHubWebview(endpoint, timeoutMs = DEFAULT_TIMEOUT_MS) {
   if (!endpoint) throw new Error('POF_E2E_CDP_ENDPOINT is required for UI E2E');
   const deadline = Date.now() + timeoutMs;
   let targetSummary = '';
+  let lastError = '';
   while (Date.now() < deadline) {
     try {
       const response = await globalThis.fetch(`${endpoint}/json/list`);
@@ -196,17 +197,17 @@ async function connectToHubWebview(endpoint, timeoutMs = DEFAULT_TIMEOUT_MS) {
             target = new CdpTarget(socket, attached.sessionId);
           }
           if (await target.evaluate('Boolean(document.querySelector("#panel-dashboard"))')) return target;
-        } catch {
-          // Non-page targets may reject Runtime.evaluate.
+        } catch (error) {
+          lastError = error instanceof Error ? error.message : String(error);
         }
         connection.close();
       }
-    } catch {
-      // VS Code or its webview target may still be starting.
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error(`Pile ou Face hub webview was not found through CDP. Targets: ${targetSummary || '<none>'}`);
+  throw new Error(`Pile ou Face hub webview was not found through CDP. Targets: ${targetSummary || '<none>'}. Last error: ${lastError || '<none>'}`);
 }
 
 class HubPage {

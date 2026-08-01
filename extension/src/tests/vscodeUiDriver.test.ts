@@ -267,4 +267,14 @@ describe('VS Code UI E2E driver', () => {
   it('rejects discovery when the CDP endpoint is missing', async () => {
     await assert.rejects(connectToHubWebview('', 1), /CDP_ENDPOINT/);
   });
+
+  it('preserves the last CDP discovery error for CI diagnostics', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => { throw new Error('CDP offline'); }) as any;
+    try {
+      await assert.rejects(connectToHubWebview('http://127.0.0.1:9222', 1), /Last error: CDP offline/);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

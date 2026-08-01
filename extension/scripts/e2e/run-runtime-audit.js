@@ -260,6 +260,7 @@ async function main() {
         '--skip-welcome',
         '--skip-release-notes',
         `--remote-debugging-port=${cdpPort}`,
+        '--remote-allow-origins=*',
       ],
       extensionTestsEnv: {
         POF_AUDIT_TRACE: '1',
