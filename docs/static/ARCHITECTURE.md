@@ -180,7 +180,6 @@ Elements persistants :
 - `static_cache/` : caches par binaire;
 - `decompile_cache/` : pseudo-C mis en cache;
 - `pfdb/` : base d'analyse SQLite selon les modules (desassemblage, CFG, symboles...);
-- `patches/` : patchs persistants;
 - `plugins/` : plugins installes par l'extension;
 - `licenses/` : licences importees dans le workspace;
 - `decompilers.json` : configuration des decompilateurs.
@@ -192,6 +191,11 @@ resolu de la meme facon par l'extension VS Code (via subprocess CLI) et par le s
 MCP (process independant, sans acces aux API VS Code), qui partagent donc desormais
 les memes annotations. Aucun stockage JSON ni table d'annotations dans `DisasmCache`
 n'est conserve. Voir `annotations.py` / `annotation_db.py` plus bas.
+
+**Patches binaires** : l'historique actif et la pile redo sont stockés uniquement
+dans `~/.pile-ou-face/patches.db`, avec une table de binaires et une table de patches.
+Il n'existe plus de fichier JSON, de migration ni de fallback. La suppression d'un
+binaire récent et la purge du workspace nettoient également les lignes SQLite.
 
 ## Formats supportes
 

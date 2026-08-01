@@ -24,6 +24,7 @@ describe("sharedHandlers", () => {
   let sink;
   let vscodeStub;
   let fileManagerStub;
+  let patchHistoryBridge;
 
   beforeEach(() => {
     tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pof-shared-handlers-"));
@@ -48,6 +49,10 @@ describe("sharedHandlers", () => {
       cleanupAll: sinon.stub().returns({ removedArtifacts: 0, removedCache: 0 }),
       purgeStaleCache: sinon.stub().returns({ removed: 0 }),
     };
+    patchHistoryBridge = {
+      deleteHistory: sinon.stub().resolves({ ok: true, removed: 1 }),
+      purgeMissing: sinon.stub().resolves({ ok: true, removed: 0 }),
+    };
   });
 
   afterEach(() => {
@@ -65,6 +70,7 @@ describe("sharedHandlers", () => {
       root: tempRoot,
       panel: sink.panel,
       clearRawProfile,
+      patchHistoryBridge,
     });
     const missingPath = path.join(tempRoot, "ghost.bin");
 
@@ -99,6 +105,7 @@ describe("sharedHandlers", () => {
       panel: sink.panel,
       context: { workspaceState: { get: () => [], update: sinon.stub().resolves() } },
       clearRawProfile,
+      patchHistoryBridge,
     });
     const binaryPath = path.join(tempRoot, "sample.exe");
 
@@ -108,7 +115,27 @@ describe("sharedHandlers", () => {
     expect(clearRawProfile.calledOnceWithExactly(binaryPath)).to.equal(true);
     expect(fileManagerStub.cleanupForBinary.calledOnce).to.equal(true);
     expect(fileManagerStub.cleanupForBinary.firstCall.args[1]).to.equal(binaryPath);
+    expect(patchHistoryBridge.deleteHistory.calledOnceWithExactly(binaryPath)).to.equal(true);
     expect(sink.messages.map((message) => message.type)).to.include("generatedFiles");
+  });
+
+  it("purges stale SQLite patch histories with workspace cache entries", async () => {
+    fileManagerStub.purgeStaleCache.returns({ removed: 2 });
+    patchHistoryBridge.purgeMissing.resolves({ ok: true, removed: 3 });
+    const sharedHandlers = proxyquire("../shared/sharedHandlers", {
+      vscode: vscodeStub,
+      "./fileManager": fileManagerStub,
+    });
+    const handlers = sharedHandlers({
+      root: tempRoot,
+      panel: sink.panel,
+      patchHistoryBridge,
+    });
+
+    await handlers.purgeStaleCache();
+
+    expect(patchHistoryBridge.purgeMissing.calledOnceWithExactly(tempRoot)).to.equal(true);
+    expect(vscodeStub.window.showInformationMessage.firstCall.args[0]).to.include("5 entrée(s)");
   });
 
   it("allows reconfiguring a stored raw profile when reopening a blob", async () => {

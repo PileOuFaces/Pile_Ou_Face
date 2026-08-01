@@ -14,6 +14,7 @@ const fileManager = require('./fileManager');
 const { detectPythonExecutable, getExtensionPath, buildRuntimeEnv } = require('./utils');
 const { makeAnnotationsBridge } = require('./annotationsBridge');
 const { makeChatHistoryBridge } = require('./chatHistoryBridge');
+const { makePatchHistoryBridge } = require('./patchHistoryBridge');
 const { makeMappingStore } = require('./mappingStore');
 const {
   cancelAiProcess,
@@ -278,6 +279,12 @@ function sharedHandlers(ctx) {
     getPythonExecutable: () => detectPythonExecutable(root),
     buildPythonEnv: () => buildRuntimeEnv(root, storageDir),
   });
+  const patchHistoryBridge = ctx.patchHistoryBridge || makePatchHistoryBridge({
+    root,
+    extensionPath: context?.extensionPath || getExtensionPath() || root,
+    getPythonExecutable: () => detectPythonExecutable(root),
+    buildPythonEnv: () => buildRuntimeEnv(root, storageDir),
+  });
   const safePostMessage = (message) => {
     try {
       panel.webview.postMessage(message);
@@ -326,6 +333,7 @@ function sharedHandlers(ctx) {
     if (context) await forgetRecentBinaryState(context, target);
     await Promise.resolve(clearRawProfile?.(target));
     if (answer === 'Retirer et nettoyer') {
+      await patchHistoryBridge.deleteHistory(target);
       const result = fileManager.cleanupForBinary(storageDir || root, target, {
         purgeStale: true,
         root,
@@ -543,6 +551,7 @@ function sharedHandlers(ctx) {
         purgeStale: true,
         root,
       });
+      await patchHistoryBridge.deleteHistory(absPath);
       if (result.total > 0) {
         panel.webview.postMessage({ type: 'refreshGeneratedFiles' });
         panel.webview.postMessage({ type: 'generatedFiles', files: fileManager.listAll(storageDir || root) });
@@ -602,8 +611,10 @@ function sharedHandlers(ctx) {
       panel.webview.postMessage({ type: 'refreshGeneratedFiles' });
       panel.webview.postMessage({ type: 'generatedFiles', files: fileManager.listAll(storageDir || root) });
     },
-    purgeStaleCache: () => {
-      const { removed } = fileManager.purgeStaleCache(storageDir || root, root);
+    purgeStaleCache: async () => {
+      const { removed: removedFiles } = fileManager.purgeStaleCache(storageDir || root, root);
+      const { removed: removedPatches = 0 } = await patchHistoryBridge.purgeMissing(root);
+      const removed = removedFiles + removedPatches;
       vscode.window.showInformationMessage(
         removed > 0
           ? `Reverse Workspace : ${removed} entrée(s) de cache obsolète(s) supprimée(s).`
