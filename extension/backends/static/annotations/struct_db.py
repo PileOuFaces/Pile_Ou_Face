@@ -10,7 +10,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
-STRUCTS_DB_NAME = "structs.db"
+STRUCTS_DB_NAME = "types.db"
 MAX_SOURCE_BYTES = 1_048_576
 MAX_DEFINITIONS = 2_048
 MAX_FIELDS_PER_DEFINITION = 4_096
@@ -54,15 +54,20 @@ class StructDb:
         connection.executescript(
             """
             CREATE TABLE IF NOT EXISTS metadata (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
+                binary TEXT NOT NULL,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                PRIMARY KEY (binary, key)
             );
             CREATE TABLE IF NOT EXISTS definitions (
-                name TEXT PRIMARY KEY,
-                kind TEXT NOT NULL CHECK(kind IN ('struct', 'union', 'enum'))
+                binary TEXT NOT NULL,
+                name TEXT NOT NULL,
+                kind TEXT NOT NULL CHECK(kind IN ('struct', 'union', 'enum')),
+                PRIMARY KEY (binary, name)
             );
             CREATE TABLE IF NOT EXISTS definition_fields (
-                definition_name TEXT NOT NULL REFERENCES definitions(name) ON DELETE CASCADE,
+                binary TEXT NOT NULL,
+                definition_name TEXT NOT NULL,
                 ordinal INTEGER NOT NULL,
                 name TEXT NOT NULL,
                 type TEXT NOT NULL,
@@ -71,14 +76,19 @@ class StructDb:
                 array_len INTEGER,
                 array_dims TEXT,
                 display_type TEXT NOT NULL,
-                PRIMARY KEY (definition_name, ordinal)
+                PRIMARY KEY (binary, definition_name, ordinal),
+                FOREIGN KEY (binary, definition_name)
+                    REFERENCES definitions(binary, name) ON DELETE CASCADE
             );
             CREATE TABLE IF NOT EXISTS enum_values (
-                definition_name TEXT NOT NULL REFERENCES definitions(name) ON DELETE CASCADE,
+                binary TEXT NOT NULL,
+                definition_name TEXT NOT NULL,
                 ordinal INTEGER NOT NULL,
                 name TEXT NOT NULL,
                 value INTEGER NOT NULL,
-                PRIMARY KEY (definition_name, ordinal)
+                PRIMARY KEY (binary, definition_name, ordinal),
+                FOREIGN KEY (binary, definition_name)
+                    REFERENCES definitions(binary, name) ON DELETE CASCADE
             );
             CREATE TABLE IF NOT EXISTS typed_refs (
                 id INTEGER PRIMARY KEY,
@@ -105,27 +115,32 @@ class StructDb:
                 PRIMARY KEY (ref_id, ordinal)
             );
             CREATE INDEX IF NOT EXISTS idx_typed_refs_binary ON typed_refs(binary);
+            CREATE INDEX IF NOT EXISTS idx_definitions_binary ON definitions(binary);
             """
         )
 
-    def load_definitions(self) -> dict[str, Any]:
+    def load_definitions(self, binary: str) -> dict[str, Any]:
+        if not binary:
+            raise ValueError("Chemin binaire manquant.")
         if not os.path.isfile(self.path):
             return {"source": "", "definitions": {}}
         with self._connect() as connection:
             source_row = connection.execute(
-                "SELECT value FROM metadata WHERE key = 'source'"
+                "SELECT value FROM metadata WHERE binary = ? AND key = 'source'",
+                (binary,),
             ).fetchone()
             definitions: dict[str, dict[str, Any]] = {}
             for row in connection.execute(
-                "SELECT name, kind FROM definitions ORDER BY name"
+                "SELECT name, kind FROM definitions WHERE binary = ? ORDER BY name",
+                (binary,),
             ):
                 definition: dict[str, Any] = {"name": row["name"], "kind": row["kind"]}
                 if row["kind"] == "enum":
                     values = [
                         {"name": item["name"], "value": item["value"]}
                         for item in connection.execute(
-                            "SELECT name, value FROM enum_values WHERE definition_name = ? ORDER BY ordinal",
-                            (row["name"],),
+                            "SELECT name, value FROM enum_values WHERE binary = ? AND definition_name = ? ORDER BY ordinal",
+                            (binary, row["name"]),
                         )
                     ]
                     definition["values"] = values
@@ -146,8 +161,8 @@ class StructDb:
                             "display_type": item["display_type"],
                         }
                         for item in connection.execute(
-                            "SELECT * FROM definition_fields WHERE definition_name = ? ORDER BY ordinal",
-                            (row["name"],),
+                            "SELECT * FROM definition_fields WHERE binary = ? AND definition_name = ? ORDER BY ordinal",
+                            (binary, row["name"]),
                         )
                     ]
                 definitions[row["name"]] = definition
@@ -157,31 +172,34 @@ class StructDb:
             }
 
     def replace_definitions(
-        self, source: str, definitions: dict[str, dict[str, Any]]
+        self, binary: str, source: str, definitions: dict[str, dict[str, Any]]
     ) -> None:
+        if not binary:
+            raise ValueError("Chemin binaire manquant.")
         if len(source.encode("utf-8")) > MAX_SOURCE_BYTES:
             raise ValueError("Les définitions dépassent la limite de 1 Mio.")
         if len(definitions) > MAX_DEFINITIONS:
             raise ValueError(f"Trop de types: limite de {MAX_DEFINITIONS}.")
         with self._connect() as connection:
-            connection.execute("DELETE FROM definitions")
+            connection.execute("DELETE FROM definitions WHERE binary = ?", (binary,))
             connection.execute(
-                "INSERT INTO metadata(key, value) VALUES('source', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (source,),
+                "INSERT INTO metadata(binary, key, value) VALUES(?, 'source', ?) ON CONFLICT(binary, key) DO UPDATE SET value=excluded.value",
+                (binary, source),
             )
             for name, definition in definitions.items():
                 kind = str(definition.get("kind") or "struct")
                 connection.execute(
-                    "INSERT INTO definitions(name, kind) VALUES(?, ?)", (name, kind)
+                    "INSERT INTO definitions(binary, name, kind) VALUES(?, ?, ?)",
+                    (binary, name, kind),
                 )
                 if kind == "enum":
                     values = definition.get("values") or []
                     if len(values) > MAX_FIELDS_PER_DEFINITION:
                         raise ValueError(f"Trop de valeurs dans {name}.")
                     connection.executemany(
-                        "INSERT INTO enum_values(definition_name, ordinal, name, value) VALUES(?, ?, ?, ?)",
+                        "INSERT INTO enum_values(binary, definition_name, ordinal, name, value) VALUES(?, ?, ?, ?, ?)",
                         [
-                            (name, index, item["name"], int(item["value"]))
+                            (binary, name, index, item["name"], int(item["value"]))
                             for index, item in enumerate(values)
                         ],
                     )
@@ -191,10 +209,11 @@ class StructDb:
                     raise ValueError(f"Trop de champs dans {name}.")
                 connection.executemany(
                     """INSERT INTO definition_fields
-                    (definition_name, ordinal, name, type, type_kind, pointer_level, array_len, array_dims, display_type)
-                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (binary, definition_name, ordinal, name, type, type_kind, pointer_level, array_len, array_dims, display_type)
+                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     [
                         (
+                            binary,
                             name,
                             index,
                             field["name"],

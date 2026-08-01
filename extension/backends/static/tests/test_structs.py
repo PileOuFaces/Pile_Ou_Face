@@ -57,15 +57,16 @@ class TestStructs(unittest.TestCase):
                   uint16_t count;
                 } Header;
                 """,
+                "/tmp/demo.bin",
                 workspace_root=storage,
             )
-            store = load_struct_store(storage)
+            store = load_struct_store("/tmp/demo.bin", storage)
             self.assertIn("Header", store["definitions"])
             self.assertIn("typedef struct Header", store["source"])
             self.assertEqual(
-                get_struct_db_path(storage), os.path.join(storage, "structs.db")
+                get_struct_db_path(storage), os.path.join(storage, "types.db")
             )
-            self.assertTrue(os.path.isfile(os.path.join(storage, "structs.db")))
+            self.assertTrue(os.path.isfile(os.path.join(storage, "types.db")))
             self.assertFalse(os.path.exists(os.path.join(tmp, ".pile-ou-face")))
 
     def test_parse_enum_and_union_definitions(self):
@@ -437,8 +438,8 @@ class TestStructs(unittest.TestCase):
     def test_roundtrip_enum_class(self):
         source = "enum class Color : uint8_t { Red = 0, Green = 1, Blue = 2 };"
         with tempfile.TemporaryDirectory() as tmp:
-            save_struct_source(source, workspace_root=tmp)
-            store = load_struct_store(tmp)
+            save_struct_source(source, "/tmp/demo.bin", workspace_root=tmp)
+            store = load_struct_store("/tmp/demo.bin", tmp)
         color = store["definitions"]["Color"]
         self.assertEqual(color["kind"], "enum")
         self.assertEqual(color["value_map"]["Blue"], 2)
@@ -450,8 +451,8 @@ class TestStructs(unittest.TestCase):
         enum Mode { MODE_NONE, MODE_READ, MODE_WRITE };
         """
         with tempfile.TemporaryDirectory() as tmp:
-            save_struct_source(source, workspace_root=tmp)
-            catalog = list_struct_store(tmp)["structs"]
+            save_struct_source(source, "/tmp/demo.bin", workspace_root=tmp)
+            catalog = list_struct_store("/tmp/demo.bin", tmp)["structs"]
 
         by_name = {entry["name"]: entry for entry in catalog}
         self.assertEqual(by_name["Header"]["field_count"], 2)
@@ -467,8 +468,8 @@ class TestStructs(unittest.TestCase):
         } Ops;
         """
         with tempfile.TemporaryDirectory() as tmp:
-            save_struct_source(source, workspace_root=tmp)
-            store = load_struct_store(tmp)
+            save_struct_source(source, "/tmp/demo.bin", workspace_root=tmp)
+            store = load_struct_store("/tmp/demo.bin", tmp)
         ops = store["definitions"]["Ops"]
         self.assertEqual(ops["fields"][0]["type_kind"], "fn_ptr")
         self.assertEqual(ops["fields"][1]["name"], "write")
@@ -476,11 +477,31 @@ class TestStructs(unittest.TestCase):
     def test_roundtrip_multidim_array(self):
         source = "typedef struct M { float mat[4][4]; } M;"
         with tempfile.TemporaryDirectory() as tmp:
-            save_struct_source(source, workspace_root=tmp)
-            store = load_struct_store(tmp)
+            save_struct_source(source, "/tmp/demo.bin", workspace_root=tmp)
+            store = load_struct_store("/tmp/demo.bin", tmp)
         field = store["definitions"]["M"]["fields"][0]
         self.assertEqual(field["array_dims"], [4, 4])
         self.assertEqual(field["array_len"], 16)
+
+    def test_type_catalogs_are_isolated_by_binary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            save_struct_source("struct Alpha { uint32_t value; };", "/tmp/a.bin", tmp)
+            save_struct_source("struct Beta { uint32_t value; };", "/tmp/b.bin", tmp)
+
+            self.assertEqual(
+                [
+                    item["name"]
+                    for item in list_struct_store("/tmp/a.bin", tmp)["structs"]
+                ],
+                ["Alpha"],
+            )
+            self.assertEqual(
+                [
+                    item["name"]
+                    for item in list_struct_store("/tmp/b.bin", tmp)["structs"]
+                ],
+                ["Beta"],
+            )
 
     # ── Scénario mixte ───────────────────────────────────────────────────────────
 

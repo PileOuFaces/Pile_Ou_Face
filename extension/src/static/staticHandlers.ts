@@ -2233,9 +2233,12 @@ function staticHandlers(config) {
         });
       }
     },
-    hubLoadStructs: async () => {
+    hubLoadStructs: async (message) => {
       try {
-        const { stdout } = await runPython(['backends/static/annotations/structs.py', 'list']);
+        const { stdout } = await runPython([
+          'backends/static/annotations/structs.py', 'list',
+          '--binary', String(message.binaryPath || ''),
+        ]);
         panel.webview.postMessage({ type: 'hubStructsDone', data: JSON.parse(stdout) });
       } catch (e) {
         panel.webview.postMessage({ type: 'hubStructsDone', data: { error: String(e), structs: [], source: '' } });
@@ -2246,7 +2249,11 @@ function staticHandlers(config) {
       const sourceFile = path.join(tmpDir, 'structs.c');
       try {
         await fs.promises.writeFile(sourceFile, String(message.sourceText || ''), 'utf8');
-        const { stdout } = await runPython(['backends/static/annotations/structs.py', 'save', '--source-file', sourceFile]);
+        const { stdout } = await runPython([
+          'backends/static/annotations/structs.py', 'save',
+          '--binary', String(message.binaryPath || ''),
+          '--source-file', sourceFile,
+        ]);
         panel.webview.postMessage({ type: 'hubStructsSaved', data: JSON.parse(stdout) });
       } catch (e) {
         panel.webview.postMessage({ type: 'hubStructsSaved', data: { error: String(e), structs: [], source: '' } });

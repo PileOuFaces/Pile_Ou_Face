@@ -62,6 +62,6 @@ class TestTypedStructRefs(unittest.TestCase):
             )
             self.assertEqual(
                 get_struct_db_path(storage),
-                os.path.join(storage, "structs.db"),
+                os.path.join(storage, "types.db"),
             )
             self.assertFalse(os.path.exists(os.path.join(tmp, ".pile-ou-face")))

@@ -349,7 +349,7 @@ Fonctionnalites visibles :
 - persistance des types appliques;
 - propagation vers d'autres vues.
 
-Les definitions et leurs applications sont stockees uniquement dans `structs.db`, une
+Les definitions et leurs applications sont stockees uniquement dans `types.db`, une
 base SQLite normalisee et isolee par workspace. Il n'existe aucun fallback JSON.
 
 ## MALWARE

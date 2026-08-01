@@ -1514,6 +1514,11 @@ function resetStackAndDecompileDerivedState() {
 }
 
 function resetTypedDataDerivedState() {
+  typedDataUiState.structSource = '';
+  typedDataUiState.structs = [];
+  typedDataUiState.structsLoaded = false;
+  typedDataUiState.loadingStructs = false;
+  typedDataUiState.pendingEditorOpen = false;
   typedDataUiState.appliedStructName = '';
   typedDataUiState.appliedStructOffset = '0x0';
   typedDataUiState.appliedStructAddr = '';
