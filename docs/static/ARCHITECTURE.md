@@ -177,8 +177,12 @@ l'extension et il n'est pas migre au demarrage.
 
 Elements persistants :
 
-- `static_cache/` : caches par binaire;
-- `decompile_cache/` : pseudo-C mis en cache;
+- `static_cache/static-cache.sqlite3` : source unique pour les resultats d'analyse,
+  le pseudo-C et les augmentations IA. Il n'existe ni cache JSON, ni lecteur de
+  compatibilite, ni migration de l'ancien format. Le store refuse une valeur de plus
+  de 16 Mio et applique une eviction LRU au-dela de 4 096 entrees ou 256 Mio de
+  donnees utiles. Les consultations de l'interface lisent uniquement les metadonnees,
+  sans charger les payloads;
 - `pfdb/` : base d'analyse SQLite selon les modules (desassemblage, CFG, symboles...);
 - `plugins/` : plugins installes par l'extension;
 - `licenses/` : licences importees dans le workspace;
