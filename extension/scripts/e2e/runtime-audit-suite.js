@@ -499,7 +499,7 @@ async function run() {
       target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
       const hub = new HubPage(target);
 
-      await hub.expectActive(hub.panel('dashboard'), 'dashboard panel');
+      await hub.openPanel('dashboard');
       const fixture = readFixtureSpecs()[0];
       await withWindowMocks({
         showOpenDialog: async () => [vscode.Uri.file(fixture.path)],

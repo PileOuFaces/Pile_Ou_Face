@@ -254,7 +254,7 @@ class HubPage {
   async expectActive(locator, description) {
     await locator.waitFor({ state: 'attached' });
     const classes = String(await locator.getAttribute('class') || '').split(/\s+/);
-    if (!classes.includes('active')) throw new Error(`${description} is visible but not active`);
+    if (!classes.includes('active')) throw new Error(`${description} is not active`);
   }
 
   async openPanel(panelId) {
