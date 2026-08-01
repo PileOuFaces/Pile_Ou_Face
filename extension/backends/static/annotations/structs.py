@@ -15,7 +15,7 @@ from typing import Any
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
-STRUCTS_FILE_NAME = "structs.json"
+from backends.static.annotations.struct_db import StructDb
 
 _COMPOUND_RE = re.compile(
     r"(?:(?:typedef)\s+)?(?P<kind>struct|union)(?:\s+(?P<tag>[A-Za-z_]\w*))?\s*\{(?P<body>.*?)\}\s*(?P<alias>[A-Za-z_]\w*)?\s*;",
@@ -70,14 +70,6 @@ _PRIMITIVE_TYPES = {
     "uintptr_t",
     "void",
 }
-
-
-def get_struct_store_path(workspace_root: str | None = None) -> str:
-    """Return the filesystem path where struct definitions are stored."""
-    root = (
-        workspace_root or os.environ.get("POF_STORAGE_DIR", "").strip() or os.getcwd()
-    )
-    return os.path.join(root, STRUCTS_FILE_NAME)
 
 
 def _strip_comments(source_text: str) -> str:
@@ -284,21 +276,7 @@ def parse_struct_definitions(source_text: str) -> dict[str, dict[str, Any]]:
 
 def load_struct_store(workspace_root: str | None = None) -> dict[str, Any]:
     """Load the full struct store with all type definitions and source."""
-    store_path = get_struct_store_path(workspace_root)
-    if not os.path.isfile(store_path):
-        return {"source": "", "definitions": {}}
-    try:
-        with open(store_path, encoding="utf-8") as fh:
-            payload = json.load(fh)
-    except Exception:
-        return {"source": "", "definitions": {}}
-    source = payload.get("source") if isinstance(payload, dict) else ""
-    definitions = payload.get("definitions") if isinstance(payload, dict) else {}
-    if not isinstance(source, str):
-        source = ""
-    if not isinstance(definitions, dict):
-        definitions = {}
-    return {"source": source, "definitions": definitions}
+    return StructDb(workspace_root).load_definitions()
 
 
 def list_struct_store(workspace_root: str | None = None) -> dict[str, Any]:
@@ -321,14 +299,7 @@ def save_struct_source(
 ) -> dict[str, Any]:
     """Save C-style struct/union/enum definitions so they can be applied to binary data."""
     definitions = parse_struct_definitions(source_text)
-    store_path = get_struct_store_path(workspace_root)
-    os.makedirs(os.path.dirname(store_path), exist_ok=True)
-    payload = {
-        "source": source_text,
-        "definitions": definitions,
-    }
-    with open(store_path, "w", encoding="utf-8") as fh:
-        json.dump(payload, fh, indent=2, sort_keys=True)
+    StructDb(workspace_root).replace_definitions(source_text, definitions)
     return list_struct_store(workspace_root)
 
 

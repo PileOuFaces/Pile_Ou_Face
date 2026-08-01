@@ -183,6 +183,8 @@ Elements persistants :
 - `plugins/` : plugins installes par l'extension;
 - `licenses/` : licences importees dans le workspace;
 - `decompilers.json` : configuration des decompilateurs.
+- `structs.db` : definitions C et references typees appliquees, dans une base SQLite
+  normalisee propre au workspace.
 
 **Annotations (labels, commentaires, renommages, bookmarks, revue)** : cas particulier,
 stockees a part dans `~/.pile-ou-face/annotations.db` (base SQLite dediee, dans le home
@@ -196,6 +198,10 @@ n'est conserve. Voir `annotations.py` / `annotation_db.py` plus bas.
 dans `~/.pile-ou-face/patches.db`, avec une table de binaires et une table de patches.
 Il n'existe plus de fichier JSON, de migration ni de fallback. La suppression d'un
 binaire récent et la purge du workspace nettoient également les lignes SQLite.
+
+**Types C et references typees** : `structs.db` est l'unique stockage. Les definitions,
+champs, enums, applications et champs appliques utilisent des tables relationnelles.
+Les anciens fichiers `structs.json` et `typed_struct_refs.json` ne sont ni lus ni migres.
 
 ## Formats supportes
 
