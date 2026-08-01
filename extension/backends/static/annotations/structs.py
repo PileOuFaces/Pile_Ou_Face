@@ -274,14 +274,24 @@ def parse_struct_definitions(source_text: str) -> dict[str, dict[str, Any]]:
     return definitions
 
 
-def load_struct_store(workspace_root: str | None = None) -> dict[str, Any]:
+def _normalize_binary_key(binary_path: str) -> str:
+    if not binary_path:
+        raise ValueError("Chemin binaire manquant.")
+    return os.path.normcase(os.path.abspath(binary_path))
+
+
+def load_struct_store(
+    binary_path: str, workspace_root: str | None = None
+) -> dict[str, Any]:
     """Load the full struct store with all type definitions and source."""
-    return StructDb(workspace_root).load_definitions()
+    return StructDb(workspace_root).load_definitions(_normalize_binary_key(binary_path))
 
 
-def list_struct_store(workspace_root: str | None = None) -> dict[str, Any]:
+def list_struct_store(
+    binary_path: str, workspace_root: str | None = None
+) -> dict[str, Any]:
     """List all user-defined struct/union/enum types currently saved in the workspace."""
-    store = load_struct_store(workspace_root)
+    store = load_struct_store(binary_path, workspace_root)
     types = []
     for name, definition in sorted(store["definitions"].items()):
         kind = str((definition or {}).get("kind") or "struct")
@@ -295,12 +305,13 @@ def list_struct_store(workspace_root: str | None = None) -> dict[str, Any]:
 
 
 def save_struct_source(
-    source_text: str, workspace_root: str | None = None
+    source_text: str, binary_path: str, workspace_root: str | None = None
 ) -> dict[str, Any]:
     """Save C-style struct/union/enum definitions so they can be applied to binary data."""
     definitions = parse_struct_definitions(source_text)
-    StructDb(workspace_root).replace_definitions(source_text, definitions)
-    return list_struct_store(workspace_root)
+    binary_key = _normalize_binary_key(binary_path)
+    StructDb(workspace_root).replace_definitions(binary_key, source_text, definitions)
+    return list_struct_store(binary_key, workspace_root)
 
 
 _PRIMITIVE_LAYOUTS: dict[str, tuple[int, int, str]] = {
@@ -468,13 +479,16 @@ def main() -> int:
     parser.add_argument("--source-text", default="")
     parser.add_argument("--source-file")
     parser.add_argument("--workspace-root")
+    parser.add_argument("--binary", required=True)
     args = parser.parse_args()
 
     try:
         if args.action == "list":
-            result = list_struct_store(args.workspace_root)
+            result = list_struct_store(args.binary, args.workspace_root)
         else:
-            result = save_struct_source(_load_source_text(args), args.workspace_root)
+            result = save_struct_source(
+                _load_source_text(args), args.binary, args.workspace_root
+            )
     except Exception as exc:
         result = {"error": str(exc), "structs": [], "source": ""}
 

@@ -1554,7 +1554,7 @@ function getTypedStructList() {
 function ensureTypedStructCatalogLoaded() {
   if (typedDataUiState.loadingStructs || typedDataUiState.structsLoaded) return;
   typedDataUiState.loadingStructs = true;
-  vscode.postMessage({ type: 'hubLoadStructs' });
+  vscode.postMessage({ type: 'hubLoadStructs', binaryPath: getStaticBinaryPath() });
 }
 
 function getPreferredHexStructName() {
@@ -1764,7 +1764,11 @@ function openTypedStructEditor(sourceText, types = typedDataUiState.structs) {
     status.textContent = 'Validation des définitions C…';
     status.classList.remove('is-error');
     setTypedDataStructStatus('Sauvegarde des types C…');
-    vscode.postMessage({ type: 'hubSaveStructs', sourceText: textarea.value });
+    vscode.postMessage({
+      type: 'hubSaveStructs',
+      binaryPath: getStaticBinaryPath(),
+      sourceText: textarea.value,
+    });
   });
 
   const status = document.createElement('div');

@@ -12,6 +12,10 @@ describe("typed struct editor contract", () => {
     path.resolve(__dirname, "../shared/messages.js"),
     "utf8",
   );
+  const handlersSource = () => fs.readFileSync(
+    path.resolve(__dirname, "../../src/static/staticHandlers.ts"),
+    "utf8",
+  );
 
   it("shows a catalog for structs, unions, and enums", () => {
     const source = searchSource();
@@ -30,6 +34,7 @@ describe("typed struct editor contract", () => {
 
     expect(editor).to.include("saveBtn.disabled = true");
     expect(editor).to.include("type: 'hubSaveStructs'");
+    expect(editor).to.include("binaryPath: getStaticBinaryPath()");
     expect(editor).to.not.include("vscode.postMessage({ type: 'hubSaveStructs', sourceText: textarea.value });\n    popup.remove();");
   });
 
@@ -44,5 +49,16 @@ describe("typed struct editor contract", () => {
     expect(handler).to.include("updateTypedStructEditorResult(data, data.error)");
     expect(errorIndex).to.be.greaterThan(-1);
     expect(catalogUpdateIndex).to.be.greaterThan(errorIndex);
+  });
+
+  it("threads the active binary through host load and save commands", () => {
+    const source = handlersSource();
+    const start = source.indexOf("hubLoadStructs: async");
+    const end = source.indexOf("hubSaveTypedStructRef: async", start);
+    const handlers = source.slice(start, end);
+
+    expect(handlers).to.include("hubLoadStructs: async (message)");
+    expect(handlers.match(/'--binary'/g)).to.have.length(2);
+    expect(handlers.match(/String\(message\.binaryPath \|\| ''\)/g)).to.have.length(2);
   });
 });

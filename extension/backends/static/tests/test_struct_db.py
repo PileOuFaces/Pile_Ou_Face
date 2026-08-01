@@ -24,21 +24,22 @@ class TestStructDb(unittest.TestCase):
             storage = os.path.join(tmp, "storage")
             with patch.dict(os.environ, {"POF_STORAGE_DIR": storage}):
                 self.assertEqual(
-                    get_struct_db_path(), os.path.join(storage, "structs.db")
+                    get_struct_db_path(), os.path.join(storage, "types.db")
                 )
                 self.assertEqual(
-                    get_struct_db_path(explicit), os.path.join(explicit, "structs.db")
+                    get_struct_db_path(explicit), os.path.join(explicit, "types.db")
                 )
 
     def test_empty_read_has_no_side_effect_then_write_creates_normalized_schema(self):
         with tempfile.TemporaryDirectory() as tmp:
             database = StructDb(tmp)
             self.assertEqual(
-                database.load_definitions(), {"source": "", "definitions": {}}
+                database.load_definitions("/tmp/a.bin"),
+                {"source": "", "definitions": {}},
             )
             self.assertEqual(database.list_typed_refs(), [])
             self.assertFalse(os.path.exists(database.path))
-            database.replace_definitions("", {})
+            database.replace_definitions("/tmp/a.bin", "", {})
             with sqlite3.connect(database.path) as connection:
                 tables = {
                     row[0]
@@ -83,14 +84,15 @@ class TestStructDb(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as tmp:
             database = StructDb(tmp)
-            database.replace_definitions("first", definitions)
+            database.replace_definitions("/tmp/a.bin", "first", definitions)
             self.assertEqual(
-                database.load_definitions(),
+                database.load_definitions("/tmp/a.bin"),
                 {"source": "first", "definitions": definitions},
             )
-            database.replace_definitions("", {})
+            database.replace_definitions("/tmp/a.bin", "", {})
             self.assertEqual(
-                database.load_definitions(), {"source": "", "definitions": {}}
+                database.load_definitions("/tmp/a.bin"),
+                {"source": "", "definitions": {}},
             )
 
     def test_invalid_replace_rolls_back_existing_definitions(self):
@@ -101,10 +103,12 @@ class TestStructDb(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as tmp:
             database = StructDb(tmp)
-            database.replace_definitions("original", original)
+            database.replace_definitions("/tmp/a.bin", "original", original)
             with self.assertRaisesRegex(ValueError, "Trop de types"):
-                database.replace_definitions("invalid", too_many)
-            self.assertEqual(database.load_definitions()["source"], "original")
+                database.replace_definitions("/tmp/a.bin", "invalid", too_many)
+            self.assertEqual(
+                database.load_definitions("/tmp/a.bin")["source"], "original"
+            )
 
     def test_typed_ref_upsert_replaces_fields_and_filters_binary(self):
         entry = {
@@ -160,9 +164,26 @@ class TestStructDb(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             first = StructDb(os.path.join(tmp, "first"))
             second = StructDb(os.path.join(tmp, "second"))
-            first.replace_definitions("one", {})
-            self.assertEqual(second.load_definitions()["source"], "")
+            first.replace_definitions("/tmp/a.bin", "one", {})
+            self.assertEqual(second.load_definitions("/tmp/a.bin")["source"], "")
             self.assertNotEqual(first.path, second.path)
+
+    def test_definitions_are_isolated_by_binary_in_one_workspace(self):
+        first = {"First": {"name": "First", "kind": "enum", "values": []}}
+        second = {"Second": {"name": "Second", "kind": "enum", "values": []}}
+        with tempfile.TemporaryDirectory() as tmp:
+            database = StructDb(tmp)
+            database.replace_definitions("/tmp/a.bin", "first", first)
+            database.replace_definitions("/tmp/b.bin", "second", second)
+
+            self.assertEqual(
+                set(database.load_definitions("/tmp/a.bin")["definitions"]),
+                {"First"},
+            )
+            self.assertEqual(
+                set(database.load_definitions("/tmp/b.bin")["definitions"]),
+                {"Second"},
+            )
 
     @staticmethod
     def _field(name: str, addr: str) -> dict[str, object]:

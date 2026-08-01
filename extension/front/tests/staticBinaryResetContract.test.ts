@@ -43,6 +43,9 @@ describe("static binary reset contract", () => {
     expect(stackDecompile).to.include("decompileUiState.renderedBinaryPath = ''");
 
     const typedData = functionBody(source, "resetTypedDataDerivedState");
+    expect(typedData).to.include("typedDataUiState.structSource = ''");
+    expect(typedData).to.include("typedDataUiState.structs = []");
+    expect(typedData).to.include("typedDataUiState.structsLoaded = false");
     expect(typedData).to.include("typedDataUiState.appliedStructName = ''");
     expect(typedData).to.include("typedDataUiState.hexStructPreview = null");
 
