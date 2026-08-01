@@ -8,10 +8,19 @@ class CdpTarget {
   constructor(socket, sessionId = null) {
     this.socket = socket;
     this.sessionId = sessionId;
+    this.contextId = null;
+    this.executionContextIds = [];
     this.nextId = 1;
     this.pending = new Map();
     socket.addEventListener('message', (event) => {
       const message = JSON.parse(String(event.data));
+      if (
+        message.method === 'Runtime.executionContextCreated'
+        && (!this.sessionId || message.sessionId === this.sessionId)
+        && message.params?.context?.id
+      ) {
+        this.executionContextIds.push(message.params.context.id);
+      }
       if (!message.id || !this.pending.has(message.id)) return;
       const { resolve, reject } = this.pending.get(message.id);
       this.pending.delete(message.id);
@@ -50,11 +59,12 @@ class CdpTarget {
     });
   }
 
-  async evaluate(expression) {
+  async evaluate(expression, contextId = this.contextId) {
     const result = await this.send('Runtime.evaluate', {
       expression,
       returnByValue: true,
       awaitPromise: true,
+      ...(contextId ? { contextId } : {}),
     });
     if (result.exceptionDetails) {
       throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text || 'DOM evaluation failed');
@@ -178,7 +188,6 @@ async function connectToHubWebview(endpoint, timeoutMs = DEFAULT_TIMEOUT_MS) {
       const webviewTargets = targets.filter((candidate) => (
         candidate.type === 'webview'
         || candidate.type === 'iframe'
-        || String(candidate.url || '').startsWith('vscode-webview://')
       ));
       for (const candidate of webviewTargets) {
         const socketUrl = candidate.webSocketDebuggerUrl || browser.webSocketDebuggerUrl;
@@ -196,7 +205,18 @@ async function connectToHubWebview(endpoint, timeoutMs = DEFAULT_TIMEOUT_MS) {
             if (!attached.sessionId) throw new Error('CDP iframe attachment returned no session');
             target = new CdpTarget(socket, attached.sessionId);
           }
-          if (await target.evaluate('Boolean(document.querySelector("#panel-dashboard"))')) return target;
+          await target.send('Runtime.enable');
+          const contexts = target.executionContextIds.length ? target.executionContextIds : [null];
+          for (const contextId of contexts) {
+            try {
+              if (await target.evaluate('Boolean(globalThis.document?.querySelector("#panel-dashboard"))', contextId)) {
+                target.contextId = contextId;
+                return target;
+              }
+            } catch (error) {
+              lastError = error instanceof Error ? error.message : String(error);
+            }
+          }
         } catch (error) {
           lastError = error instanceof Error ? error.message : String(error);
         }

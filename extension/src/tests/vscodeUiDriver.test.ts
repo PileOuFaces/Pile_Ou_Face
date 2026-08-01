@@ -137,9 +137,18 @@ describe('VS Code UI E2E driver', () => {
   it('routes attached target commands through their CDP session', async () => {
     const socket = new FakeSocket();
     const target = new CdpTarget(socket, 'iframe-session');
+    socket.emit('message', {
+      data: JSON.stringify({
+        method: 'Runtime.executionContextCreated',
+        sessionId: 'iframe-session',
+        params: { context: { id: 42 } },
+      }),
+    });
+    target.contextId = target.executionContextIds[0];
 
     assert.equal(await target.evaluate('true'), true);
     assert.equal(JSON.parse(socket.sent[0]).sessionId, 'iframe-session');
+    assert.equal(JSON.parse(socket.sent[0]).params.contextId, 42);
   });
 
   it('surfaces CDP protocol errors, evaluation exceptions and closed requests', async () => {
