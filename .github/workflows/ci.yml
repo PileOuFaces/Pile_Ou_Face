@@ -373,6 +373,7 @@ jobs:
             extension/.pile-ou-face/test-artifacts/e2e-runtime-audit/*.png
             extension/.pile-ou-face/test-artifacts/e2e-runtime-audit/*.html
           if-no-files-found: warn
+          include-hidden-files: true
 
   # ══════════════════════════════════════════════════════════════
   # 🔐 Security Scan — PRs uniquement, ubuntu seulement
