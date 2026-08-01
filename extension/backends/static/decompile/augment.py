@@ -20,6 +20,7 @@ from backends.mcp.ai_provider import (  # noqa: E402
     call_provider_result,
     resolve_provider_model,
 )
+from backends.static.cache.cache_store import get_payload, put_payload  # noqa: E402
 
 SCHEMA_VERSION = 1
 IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
@@ -227,10 +228,6 @@ def cache_key(binary_path: str, addr: str, code: str, provider: str, model: str)
     return digest.hexdigest()
 
 
-def _cache_path(cache_dir: str, key: str) -> Path:
-    return Path(cache_dir) / "ai-decompile" / f"{key}.json"
-
-
 def build_prompt(code: str, function_name: str, language: str) -> str:
     return (
         "You improve the readability of decompiled C without rewriting it. Return STRICT JSON only. "
@@ -255,9 +252,14 @@ def suggest(payload: dict[str, Any]) -> dict[str, Any]:
         provider,
         model,
     )
-    path = _cache_path(str(payload["cache_dir"]), key)
-    if payload.get("use_cache", True) and path.is_file():
-        result = json.loads(path.read_text(encoding="utf-8"))
+    cache_dir = str(payload["cache_dir"])
+    cached = (
+        get_payload(cache_dir, "ai-decompile", key)
+        if payload.get("use_cache", True)
+        else None
+    )
+    if isinstance(cached, dict):
+        result = cached
         result["cached"] = True
         return result
     response = call_provider_result(
@@ -293,17 +295,40 @@ def suggest(payload: dict[str, Any]) -> dict[str, Any]:
         "accepted_ids": [],
         "versions": [],
     }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    binary_path = str(payload.get("binary_path", ""))
+    try:
+        stat = Path(binary_path).stat()
+        metadata = (
+            str(Path(binary_path).resolve()),
+            stat.st_mtime_ns / 1_000_000,
+            stat.st_size,
+        )
+    except OSError:
+        metadata = (binary_path, 0, 0)
+    result["_cache_meta"] = {
+        "binary_path": metadata[0],
+        "binary_mtime_ms": metadata[1],
+        "binary_size": metadata[2],
+    }
+    put_payload(
+        cache_dir,
+        "ai-decompile",
+        key,
+        result,
+        binary_path=metadata[0],
+        binary_mtime_ms=metadata[1],
+        binary_size=metadata[2],
+    )
     return result
 
 
 def accept(payload: dict[str, Any]) -> dict[str, Any]:
     key = str(payload.get("cache_key", ""))
-    path = _cache_path(str(payload["cache_dir"]), key)
-    if not re.fullmatch(r"[a-f0-9]{64}", key) or not path.is_file():
+    if not re.fullmatch(r"[a-f0-9]{64}", key):
         raise ValueError("Proposition introuvable ou expirée")
-    result = json.loads(path.read_text(encoding="utf-8"))
+    result = get_payload(str(payload["cache_dir"]), "ai-decompile", key)
+    if not isinstance(result, dict):
+        raise ValueError("Proposition introuvable ou expirée")
     selected = [str(value) for value in payload.get("selected_ids", [])]
     augmented = apply_proposal(result["raw_code"], result["proposal"], selected)
     if not semantic_guard(result["raw_code"], augmented):
@@ -327,7 +352,16 @@ def accept(payload: dict[str, Any]) -> dict[str, Any]:
             "versions": versions[-20:],
         }
     )
-    path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    meta = result.get("_cache_meta", {})
+    put_payload(
+        str(payload["cache_dir"]),
+        "ai-decompile",
+        key,
+        result,
+        binary_path=str(meta.get("binary_path", "")),
+        binary_mtime_ms=float(meta.get("binary_mtime_ms", 0)),
+        binary_size=int(meta.get("binary_size", 0)),
+    )
     return result
 
 
@@ -345,10 +379,9 @@ def lookup(payload: dict[str, Any]) -> dict[str, Any]:
         provider,
         model,
     )
-    path = _cache_path(str(payload["cache_dir"]), key)
-    if not path.is_file():
+    result = get_payload(str(payload["cache_dir"]), "ai-decompile", key)
+    if not isinstance(result, dict):
         return {"ok": True, "found": False, "cache_key": key}
-    result = json.loads(path.read_text(encoding="utf-8"))
     if result.get("accepted") is not True or not result.get("accepted_ids"):
         return {"ok": True, "found": False, "cache_key": key}
     result.update({"ok": True, "found": True, "cached": True})

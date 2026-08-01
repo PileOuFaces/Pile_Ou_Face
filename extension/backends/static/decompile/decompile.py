@@ -43,6 +43,7 @@ from backends.static.annotations.typed_struct_refs import (
     build_typed_struct_index,
     typed_struct_signature,
 )
+from backends.static.cache.cache_store import get_payload, put_payload
 
 _log = get_logger(__name__)
 _FILE_SIGNATURE_CACHE: dict[tuple[str, int, int], str] = {}
@@ -1320,13 +1321,11 @@ def _cache_key(
 
 
 def _read_cache(key: str, cache_dir: Path) -> dict | None:
-    p = cache_dir / f"{key}.json"
-    if p.exists():
-        try:
-            return json.loads(p.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-    return None
+    try:
+        result = get_payload(cache_dir, "decompile", key)
+        return result if isinstance(result, dict) else None
+    except Exception:
+        return None
 
 
 def _build_cache_meta(binary_path: str) -> dict[str, Any] | None:
@@ -1347,21 +1346,26 @@ def _write_cache(
     key: str, cache_dir: Path, data: dict, *, meta: dict[str, Any] | None = None
 ) -> None:
     try:
-        cache_dir.mkdir(parents=True, exist_ok=True)
         payload = dict(data)
         if meta:
             payload["_cache_meta"] = dict(meta)
-        (cache_dir / f"{key}.json").write_text(
-            json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+        put_payload(
+            cache_dir,
+            "decompile",
+            key,
+            payload,
+            binary_path=str((meta or {}).get("binary_path", "")),
+            binary_mtime_ms=float((meta or {}).get("binary_mtime_ms", 0)),
+            binary_size=int((meta or {}).get("binary_size", 0)),
         )
     except Exception:
         pass  # cache write failure is non-fatal
 
 
 _DEFAULT_CACHE_DIR = (
-    Path(_pof_storage_env) / "decompile_cache"
+    Path(_pof_storage_env) / "static_cache"
     if _pof_storage_env
-    else Path.home() / ".config" / "pile-ou-face" / "decompile_cache"
+    else Path.home() / ".config" / "pile-ou-face" / "static_cache"
 )
 
 

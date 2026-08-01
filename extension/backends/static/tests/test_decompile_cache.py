@@ -124,7 +124,7 @@ class TestCacheHelpers(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             subdir = Path(d) / "nested" / "cache"
             _write_cache("deadbeefcafe1234", subdir, {"x": 1})
-            self.assertTrue((subdir / "deadbeefcafe1234.json").exists())
+            self.assertTrue((subdir / "static-cache.sqlite3").exists())
 
     def test_write_cache_can_embed_binary_metadata(self):
         with tempfile.TemporaryDirectory() as d:
