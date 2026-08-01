@@ -11,6 +11,7 @@ sys.path.insert(0, ROOT)
 from backends.static.annotations.struct_db import get_struct_db_path
 from backends.static.annotations.structs import (
     compute_struct_layout,
+    list_struct_store,
     load_struct_store,
     parse_struct_definitions,
     save_struct_source,
@@ -87,6 +88,53 @@ class TestStructs(unittest.TestCase):
         self.assertEqual(definitions["Mode"]["value_map"]["MODE_RW"], 3)
         self.assertEqual(definitions["Payload"]["kind"], "union")
         self.assertEqual(len(definitions["Payload"]["fields"]), 2)
+
+    def test_parse_explicit_compound_field_kinds_and_qualifiers(self):
+        definitions = parse_struct_definitions(
+            """
+            struct Child { uint32_t value; };
+            union Choice { uint32_t number; char text[4]; };
+            enum Mode { MODE_OFF, MODE_ON };
+            struct Parent {
+              const struct Child *child;
+              volatile union Choice choice;
+              enum Mode mode;
+            };
+            """
+        )
+        fields = definitions["Parent"]["fields"]
+        self.assertEqual(
+            [field["type_kind"] for field in fields], ["struct", "union", "enum"]
+        )
+        self.assertEqual(fields[0]["type"], "Child")
+
+    def test_parse_enum_arithmetic_and_unary_expressions(self):
+        definitions = parse_struct_definitions(
+            """
+            enum Numbers {
+              NEG = -2,
+              POS = +2,
+              INV = ~0,
+              SUM = POS + 3,
+              DIFF = SUM - 1,
+              PRODUCT = DIFF * 2,
+              QUOTIENT = PRODUCT / 4,
+              REMAINDER = PRODUCT % 3,
+              MASKED = PRODUCT & 6,
+              TOGGLED = MASKED ^ 3
+            };
+            """
+        )
+        values = definitions["Numbers"]["value_map"]
+        self.assertEqual(values["NEG"], -2)
+        self.assertEqual(values["QUOTIENT"], 2)
+        self.assertEqual(values["TOGGLED"], 3)
+
+    def test_rejects_unknown_enum_symbol_and_unsupported_source(self):
+        with self.assertRaisesRegex(ValueError, "inconnu"):
+            parse_struct_definitions("enum Broken { VALUE = UNKNOWN + 1 };")
+        with self.assertRaisesRegex(ValueError, "Aucun type C reconnu"):
+            parse_struct_definitions("typedef unsigned int word_t;")
 
     # ── C++ enum class ───────────────────────────────────────────────────────────
 
@@ -345,6 +393,29 @@ class TestStructs(unittest.TestCase):
         with self.assertRaises(ValueError):
             compute_struct_layout(definitions, "DoesNotExist", 8)
 
+    def test_error_layout_enum_cannot_be_applied_as_struct(self):
+        definitions = parse_struct_definitions("enum Mode { OFF, ON };")
+        with self.assertRaisesRegex(ValueError, "ne peut pas être appliqué"):
+            compute_struct_layout(definitions, "Mode", 8)
+
+    def test_pointer_sized_primitives_follow_target_architecture(self):
+        definitions = parse_struct_definitions(
+            "typedef struct Sizes { size_t size; uintptr_t address; } Sizes;"
+        )
+        layout = compute_struct_layout(definitions, "Sizes", 4)
+        self.assertEqual([field["size"] for field in layout["fields"]], [4, 4])
+        self.assertEqual(layout["size"], 8)
+
+    def test_reused_nested_type_has_stable_cached_layout(self):
+        definitions = parse_struct_definitions(
+            """
+            struct Child { uint32_t value; };
+            struct Parent { struct Child first; struct Child second; };
+            """
+        )
+        layout = compute_struct_layout(definitions, "Parent", 8)
+        self.assertEqual([field["offset"] for field in layout["fields"]], [0, 4])
+
     def test_error_layout_unknown_field_type(self):
         definitions = parse_struct_definitions("typedef struct S { Phantom x; } S;")
         with self.assertRaises(ValueError):
@@ -371,6 +442,22 @@ class TestStructs(unittest.TestCase):
         color = store["definitions"]["Color"]
         self.assertEqual(color["kind"], "enum")
         self.assertEqual(color["value_map"]["Blue"], 2)
+
+    def test_list_store_exposes_all_type_kinds_and_counts(self):
+        source = """
+        typedef struct Header { uint32_t magic; uint16_t count; } Header;
+        typedef union Payload { uint32_t raw; char text[4]; } Payload;
+        enum Mode { MODE_NONE, MODE_READ, MODE_WRITE };
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            save_struct_source(source, workspace_root=tmp)
+            catalog = list_struct_store(tmp)["structs"]
+
+        by_name = {entry["name"]: entry for entry in catalog}
+        self.assertEqual(by_name["Header"]["field_count"], 2)
+        self.assertEqual(by_name["Payload"]["field_count"], 2)
+        self.assertEqual(by_name["Mode"]["value_count"], 3)
+        self.assertEqual(by_name["Mode"]["kind"], "enum")
 
     def test_roundtrip_fn_ptr_struct(self):
         source = """

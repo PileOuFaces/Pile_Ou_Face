@@ -282,16 +282,16 @@ def load_struct_store(workspace_root: str | None = None) -> dict[str, Any]:
 def list_struct_store(workspace_root: str | None = None) -> dict[str, Any]:
     """List all user-defined struct/union/enum types currently saved in the workspace."""
     store = load_struct_store(workspace_root)
-    structs = [
-        {
-            "name": name,
-            "kind": str((definition or {}).get("kind") or "struct"),
-            "field_count": len((definition or {}).get("fields") or []),
-        }
-        for name, definition in sorted(store["definitions"].items())
-        if str((definition or {}).get("kind") or "struct") in {"struct", "union"}
-    ]
-    return {"structs": structs, "source": store["source"], "error": None}
+    types = []
+    for name, definition in sorted(store["definitions"].items()):
+        kind = str((definition or {}).get("kind") or "struct")
+        entry = {"name": name, "kind": kind}
+        if kind == "enum":
+            entry["value_count"] = len((definition or {}).get("values") or [])
+        else:
+            entry["field_count"] = len((definition or {}).get("fields") or [])
+        types.append(entry)
+    return {"structs": types, "source": store["source"], "error": None}
 
 
 def save_struct_source(
