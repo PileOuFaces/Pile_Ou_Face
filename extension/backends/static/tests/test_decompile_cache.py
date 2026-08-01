@@ -84,18 +84,6 @@ class TestCacheHelpers(unittest.TestCase):
         k2 = _cache_key("/bin/ls", "0x401000", decompiler="ghidra")
         self.assertNotEqual(k1, k2)
 
-    def test_cache_key_changes_with_annotations_mtime(self):
-        import time
-
-        with tempfile.TemporaryDirectory() as d:
-            ann_path = Path(d) / "ann.json"
-            ann_path.write_text('{"0x401000": {"name": "foo"}}')
-            k1 = _cache_key("/bin/ls", "0x401000", annotations_json=str(ann_path))
-            time.sleep(0.01)
-            ann_path.write_text('{"0x401000": {"name": "bar"}}')
-            k2 = _cache_key("/bin/ls", "0x401000", annotations_json=str(ann_path))
-            self.assertNotEqual(k1, k2)
-
     def test_cache_key_changes_with_sqlite_annotations_signature(self):
         k1 = _cache_key(
             "/bin/ls",

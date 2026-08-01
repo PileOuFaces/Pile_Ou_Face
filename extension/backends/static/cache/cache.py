@@ -91,16 +91,6 @@ CREATE TABLE IF NOT EXISTS strings_data (
 );
 CREATE INDEX IF NOT EXISTS idx_strings_binary_addr ON strings_data(binary_id, addr);
 
-CREATE TABLE IF NOT EXISTS annotations (
-    id        INTEGER PRIMARY KEY AUTOINCREMENT,
-    binary_id INTEGER NOT NULL,
-    addr      TEXT    NOT NULL,
-    kind      TEXT    NOT NULL,
-    value     TEXT    NOT NULL,
-    FOREIGN KEY (binary_id) REFERENCES binary(id) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS idx_annotations_binary_addr ON annotations(binary_id, addr);
-
 CREATE TABLE IF NOT EXISTS functions (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     binary_id  INTEGER NOT NULL,
@@ -608,92 +598,6 @@ class DisasmCache:
         self._conn.commit()
         logger.debug("Strings cached: %s (%d strings)", binary_path, len(strings))
         return binary_id
-
-    # ------------------------------------------------------------------
-    # API publique — annotations
-    # ------------------------------------------------------------------
-
-    def get_annotations(self, binary_path: str, addr: str | None = None) -> list[dict]:
-        """Charge les annotations depuis le cache.
-
-        Args:
-            binary_path: Chemin absolu vers le binaire
-            addr: Filtrer par adresse (None = toutes)
-
-        Returns:
-            Liste de {addr, kind, value}.
-        """
-        row = self._get_valid_binary_row(binary_path)
-        if row is None:
-            return []
-        binary_id: int = row["id"]
-        if addr is not None:
-            cur = self._conn.execute(
-                "SELECT addr, kind, value FROM annotations WHERE binary_id=? AND addr=? ORDER BY id",
-                (binary_id, addr),
-            )
-        else:
-            cur = self._conn.execute(
-                "SELECT addr, kind, value FROM annotations WHERE binary_id=? ORDER BY addr, id",
-                (binary_id,),
-            )
-        return [
-            {"addr": r["addr"], "kind": r["kind"], "value": r["value"]} for r in cur
-        ]
-
-    def save_annotation(
-        self, binary_path: str, addr: str, kind: str, value: str
-    ) -> None:
-        """Ajoute ou remplace une annotation pour une adresse.
-
-        Si une annotation du même (addr, kind) existe, elle est remplacée.
-
-        Args:
-            binary_path: Chemin absolu vers le binaire
-            addr: Adresse (ex: "0x401000")
-            kind: Type d'annotation ("comment", "rename", ...)
-            value: Valeur de l'annotation
-        """
-        binary_id = self._ensure_binary(binary_path)
-        self._conn.execute(
-            "DELETE FROM annotations WHERE binary_id=? AND addr=? AND kind=?",
-            (binary_id, addr, kind),
-        )
-        self._conn.execute(
-            "INSERT INTO annotations(binary_id, addr, kind, value) VALUES(?,?,?,?)",
-            (binary_id, addr, kind, value),
-        )
-        self._conn.commit()
-
-    def delete_annotation(
-        self, binary_path: str, addr: str, kind: str | None = None
-    ) -> int:
-        """Supprime les annotations pour une adresse.
-
-        Args:
-            binary_path: Chemin absolu vers le binaire
-            addr: Adresse cible
-            kind: Type à supprimer (None = tous les types pour cette adresse)
-
-        Returns:
-            Nombre d'annotations supprimées.
-        """
-        row = self._get_valid_binary_row(binary_path)
-        if row is None:
-            return 0
-        binary_id: int = row["id"]
-        if kind is not None:
-            cur = self._conn.execute(
-                "DELETE FROM annotations WHERE binary_id=? AND addr=? AND kind=?",
-                (binary_id, addr, kind),
-            )
-        else:
-            cur = self._conn.execute(
-                "DELETE FROM annotations WHERE binary_id=? AND addr=?",
-                (binary_id, addr),
-            )
-        self._conn.commit()
-        return cur.rowcount
 
     # ------------------------------------------------------------------
     # API publique — fonctions découvertes

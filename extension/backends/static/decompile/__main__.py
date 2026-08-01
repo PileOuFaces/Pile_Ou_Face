@@ -28,7 +28,6 @@ parser.add_argument("--func-name", default="")
 parser.add_argument("--decompiler", default="")
 parser.add_argument("--provider", default="auto", choices=["auto", "local", "docker"])
 parser.add_argument("--list", action="store_true", dest="list_decompilers")
-parser.add_argument("--annotations-json", default=None)
 parser.add_argument("--annotations-db", default="auto")
 parser.add_argument("--cache-dir", default=None)
 parser.add_argument("--no-cache", action="store_true", dest="no_cache")
@@ -70,7 +69,6 @@ else:
                 args.addr,
                 func_name=args.func_name,
                 decompiler=args.decompiler,
-                annotations_json=args.annotations_json,
                 annotations_db=args.annotations_db,
                 cache_dir=Path(args.cache_dir) if args.cache_dir else None,
                 provider=args.provider,

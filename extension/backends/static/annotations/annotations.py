@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Annotations persistantes sur les adresses d'un binaire.
 
-Stocke commentaires et renommages dans le cache SQLite (.pfdb).
-Façade de haut niveau sur DisasmCache.annotations.
+Stocke commentaires, renommages, bookmarks et revues dans la base SQLite
+dédiée aux annotations. Façade de haut niveau sur AnnotationDb.
 
 Usage:
     from backends.static.annotations.annotations import AnnotationStore
@@ -41,7 +41,7 @@ KIND_BOOKMARK_COLOR = "bookmark_color"
 class AnnotationStore:
     """Façade pour les annotations persistantes d'un binaire.
 
-    Gère commentaires et renommages via le cache SQLite.
+    Gère les annotations via l'unique base SQLite dédiée.
     """
 
     def __init__(self, binary_path: str, cache_path: str | None = None) -> None:
@@ -49,7 +49,7 @@ class AnnotationStore:
 
         Args:
             binary_path: Chemin absolu vers le binaire analysé.
-            cache_path: Chemin vers le fichier cache SQLite (None = chemin auto).
+            cache_path: Chemin vers la base SQLite (None = chemin auto).
         """
         self._binary_path = binary_path
         self._cache = AnnotationDb(cache_path)

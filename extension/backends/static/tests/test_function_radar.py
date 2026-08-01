@@ -27,6 +27,7 @@ from backends.static.analysis.function_radar import (
     build_function_radar,
     main,
 )
+from backends.static.annotations.annotation_db import AnnotationDb
 from backends.static.cache.cache import DisasmCache
 
 
@@ -237,13 +238,21 @@ class TestFunctionRadar(unittest.TestCase):
                         }
                     ],
                 )
-                cache.save_annotation(
+            annotation_db = Path(tmp) / "annotations.db"
+            with AnnotationDb(annotation_db) as db:
+                db.save_annotation(
                     str(binary_path), "0x401030", "comment", "decrypt routine"
                 )
 
-            with patch(
-                "backends.static.analysis.function_radar.build_analysis_index"
-            ) as mocked_index:
+            with (
+                patch(
+                    "backends.static.analysis.function_radar.build_analysis_index"
+                ) as mocked_index,
+                patch(
+                    "backends.static.analysis.function_radar.AnnotationDb",
+                    side_effect=lambda: AnnotationDb(annotation_db),
+                ),
+            ):
                 mocked_index.return_value = {"binary": str(binary_path)}
                 result = build_function_radar(
                     str(binary_path), cache_db=str(cache_db), hotspot_limit=6

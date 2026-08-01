@@ -33,7 +33,7 @@ def list_binaries(db_path: str) -> list[dict]:
     """Liste les binaires présents dans le cache.
 
     Returns:
-        [{id, path, hash, created_at, disasm_lines, symbols, strings, annotations}, ...]
+        [{id, path, hash, created_at, disasm_lines, symbols, strings}, ...]
     """
     if not Path(db_path).exists():
         return []
@@ -45,13 +45,11 @@ def list_binaries(db_path: str) -> list[dict]:
                 b.id, b.path, b.hash, b.created_at,
                 COUNT(DISTINCT dl.id) AS disasm_lines,
                 COUNT(DISTINCT s.id)  AS symbols,
-                COUNT(DISTINCT st.id) AS strings,
-                COUNT(DISTINCT a.id)  AS annotations
+                COUNT(DISTINCT st.id) AS strings
             FROM binary b
             LEFT JOIN disasm_lines dl ON dl.binary_id = b.id
             LEFT JOIN symbols      s  ON s.binary_id  = b.id
             LEFT JOIN strings_data st ON st.binary_id = b.id
-            LEFT JOIN annotations  a  ON a.binary_id  = b.id
             GROUP BY b.id
             ORDER BY b.created_at
             """
@@ -65,7 +63,6 @@ def list_binaries(db_path: str) -> list[dict]:
                 "disasm_lines": row["disasm_lines"],
                 "symbols": row["symbols"],
                 "strings": row["strings"],
-                "annotations": row["annotations"],
             }
             for row in rows
         ]
@@ -77,7 +74,7 @@ def db_stats(db_path: str) -> dict:
 
     Returns:
         {db_path, size_bytes, binaries, total_disasm_lines, total_symbols,
-         total_strings, total_annotations, schema_version}
+         total_strings, schema_version}
     """
     p = Path(db_path)
     if not p.exists():
@@ -89,7 +86,6 @@ def db_stats(db_path: str) -> dict:
         n_dis = conn.execute("SELECT COUNT(*) FROM disasm_lines").fetchone()[0]
         n_sym = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
         n_str = conn.execute("SELECT COUNT(*) FROM strings_data").fetchone()[0]
-        n_ann = conn.execute("SELECT COUNT(*) FROM annotations").fetchone()[0]
         ver_row = conn.execute(
             "SELECT value FROM schema_meta WHERE key='version'"
         ).fetchone()
@@ -104,7 +100,6 @@ def db_stats(db_path: str) -> dict:
         "total_disasm_lines": n_dis,
         "total_symbols": n_sym,
         "total_strings": n_str,
-        "total_annotations": n_ann,
     }
 
 

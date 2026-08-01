@@ -2,20 +2,8 @@ const { expect } = require("chai");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const crypto = require("crypto");
 const proxyquire = require("proxyquire");
 const sinon = require("sinon");
-
-function computeLegacyAnnotationsPath(root, binaryPath, storageDir) {
-  const absPath = path.isAbsolute(binaryPath) ? binaryPath : path.join(root, binaryPath);
-  const hash = crypto
-    .createHash("sha256")
-    .update(absPath)
-    .update(fs.existsSync(absPath) ? String(fs.statSync(absPath).mtimeMs) : "")
-    .digest("hex")
-    .slice(0, 16);
-  return path.join(storageDir, "annotations", `${hash}.json`);
-}
 
 function makePanelSink() {
   const messages = [];
@@ -243,53 +231,13 @@ describe("sharedHandlers", () => {
     expect(vscodeStub.window.showInformationMessage.calledOnce).to.equal(true);
   });
 
-  it("ignores legacy JSON annotation files and loads SQLite annotations directly", async () => {
+  it("loads annotations directly from the SQLite bridge", async () => {
     const sharedHandlers = proxyquire("../shared/sharedHandlers", {
       vscode: vscodeStub,
       "./fileManager": fileManagerStub,
     });
     const storageDir = path.join(tempRoot, "storage");
-    const binaryPath = path.join(tempRoot, "sample.bin");
-    fs.writeFileSync(binaryPath, Buffer.from("binary-content"));
-
-    const legacyPath = computeLegacyAnnotationsPath(tempRoot, binaryPath, storageDir);
-    fs.mkdirSync(path.dirname(legacyPath), { recursive: true });
-    const legacyAnnotations = {
-      "0x1000": { comment: "legacy comment", name: "legacy_fn" },
-    };
-    fs.writeFileSync(legacyPath, JSON.stringify(legacyAnnotations, null, 2), "utf8");
-
-    const currentAnnotations = { "0x2000": { comment: "sqlite comment" } };
-    const annotationsBridgeStub = {
-      loadAnnotations: sinon.stub().resolves(currentAnnotations),
-    };
-
-    const handlers = sharedHandlers({
-      root: tempRoot,
-      storageDir,
-      panel: sink.panel,
-      annotationsBridge: annotationsBridgeStub,
-    });
-
-    await handlers.hubLoadAnnotations({ binaryPath });
-
-    expect(annotationsBridgeStub.loadAnnotations.calledOnceWithExactly(binaryPath)).to.equal(true);
-    expect(fs.existsSync(legacyPath)).to.equal(true);
-    expect(fs.existsSync(`${legacyPath}.migrated`)).to.equal(false);
-
-    const annotationsMessage = sink.messages.find((message) => message.type === "hubAnnotations");
-    expect(annotationsMessage).to.exist;
-    expect(annotationsMessage.binaryPath).to.equal(binaryPath);
-    expect(annotationsMessage.annotations).to.deep.equal(currentAnnotations);
-  });
-
-  it("loads annotations directly when no legacy JSON file exists", async () => {
-    const sharedHandlers = proxyquire("../shared/sharedHandlers", {
-      vscode: vscodeStub,
-      "./fileManager": fileManagerStub,
-    });
-    const storageDir = path.join(tempRoot, "storage");
-    const binaryPath = path.join(tempRoot, "no-legacy.bin");
+    const binaryPath = path.join(tempRoot, "sqlite-only.bin");
     fs.writeFileSync(binaryPath, Buffer.from("binary-content"));
 
     const currentAnnotations = { "0x2000": { comment: "already in sqlite" } };

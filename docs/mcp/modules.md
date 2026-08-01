@@ -980,7 +980,7 @@ purge_binary(db_path: str, binary_path=None) -> int  # 0=all, int=deleted
 [{
   "id": 1, "path": "/abs/path/binary", "hash": "...",
   "created_at": "2026-03-01T12:00:00",
-  "disasm_lines": 299, "symbols": 12, "strings": 47, "annotations": 3
+  "disasm_lines": 299, "symbols": 12, "strings": 47
 }]
 ```
 
