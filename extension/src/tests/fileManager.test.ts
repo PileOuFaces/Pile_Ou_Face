@@ -90,24 +90,19 @@ describe("fileManager", () => {
     expect(pruneSpy.calledOnce).to.equal(true);
   });
 
-  it("purges legacy decompile cache, stale patches and stale pfdb files", () => {
+  it("purges legacy decompile cache and stale pfdb files", () => {
     const workspaceFile = path.join(tempRoot, "examples", "demo.elf");
     fs.mkdirSync(path.dirname(workspaceFile), { recursive: true });
     fs.writeFileSync(workspaceFile, Buffer.from("demo"));
 
     const decompileDir = path.join(mockStorageDir, "decompile_cache");
-    const patchesDir = path.join(mockStorageDir, "patches");
     const pfdbDir = path.join(mockStorageDir, "pfdb");
     fs.mkdirSync(decompileDir, { recursive: true });
-    fs.mkdirSync(patchesDir, { recursive: true });
     fs.mkdirSync(pfdbDir, { recursive: true });
 
     fs.writeFileSync(path.join(decompileDir, "legacy.json"), '{"code":"old"}');
 
     const patchKey = crypto.createHash("sha256").update(path.resolve(workspaceFile)).digest("hex").slice(0, 16);
-    fs.writeFileSync(path.join(patchesDir, `${patchKey}.json`), JSON.stringify({ binary: path.resolve(workspaceFile), patches: [] }));
-    fs.writeFileSync(path.join(patchesDir, "orphanpatch000000.json"), JSON.stringify({ binary: "/tmp/does-not-exist", patches: [] }));
-
     const pfdbName = `demo.elf.${patchKey}.pfdb`;
     fs.writeFileSync(path.join(pfdbDir, pfdbName), "sqlite");
     fs.writeFileSync(path.join(pfdbDir, "ghost.1234567890abcdef.pfdb"), "sqlite");
@@ -123,10 +118,8 @@ describe("fileManager", () => {
     });
 
     const result = fileManager.purgeStaleCache(mockStorageDir, tempRoot);
-    expect(result.removed).to.equal(4);
+    expect(result.removed).to.equal(3);
     expect(fs.existsSync(path.join(decompileDir, "legacy.json"))).to.equal(false);
-    expect(fs.existsSync(path.join(patchesDir, `${patchKey}.json`))).to.equal(true);
-    expect(fs.existsSync(path.join(patchesDir, "orphanpatch000000.json"))).to.equal(false);
     expect(fs.existsSync(path.join(pfdbDir, pfdbName))).to.equal(true);
     expect(fs.existsSync(path.join(pfdbDir, "ghost.1234567890abcdef.pfdb"))).to.equal(false);
     expect(fs.existsSync(path.join(pfdbDir, "ghost.1234567890abcdef.pfdb-journal"))).to.equal(false);
@@ -164,7 +157,7 @@ describe("fileManager", () => {
 
     // ── Protected entries: directories ─────────────────────────────────────
 
-    const PROTECTED_DIRS = ["licenses", "plugins", "patches", "pfdb"];
+    const PROTECTED_DIRS = ["licenses", "plugins", "pfdb"];
 
     for (const dirName of PROTECTED_DIRS) {
       it(`does NOT delete ${dirName}/`, () => {
@@ -186,7 +179,6 @@ describe("fileManager", () => {
         "compilers.json",
         "licenses",
         "plugins",
-        "patches",
         "pfdb",
       ];
 
@@ -249,11 +241,9 @@ describe("fileManager", () => {
 
     const cacheDir = path.join(mockStorageDir, "static_cache");
     const decompileDir = path.join(mockStorageDir, "decompile_cache");
-    const patchesDir = path.join(mockStorageDir, "patches");
     const pfdbDir = path.join(mockStorageDir, "pfdb");
     fs.mkdirSync(cacheDir, { recursive: true });
     fs.mkdirSync(decompileDir, { recursive: true });
-    fs.mkdirSync(patchesDir, { recursive: true });
     fs.mkdirSync(pfdbDir, { recursive: true });
 
     fs.writeFileSync(path.join(mockStorageDir, "ghost.bin.disasm.asm"), "nop");
@@ -278,8 +268,6 @@ describe("fileManager", () => {
 
     const ghostPatchKey = crypto.createHash("sha256").update(path.resolve(missingBinary)).digest("hex").slice(0, 16);
     const otherPatchKey = crypto.createHash("sha256").update(path.resolve(otherBinary)).digest("hex").slice(0, 16);
-    fs.writeFileSync(path.join(patchesDir, `${ghostPatchKey}.json`), JSON.stringify({ binary: path.resolve(missingBinary), patches: [] }));
-    fs.writeFileSync(path.join(patchesDir, `${otherPatchKey}.json`), JSON.stringify({ binary: path.resolve(otherBinary), patches: [] }));
 
     const ghostPfdb = path.join(pfdbDir, `ghost.bin.${ghostPatchKey}.pfdb`);
     const otherPfdb = path.join(pfdbDir, `other.bin.${otherPatchKey}.pfdb`);
@@ -311,8 +299,6 @@ describe("fileManager", () => {
     expect(fs.existsSync(okCacheDir)).to.equal(true);
     expect(fs.existsSync(path.join(decompileDir, "ghost.json"))).to.equal(false);
     expect(fs.existsSync(path.join(decompileDir, "other.json"))).to.equal(true);
-    expect(fs.existsSync(path.join(patchesDir, `${ghostPatchKey}.json`))).to.equal(false);
-    expect(fs.existsSync(path.join(patchesDir, `${otherPatchKey}.json`))).to.equal(true);
     expect(fs.existsSync(ghostPfdb)).to.equal(false);
     expect(fs.existsSync(`${ghostPfdb}-journal`)).to.equal(false);
     expect(fs.existsSync(otherPfdb)).to.equal(true);

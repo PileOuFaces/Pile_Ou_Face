@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -44,18 +45,31 @@ class TestPatchManager(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
         self.binary = os.path.join(self.tmp, "test.elf")
         self.storage = os.path.join(self.tmp, "storage")
+        self.db_path = os.path.join(self.tmp, "patches.db")
         make_minimal_elf(self.binary)
 
     def run_pm(self, args, *, storage=None):
         return run_pm(
             args,
-            {"POF_STORAGE_DIR": storage if storage is not None else self.storage},
+            {"POF_PATCHES_DB": storage if storage is not None else self.db_path},
         )
 
     def test_list_empty(self):
         result = self.run_pm(["list", "--binary", self.binary])
         self.assertEqual(result["patches"], [])
         self.assertEqual(result["redo_patches"], [])
+
+    def test_apply_rejects_empty_bytes_without_touching_binary(self):
+        with open(self.binary, "rb") as binary_file:
+            original = binary_file.read()
+
+        result = self.run_pm(
+            ["apply", "--binary", self.binary, "--offset", "0", "--bytes", " "]
+        )
+
+        self.assertFalse(result["ok"])
+        with open(self.binary, "rb") as binary_file:
+            self.assertEqual(binary_file.read(), original)
 
     def test_apply_and_list(self):
         self.run_pm(
@@ -66,7 +80,7 @@ class TestPatchManager(unittest.TestCase):
         self.assertEqual(result["patches"][0]["patched_bytes"], "90 90")
         self.assertEqual(result["patches"][0]["offset"], 0)
 
-    def test_apply_uses_storage_dir_patches_without_project_pof_dir(self):
+    def test_apply_uses_sqlite_without_project_patch_directory(self):
         workspace = os.path.join(self.tmp, "workspace")
         nested = os.path.join(workspace, "samples", "bin")
         os.makedirs(nested)
@@ -75,22 +89,29 @@ class TestPatchManager(unittest.TestCase):
 
         self.run_pm(["apply", "--binary", binary, "--offset", "0", "--bytes", "90 90"])
 
-        patch_dir = os.path.join(self.storage, "patches")
-        self.assertTrue(os.path.isdir(patch_dir))
-        self.assertEqual(len(os.listdir(patch_dir)), 1)
+        self.assertTrue(os.path.isfile(self.db_path))
+        self.assertFalse(os.path.exists(os.path.join(self.storage, "patches")))
         self.assertFalse(os.path.exists(os.path.join(workspace, ".pile-ou-face")))
         self.assertFalse(os.path.exists(os.path.join(nested, ".pile-ou-face")))
 
-    def test_apply_without_storage_env_uses_local_patches_dir(self):
+    def test_storage_is_normalized_sqlite(self):
         run_pm(
             ["apply", "--binary", self.binary, "--offset", "0", "--bytes", "90 90"],
-            {"POF_STORAGE_DIR": ""},
+            {"POF_PATCHES_DB": self.db_path},
         )
 
-        patch_dir = os.path.join(self.tmp, "patches")
-        self.assertTrue(os.path.isdir(patch_dir))
-        self.assertEqual(len(os.listdir(patch_dir)), 1)
-        self.assertFalse(os.path.exists(os.path.join(self.tmp, ".pile-ou-face")))
+        with sqlite3.connect(self.db_path) as conn:
+            tables = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+            self.assertIn("patch_binaries", tables)
+            self.assertIn("binary_patches", tables)
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM binary_patches").fetchone()[0], 1
+            )
 
     def test_revert_restores_bytes(self):
         with open(self.binary, "rb") as f:
@@ -178,6 +199,38 @@ class TestPatchManager(unittest.TestCase):
         result = self.run_pm(["list", "--binary", self.binary])
         self.assertEqual(result["patches"], [])
         self.assertEqual(len(result["redo_patches"]), 2)
+
+    def test_delete_removes_one_binary_history(self):
+        self.run_pm(
+            ["apply", "--binary", self.binary, "--offset", "0", "--bytes", "90"]
+        )
+
+        result = self.run_pm(["delete", "--binary", self.binary])
+
+        self.assertEqual(result, {"ok": True, "removed": 1})
+        self.assertEqual(self.run_pm(["list", "--binary", self.binary])["patches"], [])
+
+    def test_purge_missing_is_scoped_to_workspace(self):
+        outside_dir = tempfile.mkdtemp()
+        outside_binary = os.path.join(outside_dir, "outside.bin")
+        make_minimal_elf(outside_binary)
+        self.run_pm(
+            ["apply", "--binary", self.binary, "--offset", "0", "--bytes", "90"]
+        )
+        self.run_pm(
+            ["apply", "--binary", outside_binary, "--offset", "0", "--bytes", "90"]
+        )
+        os.unlink(self.binary)
+        os.unlink(outside_binary)
+
+        result = self.run_pm(["purge-missing", "--workspace", self.tmp])
+
+        self.assertEqual(result, {"ok": True, "removed": 1})
+        with sqlite3.connect(self.db_path) as conn:
+            remaining = conn.execute(
+                "SELECT binary_path FROM patch_binaries"
+            ).fetchall()
+        self.assertEqual(remaining, [(os.path.abspath(outside_binary),)])
 
 
 if __name__ == "__main__":
