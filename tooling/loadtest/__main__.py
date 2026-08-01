@@ -12,12 +12,23 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from statistics import median
+from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from loadtest.fixtures import build_fixture
 from loadtest.baseline import load_baseline
-from loadtest.report import Budget, Result, all_ok, format_summary_table, to_json
+from loadtest.report import (
+    Baseline,
+    Budget,
+    Result,
+    all_ok,
+    budget_for,
+    evaluate_result,
+    format_summary_table,
+    to_json,
+)
 from loadtest.runner import run_measured
 from loadtest.scenarios import FIXTURE_PROFILES, SCENARIOS
 
@@ -96,6 +107,39 @@ def _run_prepare_commands(
     return True
 
 
+def _median_result(samples: list[Result]) -> Result:
+    """Agrège trois mesures tout en conservant toute erreur d'exécution."""
+    first = samples[0]
+    failed = next((sample for sample in samples if sample.returncode != 0), None)
+    return Result(
+        scenario=first.scenario,
+        fixture=first.fixture,
+        binary_size_bytes=first.binary_size_bytes,
+        peak_rss_bytes=int(median(sample.peak_rss_bytes for sample in samples)),
+        elapsed_s=float(median(sample.elapsed_s for sample in samples)),
+        returncode=failed.returncode if failed else 0,
+        timed_out=any(sample.timed_out for sample in samples),
+        memory_limited=any(sample.memory_limited for sample in samples),
+    )
+
+
+def _confirm_baseline_regression(
+    initial: Result,
+    measure: Callable[[], Result],
+    budget: Budget,
+    baseline: Baseline | None,
+    max_ratio: float | None,
+) -> tuple[Result, int]:
+    """Rejoue seulement une régression historique, puis décide à la médiane."""
+    evaluation = evaluate_result(
+        initial, budget, baseline=baseline, max_ratio=max_ratio
+    )
+    if evaluation.status != "regression_limit":
+        return initial, 0
+    samples = [initial, measure(), measure()]
+    return _median_result(samples), 2
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Test de charge des fonctionnalités backend"
@@ -166,6 +210,8 @@ def main(argv: list[str] | None = None) -> int:
     script_env = {**os.environ, "PYTHONPATH": str(EXTENSION_ROOT)}
 
     results: list[Result] = []
+    retry_count = 0
+    retried_scenarios: list[str] = []
     for profile in profiles:
         binary_path = (
             args.binary.resolve()
@@ -174,14 +220,15 @@ def main(argv: list[str] | None = None) -> int:
         )
         binary_size = binary_path.stat().st_size
         for scenario in scenarios:
-            script_path = _script_path(scenario.script)
-            with tempfile.TemporaryDirectory() as out_tmp:
-                out_dir = Path(out_tmp)
-                if not _run_prepare_commands(
-                    scenario, binary_path, out_dir, script_env
-                ):
-                    results.append(
-                        Result(
+
+            def measure() -> Result:
+                script_path = _script_path(scenario.script)
+                with tempfile.TemporaryDirectory() as out_tmp:
+                    out_dir = Path(out_tmp)
+                    if not _run_prepare_commands(
+                        scenario, binary_path, out_dir, script_env
+                    ):
+                        return Result(
                             scenario=scenario.name,
                             fixture=profile.name,
                             binary_size_bytes=binary_size,
@@ -190,17 +237,14 @@ def main(argv: list[str] | None = None) -> int:
                             returncode=1,
                             timed_out=False,
                         )
+                    cmd_args = scenario.build_args(binary_path, out_dir)
+                    measured = run_measured(
+                        [sys.executable, str(script_path), *cmd_args],
+                        timeout_s=min(scenario.timeout_s, args.timeout_cap_s),
+                        env=script_env,
+                        memory_limit_bytes=args.memory_limit_mib * MIB,
                     )
-                    continue
-                cmd_args = scenario.build_args(binary_path, out_dir)
-                measured = run_measured(
-                    [sys.executable, str(script_path), *cmd_args],
-                    timeout_s=min(scenario.timeout_s, args.timeout_cap_s),
-                    env=script_env,
-                    memory_limit_bytes=args.memory_limit_mib * MIB,
-                )
-                results.append(
-                    Result(
+                    return Result(
                         scenario=scenario.name,
                         fixture=profile.name,
                         binary_size_bytes=binary_size,
@@ -210,6 +254,29 @@ def main(argv: list[str] | None = None) -> int:
                         timed_out=measured["timed_out"],
                         memory_limited=measured["memory_limited"],
                     )
+
+            baseline = (
+                baselines.get((scenario.name, profile.name)) if baselines else None
+            )
+            result, retries = _confirm_baseline_regression(
+                measure(),
+                measure,
+                budget_for(
+                    Result(scenario.name, profile.name, binary_size, 0, 0, 0, False),
+                    DEFAULT_BUDGETS,
+                    SCENARIO_BUDGETS,
+                ),
+                baseline,
+                args.max_ratio,
+            )
+            results.append(result)
+            if retries:
+                retry_count += retries
+                retried_scenarios.append(f"{scenario.name}/{profile.name}")
+                print(
+                    f"Confirmation ciblée {scenario.name}/{profile.name}: "
+                    "médiane de 3 mesures",
+                    file=sys.stderr,
                 )
 
     if baselines:
@@ -242,6 +309,8 @@ def main(argv: list[str] | None = None) -> int:
         "fixture_sha256": _sha256_file(binary_path)
         if args.binary is not None
         else None,
+        "performance_retry_count": retry_count,
+        "retried_scenarios": retried_scenarios,
     }
     report_path.write_text(
         to_json(

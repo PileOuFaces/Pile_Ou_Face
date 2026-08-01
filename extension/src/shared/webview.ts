@@ -1101,6 +1101,7 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', global
   const staticPwntoolsScriptControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'static', 'pwntoolsScriptController.js'));
   const staticToolsWidgetsControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'static', 'staticToolsWidgetsController.js'));
   const staticAutoTriageControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'static', 'autoTriageController.js'));
+  const staticDecompileAugmentationControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'static', 'decompileAugmentationController.js'));
   // dynamic controllers
   const dynamicPayloadHistoryControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'dynamic', 'payloadHistoryController.js'));
   const dynamicVisualizerControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'dynamic', 'dynamicVisualizerController.js'));
@@ -1187,6 +1188,7 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', global
     .replace(/{{staticPwntoolsScriptControllerUri}}/g, staticPwntoolsScriptControllerUri.toString())
     .replace(/{{staticToolsWidgetsControllerUri}}/g, staticToolsWidgetsControllerUri.toString())
     .replace(/{{staticAutoTriageControllerUri}}/g, staticAutoTriageControllerUri.toString())
+    .replace(/{{staticDecompileAugmentationControllerUri}}/g, staticDecompileAugmentationControllerUri.toString())
     // dynamic controllers
     .replace(/{{dynamicPayloadHistoryControllerUri}}/g, dynamicPayloadHistoryControllerUri.toString())
     .replace(/{{dynamicVisualizerControllerUri}}/g, dynamicVisualizerControllerUri.toString())

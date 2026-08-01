@@ -1102,3 +1102,78 @@ input[type="checkbox"]:checked + .search-pill {
 .hl-string  { color: #ce9178; }
 .hl-comment { color: var(--text-muted);    font-style: italic; }
 .hl-number  { color: var(--accent-orange); }
+.decompile-augment-shell {
+  margin: 8px 0 12px;
+}
+
+.decompile-augment-status {
+  margin: 0;
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+}
+
+.decompile-augment-status[data-tone="error"] { color: var(--vscode-errorForeground); }
+.decompile-augment-status[data-tone="success"] { color: var(--vscode-testing-iconPassed); }
+.decompile-augment-status[data-tone="warning"] { color: var(--vscode-editorWarning-foreground); }
+
+.decompile-augment-review {
+  margin-top: 8px;
+  padding: 12px;
+  border-left: 3px solid var(--vscode-textLink-foreground);
+}
+
+.decompile-augment-head,
+.decompile-augment-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.decompile-augment-view-tabs { display: flex; gap: 4px; }
+.decompile-augment-view-tabs .active { border-color: var(--vscode-focusBorder); }
+
+.decompile-augment-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.7fr);
+  gap: 12px;
+  margin: 10px 0;
+}
+
+.decompile-augment-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 360px;
+  overflow: auto;
+}
+
+.decompile-augment-suggestion {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.decompile-augment-suggestion span { display: grid; gap: 3px; min-width: 0; }
+.decompile-augment-suggestion strong { overflow-wrap: anywhere; }
+.decompile-augment-suggestion small { color: var(--vscode-descriptionForeground); }
+
+.decompile-augment-code {
+  margin: 0;
+  max-height: 360px;
+  overflow: auto;
+  padding: 10px;
+  background: var(--vscode-textCodeBlock-background);
+  border-radius: 6px;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 850px) {
+  .decompile-augment-grid { grid-template-columns: 1fr; }
+  .decompile-augment-head,
+  .decompile-augment-footer { align-items: flex-start; flex-direction: column; }
+}

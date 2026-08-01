@@ -2360,6 +2360,10 @@ window.addEventListener('message', (event) => {
     _refreshDecompilePills();
     return;
   }
+  if (msg.type === 'hubDecompileAugmented' || msg.type === 'hubDecompileAugmentationCache') {
+    window.decompileAugmentationController?.receive(msg);
+    return;
+  }
   if (msg.type === 'hubDecompile') {
     const renderStarted = performance.now();
     const container = document.getElementById('decompileContent');
