@@ -495,13 +495,31 @@ async function run() {
   suite.addTest(new Mocha.Test('drives the hub through real webview controls', async () => {
     let target = null;
     try {
+      const [fixture] = readFixtureSpecs();
+      assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
       await vscode.commands.executeCommand('pileOuFace.open');
       target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
       const hub = new HubPage(target);
 
+      await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+        type: 'hubUseBinaryPath',
+        binaryPath: fixture.path,
+      });
+      await hub.binaryPath().waitForValue(path.basename(fixture.path), 30000);
+
       await hub.openPanel('dashboard');
       await hub.openPanel('static');
       await hub.openStaticTab('data', 'typed_data');
+
+      await hub.openTypeManager();
+      await hub.typeEditorSource().fill('struct E2EUiType { int x; int y; };');
+      await hub.typeEditorSaveButton().click();
+      await hub.typeEditorStatus().waitForText('sauvegardé(s)', 30000);
+      await hub.typeEditorCatalog().waitForText('E2EUiType', 30000);
+
+      await hub.typeEditorCloseButton().click();
+      await hub.openTypeManager();
+      await hub.typeEditorCatalog().waitForText('E2EUiType', 30000);
 
       await hub.openPanel('dashboard');
       await hub.expectActive(hub.panel('dashboard'), 'dashboard panel after returning');

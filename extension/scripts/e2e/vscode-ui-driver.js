@@ -119,6 +119,10 @@ class CdpLocator {
     return this.target.evaluate(this.expression('return el ? el.textContent : null;'));
   }
 
+  async inputValue() {
+    return this.target.evaluate(this.expression("return el && 'value' in el ? String(el.value) : null;"));
+  }
+
   async waitForText(expected, timeout = DEFAULT_TIMEOUT_MS) {
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
@@ -127,6 +131,16 @@ class CdpLocator {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     throw new Error(`Timed out waiting for ${this.selector} to contain ${JSON.stringify(expected)}`);
+  }
+
+  async waitForValue(expected, timeout = DEFAULT_TIMEOUT_MS) {
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+      const value = String(await this.inputValue() || '');
+      if (value.includes(expected)) return value;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error(`Timed out waiting for ${this.selector} value to contain ${JSON.stringify(expected)}`);
   }
 
   async fill(value) {
@@ -252,6 +266,38 @@ class HubPage {
     return this.target.locator(`.sub-tab[data-sub-tab="${tabId}"]`);
   }
 
+  binaryPath() {
+    return this.target.locator('#staticBinaryPath');
+  }
+
+  typeManagerButton() {
+    return this.target.locator('#btnTypedEditStructs');
+  }
+
+  typeEditor() {
+    return this.target.locator('#pof-typed-struct-popup');
+  }
+
+  typeEditorSource() {
+    return this.target.locator('#pof-typed-struct-popup textarea');
+  }
+
+  typeEditorCatalog() {
+    return this.target.locator('#pof-typed-struct-popup .typed-data-type-catalog');
+  }
+
+  typeEditorStatus() {
+    return this.target.locator('#pof-typed-struct-popup .typed-data-struct-editor-status');
+  }
+
+  typeEditorSaveButton() {
+    return this.target.locator('#pof-typed-struct-popup [data-action="save-types"]');
+  }
+
+  typeEditorCloseButton() {
+    return this.target.locator('#pof-typed-struct-popup .typed-data-struct-editor-actions .btn:first-child');
+  }
+
   async expectActive(locator, description) {
     await locator.waitFor({ state: 'attached' });
     const classes = String(await locator.getAttribute('class') || '').split(/\s+/);
@@ -269,6 +315,11 @@ class HubPage {
     await this.expectActive(this.group(groupId), `group ${groupId}`);
     await this.subTab(tabId).click();
     await this.expectActive(this.subTab(tabId), `sub-tab ${tabId}`);
+  }
+
+  async openTypeManager() {
+    await this.typeManagerButton().click();
+    await this.typeEditor().waitFor({ state: 'visible' });
   }
 }
 
