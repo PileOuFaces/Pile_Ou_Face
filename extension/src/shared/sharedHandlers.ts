@@ -507,12 +507,15 @@ function sharedHandlers(ctx) {
       panel.webview.postMessage({ type: 'platformInfo', platform: process.platform });
     },
     requestBinarySelection: async () => {
-      const binaryUri = await vscode.window.showOpenDialog({
-        title: 'Choisir le fichier de travail à analyser',
-        defaultUri: vscode.Uri.file(root),
-        canSelectMany: false,
-        filters: { 'Tous les fichiers': ['*'] }
-      });
+      const e2eSelectionPath = String(process.env.POF_E2E_BINARY_SELECTION_PATH || '').trim();
+      const binaryUri = e2eSelectionPath
+        ? [vscode.Uri.file(e2eSelectionPath)]
+        : await vscode.window.showOpenDialog({
+          title: 'Choisir le fichier de travail à analyser',
+          defaultUri: vscode.Uri.file(root),
+          canSelectMany: false,
+          filters: { 'Tous les fichiers': ['*'] }
+        });
       if (!binaryUri?.length) return;
       const binaryPath = binaryUri[0].fsPath;
       const resolved = await resolveBinarySelection(binaryPath);

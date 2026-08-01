@@ -501,26 +501,22 @@ async function run() {
 
       await hub.openPanel('dashboard');
       const fixture = readFixtureSpecs()[0];
-      await withWindowMocks({
-        showOpenDialog: async () => [vscode.Uri.file(fixture.path)],
-      }, async () => {
-        await target.locator('#topBarBinaryButton').click();
-        await target.locator('#btnTopBarSelectBinary').click();
-        await target.locator('#topBarBinaryName').waitForText(path.basename(fixture.path));
+      await target.locator('#topBarBinaryButton').click();
+      await target.locator('#btnTopBarSelectBinary').click();
+      await target.locator('#topBarBinaryName').waitForText(path.basename(fixture.path));
 
-        await hub.openPanel('static');
-        await hub.openStaticTab('data', 'typed_data');
+      await hub.openPanel('static');
+      await hub.openStaticTab('data', 'typed_data');
 
-        const manageTypesButton = target.locator('#btnTypedEditStructs');
-        assert.strictEqual(await manageTypesButton.isEnabled(), true, 'Gérer les types should be enabled');
-        await manageTypesButton.click();
+      const manageTypesButton = target.locator('#btnTypedEditStructs');
+      assert.strictEqual(await manageTypesButton.isEnabled(), true, 'Gérer les types should be enabled');
+      await manageTypesButton.click();
 
-        const editor = target.locator('#pof-typed-struct-popup');
-        await editor.waitFor({ state: 'visible' });
-        await target.locator('#pof-typed-struct-popup textarea').fill('struct E2EPoint { int x; int y; };');
-        await target.locator('#pof-typed-struct-popup [data-action="save-types"]').click();
-        await target.locator('#pof-typed-struct-popup .typed-data-type-catalog').waitForText('E2EPoint');
-      });
+      const editor = target.locator('#pof-typed-struct-popup');
+      await editor.waitFor({ state: 'visible' });
+      await target.locator('#pof-typed-struct-popup textarea').fill('struct E2EPoint { int x; int y; };');
+      await target.locator('#pof-typed-struct-popup [data-action="save-types"]').click();
+      await target.locator('#pof-typed-struct-popup .typed-data-type-catalog').waitForText('E2EPoint');
 
       await hub.openPanel('dashboard');
       await hub.expectActive(hub.panel('dashboard'), 'dashboard panel after returning');

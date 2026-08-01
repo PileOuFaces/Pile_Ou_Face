@@ -269,6 +269,7 @@ async function main() {
         POF_E2E_EXTENSION_ROOT: extensionRoot,
         POF_E2E_FIXTURE_BINARY: fixtures[0].path,
         POF_E2E_FIXTURES_JSON: JSON.stringify(fixtures),
+        POF_E2E_BINARY_SELECTION_PATH: fixtures[0].path,
         POF_E2E_PERF_PATH: perfPath,
         POF_E2E_CDP_ENDPOINT: cdpEndpoint,
         POF_E2E_ARTIFACTS_DIR: path.dirname(perfPath),
