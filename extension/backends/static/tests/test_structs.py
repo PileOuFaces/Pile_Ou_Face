@@ -8,9 +8,9 @@ import unittest
 ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "../../.."))
 sys.path.insert(0, ROOT)
 
+from backends.static.annotations.struct_db import get_struct_db_path
 from backends.static.annotations.structs import (
     compute_struct_layout,
-    get_struct_store_path,
     load_struct_store,
     parse_struct_definitions,
     save_struct_source,
@@ -62,8 +62,9 @@ class TestStructs(unittest.TestCase):
             self.assertIn("Header", store["definitions"])
             self.assertIn("typedef struct Header", store["source"])
             self.assertEqual(
-                get_struct_store_path(storage), os.path.join(storage, "structs.json")
+                get_struct_db_path(storage), os.path.join(storage, "structs.db")
             )
+            self.assertTrue(os.path.isfile(os.path.join(storage, "structs.db")))
             self.assertFalse(os.path.exists(os.path.join(tmp, ".pile-ou-face")))
 
     def test_parse_enum_and_union_definitions(self):
