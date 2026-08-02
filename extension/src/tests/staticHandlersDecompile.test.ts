@@ -79,10 +79,11 @@ describe('hubLoadDecompile parallel', () => {
     };
     const posted = [];
     const handlers = makeHandlers(execFile, posted, { fs: fsStub });
-    await handlers.hubAugmentDecompile({ binaryPath: '/bin/foo', addr: '0x1000', code: 'int f(){}' });
+    await handlers.hubAugmentDecompile({ binaryPath: 'bin/foo', addr: '0x1000', code: 'int f(){}' });
     expect(calls.some(args => args.includes('--check'))).to.equal(true);
     expect(calls.some(args => args.includes('suggest')), JSON.stringify({ calls, posted })).to.equal(true);
     expect(fsStub.writeFileSync.calledOnce).to.equal(true);
+    expect(JSON.parse(fsStub.writeFileSync.firstCall.args[1]).binary_path).to.equal('/workspace/bin/foo');
     expect(fsStub.rmSync.calledOnce).to.equal(true);
     expect(posted.at(-1)).to.include({ type: 'hubDecompileAugmented', ok: true });
   });
@@ -131,13 +132,14 @@ describe('hubLoadDecompile parallel', () => {
     const posted = [];
     const handlers = makeHandlers(execFile, posted, { fs: fsStub });
     await handlers.hubLoadDecompileAugmentationCache({
-      binaryPath: '/bin/foo', addr: '0x1000', code: 'int v1;',
+      binaryPath: 'bin/foo', addr: '0x1000', code: 'int v1;',
     });
     expect(calls).to.have.length(1);
     expect(calls[0]).to.include('lookup');
     expect(calls[0]).not.to.include('--check');
+    expect(JSON.parse(fsStub.writeFileSync.firstCall.args[1]).binary_path).to.equal('/workspace/bin/foo');
     expect(posted[0]).to.deep.include({
-      type: 'hubDecompileAugmentationCache', ok: true, binaryPath: '/bin/foo', addr: '0x1000',
+      type: 'hubDecompileAugmentationCache', ok: true, binaryPath: 'bin/foo', addr: '0x1000',
     });
   });
 
