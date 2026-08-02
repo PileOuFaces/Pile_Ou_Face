@@ -185,6 +185,77 @@ class TestStructDb(unittest.TestCase):
                 {"Second"},
             )
 
+    def test_merge_definitions_upserts_without_wiping_existing_catalog(self):
+        original = {"One": {"name": "One", "kind": "enum", "values": []}}
+        with tempfile.TemporaryDirectory() as tmp:
+            database = StructDb(tmp)
+            database.replace_definitions("/tmp/a.bin", "original", original)
+            database.merge_definitions(
+                "/tmp/a.bin",
+                {"Two": {"name": "Two", "kind": "enum", "values": []}},
+                "ai-import",
+            )
+            stored = database.load_definitions("/tmp/a.bin")["definitions"]
+            self.assertEqual(set(stored), {"One", "Two"})
+
+    def test_merge_definitions_overwrites_only_named_entries(self):
+        original = {
+            "One": {
+                "name": "One",
+                "kind": "enum",
+                "values": [{"name": "A", "value": 0}],
+            },
+            "Two": {"name": "Two", "kind": "enum", "values": []},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            database = StructDb(tmp)
+            database.replace_definitions("/tmp/a.bin", "original", original)
+            database.merge_definitions(
+                "/tmp/a.bin",
+                {
+                    "One": {
+                        "name": "One",
+                        "kind": "enum",
+                        "values": [{"name": "B", "value": 1}],
+                    }
+                },
+                "ai-import",
+            )
+            stored = database.load_definitions("/tmp/a.bin")["definitions"]
+            self.assertEqual(stored["One"]["values"][0]["name"], "B")
+            self.assertEqual(stored["Two"]["kind"], "enum")
+
+    def test_merge_definitions_respects_max_definitions_limit(self):
+        original = {"One": {"name": "One", "kind": "enum", "values": []}}
+        too_many = {
+            f"Type{index}": {"name": f"Type{index}", "kind": "enum", "values": []}
+            for index in range(MAX_DEFINITIONS)
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            database = StructDb(tmp)
+            database.replace_definitions("/tmp/a.bin", "original", original)
+            with self.assertRaisesRegex(ValueError, "Trop de types"):
+                database.merge_definitions("/tmp/a.bin", too_many, "ai-import")
+            self.assertEqual(
+                set(database.load_definitions("/tmp/a.bin")["definitions"]), {"One"}
+            )
+
+    def test_merge_definitions_noop_on_empty_input(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            database = StructDb(tmp)
+            database.merge_definitions("/tmp/a.bin", {}, "ai-import")
+            self.assertFalse(os.path.exists(database.path))
+
+    def test_merge_definitions_requires_binary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            database = StructDb(tmp)
+            with self.assertRaises(ValueError):
+                database.merge_definitions(
+                    "",
+                    {"One": {"name": "One", "kind": "enum", "values": []}},
+                    "ai-import",
+                )
+
     @staticmethod
     def _field(name: str, addr: str) -> dict[str, object]:
         return {

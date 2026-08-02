@@ -26,6 +26,22 @@ describe("typed struct editor contract", () => {
     expect(source).to.include("typed-data-type-catalog-empty");
   });
 
+  it("renders dedicated badges and counts for typedef and function kinds", () => {
+    const source = searchSource();
+    const cssSource = fs.readFileSync(
+      path.resolve(__dirname, "../static/tools.css"),
+      "utf8",
+    );
+    const start = source.indexOf("function renderTypedStructCatalog(container, types)");
+    const end = source.indexOf("\nfunction ", start + 1);
+    const renderFn = source.slice(start, end);
+
+    expect(renderFn).to.include("kind === 'typedef'");
+    expect(renderFn).to.include("kind === 'function'");
+    expect(cssSource).to.include(".typed-data-type-kind-typedef");
+    expect(cssSource).to.include(".typed-data-type-kind-function");
+  });
+
   it("keeps the editor open while definitions are saved", () => {
     const source = searchSource();
     const start = source.indexOf("function openTypedStructEditor(");
