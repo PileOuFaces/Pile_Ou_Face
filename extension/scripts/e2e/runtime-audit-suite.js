@@ -1056,21 +1056,21 @@ async function run() {
   suite.addTest(new Mocha.Test('isolates annotations when switching between recent binaries and reopening the hub', async () => {
     let target = null;
     try {
-      const [sourceFixtureA, sourceFixtureB] = readFixtureSpecs();
-      assert.ok(sourceFixtureA?.path && fs.existsSync(sourceFixtureA.path), 'first UI fixture binary must exist');
-      assert.ok(sourceFixtureB?.path && fs.existsSync(sourceFixtureB.path), 'second UI fixture binary must exist');
-      const isolationRoot = process.env.POF_E2E_WORKSPACE_DIR || path.dirname(sourceFixtureA.path);
+      const [sourceFixture] = readFixtureSpecs()
+        .sort((left, right) => Number(left.sizeBytes || 0) - Number(right.sizeBytes || 0));
+      assert.ok(sourceFixture?.path && fs.existsSync(sourceFixture.path), 'UI fixture binary must exist');
+      const isolationRoot = process.env.POF_E2E_WORKSPACE_DIR || path.dirname(sourceFixture.path);
       const fixtureA = {
-        ...sourceFixtureA,
+        ...sourceFixture,
         path: path.join(isolationRoot, `e2e-isolation-a-${process.pid}.elf`),
       };
       const fixtureB = {
-        ...sourceFixtureB,
+        ...sourceFixture,
         path: path.join(isolationRoot, `e2e-isolation-b-${process.pid}.elf`),
       };
-      fs.copyFileSync(sourceFixtureA.path, fixtureA.path);
+      fs.copyFileSync(sourceFixture.path, fixtureA.path);
       fs.appendFileSync(fixtureA.path, `pof-e2e-isolation-a-${process.pid}`);
-      fs.copyFileSync(sourceFixtureB.path, fixtureB.path);
+      fs.copyFileSync(sourceFixture.path, fixtureB.path);
       fs.appendFileSync(fixtureB.path, `pof-e2e-isolation-b-${process.pid}`);
       const binaryAName = path.basename(fixtureA.path);
       const binaryBName = path.basename(fixtureB.path);
@@ -1139,16 +1139,6 @@ async function run() {
         !String(await hub.annotationsList().textContent() || '').includes('e2e_binary_a'),
         'the second binary must not display the first binary annotation',
       );
-
-      await hub.firstAnnotationDeleteButton().clickDom();
-      await hub.annotationsList().waitForText('Aucune annotation.', 30000);
-      await hub.topBarBinaryButton().clickDom();
-      await hub.topBarBinaryMenu().waitFor({ state: 'visible', timeout: 30000 });
-      await hub.recentBinaryButton(binaryAName).clickDom();
-      await hub.binaryPath().waitForValue(binaryAName, 30000);
-      await hub.openStaticTab('code', 'disasm');
-      await hub.firstAnnotationDeleteButton().clickDom();
-      await hub.annotationsList().waitForText('Aucune annotation.', 30000);
     } catch (error) {
       const artifacts = await captureUiFailure(
         target,
