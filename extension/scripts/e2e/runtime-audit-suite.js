@@ -508,7 +508,7 @@ async function run() {
       await hub.expectActive(hub.panel('static'), 'static panel opened from the empty dashboard');
       await hub.topBarBinaryMenu().waitFor({ state: 'visible' });
       await hub.currentBinaryName().waitForText('Aucun fichier sélectionné', 30000);
-      await hub.disassemblyBinarySummary().waitForText('Aucun binaire', 30000);
+      await hub.disassemblyBinarySummary().waitForText('Aucun fichier', 30000);
       assert.equal(await hub.decompileAugmentButton().isEnabled(), false, 'AI augmentation must stay disabled without decompiled code');
     } catch (error) {
       const artifacts = await captureUiFailure(
