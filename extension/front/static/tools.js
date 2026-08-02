@@ -740,14 +740,20 @@ function renderDecompilePayload(container, payload) {
     container.textContent = `Erreur : ${_ERROR_TYPE_MESSAGES[result.error_type] || result.error}`;
     return;
   }
-  const code = result.code || (result.functions || []).map((f) => `// ${f.addr}\n${f.code}`).join('\n\n');
+  const rawCode = result.code || (result.functions || []).map((f) => `// ${f.addr}\n${f.code}`).join('\n\n');
   window.decompileAugmentationController?.setSource({
     binaryPath: decompileUiState.renderedBinaryPath,
     addr: decompileUiState.renderedAddr,
     functionName: payload.funcName || '',
-    code,
+    code: rawCode,
     functions: Array.isArray(result.functions) ? result.functions : [],
   });
+  const acceptedAugmentation = window.decompileAugmentationController?.state?.result;
+  const code = Array.isArray(acceptedAugmentation?.accepted_ids)
+    && acceptedAugmentation.accepted_ids.length > 0
+    && acceptedAugmentation.augmented_code
+    ? String(acceptedAugmentation.augmented_code)
+    : rawCode;
   const wrap = document.createElement('div');
   const callTargets = extractDecompileCallTargets(code, payload.addr);
   const addressTargets = extractDecompileAddressTargets(code, payload.addr);

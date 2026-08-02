@@ -405,6 +405,10 @@ function isAutoTriageScript(args) {
   return Array.isArray(args) && args.some((arg) => String(arg || '').endsWith(path.join('backends', 'mcp', 'auto_triage.py')));
 }
 
+function isDecompileAugmentScript(args) {
+  return Array.isArray(args) && args.some((arg) => String(arg || '').endsWith(path.join('backends', 'static', 'decompile', 'augment.py')));
+}
+
 function createMockProviderList() {
   return JSON.stringify({
     providers: [{ name: 'openai', configured: true, model: 'e2e-model' }],
@@ -705,6 +709,108 @@ async function run() {
       for (const filePath of [binaryPath, mappingPath, reportPath].filter(Boolean)) {
         try { fs.rmSync(filePath, { force: true }); } catch { /* Best-effort fixture cleanup. */ }
       }
+    }
+  }));
+
+  suite.addTest(new Mocha.Test('accepts global decompile augmentation and restores it from cache through the real UI', async () => {
+    const [fixture] = readFixtureSpecs();
+    assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
+    const functionAddr = String(fixture.entry || '0x400078');
+    const rawCode = 'int main(void) { return 0; }';
+    const augmentedCode = 'int main(void) { /* validated by E2E */ return 0; }';
+    let target = null;
+    let accepted = false;
+    let suggestCalls = 0;
+    const originalExecFile = childProcess.execFile;
+    const augmentationResult = () => ({
+      ok: true,
+      found: accepted,
+      cached: accepted,
+      cache_key: 'e2e-decompile-augmentation',
+      raw_code: rawCode,
+      augmented_code: augmentedCode,
+      accepted_ids: accepted ? ['summary'] : [],
+      proposal: { summary: 'Nom et commentaire proposés par le test E2E' },
+    });
+    try {
+      await withChildProcessMocks({
+        execFile: (file, args = [], options = {}, callback = undefined) => {
+          const cb = typeof options === 'function' ? options : callback;
+          if (isAiConsentScript(args)) {
+            const proc = new EventEmitter();
+            process.nextTick(() => cb?.(null, JSON.stringify({ consented: true }), ''));
+            return proc;
+          }
+          if (isDecompileAugmentScript(args)) {
+            const proc = new EventEmitter();
+            const action = String(args[args.indexOf('--action') + 1] || '');
+            process.nextTick(() => {
+              if (action === 'suggest') suggestCalls += 1;
+              if (action === 'accept') accepted = true;
+              cb?.(null, JSON.stringify(augmentationResult()), '');
+            });
+            return proc;
+          }
+          if (Array.isArray(args) && args.some((arg) => String(arg || '').endsWith(path.join('backends', 'static', 'decompile', 'decompile.py')))) {
+            const proc = new EventEmitter();
+            const result = args.includes('--list')
+              ? createMockDecompilerList()
+              : JSON.stringify({
+                ok: true,
+                functions: [{ addr: functionAddr, name: 'main', code: rawCode }],
+                score: 100,
+              });
+            process.nextTick(() => cb?.(null, result, ''));
+            return proc;
+          }
+          return originalExecFile.call(childProcess, file, args, options, callback);
+        },
+      }, async () => {
+        await vscode.commands.executeCommand('pileOuFace.goToAddress');
+        target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+        let hub = new HubPage(target);
+        await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+          type: 'hubUseBinaryPath',
+          binaryPath: fixture.path,
+        });
+        await hub.binaryPath().waitForValue(path.basename(fixture.path), 30000);
+        await hub.openPanel('static');
+        await hub.openStaticTab('code', 'decompile');
+        await hub.decompileOutput().waitForText(rawCode, 30000);
+        assert.equal(await hub.decompileFunctionSelect().inputValue(), '', 'the fixture remains in global decompile mode');
+        assert.equal(await hub.decompileAugmentButton().isEnabled(), true, 'a global result with one function must enable augmentation');
+
+        await hub.decompileAugmentButton().click();
+        await hub.decompileAugmentReview().waitFor({ state: 'visible', timeout: 30000 });
+        await hub.decompileAugmentSuggestions().waitForText('Nom et commentaire proposés', 30000);
+        await hub.decompileAugmentAcceptButton().click();
+        await hub.decompileAugmentStatus().waitForText('Version IA appliquée et enregistrée dans le cache.', 30000);
+        await hub.decompileOutput().waitForText('validated by E2E', 30000);
+        assert.equal(await hub.decompileAugmentReview().getAttribute('hidden'), '', 'review must close after acceptance');
+        assert.equal(suggestCalls, 1, 'the provider suggestion must run exactly once');
+
+        target.close();
+        target = null;
+        await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+        await vscode.commands.executeCommand('pileOuFace.goToAddress');
+        target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+        hub = new HubPage(target);
+        await hub.openPanel('static');
+        await hub.openStaticTab('code', 'decompile');
+        await hub.decompileOutput().waitForText('validated by E2E', 30000);
+        await hub.decompileAugmentStatus().waitForText('Version IA acceptée restaurée depuis le cache.', 30000);
+        assert.equal(suggestCalls, 1, 'restoring the accepted cache must not call the provider again');
+      });
+    } catch (error) {
+      const artifacts = await captureUiFailure(
+        target,
+        process.env.POF_E2E_ARTIFACTS_DIR,
+        'hub-decompile-augmentation-cache',
+      );
+      error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
+      throw error;
+    } finally {
+      target?.close();
     }
   }));
 
@@ -1481,7 +1587,7 @@ async function run() {
   }));
 
   if (['1', 'true', 'yes'].includes(String(process.env.POF_E2E_UI_ONLY || '').toLowerCase())) {
-    mocha.grep(/real webview controls|real confirmation UI/);
+    mocha.grep(/real webview controls|real confirmation UI|restores it from cache through the real UI/);
   }
 
   return new Promise((resolve, reject) => {

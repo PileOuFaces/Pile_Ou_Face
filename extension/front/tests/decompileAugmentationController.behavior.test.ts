@@ -153,4 +153,24 @@ describe('decompileAugmentationController', () => {
     controller.receive({ type: 'hubDecompileAugmentationCache', ok: true, binaryPath: '/tmp/a', addr: '0x1', result: { found: true, augmented_code: 'int count;' } });
     expect(applied).to.deep.equal([{ found: true, augmented_code: 'int count;' }]);
   });
+
+  it('retains an accepted cache result when the same decompile source is rendered again', () => {
+    const app = fixture();
+    const source = {
+      binaryPath: '/tmp/a.bin', addr: '0x1000', functionName: 'main', code: 'int main(){}',
+    };
+    app.controller.setSource(source);
+    app.controller.receive({
+      type: 'hubDecompileAugmentationCache', binaryPath: '/tmp/a.bin', addr: '0x1000', ok: true,
+      result: { found: true, accepted_ids: ['summary'], augmented_code: 'int renamed_main(){}' },
+    });
+
+    app.controller.setSource(source);
+
+    expect(app.controller.state.result).to.deep.include({
+      found: true,
+      accepted_ids: ['summary'],
+      augmented_code: 'int renamed_main(){}',
+    });
+  });
 });

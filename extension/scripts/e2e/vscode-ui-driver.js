@@ -351,6 +351,30 @@ class HubPage {
     return this.target.locator('#btnAugmentDecompile');
   }
 
+  decompileFunctionSelect() {
+    return this.target.locator('#decompileAddrSelect');
+  }
+
+  decompileOutput() {
+    return this.target.locator('#decompileContent .decompile-output');
+  }
+
+  decompileAugmentStatus() {
+    return this.target.locator('#decompileAugmentStatus');
+  }
+
+  decompileAugmentReview() {
+    return this.target.locator('#decompileAugmentReview');
+  }
+
+  decompileAugmentSuggestions() {
+    return this.target.locator('#decompileAugmentSuggestions');
+  }
+
+  decompileAugmentAcceptButton() {
+    return this.target.locator('#btnAcceptDecompileAugment');
+  }
+
   interfaceModeButton(mode) {
     return this.target.locator(`[data-interface-mode="${mode}"]`);
   }

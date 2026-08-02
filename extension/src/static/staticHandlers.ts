@@ -1685,6 +1685,7 @@ function staticHandlers(config) {
     },
     hubAugmentDecompile: async (message = {}) => {
       const binaryPath = String(message.binaryPath || '').trim();
+      const backendBinaryPath = path.isAbsolute(binaryPath) ? binaryPath : path.join(root, binaryPath);
       const addr = String(message.addr || '').trim();
       const code = String(message.code || '');
       const pythonEnv = buildPythonEnv();
@@ -1700,7 +1701,7 @@ function staticHandlers(config) {
         respond(false, 'Sélectionnez une fonction décompilée avant de lancer l’augmentation.');
         return;
       }
-      if (!fs.existsSync(binaryPath) || fs.statSync(binaryPath).isDirectory()) {
+      if (!fs.existsSync(backendBinaryPath) || fs.statSync(backendBinaryPath).isDirectory()) {
         respond(false, 'Binaire introuvable.');
         return;
       }
@@ -1736,7 +1737,7 @@ function staticHandlers(config) {
       const inputPath = path.join(os.tmpdir(), `pof-decompile-augment-${crypto.randomUUID()}.json`);
       try {
         fs.writeFileSync(inputPath, JSON.stringify({
-          binary_path: binaryPath,
+          binary_path: backendBinaryPath,
           addr,
           code: code.slice(0, 32000),
           function_name: String(message.functionName || ''),
@@ -1789,6 +1790,7 @@ function staticHandlers(config) {
     },
     hubLoadDecompileAugmentationCache: async (message = {}) => {
       const binaryPath = String(message.binaryPath || '').trim();
+      const backendBinaryPath = path.isAbsolute(binaryPath) ? binaryPath : path.join(root, binaryPath);
       const addr = String(message.addr || '').trim();
       const code = String(message.code || '');
       const respond = (ok, resultOrError) => panel.webview.postMessage(ok
@@ -1807,7 +1809,7 @@ function staticHandlers(config) {
       const inputPath = path.join(os.tmpdir(), `pof-decompile-cache-${crypto.randomUUID()}.json`);
       try {
         fs.writeFileSync(inputPath, JSON.stringify({
-          binary_path: binaryPath,
+          binary_path: backendBinaryPath,
           addr,
           code: code.slice(0, 32000),
           provider,

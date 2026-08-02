@@ -78,6 +78,35 @@ describe('VS Code UI E2E driver', () => {
     assert.ok(calls.includes('click:.sub-tab[data-sub-tab="typed_data"]'));
   });
 
+  it('exposes the decompile augmentation journey through stable selectors', () => {
+    const selectors: string[] = [];
+    const target = {
+      locator(selector: string) {
+        selectors.push(selector);
+        return { selector };
+      },
+    };
+    const hub = new HubPage(target);
+
+    hub.decompileFunctionSelect();
+    hub.decompileOutput();
+    hub.decompileAugmentButton();
+    hub.decompileAugmentStatus();
+    hub.decompileAugmentReview();
+    hub.decompileAugmentSuggestions();
+    hub.decompileAugmentAcceptButton();
+
+    assert.deepEqual(selectors, [
+      '#decompileAddrSelect',
+      '#decompileContent .decompile-output',
+      '#btnAugmentDecompile',
+      '#decompileAugmentStatus',
+      '#decompileAugmentReview',
+      '#decompileAugmentSuggestions',
+      '#btnAcceptDecompileAugment',
+    ]);
+  });
+
   it('falls back to a DOM click when Electron ignores panel navigation coordinates', async () => {
     const calls: string[] = [];
     const target = {
