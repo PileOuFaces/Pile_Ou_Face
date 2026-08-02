@@ -97,6 +97,19 @@ class TestCacheHelpers(unittest.TestCase):
         )
         self.assertNotEqual(k1, k2)
 
+    def test_cache_key_changes_with_typed_var_bindings_signature(self):
+        k1 = _cache_key(
+            "/bin/ls",
+            "0x401000",
+            typed_var_bindings_signature="abc123",
+        )
+        k2 = _cache_key(
+            "/bin/ls",
+            "0x401000",
+            typed_var_bindings_signature="def456",
+        )
+        self.assertNotEqual(k1, k2)
+
     def test_cache_key_reuses_identical_binary_content_across_paths(self):
         with tempfile.TemporaryDirectory() as d:
             a = Path(d) / "a.bin"
@@ -180,6 +193,10 @@ class TestDecompileFunctionCache(unittest.TestCase):
                 return_value="",
             ),
             mock.patch(
+                "backends.static.decompile.decompile.typed_var_binding_signature",
+                return_value="",
+            ),
+            mock.patch(
                 "backends.static.disasm.stack_frame.analyse_stack_frame",
                 return_value=self._empty_stack,
             ),
@@ -199,6 +216,7 @@ class TestDecompileFunctionCache(unittest.TestCase):
                 "0x401000",
                 stack_signature=_stack_signature(self._empty_stack, None),
                 typed_structs_signature="",
+                typed_var_bindings_signature="",
             )
             _write_cache(key, cache_dir, cached)
 
@@ -223,6 +241,10 @@ class TestDecompileFunctionCache(unittest.TestCase):
                 ),
                 mock.patch(
                     "backends.static.decompile.decompile.typed_struct_signature",
+                    return_value="",
+                ),
+                mock.patch(
+                    "backends.static.decompile.decompile.typed_var_binding_signature",
                     return_value="",
                 ),
                 mock.patch(
@@ -269,6 +291,10 @@ class TestDecompileFunctionCache(unittest.TestCase):
                     return_value="",
                 ),
                 mock.patch(
+                    "backends.static.decompile.decompile.typed_var_binding_signature",
+                    return_value="",
+                ),
+                mock.patch(
                     "backends.static.disasm.stack_frame.analyse_stack_frame",
                     return_value=self._empty_stack,
                 ),
@@ -285,6 +311,7 @@ class TestDecompileFunctionCache(unittest.TestCase):
                 "0x401000",
                 stack_signature=_stack_signature(self._empty_stack, None),
                 typed_structs_signature="",
+                typed_var_bindings_signature="",
             )
             cached = _read_cache(key, cache_dir)
             self.assertIsNotNone(cached)
@@ -323,6 +350,7 @@ class TestDecompileFunctionCache(unittest.TestCase):
                 "0x401000",
                 stack_signature=_stack_signature(self._empty_stack, None),
                 typed_structs_signature="",
+                typed_var_bindings_signature="",
             )
             self.assertIsNone(_read_cache(key, cache_dir))
 

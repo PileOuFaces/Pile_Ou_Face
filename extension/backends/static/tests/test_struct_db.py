@@ -12,6 +12,8 @@ sys.path.insert(0, ROOT)
 from backends.static.annotations.struct_db import (
     MAX_DEFINITIONS,
     MAX_FIELDS_PER_REF,
+    MAX_TYPED_VAR_BINDINGS,
+    MAX_TYPED_VAR_BINDINGS_PER_FUNCTION,
     StructDb,
     get_struct_db_path,
 )
@@ -159,6 +161,133 @@ class TestStructDb(unittest.TestCase):
             self.assertEqual(
                 database.list_typed_refs()[0]["fields"][0]["field_name"], "valid"
             )
+
+    def test_typed_var_binding_upsert_and_binary_isolation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            database = StructDb(tmp)
+            database.replace_definitions(
+                "/tmp/a.bin",
+                "manual",
+                {"Mode": {"kind": "enum", "values": [{"name": "ON", "value": 1}]}},
+            )
+            database.replace_definitions(
+                "/tmp/b.bin",
+                "manual",
+                {"Mode": {"kind": "enum", "values": [{"name": "ON", "value": 1}]}},
+            )
+            entry = {
+                "binary": "/tmp/a.bin",
+                "func_addr": "0x1000",
+                "var_kind": "param",
+                "var_key": "1",
+                "type_name": "Mode",
+                "type_kind": "enum",
+                "pointer_level": 0,
+            }
+            database.save_typed_var_binding(entry)
+            database.save_typed_var_binding({**entry, "pointer_level": 1})
+            database.save_typed_var_binding({**entry, "binary": "/tmp/b.bin"})
+
+            selected = database.list_typed_var_bindings("/tmp/a.bin")
+            self.assertEqual(len(selected), 1)
+            self.assertEqual(selected[0]["pointer_level"], 1)
+            self.assertEqual(len(database.list_typed_var_bindings()), 2)
+
+    def test_typed_var_binding_per_function_limit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            database = StructDb(tmp)
+            database.replace_definitions(
+                "/tmp/a.bin",
+                "manual",
+                {"Mode": {"kind": "enum", "values": [{"name": "ON", "value": 1}]}},
+            )
+            for i in range(1, MAX_TYPED_VAR_BINDINGS_PER_FUNCTION + 1):
+                database.save_typed_var_binding(
+                    {
+                        "binary": "/tmp/a.bin",
+                        "func_addr": "0x1000",
+                        "var_kind": "param",
+                        "var_key": str(i),
+                        "type_name": "Mode",
+                        "type_kind": "enum",
+                        "pointer_level": 0,
+                    }
+                )
+            with self.assertRaisesRegex(ValueError, "limite de"):
+                database.save_typed_var_binding(
+                    {
+                        "binary": "/tmp/a.bin",
+                        "func_addr": "0x1000",
+                        "var_kind": "param",
+                        "var_key": str(MAX_TYPED_VAR_BINDINGS_PER_FUNCTION + 1),
+                        "type_name": "Mode",
+                        "type_kind": "enum",
+                        "pointer_level": 0,
+                    }
+                )
+            self.assertEqual(
+                len(database.list_typed_var_bindings("/tmp/a.bin", "0x1000")),
+                MAX_TYPED_VAR_BINDINGS_PER_FUNCTION,
+            )
+
+    def test_typed_var_binding_global_limit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            database = StructDb(tmp)
+            database.replace_definitions(
+                "/tmp/a.bin",
+                "manual",
+                {"Mode": {"kind": "enum", "values": [{"name": "ON", "value": 1}]}},
+            )
+            for i in range(MAX_TYPED_VAR_BINDINGS):
+                database.save_typed_var_binding(
+                    {
+                        "binary": "/tmp/a.bin",
+                        "func_addr": hex(0x401000 + i),
+                        "var_kind": "param",
+                        "var_key": "1",
+                        "type_name": "Mode",
+                        "type_kind": "enum",
+                        "pointer_level": 0,
+                    }
+                )
+            with self.assertRaisesRegex(ValueError, "limite de"):
+                database.save_typed_var_binding(
+                    {
+                        "binary": "/tmp/a.bin",
+                        "func_addr": hex(0x401000 + MAX_TYPED_VAR_BINDINGS),
+                        "var_kind": "param",
+                        "var_key": "1",
+                        "type_name": "Mode",
+                        "type_kind": "enum",
+                        "pointer_level": 0,
+                    }
+                )
+            self.assertEqual(
+                len(database.list_typed_var_bindings()), MAX_TYPED_VAR_BINDINGS
+            )
+
+    def test_typed_var_binding_cascade_delete_on_type_removal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            database = StructDb(tmp)
+            database.replace_definitions(
+                "/tmp/a.bin",
+                "manual",
+                {"Mode": {"kind": "enum", "values": [{"name": "ON", "value": 1}]}},
+            )
+            database.save_typed_var_binding(
+                {
+                    "binary": "/tmp/a.bin",
+                    "func_addr": "0x1000",
+                    "var_kind": "param",
+                    "var_key": "1",
+                    "type_name": "Mode",
+                    "type_kind": "enum",
+                    "pointer_level": 0,
+                }
+            )
+            self.assertEqual(len(database.list_typed_var_bindings()), 1)
+            database.replace_definitions("/tmp/a.bin", "manual", {})
+            self.assertEqual(len(database.list_typed_var_bindings()), 0)
 
     def test_workspaces_are_isolated(self):
         with tempfile.TemporaryDirectory() as tmp:
