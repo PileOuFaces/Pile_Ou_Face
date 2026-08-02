@@ -413,6 +413,10 @@ function isXrefsScript(args) {
   return Array.isArray(args) && args.some((arg) => String(arg || '').endsWith(path.join('backends', 'static', 'disasm', 'xrefs.py')));
 }
 
+function isSymbolsScript(args) {
+  return Array.isArray(args) && args.some((arg) => String(arg || '').endsWith(path.join('backends', 'static', 'binary', 'symbols.py')));
+}
+
 function createMockProviderList() {
   return JSON.stringify({
     providers: [{ name: 'openai', configured: true, model: 'e2e-model' }],
@@ -888,45 +892,66 @@ async function run() {
     assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
     const binaryName = path.basename(fixture.path);
     let target = null;
+    const originalExecFile = childProcess.execFile;
     try {
-      await vscode.commands.executeCommand('pileOuFace.goToAddress');
-      target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
-      let hub = new HubPage(target);
+      await withChildProcessMocks({
+        execFile: (file, args = [], options = {}, callback = undefined) => {
+          if (!isSymbolsScript(args)) {
+            return originalExecFile.call(childProcess, file, args, options, callback);
+          }
+          const cb = typeof options === 'function' ? options : callback;
+          const proc = new EventEmitter();
+          const payload = {
+            symbols: [{
+              addr: String(fixture.entry || '0x400078'),
+              name: 'entry_e2e',
+              type: 'T',
+              size: 16,
+            }],
+          };
+          process.nextTick(() => cb?.(null, JSON.stringify(payload), ''));
+          return proc;
+        },
+      }, async () => {
+        await vscode.commands.executeCommand('pileOuFace.goToAddress');
+        target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+        let hub = new HubPage(target);
 
-      await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
-        type: 'hubUseBinaryPath',
-        binaryPath: fixture.path,
+        await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+          type: 'hubUseBinaryPath',
+          binaryPath: fixture.path,
+        });
+        await hub.binaryPath().waitForValue(binaryName, 30000);
+        await hub.topBarBinaryName().waitForText(binaryName, 30000);
+        await hub.openPanel('static');
+        await hub.openStaticTab('data', 'info');
+        const visibleInfo = await hub.binaryInfo().waitForText('Entry point', 30000);
+        assert.match(visibleInfo, /Format/);
+        assert.match(visibleInfo, /Bits/);
+
+        await hub.openStaticTab('data', 'sections');
+        const visibleSections = await hub.binarySections().waitForText('.text', 30000);
+        assert.match(visibleSections, /section\(s\)/);
+
+        await hub.openStaticTab('code', 'discovered');
+        const visibleFunctionCount = await hub.binaryFunctionsCount().waitForText('fonction', 30000);
+        assert.match(visibleFunctionCount, /\d+ fonction/);
+        await hub.binaryFunctions().waitFor({ state: 'visible', timeout: 30000 });
+
+        target.close();
+        target = null;
+        await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+        await vscode.commands.executeCommand('pileOuFace.goToAddress');
+        target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+        hub = new HubPage(target);
+
+        await hub.binaryPath().waitForValue(binaryName, 30000);
+        await hub.topBarBinaryName().waitForText(binaryName, 30000);
+        await hub.openPanel('static');
+        await hub.openStaticTab('data', 'info');
+        const restoredInfo = await hub.binaryInfo().waitForText('Entry point', 30000);
+        assert.equal(restoredInfo, visibleInfo, 'the reopened hub must render the same binary analysis');
       });
-      await hub.binaryPath().waitForValue(binaryName, 30000);
-      await hub.topBarBinaryName().waitForText(binaryName, 30000);
-      await hub.openPanel('static');
-      await hub.openStaticTab('data', 'info');
-      const visibleInfo = await hub.binaryInfo().waitForText('Entry point', 30000);
-      assert.match(visibleInfo, /Format/);
-      assert.match(visibleInfo, /Bits/);
-
-      await hub.openStaticTab('data', 'sections');
-      const visibleSections = await hub.binarySections().waitForText('.text', 30000);
-      assert.match(visibleSections, /section\(s\)/);
-
-      await hub.openStaticTab('code', 'discovered');
-      const visibleFunctionCount = await hub.binaryFunctionsCount().waitForText('fonction', 30000);
-      assert.match(visibleFunctionCount, /\d+ fonction/);
-      await hub.binaryFunctions().waitFor({ state: 'visible', timeout: 30000 });
-
-      target.close();
-      target = null;
-      await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
-      await vscode.commands.executeCommand('pileOuFace.goToAddress');
-      target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
-      hub = new HubPage(target);
-
-      await hub.binaryPath().waitForValue(binaryName, 30000);
-      await hub.topBarBinaryName().waitForText(binaryName, 30000);
-      await hub.openPanel('static');
-      await hub.openStaticTab('data', 'info');
-      const restoredInfo = await hub.binaryInfo().waitForText('Entry point', 30000);
-      assert.equal(restoredInfo, visibleInfo, 'the reopened hub must render the same binary analysis');
     } catch (error) {
       const artifacts = await captureUiFailure(
         target,
