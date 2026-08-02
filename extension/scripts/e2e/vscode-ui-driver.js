@@ -322,6 +322,18 @@ class HubPage {
     return this.target.locator('#btnAugmentDecompile');
   }
 
+  interfaceModeButton(mode) {
+    return this.target.locator(`[data-interface-mode="${mode}"]`);
+  }
+
+  interfaceModeInput() {
+    return this.target.locator('#settingInterfaceMode');
+  }
+
+  staticFeaturePicker() {
+    return this.target.locator('#staticFeatureSettings');
+  }
+
   typeManagerButton() {
     return this.target.locator('#btnTypedEditStructs');
   }

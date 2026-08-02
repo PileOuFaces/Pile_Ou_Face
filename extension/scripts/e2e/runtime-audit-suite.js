@@ -523,6 +523,71 @@ async function run() {
     }
   }));
 
+  suite.addTest(new Mocha.Test('persists the simplified static interface across a hub reload', async () => {
+    const userDataDir = process.env.POF_E2E_USER_DATA_DIR;
+    assert.ok(userDataDir, 'POF_E2E_USER_DATA_DIR is required');
+    let target = null;
+    let hub = null;
+    const isSettingsSave = (event) => event.kind === 'webview_message' && event.name === 'hubSaveSettings';
+    try {
+      await vscode.commands.executeCommand('pileOuFace.goToAddress');
+      target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+      hub = new HubPage(target);
+      await hub.openPanel('options');
+
+      const savesBeforeSimpleMode = countCurrentAuditEvents(userDataDir, isSettingsSave);
+      await hub.interfaceModeButton('simple').click();
+      await hub.interfaceModeInput().waitForValue('simple', 30000);
+      await hub.interfaceModeButton('simple').waitForAttribute('aria-pressed', 'true', 30000);
+      await hub.staticFeaturePicker().waitForAttribute('class', 'is-disabled', 30000);
+      await waitForAuditEvents(userDataDir, (events) => countEvents(events, isSettingsSave) > savesBeforeSimpleMode);
+
+      await hub.openPanel('static');
+      await hub.group('code').click();
+      assert.equal(await hub.subTab('callgraph').textContent(), null, 'specialized call graph tab must be hidden in simple mode');
+      assert.notEqual(await hub.subTab('disasm').textContent(), null, 'essential disassembly tab must remain visible in simple mode');
+
+      target.close();
+      target = null;
+      hub = null;
+      await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+      await vscode.commands.executeCommand('pileOuFace.goToAddress');
+      target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+      hub = new HubPage(target);
+      await hub.openPanel('options');
+      await hub.interfaceModeInput().waitForValue('simple', 30000);
+      await hub.interfaceModeButton('simple').waitForAttribute('aria-pressed', 'true', 30000);
+
+      const savesBeforeRestore = countCurrentAuditEvents(userDataDir, isSettingsSave);
+      await hub.interfaceModeButton('advanced').click();
+      await hub.interfaceModeInput().waitForValue('advanced', 30000);
+      await waitForAuditEvents(userDataDir, (events) => countEvents(events, isSettingsSave) > savesBeforeRestore);
+    } catch (error) {
+      const artifacts = await captureUiFailure(
+        target,
+        process.env.POF_E2E_ARTIFACTS_DIR,
+        'hub-settings-persistence',
+      );
+      error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
+      throw error;
+    } finally {
+      try {
+        if (!hub) {
+          await vscode.commands.executeCommand('pileOuFace.goToAddress');
+          target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+          hub = new HubPage(target);
+        }
+        if (hub && await hub.interfaceModeButton('advanced').getAttribute('aria-pressed') !== 'true') {
+          await hub.openPanel('options');
+          await hub.interfaceModeButton('advanced').clickDom();
+        }
+      } catch {
+        // Preserve the original assertion while keeping best-effort test isolation.
+      }
+      target?.close();
+    }
+  }));
+
   suite.addTest(new Mocha.Test('drives the hub through real webview controls', async () => {
     let target = null;
     try {

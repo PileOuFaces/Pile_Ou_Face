@@ -229,6 +229,9 @@ describe('VS Code UI E2E driver', () => {
     assert.equal(hub.autoTriageButton().selector, '[data-action="auto-triage"]');
     assert.equal(hub.disassemblyBinarySummary().selector, '#disasmSummaryBinary');
     assert.equal(hub.decompileAugmentButton().selector, '#btnAugmentDecompile');
+    assert.equal(hub.interfaceModeButton('simple').selector, '[data-interface-mode="simple"]');
+    assert.equal(hub.interfaceModeInput().selector, '#settingInterfaceMode');
+    assert.equal(hub.staticFeaturePicker().selector, '#staticFeatureSettings');
     assert.equal(hub.entryPointButton().selector, '#btnGoToEntry');
     assert.equal(hub.annotationAddress().selector, '#annotationAddrBadge');
     assert.equal(hub.annotationName().selector, '#annotationName');
