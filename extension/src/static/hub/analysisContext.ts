@@ -36,6 +36,9 @@ function createAnalysisContext({
 }) {
   // In-flight deduplication: concurrent callers for the same disasmPath share one subprocess.
   const _disasmInFlight = new Map<string, Promise<void>>();
+  // Several panels request the same symbol table when a binary becomes active.
+  // Share that immutable extraction instead of starting competing Python processes.
+  const _symbolsInFlight = new Map<string, Promise<any[]>>();
 
   const sanitizeArtifactToken = (value, fallback = 'item') => {
     const text = String(value || '').trim();
@@ -582,12 +585,19 @@ function createAnalysisContext({
       logChannel?.appendLine?.(`[cache] Symboles depuis cache (${includeAll ? 'all' : 'default'})`);
       return cached;
     }
-    const args = ['--binary', binaryPath];
-    if (includeAll) args.push('--all');
-    const rawSymbols = await runPythonJson(getSymbolsScript(root), args).catch(() => []);
-    const symbols = Array.isArray(rawSymbols) ? rawSymbols : (rawSymbols.symbols || []);
-    writeAnalysisCacheEntry(binaryPath, useCache, cacheKey, symbols);
-    return symbols;
+    const inflightKey = `${path.resolve(binaryPath)}:${includeAll ? 'all' : 'default'}`;
+    const existing = _symbolsInFlight.get(inflightKey);
+    if (existing) return existing;
+    const extraction = (async () => {
+      const args = ['--binary', binaryPath];
+      if (includeAll) args.push('--all');
+      const rawSymbols = await runPythonJson(getSymbolsScript(root), args).catch(() => []);
+      const symbols = Array.isArray(rawSymbols) ? rawSymbols : (rawSymbols.symbols || []);
+      writeAnalysisCacheEntry(binaryPath, useCache, cacheKey, symbols);
+      return symbols;
+    })().finally(() => { _symbolsInFlight.delete(inflightKey); });
+    _symbolsInFlight.set(inflightKey, extraction);
+    return extraction;
   };
 
   const collectSymbolNames = (symbols) => {
