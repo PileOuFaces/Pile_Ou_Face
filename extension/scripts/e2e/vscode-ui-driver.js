@@ -168,9 +168,14 @@ class CdpLocator {
 
   async click() {
     await this.waitFor({ state: 'visible' });
+    const scrolled = await this.target.evaluate(this.expression(`
+      if (!el || el.disabled) return false;
+      el.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' });
+      return true;
+    `));
+    if (!scrolled) throw new Error(`Element is disabled or missing: ${this.selector}`);
     const point = await this.target.evaluate(this.expression(`
       if (!el || el.disabled) return null;
-      el.scrollIntoView({ block: 'center', inline: 'center' });
       const rect = el.getBoundingClientRect();
       return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
     `));
@@ -322,6 +327,22 @@ class HubPage {
     return this.target.locator('#btnAugmentDecompile');
   }
 
+  interfaceModeButton(mode) {
+    return this.target.locator(`[data-interface-mode="${mode}"]`);
+  }
+
+  interfaceModeInput() {
+    return this.target.locator('#settingInterfaceMode');
+  }
+
+  staticFeaturePicker() {
+    return this.target.locator('#staticFeatureSettings');
+  }
+
+  staticFeaturesAllButton() {
+    return this.target.locator('#btnStaticFeaturesAll');
+  }
+
   typeManagerButton() {
     return this.target.locator('#btnTypedEditStructs');
   }
@@ -389,9 +410,15 @@ class HubPage {
   }
 
   async openPanel(panelId) {
-    await this.panelNav(panelId).click();
+    const navigation = this.panelNav(panelId);
+    await navigation.click();
+    try {
+      await navigation.waitForAttribute('class', 'active', 500);
+    } catch {
+      await navigation.clickDom();
+    }
     await this.expectActive(this.panel(panelId), `panel ${panelId}`);
-    await this.expectActive(this.panelNav(panelId), `navigation ${panelId}`);
+    await this.expectActive(navigation, `navigation ${panelId}`);
   }
 
   async openStaticTab(groupId, tabId) {
