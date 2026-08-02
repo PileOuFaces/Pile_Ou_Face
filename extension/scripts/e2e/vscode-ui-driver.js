@@ -337,6 +337,34 @@ class HubPage {
     return this.target.locator('#functionsCount');
   }
 
+  firstFunctionDisasmButton() {
+    return this.target.locator('#functionsContent .functions-row-action[data-view="disasm"]');
+  }
+
+  functionDossierButton() {
+    return this.target.locator('#functionsDetails .functions-export-action');
+  }
+
+  offsetHexInput() {
+    return this.target.locator('#offsetHex');
+  }
+
+  offsetDecimalInput() {
+    return this.target.locator('#offsetDec');
+  }
+
+  offsetBaseInput() {
+    return this.target.locator('#offsetBase');
+  }
+
+  offsetDeltaInput() {
+    return this.target.locator('#offsetDelta');
+  }
+
+  offsetResultInput() {
+    return this.target.locator('#offsetResult');
+  }
+
   dashboardStaticAction() {
     return this.target.locator('.action-card[data-action="static-open"]');
   }

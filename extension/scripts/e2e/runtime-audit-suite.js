@@ -872,6 +872,13 @@ async function run() {
       );
       await hub.typeEditorCloseButton().clickDom();
 
+      await hub.openPanel('outils');
+      await hub.offsetHexInput().fill('0x14');
+      await hub.offsetDecimalInput().waitForValue('20', 30000);
+      await hub.offsetBaseInput().fill('0x400000');
+      await hub.offsetDeltaInput().fill('0x78');
+      await hub.offsetResultInput().waitForValue('0x400078', 30000);
+
       await hub.openPanel('dashboard');
       await hub.expectActive(hub.panel('dashboard'), 'dashboard panel after returning');
     } catch (error) {
@@ -937,6 +944,28 @@ async function run() {
         const visibleFunctionCount = await hub.binaryFunctionsCount().waitForText('fonction', 30000);
         assert.match(visibleFunctionCount, /\d+ fonction/);
         await hub.binaryFunctions().waitFor({ state: 'visible', timeout: 30000 });
+
+        const functionExportPath = path.join(
+          process.env.POF_E2E_ARTIFACTS_DIR,
+          'function-dossier-e2e.json',
+        );
+        await withWindowMocks({
+          showSaveDialog: async () => vscode.Uri.file(functionExportPath),
+        }, async () => {
+          await hub.functionDossierButton().click();
+          const startedAt = Date.now();
+          while (!fs.existsSync(functionExportPath) && Date.now() - startedAt < 5000) {
+            await sleep(50);
+          }
+        });
+        assert.ok(fs.existsSync(functionExportPath), 'the function dossier must be written after the UI export');
+        const exportedFunction = JSON.parse(fs.readFileSync(functionExportPath, 'utf8'));
+        assert.ok(String(exportedFunction.function.name || '').trim(), 'the exported function must keep a visible name');
+        assert.equal(exportedFunction.function.addr, String(fixture.entry || '0x400078'));
+
+        await hub.firstFunctionDisasmButton().click();
+        await hub.expectActive(hub.subTab('disasm'), 'disassembly opened from the function list');
+        await hub.goToAddressInput().waitForValue(String(fixture.entry || '0x400078'), 30000);
 
         target.close();
         target = null;
@@ -1084,7 +1113,7 @@ async function run() {
         await hub.annotationAddress().waitForAttribute('data-addr', sourceAddr, 30000);
 
         await hub.xrefsMode().fill('from');
-        await hub.xrefsButton().click();
+        await hub.xrefsButton().clickDom();
         await hub.xrefsResult().waitForText(`Références depuis ${sourceAddr}`, 30000);
         await hub.xrefsResult().waitForText(targetAddr, 30000);
         assert.ok(xrefsModes.includes('to'), 'an incoming xrefs lookup must execute');

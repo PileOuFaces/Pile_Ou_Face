@@ -343,6 +343,13 @@ describe('VS Code UI E2E driver', () => {
     assert.equal(hub.autoTriageResult().selector, '[data-auto-triage-result]');
     assert.equal(hub.autoTriageResultTitle().selector, '[data-auto-triage-result-title]');
     assert.equal(hub.disassemblyBinarySummary().selector, '#disasmSummaryBinary');
+    assert.equal(hub.firstFunctionDisasmButton().selector, '#functionsContent .functions-row-action[data-view="disasm"]');
+    assert.equal(hub.functionDossierButton().selector, '#functionsDetails .functions-export-action');
+    assert.equal(hub.offsetHexInput().selector, '#offsetHex');
+    assert.equal(hub.offsetDecimalInput().selector, '#offsetDec');
+    assert.equal(hub.offsetBaseInput().selector, '#offsetBase');
+    assert.equal(hub.offsetDeltaInput().selector, '#offsetDelta');
+    assert.equal(hub.offsetResultInput().selector, '#offsetResult');
     assert.equal(hub.decompileAugmentButton().selector, '#btnAugmentDecompile');
     assert.equal(hub.interfaceModeButton('simple').selector, '[data-interface-mode="simple"]');
     assert.equal(hub.interfaceModeInput().selector, '#settingInterfaceMode');
