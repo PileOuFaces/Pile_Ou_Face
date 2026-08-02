@@ -83,7 +83,7 @@ describe("disasm autoload loop guard (skipAutoLoad threaded through nav chain)",
     "utf8",
   );
 
-  it("passes skipAutoLoad from hubSetBinaryPath through to applyStaticBinarySelectionUi", () => {
+  it("prevents a duplicate tab autoload for a new binary selection", () => {
     const source = binarySourceControllerSource();
     const handlerStart = source.indexOf("msg.type === 'hubSetBinaryPath'");
     expect(handlerStart, "hubSetBinaryPath handler not found").to.be.greaterThan(-1);
@@ -96,7 +96,7 @@ describe("disasm autoload loop guard (skipAutoLoad threaded through nav chain)",
     // refresh re-triggers disassembly before the cache populated by
     // hubDisasmReady's handler has a chance to short-circuit it, causing an
     // infinite disasm loop.
-    expect(handler).to.include("applyStaticBinarySelectionUi(bp, nextMeta, skipAutoLoad)");
+    expect(handler).to.include("applyStaticBinarySelectionUi(bp, nextMeta, skipAutoLoad || !sameSelection)");
   });
 
   it("drops stale automatic hubSetBinaryPath responses before mutating the selected binary", () => {
@@ -107,7 +107,7 @@ describe("disasm autoload loop guard (skipAutoLoad threaded through nav chain)",
     const handler = source.slice(handlerStart, handlerEnd);
 
     const staleGuardIndex = handler.indexOf("normalizeBinaryPathForCompare(prevBp) !== normalizeBinaryPathForCompare(bp)");
-    const applyIndex = handler.indexOf("applyStaticBinarySelectionUi(bp, nextMeta, skipAutoLoad)");
+    const applyIndex = handler.indexOf("applyStaticBinarySelectionUi(bp, nextMeta, skipAutoLoad || !sameSelection)");
     expect(staleGuardIndex, "stale hubSetBinaryPath guard missing").to.be.greaterThan(-1);
     expect(applyIndex, "selection mutation missing").to.be.greaterThan(-1);
     expect(staleGuardIndex).to.be.lessThan(applyIndex);

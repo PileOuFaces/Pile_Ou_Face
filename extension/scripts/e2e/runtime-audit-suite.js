@@ -1131,12 +1131,10 @@ async function run() {
       target.close();
       target = null;
       await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
-      disasmResponses = countDisasmResponses();
       await vscode.commands.executeCommand('pileOuFace.goToAddress');
       target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
       hub = new HubPage(target);
       await hub.binaryPath().waitForValue(binaryAName, 30000);
-      await waitForNextDisasm(disasmResponses);
       await hub.annotationsList().waitForText('e2e_binary_a', 30000);
 
       disasmResponses = countDisasmResponses();
