@@ -54,24 +54,30 @@ class AnnotationStore:
         self._binary_path = binary_path
         self._cache = AnnotationDb(cache_path)
 
-    def comment(self, addr: str, text: str) -> None:
+    def comment(self, addr: str, text: str, source: str = "user") -> None:
         """Ajoute ou remplace un commentaire sur une adresse.
 
         Args:
             addr: Adresse (ex: "0x401000")
             text: Texte du commentaire
+            source: Origine de l'annotation (ex: "user", "script")
         """
-        self._cache.save_annotation(self._binary_path, addr, KIND_COMMENT, text)
+        self._cache.save_annotation(
+            self._binary_path, addr, KIND_COMMENT, text, source=source
+        )
         logger.debug("Comment set: %s → %r", addr, text)
 
-    def rename(self, addr: str, name: str) -> None:
+    def rename(self, addr: str, name: str, source: str = "user") -> None:
         """Renomme la fonction ou le symbole à une adresse.
 
         Args:
             addr: Adresse (ex: "0x401000")
             name: Nouveau nom (ex: "my_main")
+            source: Origine de l'annotation (ex: "user", "script")
         """
-        self._cache.save_annotation(self._binary_path, addr, KIND_RENAME, name)
+        self._cache.save_annotation(
+            self._binary_path, addr, KIND_RENAME, name, source=source
+        )
         logger.debug("Rename set: %s → %r", addr, name)
 
     def ai_comment(self, addr: str, text: str) -> bool:
