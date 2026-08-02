@@ -319,6 +319,30 @@ class HubPage {
     return this.target.locator('[data-action="auto-triage"]');
   }
 
+  autoTriageModal() {
+    return this.target.locator('[data-auto-triage-modal]');
+  }
+
+  autoTriageConfirmButton() {
+    return this.target.locator('[data-action="auto-triage-confirm"]');
+  }
+
+  autoTriageState() {
+    return this.target.locator('[data-auto-triage-state]');
+  }
+
+  autoTriageHelp() {
+    return this.target.locator('[data-auto-triage-help]');
+  }
+
+  autoTriageResult() {
+    return this.target.locator('[data-auto-triage-result]');
+  }
+
+  autoTriageResultTitle() {
+    return this.target.locator('[data-auto-triage-result-title]');
+  }
+
   disassemblyBinarySummary() {
     return this.target.locator('#disasmSummaryBinary');
   }

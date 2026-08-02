@@ -397,6 +397,14 @@ function isOllamaBridgeScript(args) {
   return Array.isArray(args) && args.some((arg) => String(arg || '').endsWith(path.join('backends', 'mcp', 'ollama_bridge.py')));
 }
 
+function isAiConsentScript(args) {
+  return Array.isArray(args) && args.some((arg) => String(arg || '').endsWith(path.join('backends', 'mcp', 'ai_consent.py')));
+}
+
+function isAutoTriageScript(args) {
+  return Array.isArray(args) && args.some((arg) => String(arg || '').endsWith(path.join('backends', 'mcp', 'auto_triage.py')));
+}
+
 function createMockProviderList() {
   return JSON.stringify({
     providers: [{ name: 'openai', configured: true, model: 'e2e-model' }],
@@ -592,6 +600,111 @@ async function run() {
         // Preserve the original assertion while keeping best-effort test isolation.
       }
       target?.close();
+    }
+  }));
+
+  suite.addTest(new Mocha.Test('retries auto-triage from the real confirmation UI without reopening the modal', async () => {
+    const userDataDir = process.env.POF_E2E_USER_DATA_DIR;
+    assert.ok(userDataDir, 'POF_E2E_USER_DATA_DIR is required');
+    const [fixture] = readFixtureSpecs();
+    assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
+    const [auditPath] = findAuditFiles(userDataDir)
+      .sort((left, right) => fs.statSync(right).mtimeMs - fs.statSync(left).mtimeMs);
+    assert.ok(auditPath, 'runtime audit file must identify the extension storage directory');
+    const storageDir = path.dirname(auditPath);
+    const binaryPath = path.join(storageDir, 'e2e-auto-triage.bin');
+    const mappingPath = path.join(storageDir, 'e2e-auto-triage.disasm.mapping.json');
+    let reportPath = '';
+    let target = null;
+    let attempt = 0;
+    const originalExecFile = childProcess.execFile;
+    const originalSpawn = childProcess.spawn;
+    try {
+      fs.copyFileSync(fixture.path, binaryPath);
+      fs.writeFileSync(mappingPath, JSON.stringify({ function_addrs: ['0x400078'] }), 'utf8');
+
+      await withChildProcessMocks({
+        execFile: (file, args = [], options = {}, callback = undefined) => {
+          if (!isAiConsentScript(args)) {
+            return originalExecFile.call(childProcess, file, args, options, callback);
+          }
+          const cb = typeof options === 'function' ? options : callback;
+          const proc = new EventEmitter();
+          process.nextTick(() => cb?.(null, JSON.stringify({ consented: true }), ''));
+          return proc;
+        },
+        spawn: (file, args = [], options = {}) => {
+          if (!isAutoTriageScript(args)) {
+            return originalSpawn.call(childProcess, file, args, options);
+          }
+          attempt += 1;
+          const proc = new EventEmitter();
+          proc.stdout = new PassThrough();
+          proc.stderr = new PassThrough();
+          proc.kill = () => true;
+          reportPath = String(args[args.indexOf('--report-out') + 1] || '');
+          process.nextTick(() => {
+            if (attempt === 1) {
+              proc.stderr.end('provider offline');
+              proc.stdout.end();
+              proc.emit('close', 1);
+              return;
+            }
+            fs.writeFileSync(reportPath, '# Rapport auto-triage E2E\n', 'utf8');
+            proc.stdout.write(`${JSON.stringify({ type: 'selection_done', total: 1, provider: 'openai', model: 'e2e-model' })}\n`);
+            proc.stdout.write(`${JSON.stringify({ type: 'function_done', index: 0, total: 1 })}\n`);
+            proc.stdout.write(`${JSON.stringify({ type: 'done', stats: { processed: 1, tokens_used: 7 } })}\n`);
+            proc.stdout.end();
+            proc.stderr.end();
+            proc.emit('close', 0);
+          });
+          return proc;
+        },
+      }, async () => {
+        await vscode.commands.executeCommand('pileOuFace.goToAddress');
+        target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+        const hub = new HubPage(target);
+        await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+          type: 'hubUseBinaryPath',
+          binaryPath,
+        });
+        await hub.binaryPath().waitForValue(path.basename(binaryPath), 30000);
+        await hub.openPanel('dashboard');
+        await hub.autoTriageBinary().waitForText(path.basename(binaryPath), 30000);
+        await hub.autoTriageButton().waitFor({ state: 'visible' });
+        assert.equal(await hub.autoTriageButton().isEnabled(), true, 'auto-triage must be available after preflight');
+
+        await hub.autoTriageButton().click();
+        await hub.autoTriageModal().waitFor({ state: 'visible' });
+        assert.equal(await hub.autoTriageModal().getAttribute('hidden'), null, 'confirmation modal must be open');
+        await hub.autoTriageConfirmButton().click();
+        await hub.autoTriageState().waitForText('Échec', 30000);
+        await hub.autoTriageHelp().waitForText('provider offline', 30000);
+        assert.equal(await hub.autoTriageModal().getAttribute('hidden'), '', 'confirmation modal must close after the failed run starts');
+        assert.equal(await hub.autoTriageButton().isEnabled(), true, 'retry must be available after a provider error');
+
+        await hub.autoTriageButton().click();
+        await hub.autoTriageModal().waitFor({ state: 'visible' });
+        await hub.autoTriageConfirmButton().click();
+        await hub.autoTriageState().waitForText('Terminé', 30000);
+        await hub.autoTriageResult().waitFor({ state: 'visible' });
+        await hub.autoTriageResultTitle().waitForText('Dernier auto-triage terminé', 30000);
+        assert.equal(await hub.autoTriageModal().getAttribute('hidden'), '', 'confirmation modal must stay closed after success');
+        assert.equal(attempt, 2, 'one failed run and one successful retry must execute');
+      });
+    } catch (error) {
+      const artifacts = await captureUiFailure(
+        target,
+        process.env.POF_E2E_ARTIFACTS_DIR,
+        'hub-auto-triage-retry',
+      );
+      error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
+      throw error;
+    } finally {
+      target?.close();
+      for (const filePath of [binaryPath, mappingPath, reportPath].filter(Boolean)) {
+        try { fs.rmSync(filePath, { force: true }); } catch { /* Best-effort fixture cleanup. */ }
+      }
     }
   }));
 
@@ -1368,7 +1481,7 @@ async function run() {
   }));
 
   if (['1', 'true', 'yes'].includes(String(process.env.POF_E2E_UI_ONLY || '').toLowerCase())) {
-    mocha.grep(/real webview controls/);
+    mocha.grep(/real webview controls|real confirmation UI/);
   }
 
   return new Promise((resolve, reject) => {

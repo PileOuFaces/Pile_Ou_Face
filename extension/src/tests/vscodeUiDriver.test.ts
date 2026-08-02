@@ -253,6 +253,12 @@ describe('VS Code UI E2E driver', () => {
     assert.equal(hub.dashboardStaticAction().selector, '.action-card[data-action="static-open"]');
     assert.equal(hub.autoTriageBinary().selector, '[data-auto-triage-binary]');
     assert.equal(hub.autoTriageButton().selector, '[data-action="auto-triage"]');
+    assert.equal(hub.autoTriageModal().selector, '[data-auto-triage-modal]');
+    assert.equal(hub.autoTriageConfirmButton().selector, '[data-action="auto-triage-confirm"]');
+    assert.equal(hub.autoTriageState().selector, '[data-auto-triage-state]');
+    assert.equal(hub.autoTriageHelp().selector, '[data-auto-triage-help]');
+    assert.equal(hub.autoTriageResult().selector, '[data-auto-triage-result]');
+    assert.equal(hub.autoTriageResultTitle().selector, '[data-auto-triage-result-title]');
     assert.equal(hub.disassemblyBinarySummary().selector, '#disasmSummaryBinary');
     assert.equal(hub.decompileAugmentButton().selector, '#btnAugmentDecompile');
     assert.equal(hub.interfaceModeButton('simple').selector, '[data-interface-mode="simple"]');

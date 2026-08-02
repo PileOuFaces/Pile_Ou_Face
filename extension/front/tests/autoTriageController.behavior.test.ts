@@ -205,6 +205,14 @@ describe('auto-triage controller behavior', () => {
     expect(app.document.querySelector('[data-auto-triage-state]').textContent).to.equal('Échec');
     expect(app.document.querySelector('[data-auto-triage-help]').textContent).to.equal('provider offline');
     expect(app.document.querySelector('[data-auto-triage-result]').hidden).to.equal(true);
+
+    app.emit(preflight());
+    expect(app.document.querySelector('[data-auto-triage-help]').textContent)
+      .to.equal('provider offline');
+
+    app.document.querySelector('[data-action="auto-triage"]').click();
+    app.document.querySelector('[data-action="auto-triage-confirm"]').click();
+    expect(app.document.querySelector('[data-auto-triage-help]').textContent).to.equal('');
   });
 
   it('opens from a host request after preflight and ignores unrelated completions', () => {
