@@ -1288,10 +1288,13 @@ function requestOllamaModels() {
 
 // Quick actions
 document.querySelectorAll('.action-card').forEach((card) => {
-  card.addEventListener('click', () => {
+  card.addEventListener('click', (event) => {
     if (card.dataset.action === 'static-open') {
       showPanel('static');
-      if (!getStaticBinaryPath()) openBinaryMenu();
+      if (!getStaticBinaryPath()) {
+        event.stopPropagation();
+        openBinaryMenu();
+      }
     } else if (card.dataset.action === 'dynamic-run') {
       showPanel('dynamic');
     } else if (card.dataset.action === 'outils-open') {

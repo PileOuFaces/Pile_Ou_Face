@@ -54,4 +54,14 @@ describe("static binary reset contract", () => {
     expect(graphs).to.include("callGraphUiState.binaryPath = ''");
     expect(graphs).to.include("window._pendingCfgHighlightAddr = null");
   });
+
+  it("keeps the binary picker open when static analysis starts from an empty workspace", () => {
+    const source = outilsSource();
+    const quickActionsStart = source.indexOf("// Quick actions");
+    expect(quickActionsStart).to.be.greaterThan(-1);
+    const quickActions = source.slice(quickActionsStart);
+
+    expect(quickActions).to.include("card.addEventListener('click', (event) => {");
+    expect(quickActions).to.include("event.stopPropagation();\n        openBinaryMenu();");
+  });
 });
