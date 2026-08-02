@@ -967,6 +967,14 @@
   background: rgba(240, 173, 78, 0.14);
   color: #f0ad4e;
 }
+.typed-data-type-kind-typedef {
+  background: rgba(126, 231, 135, 0.14);
+  color: #7ee787;
+}
+.typed-data-type-kind-function {
+  background: rgba(255, 166, 87, 0.14);
+  color: #ffa657;
+}
 .typed-data-struct-editor-status {
   min-height: 16px;
   color: var(--text-muted);

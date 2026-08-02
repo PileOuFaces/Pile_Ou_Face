@@ -62,7 +62,7 @@ class StructDb:
             CREATE TABLE IF NOT EXISTS definitions (
                 binary TEXT NOT NULL,
                 name TEXT NOT NULL,
-                kind TEXT NOT NULL CHECK(kind IN ('struct', 'union', 'enum')),
+                kind TEXT NOT NULL CHECK(kind IN ('struct', 'union', 'enum', 'typedef', 'function')),
                 PRIMARY KEY (binary, name)
             );
             CREATE TABLE IF NOT EXISTS definition_fields (
@@ -187,47 +187,38 @@ class StructDb:
                 (binary, source),
             )
             for name, definition in definitions.items():
-                kind = str(definition.get("kind") or "struct")
+                _insert_definition(connection, binary, name, definition)
+
+    def merge_definitions(
+        self, binary: str, definitions: dict[str, dict[str, Any]], source_label: str
+    ) -> None:
+        """Upsert only the given type names, leaving the rest of the binary's catalog untouched."""
+        if not binary:
+            raise ValueError("Chemin binaire manquant.")
+        if not definitions:
+            return
+        with self._connect() as connection:
+            placeholders = ",".join("?" * len(definitions))
+            existing_total = connection.execute(
+                "SELECT COUNT(*) FROM definitions WHERE binary = ?", (binary,)
+            ).fetchone()[0]
+            existing_matched = connection.execute(
+                f"SELECT COUNT(*) FROM definitions WHERE binary = ? AND name IN ({placeholders})",
+                (binary, *definitions.keys()),
+            ).fetchone()[0]
+            projected_total = existing_total - existing_matched + len(definitions)
+            if projected_total > MAX_DEFINITIONS:
+                raise ValueError(f"Trop de types: limite de {MAX_DEFINITIONS}.")
+            for name, definition in definitions.items():
                 connection.execute(
-                    "INSERT INTO definitions(binary, name, kind) VALUES(?, ?, ?)",
-                    (binary, name, kind),
+                    "DELETE FROM definitions WHERE binary = ? AND name = ?",
+                    (binary, name),
                 )
-                if kind == "enum":
-                    values = definition.get("values") or []
-                    if len(values) > MAX_FIELDS_PER_DEFINITION:
-                        raise ValueError(f"Trop de valeurs dans {name}.")
-                    connection.executemany(
-                        "INSERT INTO enum_values(binary, definition_name, ordinal, name, value) VALUES(?, ?, ?, ?, ?)",
-                        [
-                            (binary, name, index, item["name"], int(item["value"]))
-                            for index, item in enumerate(values)
-                        ],
-                    )
-                    continue
-                fields = definition.get("fields") or []
-                if len(fields) > MAX_FIELDS_PER_DEFINITION:
-                    raise ValueError(f"Trop de champs dans {name}.")
-                connection.executemany(
-                    """INSERT INTO definition_fields
-                    (binary, definition_name, ordinal, name, type, type_kind, pointer_level, array_len, array_dims, display_type)
-                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    [
-                        (
-                            binary,
-                            name,
-                            index,
-                            field["name"],
-                            field["type"],
-                            field["type_kind"],
-                            int(field.get("pointer_level") or 0),
-                            field.get("array_len"),
-                            json.dumps(field["array_dims"])
-                            if field.get("array_dims") is not None
-                            else None,
-                            field.get("display_type") or field["type"],
-                        )
-                        for index, field in enumerate(fields)
-                    ],
+                _insert_definition(connection, binary, name, definition)
+                connection.execute(
+                    "INSERT INTO metadata(binary, key, value) VALUES(?, ?, ?) "
+                    "ON CONFLICT(binary, key) DO UPDATE SET value=excluded.value",
+                    (binary, f"import_source:{name}", source_label),
                 )
 
     def list_typed_refs(self, binary: str | None = None) -> list[dict[str, Any]]:
@@ -336,6 +327,53 @@ class StructDb:
                     for index, field in enumerate(fields)
                 ],
             )
+
+
+def _insert_definition(
+    connection: sqlite3.Connection, binary: str, name: str, definition: dict[str, Any]
+) -> None:
+    kind = str(definition.get("kind") or "struct")
+    connection.execute(
+        "INSERT INTO definitions(binary, name, kind) VALUES(?, ?, ?)",
+        (binary, name, kind),
+    )
+    if kind == "enum":
+        values = definition.get("values") or []
+        if len(values) > MAX_FIELDS_PER_DEFINITION:
+            raise ValueError(f"Trop de valeurs dans {name}.")
+        connection.executemany(
+            "INSERT INTO enum_values(binary, definition_name, ordinal, name, value) VALUES(?, ?, ?, ?, ?)",
+            [
+                (binary, name, index, item["name"], int(item["value"]))
+                for index, item in enumerate(values)
+            ],
+        )
+        return
+    fields = definition.get("fields") or []
+    if len(fields) > MAX_FIELDS_PER_DEFINITION:
+        raise ValueError(f"Trop de champs dans {name}.")
+    connection.executemany(
+        """INSERT INTO definition_fields
+        (binary, definition_name, ordinal, name, type, type_kind, pointer_level, array_len, array_dims, display_type)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        [
+            (
+                binary,
+                name,
+                index,
+                field["name"],
+                field["type"],
+                field["type_kind"],
+                int(field.get("pointer_level") or 0),
+                field.get("array_len"),
+                json.dumps(field["array_dims"])
+                if field.get("array_dims") is not None
+                else None,
+                field.get("display_type") or field["type"],
+            )
+            for index, field in enumerate(fields)
+        ],
+    )
 
 
 def _address_sort_value(value: Any) -> int:

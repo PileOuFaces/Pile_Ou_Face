@@ -1693,9 +1693,16 @@ function renderTypedStructCatalog(container, types) {
     name.textContent = String(entry?.name || 'Type sans nom');
     const details = document.createElement('span');
     details.className = 'typed-data-type-count';
-    details.textContent = kind === 'enum'
-      ? `${count} valeur${count > 1 ? 's' : ''}`
-      : `${count} champ${count > 1 ? 's' : ''}`;
+    if (kind === 'enum') {
+      details.textContent = `${count} valeur${count > 1 ? 's' : ''}`;
+    } else if (kind === 'typedef') {
+      details.textContent = 'alias';
+    } else if (kind === 'function') {
+      const paramCount = Math.max(0, count - 1);
+      details.textContent = `${paramCount} paramètre${paramCount > 1 ? 's' : ''}`;
+    } else {
+      details.textContent = `${count} champ${count > 1 ? 's' : ''}`;
+    }
     item.append(badge, name, details);
     container.appendChild(item);
   });

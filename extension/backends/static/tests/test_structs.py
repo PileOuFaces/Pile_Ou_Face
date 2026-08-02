@@ -11,6 +11,7 @@ sys.path.insert(0, ROOT)
 from backends.static.annotations.struct_db import get_struct_db_path
 from backends.static.annotations.structs import (
     compute_struct_layout,
+    import_type_definitions,
     list_struct_store,
     load_struct_store,
     parse_struct_definitions,
@@ -135,7 +136,7 @@ class TestStructs(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "inconnu"):
             parse_struct_definitions("enum Broken { VALUE = UNKNOWN + 1 };")
         with self.assertRaisesRegex(ValueError, "Aucun type C reconnu"):
-            parse_struct_definitions("typedef unsigned int word_t;")
+            parse_struct_definitions("int global_counter;")
 
     # ── C++ enum class ───────────────────────────────────────────────────────────
 
@@ -574,6 +575,112 @@ class TestStructs(unittest.TestCase):
         self.assertEqual(packet_layout["fields"][1]["offset"], 4)
         self.assertEqual(packet_layout["fields"][1]["type_kind"], "union")
         self.assertEqual(packet_layout["size"], 8)
+
+    # ── Typedefs et prototypes (Lot 3, #129) ────────────────────────────────────
+
+    def test_parse_simple_pointer_typedef(self):
+        definitions = parse_struct_definitions("typedef char* PSTR;")
+        self.assertIn("PSTR", definitions)
+        self.assertEqual(definitions["PSTR"]["kind"], "typedef")
+        self.assertEqual(definitions["PSTR"]["fields"][0]["type"], "char")
+        self.assertEqual(definitions["PSTR"]["fields"][0]["pointer_level"], 1)
+
+    def test_parse_typedef_alias_to_existing_struct(self):
+        definitions = parse_struct_definitions(
+            """
+            struct Foo { uint32_t x; };
+            typedef struct Foo Foo;
+            """
+        )
+        self.assertEqual(definitions["Foo"]["kind"], "struct")
+        layout = compute_struct_layout(definitions, "Foo", 8)
+        self.assertEqual(layout["fields"][0]["name"], "x")
+
+    def test_parse_typedef_function_pointer_as_function_kind(self):
+        definitions = parse_struct_definitions("typedef void (*Callback)(int, void*);")
+        self.assertIn("Callback", definitions)
+        self.assertEqual(definitions["Callback"]["kind"], "function")
+
+    def test_parse_bare_prototype_as_function_kind(self):
+        definitions = parse_struct_definitions("int add(int a, int b);")
+        self.assertIn("add", definitions)
+        self.assertEqual(definitions["add"]["kind"], "function")
+        self.assertEqual(len(definitions["add"]["fields"]), 3)  # ret + 2 params
+
+    def test_compute_layout_resolves_typedef_indirection(self):
+        definitions = parse_struct_definitions(
+            """
+            typedef char* PSTR;
+            typedef struct Demo {
+              uint32_t tag;
+              PSTR name;
+            } Demo;
+            """
+        )
+        layout = compute_struct_layout(definitions, "Demo", 8)
+        name_field = layout["fields"][1]
+        self.assertEqual(name_field["offset"], 8)
+        self.assertEqual(name_field["size"], 8)
+        self.assertEqual(name_field["tag"], "ptr")
+
+    def test_layout_rejects_typedef_not_pointing_to_struct(self):
+        definitions = parse_struct_definitions("typedef char* PSTR;")
+        with self.assertRaisesRegex(ValueError, "ne pointe pas vers un struct/union"):
+            compute_struct_layout(definitions, "PSTR", 8)
+
+    def test_import_type_definitions_merges_without_wiping_catalog(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first = {
+                "PSTR": {
+                    "kind": "typedef",
+                    "fields": [
+                        {
+                            "name": "",
+                            "type": "char",
+                            "type_kind": "primitive",
+                            "pointer_level": 1,
+                            "array_len": None,
+                            "array_dims": None,
+                            "display_type": "char*",
+                        }
+                    ],
+                },
+            }
+            import_type_definitions(
+                "/tmp/demo.bin", first, "ghidra", workspace_root=tmp
+            )
+            second = {
+                "Color": {
+                    "kind": "enum",
+                    "values": [{"name": "RED", "value": 0}],
+                    "value_map": {"RED": 0},
+                },
+            }
+            result = import_type_definitions(
+                "/tmp/demo.bin", second, "ai-proposal", workspace_root=tmp
+            )
+            names = {entry["name"] for entry in result["structs"]}
+            self.assertEqual(names, {"PSTR", "Color"})
+
+    def test_import_type_definitions_rejects_invalid_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                import_type_definitions(
+                    "/tmp/demo.bin",
+                    {"1Bad": {"kind": "typedef", "fields": []}},
+                    "ai-proposal",
+                    workspace_root=tmp,
+                )
+
+    def test_import_type_definitions_rejects_empty_source_label(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                import_type_definitions(
+                    "/tmp/demo.bin",
+                    {"Foo": {"kind": "typedef", "fields": []}},
+                    "  ",
+                    workspace_root=tmp,
+                )
 
 
 if __name__ == "__main__":
