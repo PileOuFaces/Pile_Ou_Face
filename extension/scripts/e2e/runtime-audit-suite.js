@@ -1015,11 +1015,7 @@ async function run() {
       await hub.annotationAddress().waitForAttribute('data-addr', '0x', 30000);
       await hub.annotationName().fill('e2e_entry');
       await hub.annotationComment().fill('Annotation créée depuis l’interface');
-      await hub.annotationSubmitButton().click();
-      await sleep(250);
-      if (!String(await hub.annotationsList().textContent() || '').includes('e2e_entry')) {
-        await hub.annotationSubmitButton().clickDom();
-      }
+      await hub.annotationSubmitButton().clickDom();
       await hub.annotationsList().waitForText('e2e_entry', 30000);
       await hub.annotationsList().waitForText('Annotation créée depuis l’interface', 30000);
 
@@ -1103,12 +1099,12 @@ async function run() {
 
         await hub.goToAddressInput().fill(targetAddr);
         await hub.xrefsMode().fill('to');
-        await hub.xrefsButton().click();
+        await hub.xrefsButton().clickDom();
         await hub.xrefsResult().waitForText(`Références vers ${targetAddr}`, 30000);
         await hub.xrefsResult().waitForText('caller_e2e', 30000);
         await hub.xrefsResult().waitForText(`call ${targetAddr}`, 30000);
 
-        await hub.firstXrefsJumpButton().click();
+        await hub.firstXrefsJumpButton().clickDom();
         await hub.goToAddressInput().waitForValue(sourceAddr, 30000);
         await hub.annotationAddress().waitForAttribute('data-addr', sourceAddr, 30000);
 
