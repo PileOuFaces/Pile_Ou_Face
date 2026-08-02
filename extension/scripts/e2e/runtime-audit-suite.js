@@ -561,6 +561,7 @@ async function run() {
       const savesBeforeRestore = countCurrentAuditEvents(userDataDir, isSettingsSave);
       await hub.interfaceModeButton('advanced').click();
       await hub.interfaceModeInput().waitForValue('advanced', 30000);
+      await hub.staticFeaturesAllButton().click();
       await waitForAuditEvents(userDataDir, (events) => countEvents(events, isSettingsSave) > savesBeforeRestore);
     } catch (error) {
       const artifacts = await captureUiFailure(
@@ -577,9 +578,15 @@ async function run() {
           target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
           hub = new HubPage(target);
         }
-        if (hub && await hub.interfaceModeButton('advanced').getAttribute('aria-pressed') !== 'true') {
+        if (hub) {
+          const savesBeforeCleanup = countCurrentAuditEvents(userDataDir, isSettingsSave);
           await hub.openPanel('options');
-          await hub.interfaceModeButton('advanced').clickDom();
+          if (await hub.interfaceModeButton('advanced').getAttribute('aria-pressed') !== 'true') {
+            await hub.interfaceModeButton('advanced').clickDom();
+            await hub.interfaceModeInput().waitForValue('advanced', 30000);
+          }
+          await hub.staticFeaturesAllButton().clickDom();
+          await waitForAuditEvents(userDataDir, (events) => countEvents(events, isSettingsSave) > savesBeforeCleanup);
         }
       } catch {
         // Preserve the original assertion while keeping best-effort test isolation.

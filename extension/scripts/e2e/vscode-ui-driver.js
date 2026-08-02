@@ -339,6 +339,10 @@ class HubPage {
     return this.target.locator('#staticFeatureSettings');
   }
 
+  staticFeaturesAllButton() {
+    return this.target.locator('#btnStaticFeaturesAll');
+  }
+
   typeManagerButton() {
     return this.target.locator('#btnTypedEditStructs');
   }

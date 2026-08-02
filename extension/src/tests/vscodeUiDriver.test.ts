@@ -258,6 +258,7 @@ describe('VS Code UI E2E driver', () => {
     assert.equal(hub.interfaceModeButton('simple').selector, '[data-interface-mode="simple"]');
     assert.equal(hub.interfaceModeInput().selector, '#settingInterfaceMode');
     assert.equal(hub.staticFeaturePicker().selector, '#staticFeatureSettings');
+    assert.equal(hub.staticFeaturesAllButton().selector, '#btnStaticFeaturesAll');
     assert.equal(hub.entryPointButton().selector, '#btnGoToEntry');
     assert.equal(hub.annotationAddress().selector, '#annotationAddrBadge');
     assert.equal(hub.annotationName().selector, '#annotationName');
