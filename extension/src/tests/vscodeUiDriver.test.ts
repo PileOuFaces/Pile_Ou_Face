@@ -61,6 +61,7 @@ describe('VS Code UI E2E driver', () => {
           locators.set(selector, {
             async click() { calls.push(`click:${selector}`); },
             async waitFor() { calls.push(`wait:${selector}`); },
+            async waitForAttribute() { calls.push(`wait-attribute:${selector}`); },
             async getAttribute() { return 'panel active'; },
           });
         }
@@ -75,6 +76,28 @@ describe('VS Code UI E2E driver', () => {
     assert.ok(calls.includes('click:.icon-nav-item[data-panel="static"]'));
     assert.ok(calls.includes('click:.group-tab[data-group="data"]'));
     assert.ok(calls.includes('click:.sub-tab[data-sub-tab="typed_data"]'));
+  });
+
+  it('falls back to a DOM click when Electron ignores panel navigation coordinates', async () => {
+    const calls: string[] = [];
+    const target = {
+      locator(selector: string) {
+        return {
+          async click() { calls.push(`physical:${selector}`); },
+          async clickDom() { calls.push(`dom:${selector}`); },
+          async waitFor() {},
+          async waitForAttribute() { throw new Error('physical click ignored'); },
+          async getAttribute() { return 'panel active'; },
+        };
+      },
+    };
+
+    await new HubPage(target).openPanel('options');
+
+    assert.deepEqual(calls, [
+      'physical:.icon-nav-item[data-panel="options"]',
+      'dom:.icon-nav-item[data-panel="options"]',
+    ]);
   });
 
   it('uses CDP to inspect, fill and physically click a DOM control', async () => {
@@ -107,11 +130,9 @@ describe('VS Code UI E2E driver', () => {
 
     assert.deepEqual(sent, ['Input.dispatchMouseEvent', 'Input.dispatchMouseEvent']);
     const scrollIndex = evaluations.findIndex((expression) => expression.includes("scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' })"));
-    const layoutIndex = evaluations.findIndex((expression) => expression.includes('requestAnimationFrame'));
     const coordinatesIndex = evaluations.findIndex((expression) => expression.includes('rect.left'));
     assert.ok(scrollIndex >= 0, 'the target is scrolled into view');
-    assert.ok(layoutIndex > scrollIndex, 'the driver waits for the scrolled layout');
-    assert.ok(coordinatesIndex > layoutIndex, 'click coordinates use the updated layout');
+    assert.ok(coordinatesIndex > scrollIndex, 'click coordinates use the updated layout');
     assert.ok(evaluations.some((expression) => expression.includes('el.click()')));
   });
 

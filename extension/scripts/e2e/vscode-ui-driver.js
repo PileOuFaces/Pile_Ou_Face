@@ -174,7 +174,6 @@ class CdpLocator {
       return true;
     `));
     if (!scrolled) throw new Error(`Element is disabled or missing: ${this.selector}`);
-    await this.target.evaluate('new Promise((resolve) => requestAnimationFrame(() => resolve(true)))');
     const point = await this.target.evaluate(this.expression(`
       if (!el || el.disabled) return null;
       const rect = el.getBoundingClientRect();
@@ -407,9 +406,15 @@ class HubPage {
   }
 
   async openPanel(panelId) {
-    await this.panelNav(panelId).click();
+    const navigation = this.panelNav(panelId);
+    await navigation.click();
+    try {
+      await navigation.waitForAttribute('class', 'active', 500);
+    } catch {
+      await navigation.clickDom();
+    }
     await this.expectActive(this.panel(panelId), `panel ${panelId}`);
-    await this.expectActive(this.panelNav(panelId), `navigation ${panelId}`);
+    await this.expectActive(navigation, `navigation ${panelId}`);
   }
 
   async openStaticTab(groupId, tabId) {
