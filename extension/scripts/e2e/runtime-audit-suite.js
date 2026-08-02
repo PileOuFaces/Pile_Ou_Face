@@ -727,10 +727,12 @@ async function run() {
     assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
     const functionAddr = String(fixture.entry || '0x400078');
     const rawCode = 'int main(void) { return 0; }';
+    const functionCode = 'int main(void) { /* function retry succeeded */ return 0; }';
     const augmentedCode = 'int main(void) { /* validated by E2E */ return 0; }';
     let target = null;
     let accepted = false;
     let suggestCalls = 0;
+    let functionDecompileAttempts = 0;
     const originalExecFile = childProcess.execFile;
     const augmentationResult = () => ({
       ok: true,
@@ -763,13 +765,27 @@ async function run() {
           }
           if (Array.isArray(args) && args.some((arg) => String(arg || '').endsWith(path.join('backends', 'static', 'decompile', 'decompile.py')))) {
             const proc = new EventEmitter();
-            const result = args.includes('--list')
-              ? createMockDecompilerList()
-              : JSON.stringify({
+            let result;
+            if (args.includes('--list')) {
+              result = createMockDecompilerList();
+            } else if (args.includes('--addr')) {
+              functionDecompileAttempts += 1;
+              result = JSON.stringify(functionDecompileAttempts === 1
+                ? { ok: false, error: 'fixture decompiler unavailable', error_type: 'tool_error' }
+                : {
+                  ok: true,
+                  addr: functionAddr,
+                  name: 'main',
+                  code: functionCode,
+                  score: 100,
+                });
+            } else {
+              result = JSON.stringify({
                 ok: true,
                 functions: [{ addr: functionAddr, name: 'main', code: rawCode }],
                 score: 100,
               });
+            }
             process.nextTick(() => cb?.(null, result, ''));
             return proc;
           }
@@ -789,6 +805,16 @@ async function run() {
         await hub.decompileOutput().waitForText(rawCode, 30000);
         assert.equal(await hub.decompileFunctionSelect().inputValue(), '', 'the fixture remains in global decompile mode');
         assert.equal(await hub.decompileAugmentButton().isEnabled(), true, 'a global result with one function must enable augmentation');
+
+        await hub.decompileFunctionSelect().fill(functionAddr);
+        await hub.decompileContent().waitForText('Erreur du décompilateur — vérifiez les logs', 30000);
+        assert.equal(await hub.decompileFunctionSelect().inputValue(), functionAddr, 'the failed function selection must stay selected');
+        await hub.decompileRebuildButton().clickDom();
+        await hub.decompileOutput().waitForText('function retry succeeded', 30000);
+        assert.equal(functionDecompileAttempts, 2, 'one failed function run and one successful retry must execute');
+
+        await hub.decompileFunctionSelect().fill('');
+        await hub.decompileOutput().waitForText(rawCode, 30000);
 
         await hub.decompileAugmentButton().click();
         await hub.decompileAugmentReview().waitFor({ state: 'visible', timeout: 30000 });

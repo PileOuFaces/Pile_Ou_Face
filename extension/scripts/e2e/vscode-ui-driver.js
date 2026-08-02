@@ -421,8 +421,16 @@ class HubPage {
     return this.target.locator('#decompileAddrSelect');
   }
 
+  decompileContent() {
+    return this.target.locator('#decompileContent');
+  }
+
   decompileOutput() {
     return this.target.locator('#decompileContent .decompile-output');
+  }
+
+  decompileRebuildButton() {
+    return this.target.locator('#btnRebuildDecompile');
   }
 
   decompileAugmentStatus() {

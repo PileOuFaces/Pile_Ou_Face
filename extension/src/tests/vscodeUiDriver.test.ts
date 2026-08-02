@@ -89,7 +89,9 @@ describe('VS Code UI E2E driver', () => {
     const hub = new HubPage(target);
 
     hub.decompileFunctionSelect();
+    hub.decompileContent();
     hub.decompileOutput();
+    hub.decompileRebuildButton();
     hub.decompileAugmentButton();
     hub.decompileAugmentStatus();
     hub.decompileAugmentReview();
@@ -98,7 +100,9 @@ describe('VS Code UI E2E driver', () => {
 
     assert.deepEqual(selectors, [
       '#decompileAddrSelect',
+      '#decompileContent',
       '#decompileContent .decompile-output',
+      '#btnRebuildDecompile',
       '#btnAugmentDecompile',
       '#decompileAugmentStatus',
       '#decompileAugmentReview',
