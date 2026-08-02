@@ -157,14 +157,18 @@ describe('VS Code UI E2E driver', () => {
 
   it('falls back to a DOM click when Electron ignores panel navigation coordinates', async () => {
     const calls: string[] = [];
+    let navigationWaits = 0;
     const target = {
       locator(selector: string) {
         return {
           async click() { calls.push(`physical:${selector}`); },
           async clickDom() { calls.push(`dom:${selector}`); },
           async waitFor() {},
-          async waitForAttribute() { throw new Error('physical click ignored'); },
-          async getAttribute() { return 'panel active'; },
+          async waitForAttribute() {
+            if (selector.includes('icon-nav-item') && navigationWaits++ === 0) {
+              throw new Error('physical click ignored');
+            }
+          },
         };
       },
     };
@@ -175,6 +179,20 @@ describe('VS Code UI E2E driver', () => {
       'physical:.icon-nav-item[data-panel="options"]',
       'dom:.icon-nav-item[data-panel="options"]',
     ]);
+  });
+
+  it('waits for asynchronous panel activation', async () => {
+    const calls: string[] = [];
+    const locator = {
+      async waitFor() { calls.push('attached'); },
+      async waitForAttribute(name: string, expected: string, timeout: number) {
+        calls.push(`${name}:${expected}:${timeout}`);
+      },
+    };
+
+    await new HubPage({}).expectActive(locator, 'delayed panel', 750);
+
+    assert.deepEqual(calls, ['attached', 'class:active:750']);
   });
 
   it('uses CDP to inspect, fill and physically click a DOM control', async () => {
@@ -226,7 +244,7 @@ describe('VS Code UI E2E driver', () => {
       locator() {
         return {
           async waitFor() {},
-          async getAttribute() { return 'panel'; },
+          async waitForAttribute() { throw new Error('timed out'); },
         };
       },
     };

@@ -537,10 +537,13 @@ class HubPage {
     return this.target.locator('#annotationsList .annotation-item .ann-delete');
   }
 
-  async expectActive(locator, description) {
+  async expectActive(locator, description, timeout = DEFAULT_TIMEOUT_MS) {
     await locator.waitFor({ state: 'attached' });
-    const classes = String(await locator.getAttribute('class') || '').split(/\s+/);
-    if (!classes.includes('active')) throw new Error(`${description} is not active`);
+    try {
+      await locator.waitForAttribute('class', 'active', timeout);
+    } catch {
+      throw new Error(`${description} is not active`);
+    }
   }
 
   async openPanel(panelId) {
