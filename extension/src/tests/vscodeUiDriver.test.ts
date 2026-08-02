@@ -107,6 +107,31 @@ describe('VS Code UI E2E driver', () => {
     ]);
   });
 
+  it('exposes address navigation and xrefs through stable selectors', () => {
+    const selectors: string[] = [];
+    const target = {
+      locator(selector: string) {
+        selectors.push(selector);
+        return { selector };
+      },
+    };
+    const hub = new HubPage(target);
+
+    hub.goToAddressInput();
+    hub.xrefsMode();
+    hub.xrefsButton();
+    hub.xrefsResult();
+    hub.firstXrefsJumpButton();
+
+    assert.deepEqual(selectors, [
+      '#goToAddrInput',
+      '#xrefsMode',
+      '#btnXrefs',
+      '#xrefsResultContent',
+      '#xrefsResultContent .xrefs-jump-btn',
+    ]);
+  });
+
   it('falls back to a DOM click when Electron ignores panel navigation coordinates', async () => {
     const calls: string[] = [];
     const target = {
@@ -153,6 +178,7 @@ describe('VS Code UI E2E driver', () => {
     assert.equal(await locator.inputValue(), 'true');
     assert.equal(await locator.waitForValue('true', 50), 'true');
     assert.equal(await locator.waitForAttribute('class', 'active', 50), 'btn active');
+    await locator.waitForEnabled(50);
     await locator.fill('nouvelle valeur');
     await locator.click();
     await locator.clickDom();
@@ -245,6 +271,11 @@ describe('VS Code UI E2E driver', () => {
     const pending = closingTarget.send('Still.pending', {}, 100);
     closingSocket.close();
     await assert.rejects(pending, /target closed/);
+
+    const silentSocket = new FakeSocket();
+    silentSocket.send = function send() {};
+    const shortTimeoutTarget = new CdpTarget(silentSocket, null, 1);
+    await assert.rejects(shortTimeoutTarget.send('Never.responds'), /CDP Never\.responds timed out/);
   });
 
   it('times out when a DOM state never becomes observable', async () => {

@@ -3,11 +3,16 @@ const fs = require('fs');
 const path = require('path');
 
 const DEFAULT_TIMEOUT_MS = 15000;
+const configuredCdpCommandTimeoutMs = Number.parseInt(process.env.POF_E2E_CDP_COMMAND_TIMEOUT_MS || '', 10);
+const DEFAULT_CDP_COMMAND_TIMEOUT_MS = Number.isFinite(configuredCdpCommandTimeoutMs)
+  ? Math.max(1000, configuredCdpCommandTimeoutMs)
+  : 10000;
 
 class CdpTarget {
-  constructor(socket, sessionId = null) {
+  constructor(socket, sessionId = null, commandTimeoutMs = DEFAULT_CDP_COMMAND_TIMEOUT_MS) {
     this.socket = socket;
     this.sessionId = sessionId;
+    this.commandTimeoutMs = commandTimeoutMs;
     this.contextId = null;
     this.executionContextIds = [];
     this.nextId = 1;
@@ -33,7 +38,7 @@ class CdpTarget {
     });
   }
 
-  send(method, params = {}, timeoutMs = 3000) {
+  send(method, params = {}, timeoutMs = this.commandTimeoutMs) {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -151,6 +156,15 @@ class CdpLocator {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     throw new Error(`Timed out waiting for ${this.selector} attribute ${JSON.stringify(name)} to contain ${JSON.stringify(expected)}`);
+  }
+
+  async waitForEnabled(timeout = DEFAULT_TIMEOUT_MS) {
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+      if (await this.isEnabled()) return;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error(`Timed out waiting for ${this.selector} to become enabled`);
   }
 
   async fill(value) {
@@ -421,6 +435,26 @@ class HubPage {
 
   entryPointButton() {
     return this.target.locator('#btnGoToEntry');
+  }
+
+  goToAddressInput() {
+    return this.target.locator('#goToAddrInput');
+  }
+
+  xrefsMode() {
+    return this.target.locator('#xrefsMode');
+  }
+
+  xrefsButton() {
+    return this.target.locator('#btnXrefs');
+  }
+
+  xrefsResult() {
+    return this.target.locator('#xrefsResultContent');
+  }
+
+  firstXrefsJumpButton() {
+    return this.target.locator('#xrefsResultContent .xrefs-jump-btn');
   }
 
   annotationAddress() {
