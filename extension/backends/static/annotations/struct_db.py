@@ -16,6 +16,8 @@ MAX_DEFINITIONS = 2_048
 MAX_FIELDS_PER_DEFINITION = 4_096
 MAX_TYPED_REFS = 4_096
 MAX_FIELDS_PER_REF = 4_096
+MAX_TYPED_VAR_BINDINGS = 4_096
+MAX_TYPED_VAR_BINDINGS_PER_FUNCTION = 64
 
 
 def get_struct_db_path(workspace_root: str | None = None) -> str:
@@ -114,8 +116,21 @@ class StructDb:
                 size INTEGER NOT NULL,
                 PRIMARY KEY (ref_id, ordinal)
             );
+            CREATE TABLE IF NOT EXISTS typed_var_bindings (
+                id INTEGER PRIMARY KEY,
+                binary TEXT NOT NULL,
+                func_addr TEXT NOT NULL,
+                var_kind TEXT NOT NULL CHECK(var_kind IN ('param', 'local')),
+                var_key TEXT NOT NULL,
+                type_name TEXT NOT NULL,
+                type_kind TEXT NOT NULL CHECK(type_kind IN ('struct', 'union', 'enum')),
+                pointer_level INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(binary, func_addr, var_kind, var_key),
+                FOREIGN KEY (binary, type_name) REFERENCES definitions(binary, name) ON DELETE CASCADE
+            );
             CREATE INDEX IF NOT EXISTS idx_typed_refs_binary ON typed_refs(binary);
             CREATE INDEX IF NOT EXISTS idx_definitions_binary ON definitions(binary);
+            CREATE INDEX IF NOT EXISTS idx_typed_var_bindings_func ON typed_var_bindings(binary, func_addr);
             """
         )
 
@@ -326,6 +341,84 @@ class StructDb:
                     )
                     for index, field in enumerate(fields)
                 ],
+            )
+
+    def list_typed_var_bindings(
+        self, binary: str | None = None, func_addr: str | None = None
+    ) -> list[dict[str, Any]]:
+        if not os.path.isfile(self.path):
+            return []
+        with self._connect() as connection:
+            query = "SELECT * FROM typed_var_bindings"
+            clauses: list[str] = []
+            parameters: list[Any] = []
+            if binary:
+                clauses.append("binary = ?")
+                parameters.append(binary)
+            if func_addr:
+                clauses.append("func_addr = ?")
+                parameters.append(func_addr)
+            if clauses:
+                query += " WHERE " + " AND ".join(clauses)
+            query += " ORDER BY binary, func_addr, var_kind, var_key"
+            return [
+                {
+                    "binary": row["binary"],
+                    "func_addr": row["func_addr"],
+                    "var_kind": row["var_kind"],
+                    "var_key": row["var_key"],
+                    "type_name": row["type_name"],
+                    "type_kind": row["type_kind"],
+                    "pointer_level": row["pointer_level"],
+                }
+                for row in connection.execute(query, tuple(parameters))
+            ]
+
+    def save_typed_var_binding(self, entry: dict[str, Any]) -> None:
+        with self._connect() as connection:
+            existing = connection.execute(
+                "SELECT COUNT(*) FROM typed_var_bindings"
+            ).fetchone()[0]
+            matched = connection.execute(
+                """SELECT id FROM typed_var_bindings
+                WHERE binary = ? AND func_addr = ? AND var_kind = ? AND var_key = ?""",
+                (
+                    entry["binary"],
+                    entry["func_addr"],
+                    entry["var_kind"],
+                    entry["var_key"],
+                ),
+            ).fetchone()
+            if not matched and existing >= MAX_TYPED_VAR_BINDINGS:
+                raise ValueError(
+                    f"Trop de bindings de variables typées: limite de {MAX_TYPED_VAR_BINDINGS}."
+                )
+            if not matched:
+                per_function = connection.execute(
+                    "SELECT COUNT(*) FROM typed_var_bindings WHERE binary = ? AND func_addr = ?",
+                    (entry["binary"], entry["func_addr"]),
+                ).fetchone()[0]
+                if per_function >= MAX_TYPED_VAR_BINDINGS_PER_FUNCTION:
+                    raise ValueError(
+                        "Trop de bindings de variables typées pour cette fonction: "
+                        f"limite de {MAX_TYPED_VAR_BINDINGS_PER_FUNCTION}."
+                    )
+            connection.execute(
+                """INSERT INTO typed_var_bindings
+                (binary, func_addr, var_kind, var_key, type_name, type_kind, pointer_level)
+                VALUES(?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(binary, func_addr, var_kind, var_key) DO UPDATE SET
+                type_name=excluded.type_name, type_kind=excluded.type_kind,
+                pointer_level=excluded.pointer_level""",
+                (
+                    entry["binary"],
+                    entry["func_addr"],
+                    entry["var_kind"],
+                    entry["var_key"],
+                    entry["type_name"],
+                    entry["type_kind"],
+                    entry.get("pointer_level", 0),
+                ),
             )
 
 

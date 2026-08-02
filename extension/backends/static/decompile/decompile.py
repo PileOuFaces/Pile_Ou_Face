@@ -43,6 +43,10 @@ from backends.static.annotations.typed_struct_refs import (
     build_typed_struct_index,
     typed_struct_signature,
 )
+from backends.static.annotations.typed_var_bindings import (
+    build_typed_var_binding_index,
+    typed_var_binding_signature,
+)
 from backends.static.cache.cache_store import get_payload, put_payload
 
 _log = get_logger(__name__)
@@ -1302,6 +1306,7 @@ def _cache_key(
     annotations_signature: str = "",
     stack_signature: str = "",
     typed_structs_signature: str = "",
+    typed_var_bindings_signature: str = "",
 ) -> str:
     """Clé de cache 16 hex chars."""
     binary_signature = _file_signature(binary_path) or binary_path
@@ -1315,6 +1320,7 @@ def _cache_key(
             annotations_signature,
             stack_signature,
             typed_structs_signature,
+            typed_var_bindings_signature,
         ]
     )
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
@@ -1604,6 +1610,91 @@ def _load_typed_struct_annotation_payload(
             }
         )
     return names, comments, notes
+
+
+def _ordered_arg_names(stack_vars: list[dict] | None) -> list[str]:
+    """Same arg filter/order as `_stack_token_aliases`, so `param_N` identity matches."""
+    names: list[str] = []
+    for entry in stack_vars or []:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name") or "").strip()
+        if not name:
+            continue
+        offset = entry.get("offset")
+        source = str(entry.get("source") or "").strip().lower()
+        is_arg = source == "abi"
+        if not is_arg and isinstance(offset, int):
+            is_arg = offset >= 0
+        if is_arg:
+            names.append(name)
+    return names
+
+
+def _load_typed_var_binding_payload(
+    binary_path: str,
+    func_addr: str,
+    stack_vars: list[dict] | None,
+    ptr_size: int = 8,
+) -> tuple[dict[str, dict[int, str]], dict[str, dict[int, str]]]:
+    """Resolve typed_var_bindings identities ("param:1", "local:-16") to the
+    decompiler's final display names, using the same param-ordering logic as
+    the existing stack-var substitution so identity survives renaming."""
+    try:
+        index = build_typed_var_binding_index(binary_path, func_addr, ptr_size=ptr_size)
+    except Exception:
+        return {}, {}
+    raw_field_access = index.get("field_access_map") or {}
+    raw_enum_literal = index.get("enum_literal_map") or {}
+    if not raw_field_access and not raw_enum_literal:
+        return {}, {}
+
+    ordered_args = _ordered_arg_names(stack_vars)
+    offset_to_name: dict[int, str] = {}
+    for entry in stack_vars or []:
+        if not isinstance(entry, dict):
+            continue
+        offset = entry.get("offset")
+        name = str(entry.get("name") or "").strip()
+        if isinstance(offset, int) and name:
+            offset_to_name[offset] = name
+
+    def _resolve_identity(identity: str) -> str | None:
+        kind, _, key = identity.partition(":")
+        if kind == "param":
+            ordinal = _safe_int_local(key)
+            if ordinal is None or ordinal < 1 or ordinal > len(ordered_args):
+                return None
+            return ordered_args[ordinal - 1]
+        if kind == "local":
+            offset = _safe_int_local(key)
+            if offset is None:
+                return None
+            return offset_to_name.get(offset)
+        return None
+
+    def _safe_int_local(value: str) -> int | None:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    field_access_map: dict[str, dict[int, str]] = {}
+    for identity, offsets in raw_field_access.items():
+        resolved = _resolve_identity(identity)
+        if resolved:
+            field_access_map.setdefault(resolved, {}).update(offsets)
+
+    enum_literal_map: dict[str, dict[int, str]] = {}
+    for identity, values in raw_enum_literal.items():
+        base_identity, sep, field_name = identity.partition("->")
+        resolved = _resolve_identity(base_identity)
+        if not resolved:
+            continue
+        key = f"{resolved}->{field_name}" if sep else resolved
+        enum_literal_map.setdefault(key, {}).update(values)
+
+    return field_access_map, enum_literal_map
 
 
 def _annotation_patterns(addr_norm: str) -> list[str]:
@@ -2216,6 +2307,75 @@ def _stack_signature(
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
+def _rewrite_typed_field_access(
+    code: str, field_access_map: dict[str, dict[int, str]] | None
+) -> str:
+    """Rewrite `*(TYPE *)(base ± off)` into `base->field` for known struct/union bindings.
+
+    Regex-based, single level only: `base->inner->field` is not produced (the cast's
+    inner parens must contain a bare identifier, not another `->` expression). Non-constant
+    offsets (`base + i*8`) never match, which is the correct no-op default. A cast that
+    differs from the field's declared type still substitutes based on offset alone —
+    imprecise but informative, not a correctness blocker for this lot.
+    """
+    if not code or not field_access_map:
+        return code
+    for var_name, offsets in sorted(
+        field_access_map.items(), key=lambda item: (-len(item[0]), item[0])
+    ):
+        pattern = re.compile(
+            rf"\*\(\s*(?:[A-Za-z_]\w*\s+)*\*+\s*\)\s*\(\s*{re.escape(var_name)}\s*"
+            rf"(?P<sign>[+\-])\s*(?P<off>0x[0-9a-fA-F]+|\d+)\s*\)"
+        )
+
+        def _replace(
+            m: re.Match, offsets: dict[int, str] = offsets, var_name: str = var_name
+        ) -> str:
+            off_val = _parse_numeric_token(m.group("off")) or 0
+            if m.group("sign") == "-":
+                off_val = -off_val
+            field_name = offsets.get(off_val)
+            if not field_name:
+                return m.group(0)
+            return f"{var_name}->{field_name}"
+
+        code = pattern.sub(_replace, code)
+    return code
+
+
+def _rewrite_typed_enum_literals(
+    code: str, enum_literal_map: dict[str, dict[int, str]] | None
+) -> str:
+    """Rewrite `base == N` / `base != N` into `base == SYMBOLIC_NAME` for known enum bindings.
+
+    Only direct `==`/`!=` comparisons against the bare variable (or `base->field`) name are
+    covered; `switch (mode) { case 2: }` is an explicit fast-follow, not handled here.
+    """
+    if not code or not enum_literal_map:
+        return code
+    for var_expr, values in sorted(
+        enum_literal_map.items(), key=lambda item: (-len(item[0]), item[0])
+    ):
+        pattern = re.compile(
+            rf"(?<![\w.]){re.escape(var_expr)}(?!\w)\s*(?P<op>==|!=)\s*"
+            rf"(?P<lit>-?0x[0-9a-fA-F]+|-?\d+)"
+        )
+
+        def _replace(
+            m: re.Match, var_expr: str = var_expr, values: dict[int, str] = values
+        ) -> str:
+            lit = _parse_numeric_token(m.group("lit"))
+            if lit is None:
+                return m.group(0)
+            name = values.get(lit)
+            if not name:
+                return m.group(0)
+            return f"{var_expr} {m.group('op')} {name}"
+
+        code = pattern.sub(_replace, code)
+    return code
+
+
 def _postprocess_code(
     code: str,
     annotations_map: dict[str, str],
@@ -2224,6 +2384,8 @@ def _postprocess_code(
     binary_path: str = "",
     addr: str = "",
     decompiler: str = "",
+    field_access_map: dict[str, dict[int, str]] | None = None,
+    enum_literal_map: dict[str, dict[int, str]] | None = None,
 ) -> str:
     """Post-traitement du pseudo-C : injecte les noms d'annotations et variables de stack.
 
@@ -2231,6 +2393,10 @@ def _postprocess_code(
         code: Pseudo-C brut du décompilateur
         annotations_map: {addr_hex_norm: name} (adresses sans préfixe 0x, lowercase)
         stack_vars: Optionnel, liste de {name, offset} depuis stack_frame.py
+        field_access_map: Optionnel, {var_name: {offset: field_name}} pour réécrire
+            `*(T *)(var + off)` en `var->field` (résolu depuis typed_var_bindings)
+        enum_literal_map: Optionnel, {var_name_ou_var->field: {valeur: nom_const}} pour
+            réécrire les comparaisons littérales en constantes symboliques
 
     Returns:
         Pseudo-C enrichi avec les noms symboliques.
@@ -2304,6 +2470,10 @@ def _postprocess_code(
                 code,
                 flags=re.IGNORECASE,
             )
+
+    # 3. Typed var bindings: pointer-arithmetic member access + symbolic enum literals
+    code = _rewrite_typed_field_access(code, field_access_map)
+    code = _rewrite_typed_enum_literals(code, enum_literal_map)
 
     return code
 
@@ -2685,6 +2855,11 @@ def decompile_function(
     else:
         stack_frame_data = _stack_frame_payload(None, stack_vars)
 
+    ptr_size = 4 if "32" in binary_meta.get("bitness", "") else 8
+    field_access_map, enum_literal_map = _load_typed_var_binding_payload(
+        binary_path, addr, stack_vars, ptr_size=ptr_size
+    )
+
     _cdir = cache_dir if cache_dir is not None else _DEFAULT_CACHE_DIR
     _key = _cache_key(
         binary_path,
@@ -2694,6 +2869,9 @@ def decompile_function(
         annotations_signature=annotations_signature,
         stack_signature=_stack_signature(stack_frame_data, stack_vars),
         typed_structs_signature=typed_struct_signature(binary_path),
+        typed_var_bindings_signature=typed_var_binding_signature(
+            binary_path, func_addr=addr
+        ),
     )
     cached = None if no_cache else _read_cache(_key, _cdir)
     if cached is not None:
@@ -2715,6 +2893,8 @@ def decompile_function(
                 binary_path=binary_path,
                 addr=addr,
                 decompiler=str(result.get("decompiler") or decompiler or ""),
+                field_access_map=field_access_map,
+                enum_literal_map=enum_literal_map,
             )
         notes = _collect_annotation_notes(raw_code, ann_map, annotation_comments)
         if notes:
