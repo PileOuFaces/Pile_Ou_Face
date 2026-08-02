@@ -124,6 +124,24 @@ class TestEvaluateResult(unittest.TestCase):
         self.assertEqual(evaluation.reasons, ("rss_regression_fail",))
         self.assertTrue(evaluation.blocking)
 
+    def test_subsecond_duration_jitter_does_not_block(self):
+        evaluation = evaluate_result(
+            make_result(elapsed_s=0.527),
+            BUDGETS["medium"],
+            baseline=Baseline(100 * MIB, 0.39),
+        )
+        self.assertEqual(evaluation.status, "warning")
+        self.assertEqual(evaluation.reasons, ("duration_regression_warn",))
+
+    def test_meaningful_duration_regression_still_blocks(self):
+        evaluation = evaluate_result(
+            make_result(elapsed_s=0.8),
+            BUDGETS["medium"],
+            baseline=Baseline(100 * MIB, 0.39),
+        )
+        self.assertEqual(evaluation.status, "regression_limit")
+        self.assertEqual(evaluation.reasons, ("duration_regression_fail",))
+
     def test_exact_baseline_limits_are_allowed(self):
         evaluation = evaluate_result(
             make_result(peak_rss_bytes=135 * MIB, elapsed_s=1.35),

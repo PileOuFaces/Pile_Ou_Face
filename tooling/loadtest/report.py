@@ -9,6 +9,10 @@ from typing import Any
 
 REGRESSION_WARN_RATIO = 1.20
 REGRESSION_FAIL_RATIO = 1.35
+# Ratios on sub-second commands amplify normal scheduler/startup jitter. Keep
+# the relative gate, but require a meaningful absolute duration delta too.
+REGRESSION_WARN_DURATION_DELTA_S = 0.10
+REGRESSION_FAIL_DURATION_DELTA_S = 0.25
 
 
 @dataclass
@@ -96,7 +100,10 @@ def evaluate_result(
     if baseline is not None:
         if result.peak_rss_bytes > baseline.peak_rss_bytes * regression_fail_ratio:
             reasons.append("rss_regression_fail")
-        if result.elapsed_s > baseline.elapsed_s * regression_fail_ratio:
+        if (
+            result.elapsed_s > baseline.elapsed_s * regression_fail_ratio
+            and result.elapsed_s - baseline.elapsed_s > REGRESSION_FAIL_DURATION_DELTA_S
+        ):
             reasons.append("duration_regression_fail")
 
     if reasons:
@@ -115,7 +122,10 @@ def evaluate_result(
     if baseline is not None:
         if result.peak_rss_bytes > baseline.peak_rss_bytes * regression_warn_ratio:
             reasons.append("rss_regression_warn")
-        if result.elapsed_s > baseline.elapsed_s * regression_warn_ratio:
+        if (
+            result.elapsed_s > baseline.elapsed_s * regression_warn_ratio
+            and result.elapsed_s - baseline.elapsed_s > REGRESSION_WARN_DURATION_DELTA_S
+        ):
             reasons.append("duration_regression_warn")
     return Evaluation("warning" if reasons else "ok", tuple(reasons))
 
