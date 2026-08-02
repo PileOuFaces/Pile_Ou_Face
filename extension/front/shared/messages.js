@@ -7,11 +7,26 @@ function reportStaticWebviewPerf(event, startedAt, details = {}) {
   }, { afterPaint: true });
 }
 
+function areEquivalentStaticBinaryPaths(left, right) {
+  const normalize = (value) => String(value || '')
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/^\.\/+/, '');
+  const leftPath = normalize(left);
+  const rightPath = normalize(right);
+  if (!leftPath || !rightPath) return false;
+  if (leftPath === rightPath) return true;
+  const [shortPath, longPath] = leftPath.length < rightPath.length
+    ? [leftPath, rightPath]
+    : [rightPath, leftPath];
+  const shortPathIsAbsolute = shortPath.startsWith('/') || /^[a-z]:\//i.test(shortPath);
+  return !shortPathIsAbsolute && longPath.endsWith(`/${shortPath}`);
+}
+
 function isStaleStaticBinaryResponse(msg, scope) {
-  const normalize = (value) => String(value || '').trim().replace(/\\/g, '/');
   const currentBinaryPath = typeof getStaticBinaryPath === 'function' ? getStaticBinaryPath() : '';
   const responseBinaryPath = String(msg?.binaryPath || '').trim();
-  if (!responseBinaryPath || !currentBinaryPath || normalize(responseBinaryPath) === normalize(currentBinaryPath)) {
+  if (!responseBinaryPath || !currentBinaryPath || areEquivalentStaticBinaryPaths(responseBinaryPath, currentBinaryPath)) {
     return false;
   }
   vscode.postMessage({

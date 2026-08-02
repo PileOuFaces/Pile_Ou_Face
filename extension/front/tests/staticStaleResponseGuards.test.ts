@@ -19,6 +19,25 @@ describe("static stale response guards", () => {
     return source.slice(start, end);
   }
 
+  function equivalentPaths() {
+    const source = messagesSource();
+    const start = source.indexOf('function areEquivalentStaticBinaryPaths');
+    const end = source.indexOf('\nfunction isStaleStaticBinaryResponse', start);
+    expect(start, 'path equivalence helper not found').to.be.greaterThan(-1);
+    expect(end, 'path equivalence helper end not found').to.be.greaterThan(start);
+    return new Function(`${source.slice(start, end)}; return areEquivalentStaticBinaryPaths;`)();
+  }
+
+  it('accepts equivalent workspace-relative and absolute binary paths', () => {
+    const matches = equivalentPaths();
+
+    expect(matches('fixture.elf', '/workspace/fixture.elf')).to.equal(true);
+    expect(matches('./bin/fixture.elf', '/workspace/bin/fixture.elf')).to.equal(true);
+    expect(matches('bin\\fixture.elf', 'C:\\workspace\\bin\\fixture.elf')).to.equal(true);
+    expect(matches('/workspace-a/fixture.elf', '/workspace-b/fixture.elf')).to.equal(false);
+    expect(matches('first.elf', '/workspace/second.elf')).to.equal(false);
+  });
+
   it("guards disasm-ready before invalidating graph caches", () => {
     const handler = handlerFor(messagesSource(), "hubDisasmReady", "hubStaticCompileDone");
     const guardIndex = handler.indexOf("isStaleStaticBinaryResponse(msg, 'static-disasm-ready')");

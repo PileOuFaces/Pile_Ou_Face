@@ -883,6 +883,54 @@ async function run() {
     }
   }));
 
+  suite.addTest(new Mocha.Test('restores the selected binary and visible analysis after reopening the hub', async () => {
+    const [fixture] = readFixtureSpecs();
+    assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
+    const binaryName = path.basename(fixture.path);
+    let target = null;
+    try {
+      await vscode.commands.executeCommand('pileOuFace.goToAddress');
+      target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+      let hub = new HubPage(target);
+
+      await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+        type: 'hubUseBinaryPath',
+        binaryPath: fixture.path,
+      });
+      await hub.binaryPath().waitForValue(binaryName, 30000);
+      await hub.topBarBinaryName().waitForText(binaryName, 30000);
+      await hub.openPanel('static');
+      await hub.openStaticTab('data', 'info');
+      const visibleInfo = await hub.binaryInfo().waitForText('Entry point', 30000);
+      assert.match(visibleInfo, /Format/);
+      assert.match(visibleInfo, /Bits/);
+
+      target.close();
+      target = null;
+      await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+      await vscode.commands.executeCommand('pileOuFace.goToAddress');
+      target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+      hub = new HubPage(target);
+
+      await hub.binaryPath().waitForValue(binaryName, 30000);
+      await hub.topBarBinaryName().waitForText(binaryName, 30000);
+      await hub.openPanel('static');
+      await hub.openStaticTab('data', 'info');
+      const restoredInfo = await hub.binaryInfo().waitForText('Entry point', 30000);
+      assert.equal(restoredInfo, visibleInfo, 'the reopened hub must render the same binary analysis');
+    } catch (error) {
+      const artifacts = await captureUiFailure(
+        target,
+        process.env.POF_E2E_ARTIFACTS_DIR,
+        'hub-analysis-reload',
+      );
+      error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
+      throw error;
+    } finally {
+      target?.close();
+    }
+  }));
+
   suite.addTest(new Mocha.Test('creates, restores, updates and deletes an annotation through the UI', async () => {
     let target = null;
     try {
@@ -1668,7 +1716,7 @@ async function run() {
   }));
 
   if (['1', 'true', 'yes'].includes(String(process.env.POF_E2E_UI_ONLY || '').toLowerCase())) {
-    mocha.grep(/real webview controls|real confirmation UI|restores it from cache through the real UI|incoming and outgoing xrefs through the real UI/);
+    mocha.grep(/real webview controls|real confirmation UI|restores it from cache through the real UI|restores the selected binary and visible analysis|incoming and outgoing xrefs through the real UI/);
   }
 
   return new Promise((resolve, reject) => {
