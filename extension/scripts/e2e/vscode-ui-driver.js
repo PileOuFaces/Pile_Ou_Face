@@ -3,11 +3,16 @@ const fs = require('fs');
 const path = require('path');
 
 const DEFAULT_TIMEOUT_MS = 15000;
+const configuredCdpCommandTimeoutMs = Number.parseInt(process.env.POF_E2E_CDP_COMMAND_TIMEOUT_MS || '', 10);
+const DEFAULT_CDP_COMMAND_TIMEOUT_MS = Number.isFinite(configuredCdpCommandTimeoutMs)
+  ? Math.max(1000, configuredCdpCommandTimeoutMs)
+  : 10000;
 
 class CdpTarget {
-  constructor(socket, sessionId = null) {
+  constructor(socket, sessionId = null, commandTimeoutMs = DEFAULT_CDP_COMMAND_TIMEOUT_MS) {
     this.socket = socket;
     this.sessionId = sessionId;
+    this.commandTimeoutMs = commandTimeoutMs;
     this.contextId = null;
     this.executionContextIds = [];
     this.nextId = 1;
@@ -33,7 +38,7 @@ class CdpTarget {
     });
   }
 
-  send(method, params = {}, timeoutMs = 3000) {
+  send(method, params = {}, timeoutMs = this.commandTimeoutMs) {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {

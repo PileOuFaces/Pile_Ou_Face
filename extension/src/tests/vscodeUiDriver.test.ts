@@ -271,6 +271,11 @@ describe('VS Code UI E2E driver', () => {
     const pending = closingTarget.send('Still.pending', {}, 100);
     closingSocket.close();
     await assert.rejects(pending, /target closed/);
+
+    const silentSocket = new FakeSocket();
+    silentSocket.send = function send() {};
+    const shortTimeoutTarget = new CdpTarget(silentSocket, null, 1);
+    await assert.rejects(shortTimeoutTarget.send('Never.responds'), /CDP Never\.responds timed out/);
   });
 
   it('times out when a DOM state never becomes observable', async () => {
