@@ -106,7 +106,12 @@ describe('VS Code UI E2E driver', () => {
     await locator.clickDom();
 
     assert.deepEqual(sent, ['Input.dispatchMouseEvent', 'Input.dispatchMouseEvent']);
-    assert.ok(evaluations.some((expression) => expression.includes("scrollIntoView({ block: 'center', inline: 'center' })")));
+    const scrollIndex = evaluations.findIndex((expression) => expression.includes("scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' })"));
+    const layoutIndex = evaluations.findIndex((expression) => expression.includes('requestAnimationFrame'));
+    const coordinatesIndex = evaluations.findIndex((expression) => expression.includes('rect.left'));
+    assert.ok(scrollIndex >= 0, 'the target is scrolled into view');
+    assert.ok(layoutIndex > scrollIndex, 'the driver waits for the scrolled layout');
+    assert.ok(coordinatesIndex > layoutIndex, 'click coordinates use the updated layout');
     assert.ok(evaluations.some((expression) => expression.includes('el.click()')));
   });
 

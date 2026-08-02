@@ -168,9 +168,15 @@ class CdpLocator {
 
   async click() {
     await this.waitFor({ state: 'visible' });
+    const scrolled = await this.target.evaluate(this.expression(`
+      if (!el || el.disabled) return false;
+      el.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' });
+      return true;
+    `));
+    if (!scrolled) throw new Error(`Element is disabled or missing: ${this.selector}`);
+    await this.target.evaluate('new Promise((resolve) => requestAnimationFrame(() => resolve(true)))');
     const point = await this.target.evaluate(this.expression(`
       if (!el || el.disabled) return null;
-      el.scrollIntoView({ block: 'center', inline: 'center' });
       const rect = el.getBoundingClientRect();
       return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
     `));
