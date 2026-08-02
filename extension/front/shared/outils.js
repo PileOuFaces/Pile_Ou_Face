@@ -1628,6 +1628,23 @@ function resetStaticBinaryDerivedState() {
   window._lastDisasmAddr = '';
   window.lastBinaryArch = '';
   window._annotations = {};
+  const annotationBadge = document.getElementById('annotationAddrBadge');
+  if (annotationBadge) {
+    annotationBadge.textContent = '\u2014';
+    annotationBadge.dataset.addr = '';
+    annotationBadge.classList.remove('has-addr');
+  }
+  const annotationName = document.getElementById('annotationName');
+  if (annotationName) annotationName.value = '';
+  const annotationComment = document.getElementById('annotationComment');
+  if (annotationComment) annotationComment.value = '';
+  const annotationSubmit = document.getElementById('btnAddAnnotation');
+  if (annotationSubmit) {
+    annotationSubmit.disabled = true;
+    annotationSubmit.textContent = 'Annoter';
+    annotationSubmit.title = "Sélectionnez d'abord une adresse";
+  }
+  if (typeof renderAnnotationsList === 'function') renderAnnotationsList({});
   resetGraphDerivedState();
   updateActiveContextBars('');
   renderBookmarks();

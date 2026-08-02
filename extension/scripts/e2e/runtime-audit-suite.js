@@ -579,9 +579,10 @@ async function run() {
       await hub.interfaceModeButton('simple').waitForAttribute('aria-pressed', 'true', 30000);
 
       const savesBeforeRestore = countCurrentAuditEvents(userDataDir, isSettingsSave);
-      await hub.interfaceModeButton('advanced').click();
+      await hub.interfaceModeButton('advanced').clickDom();
       await hub.interfaceModeInput().waitForValue('advanced', 30000);
-      await hub.staticFeaturesAllButton().click();
+      await hub.staticFeaturesAllButton().waitForEnabled(30000);
+      await hub.staticFeaturesAllButton().clickDom();
       await waitForAuditEvents(userDataDir, (events) => countEvents(events, isSettingsSave) > savesBeforeRestore);
     } catch (error) {
       const artifacts = await captureUiFailure(
@@ -1044,6 +1045,114 @@ async function run() {
         target,
         process.env.POF_E2E_ARTIFACTS_DIR,
         'hub-annotation-lifecycle',
+      );
+      error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
+      throw error;
+    } finally {
+      target?.close();
+    }
+  }));
+
+  suite.addTest(new Mocha.Test('isolates annotations when switching between recent binaries and reopening the hub', async () => {
+    const userDataDir = process.env.POF_E2E_USER_DATA_DIR;
+    assert.ok(userDataDir, 'POF_E2E_USER_DATA_DIR is required');
+    let target = null;
+    try {
+      const [sourceFixture] = readFixtureSpecs()
+        .sort((left, right) => Number(left.sizeBytes || 0) - Number(right.sizeBytes || 0));
+      assert.ok(sourceFixture?.path && fs.existsSync(sourceFixture.path), 'UI fixture binary must exist');
+      const isolationRoot = process.env.POF_E2E_WORKSPACE_DIR || path.dirname(sourceFixture.path);
+      const fixtureA = {
+        ...sourceFixture,
+        path: path.join(isolationRoot, `e2e-isolation-a-${process.pid}.elf`),
+      };
+      const fixtureB = {
+        ...sourceFixture,
+        path: path.join(isolationRoot, `e2e-isolation-b-${process.pid}.elf`),
+      };
+      fs.copyFileSync(sourceFixture.path, fixtureA.path);
+      fs.appendFileSync(fixtureA.path, `pof-e2e-isolation-a-${process.pid}`);
+      fs.copyFileSync(sourceFixture.path, fixtureB.path);
+      fs.appendFileSync(fixtureB.path, `pof-e2e-isolation-b-${process.pid}`);
+      const binaryAName = path.basename(fixtureA.path);
+      const binaryBName = path.basename(fixtureB.path);
+
+      await vscode.commands.executeCommand('pileOuFace.goToAddress');
+      target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+      let hub = new HubPage(target);
+      const countDisasmResponses = () => countCurrentAuditEvents(userDataDir, (event) => (
+        event.kind === 'webview_post_message' && event.name === 'hubDisasmReady'
+      ));
+      const waitForNextDisasm = (previousCount) => waitForAuditEvents(userDataDir, (events) => (
+        countEvents(events, (event) => event.kind === 'webview_post_message' && event.name === 'hubDisasmReady') > previousCount
+      ), 30000);
+
+      let disasmResponses = countDisasmResponses();
+      await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+        type: 'hubUseBinaryPath',
+        binaryPath: fixtureA.path,
+      });
+      await hub.binaryPath().waitForValue(binaryAName, 30000);
+      await waitForNextDisasm(disasmResponses);
+      await hub.entryPointButton().clickDom();
+      await hub.annotationAddress().waitForAttribute('data-addr', '0x', 30000);
+      await hub.annotationName().fill('e2e_binary_a');
+      await hub.annotationComment().fill('Annotation isolée du premier binaire');
+      await hub.annotationSubmitButton().clickDom();
+      await hub.annotationsList().waitForText('e2e_binary_a', 30000);
+
+      disasmResponses = countDisasmResponses();
+      await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+        type: 'hubUseBinaryPath',
+        binaryPath: fixtureB.path,
+      });
+      await hub.binaryPath().waitForValue(binaryBName, 30000);
+      await waitForNextDisasm(disasmResponses);
+      await hub.annotationsList().waitForText('Aucune annotation.', 30000);
+      await hub.entryPointButton().clickDom();
+      await hub.annotationAddress().waitForAttribute('data-addr', '0x', 30000);
+      await hub.annotationName().fill('e2e_binary_b');
+      await hub.annotationComment().fill('Annotation isolée du second binaire');
+      await hub.annotationSubmitButton().clickDom();
+      await hub.annotationsList().waitForText('e2e_binary_b', 30000);
+
+      disasmResponses = countDisasmResponses();
+      await hub.topBarBinaryButton().clickDom();
+      await hub.topBarBinaryMenu().waitFor({ state: 'visible', timeout: 30000 });
+      await hub.recentBinaryButton(binaryAName).clickDom();
+      await hub.binaryPath().waitForValue(binaryAName, 30000);
+      await waitForNextDisasm(disasmResponses);
+      await hub.annotationsList().waitForText('e2e_binary_a', 30000);
+      assert.ok(
+        !String(await hub.annotationsList().textContent() || '').includes('e2e_binary_b'),
+        'the first binary must not display the second binary annotation',
+      );
+
+      target.close();
+      target = null;
+      await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+      await vscode.commands.executeCommand('pileOuFace.goToAddress');
+      target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+      hub = new HubPage(target);
+      await hub.binaryPath().waitForValue(binaryAName, 30000);
+      await hub.annotationsList().waitForText('e2e_binary_a', 30000);
+
+      disasmResponses = countDisasmResponses();
+      await hub.topBarBinaryButton().clickDom();
+      await hub.topBarBinaryMenu().waitFor({ state: 'visible', timeout: 30000 });
+      await hub.recentBinaryButton(binaryBName).clickDom();
+      await hub.binaryPath().waitForValue(binaryBName, 30000);
+      await waitForNextDisasm(disasmResponses);
+      await hub.annotationsList().waitForText('e2e_binary_b', 30000);
+      assert.ok(
+        !String(await hub.annotationsList().textContent() || '').includes('e2e_binary_a'),
+        'the second binary must not display the first binary annotation',
+      );
+    } catch (error) {
+      const artifacts = await captureUiFailure(
+        target,
+        process.env.POF_E2E_ARTIFACTS_DIR,
+        'hub-binary-isolation',
       );
       error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
       throw error;

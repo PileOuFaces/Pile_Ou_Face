@@ -521,7 +521,9 @@
         if (!sameSelection && typeof resetStaticBinaryDerivedState === 'function') {
           resetStaticBinaryDerivedState();
         }
-        applyStaticBinarySelectionUi(bp, nextMeta, skipAutoLoad);
+        // A new selection is autoloaded once by finalizeStaticBinarySelection.
+        // Rendering the stored tab here must not launch the same backend work in parallel.
+        applyStaticBinarySelectionUi(bp, nextMeta, skipAutoLoad || !sameSelection);
         finalizeStaticBinarySelection(bp, nextMeta, { sameSelection, skipAutoLoad });
         if (!sameSelection && typeof trackBinaryLoaded === 'function') {
           trackBinaryLoaded(nextMeta);

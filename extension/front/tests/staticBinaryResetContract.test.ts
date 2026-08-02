@@ -28,6 +28,11 @@ describe("static binary reset contract", () => {
     expect(body).to.include("tabDataCache = {}");
     expect(body).to.include("window.sectionsCache = []");
     expect(body).to.include("window._annotations = {}");
+    expect(body).to.include("annotationBadge.dataset.addr = ''");
+    expect(body).to.include("annotationName.value = ''");
+    expect(body).to.include("annotationComment.value = ''");
+    expect(body).to.include("annotationSubmit.disabled = true");
+    expect(body).to.include("renderAnnotationsList({})");
   });
 
   it("documents which state each reset helper owns", () => {
