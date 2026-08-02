@@ -39,6 +39,8 @@
     let pendingBinaryPath = '';
     let functionCount = 0;
     let previousFocus = null;
+    let lastRunError = '';
+    let lastRunErrorBinaryPath = '';
 
     const currentBinaryPath = () => (
       typeof getStaticBinaryPath === 'function' ? getStaticBinaryPath() : ''
@@ -72,9 +74,11 @@
       }
       const available = Boolean(cleanPath && preflight?.available);
       if (prepareBtn && !activeRuns.has(cleanPath)) prepareBtn.disabled = !available;
-      if (helpEl) helpEl.textContent = cleanPath
-        ? (preflight && !preflight.available ? 'Désassemble d’abord ce binaire pour activer l’auto-triage.' : '')
-        : 'Choisis d’abord un binaire dans l’analyse statique.';
+      if (helpEl) helpEl.textContent = cleanPath && cleanPath === lastRunErrorBinaryPath && lastRunError
+        ? lastRunError
+        : cleanPath
+          ? (preflight && !preflight.available ? 'Désassemble d’abord ce binaire pour activer l’auto-triage.' : '')
+          : 'Choisis d’abord un binaire dans l’analyse statique.';
     }
 
     function closePreflight() {
@@ -173,6 +177,11 @@
       // côté host, qui remonte l'erreur via hubAutoTriageDone (widget de suivi).
       const { provider, model } = resolveProviderAndModel();
       const requestId = `triage-${Date.now()}-${++seq}`;
+      if (lastRunErrorBinaryPath === path) {
+        lastRunError = '';
+        lastRunErrorBinaryPath = '';
+        if (helpEl) helpEl.textContent = '';
+      }
       activeRuns.set(path, requestId);
       closePreflight();
       setState('En cours', 'running');
@@ -284,11 +293,13 @@
         bus.postMessage({ type: 'hubLoadAnnotations', binaryPath: msg.binaryPath });
         const currentPath = currentBinaryPath();
         if (msg.binaryPath === currentPath) {
+          lastRunError = msg.ok ? '' : String(msg.error || 'Échec de l’auto-triage.');
+          lastRunErrorBinaryPath = msg.ok ? '' : msg.binaryPath;
           setReportButton(msg.ok ? msg.reportPath : '');
           setState(msg.ok ? (msg.cancelled ? 'À reprendre' : 'Terminé') : 'Échec', msg.ok ? (msg.cancelled ? 'running' : 'done') : 'error');
           if (prepareBtn) { prepareBtn.disabled = false; prepareBtn.textContent = msg.cancelled ? 'Reprendre l’auto-triage' : 'Relancer l’auto-triage'; }
           if (cancelBtn) cancelBtn.hidden = true;
-          if (helpEl) helpEl.textContent = msg.ok ? '' : String(msg.error || 'Échec de l’auto-triage.');
+          if (helpEl) helpEl.textContent = lastRunError;
           refreshReportButton();
         }
       }
