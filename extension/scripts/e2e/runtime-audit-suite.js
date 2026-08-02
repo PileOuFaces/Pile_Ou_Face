@@ -905,6 +905,15 @@ async function run() {
       assert.match(visibleInfo, /Format/);
       assert.match(visibleInfo, /Bits/);
 
+      await hub.openStaticTab('data', 'sections');
+      const visibleSections = await hub.binarySections().waitForText('.text', 30000);
+      assert.match(visibleSections, /section\(s\)/);
+
+      await hub.openStaticTab('code', 'discovered');
+      const visibleFunctionCount = await hub.binaryFunctionsCount().waitForText('fonction', 30000);
+      assert.match(visibleFunctionCount, /\d+ fonction/);
+      await hub.binaryFunctions().waitFor({ state: 'visible', timeout: 30000 });
+
       target.close();
       target = null;
       await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
