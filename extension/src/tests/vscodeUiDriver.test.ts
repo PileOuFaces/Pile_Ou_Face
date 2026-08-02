@@ -343,6 +343,11 @@ describe('VS Code UI E2E driver', () => {
     assert.equal(hub.autoTriageResult().selector, '[data-auto-triage-result]');
     assert.equal(hub.autoTriageResultTitle().selector, '[data-auto-triage-result-title]');
     assert.equal(hub.disassemblyBinarySummary().selector, '#disasmSummaryBinary');
+    assert.equal(hub.topBarBinaryButton().selector, '#topBarBinaryButton');
+    assert.equal(
+      hub.recentBinaryButton('fixture.elf').selector,
+      '#topBarRecentList > .top-bar-menu-item[title="fixture.elf"]',
+    );
     assert.equal(hub.firstFunctionDisasmButton().selector, '#functionsContent .functions-row-action[data-view="disasm"]');
     assert.equal(hub.functionDossierButton().selector, '#functionsDetails .functions-export-action');
     assert.equal(hub.offsetHexInput().selector, '#offsetHex');

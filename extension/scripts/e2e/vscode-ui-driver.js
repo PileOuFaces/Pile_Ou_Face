@@ -313,8 +313,16 @@ class HubPage {
     return this.target.locator('#topBarBinaryName');
   }
 
+  topBarBinaryButton() {
+    return this.target.locator('#topBarBinaryButton');
+  }
+
   topBarBinaryMenu() {
     return this.target.locator('#topBarBinaryMenu');
+  }
+
+  recentBinaryButton(binaryPath) {
+    return this.target.locator(`#topBarRecentList > .top-bar-menu-item[title=${JSON.stringify(String(binaryPath))}]`);
   }
 
   currentBinaryName() {
