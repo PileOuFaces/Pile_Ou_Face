@@ -132,6 +132,20 @@ describe('VS Code UI E2E driver', () => {
     ]);
   });
 
+  it('exposes binary analysis through a stable selector', () => {
+    const selectors: string[] = [];
+    const target = {
+      locator(selector: string) {
+        selectors.push(selector);
+        return { selector };
+      },
+    };
+
+    new HubPage(target).binaryInfo();
+
+    assert.deepEqual(selectors, ['#infoContent']);
+  });
+
   it('falls back to a DOM click when Electron ignores panel navigation coordinates', async () => {
     const calls: string[] = [];
     const target = {

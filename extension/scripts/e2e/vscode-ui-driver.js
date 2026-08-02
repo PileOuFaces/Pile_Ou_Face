@@ -321,6 +321,10 @@ class HubPage {
     return this.target.locator('#topBarCurrentBinaryName');
   }
 
+  binaryInfo() {
+    return this.target.locator('#infoContent');
+  }
+
   dashboardStaticAction() {
     return this.target.locator('.action-card[data-action="static-open"]');
   }
