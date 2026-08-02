@@ -153,6 +153,15 @@ class CdpLocator {
     throw new Error(`Timed out waiting for ${this.selector} attribute ${JSON.stringify(name)} to contain ${JSON.stringify(expected)}`);
   }
 
+  async waitForEnabled(timeout = DEFAULT_TIMEOUT_MS) {
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+      if (await this.isEnabled()) return;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error(`Timed out waiting for ${this.selector} to become enabled`);
+  }
+
   async fill(value) {
     await this.waitFor({ state: 'visible' });
     const filled = await this.target.evaluate(this.expression(`
@@ -421,6 +430,26 @@ class HubPage {
 
   entryPointButton() {
     return this.target.locator('#btnGoToEntry');
+  }
+
+  goToAddressInput() {
+    return this.target.locator('#goToAddrInput');
+  }
+
+  xrefsMode() {
+    return this.target.locator('#xrefsMode');
+  }
+
+  xrefsButton() {
+    return this.target.locator('#btnXrefs');
+  }
+
+  xrefsResult() {
+    return this.target.locator('#xrefsResultContent');
+  }
+
+  firstXrefsJumpButton() {
+    return this.target.locator('#xrefsResultContent .xrefs-jump-btn');
   }
 
   annotationAddress() {

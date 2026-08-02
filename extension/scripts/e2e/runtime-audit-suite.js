@@ -409,6 +409,10 @@ function isDecompileAugmentScript(args) {
   return Array.isArray(args) && args.some((arg) => String(arg || '').endsWith(path.join('backends', 'static', 'decompile', 'augment.py')));
 }
 
+function isXrefsScript(args) {
+  return Array.isArray(args) && args.some((arg) => String(arg || '').endsWith(path.join('backends', 'static', 'disasm', 'xrefs.py')));
+}
+
 function createMockProviderList() {
   return JSON.stringify({
     providers: [{ name: 'openai', configured: true, model: 'e2e-model' }],
@@ -676,6 +680,7 @@ async function run() {
         await hub.openPanel('dashboard');
         await hub.autoTriageBinary().waitForText(path.basename(binaryPath), 30000);
         await hub.autoTriageButton().waitFor({ state: 'visible' });
+        await hub.autoTriageButton().waitForEnabled(30000);
         assert.equal(await hub.autoTriageButton().isEnabled(), true, 'auto-triage must be available after preflight');
 
         await hub.autoTriageButton().click();
@@ -932,6 +937,82 @@ async function run() {
         target,
         process.env.POF_E2E_ARTIFACTS_DIR,
         'hub-annotation-lifecycle',
+      );
+      error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
+      throw error;
+    } finally {
+      target?.close();
+    }
+  }));
+
+  suite.addTest(new Mocha.Test('navigates incoming and outgoing xrefs through the real UI', async () => {
+    const [fixture] = readFixtureSpecs();
+    assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
+    const targetAddr = String(fixture.entry || '0x400078');
+    const sourceAddr = '0x400080';
+    let target = null;
+    const xrefsModes = [];
+    const originalExecFile = childProcess.execFile;
+    try {
+      await withChildProcessMocks({
+        execFile: (file, args = [], options = {}, callback = undefined) => {
+          if (!isXrefsScript(args)) {
+            return originalExecFile.call(childProcess, file, args, options, callback);
+          }
+          const cb = typeof options === 'function' ? options : callback;
+          const proc = new EventEmitter();
+          const mode = String(args[args.indexOf('--mode') + 1] || 'to');
+          xrefsModes.push(mode);
+          const payload = mode === 'from'
+            ? { refs: [], targets: [targetAddr] }
+            : {
+              refs: [{
+                from_addr: sourceAddr,
+                function_name: 'caller_e2e',
+                function_addr: sourceAddr,
+                type: 'call',
+                text: `call ${targetAddr}`,
+              }],
+              targets: [],
+            };
+          process.nextTick(() => cb?.(null, JSON.stringify(payload), ''));
+          return proc;
+        },
+      }, async () => {
+        await vscode.commands.executeCommand('pileOuFace.goToAddress');
+        target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+        const hub = new HubPage(target);
+        await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+          type: 'hubUseBinaryPath',
+          binaryPath: fixture.path,
+        });
+        await hub.binaryPath().waitForValue(path.basename(fixture.path), 30000);
+        await hub.openPanel('static');
+        await hub.openStaticTab('code', 'disasm');
+
+        await hub.goToAddressInput().fill(targetAddr);
+        await hub.xrefsMode().fill('to');
+        await hub.xrefsButton().click();
+        await hub.xrefsResult().waitForText(`Références vers ${targetAddr}`, 30000);
+        await hub.xrefsResult().waitForText('caller_e2e', 30000);
+        await hub.xrefsResult().waitForText(`call ${targetAddr}`, 30000);
+
+        await hub.firstXrefsJumpButton().click();
+        await hub.goToAddressInput().waitForValue(sourceAddr, 30000);
+        await hub.annotationAddress().waitForAttribute('data-addr', sourceAddr, 30000);
+
+        await hub.xrefsMode().fill('from');
+        await hub.xrefsButton().click();
+        await hub.xrefsResult().waitForText(`Références depuis ${sourceAddr}`, 30000);
+        await hub.xrefsResult().waitForText(targetAddr, 30000);
+        assert.ok(xrefsModes.includes('to'), 'an incoming xrefs lookup must execute');
+        assert.ok(xrefsModes.includes('from'), 'an outgoing xrefs lookup must execute');
+      });
+    } catch (error) {
+      const artifacts = await captureUiFailure(
+        target,
+        process.env.POF_E2E_ARTIFACTS_DIR,
+        'hub-xrefs-navigation',
       );
       error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
       throw error;
@@ -1587,7 +1668,7 @@ async function run() {
   }));
 
   if (['1', 'true', 'yes'].includes(String(process.env.POF_E2E_UI_ONLY || '').toLowerCase())) {
-    mocha.grep(/real webview controls|real confirmation UI|restores it from cache through the real UI/);
+    mocha.grep(/real webview controls|real confirmation UI|restores it from cache through the real UI|incoming and outgoing xrefs through the real UI/);
   }
 
   return new Promise((resolve, reject) => {
