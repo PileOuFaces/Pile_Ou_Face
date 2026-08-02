@@ -100,6 +100,7 @@ describe('VS Code UI E2E driver', () => {
     assert.equal(await locator.waitForText('prêt', 50), 'Résultat prêt');
     assert.equal(await locator.inputValue(), 'true');
     assert.equal(await locator.waitForValue('true', 50), 'true');
+    assert.equal(await locator.waitForAttribute('class', 'active', 50), 'btn active');
     await locator.fill('nouvelle valeur');
     await locator.click();
     await locator.clickDom();
@@ -197,6 +198,7 @@ describe('VS Code UI E2E driver', () => {
     await assert.rejects(locator.waitFor({ timeout: 1 }), /Timed out waiting/);
     await assert.rejects(locator.waitForText('never', 1), /Timed out waiting/);
     await assert.rejects(locator.waitForValue('never', 1), /Timed out waiting/);
+    await assert.rejects(locator.waitForAttribute('class', 'never', 1), /Timed out waiting/);
   });
 
   it('models the type manager journey with stable selectors', async () => {
@@ -219,6 +221,14 @@ describe('VS Code UI E2E driver', () => {
     assert.equal(hub.typeEditorStatus().selector, '#pof-typed-struct-popup .typed-data-struct-editor-status');
     assert.equal(hub.typeEditorSaveButton().selector, '#pof-typed-struct-popup [data-action="save-types"]');
     assert.equal(hub.typeEditorCloseButton().selector, '#pof-typed-struct-popup .typed-data-struct-editor-actions .btn:first-child');
+    assert.equal(hub.entryPointButton().selector, '#btnGoToEntry');
+    assert.equal(hub.annotationAddress().selector, '#annotationAddrBadge');
+    assert.equal(hub.annotationName().selector, '#annotationName');
+    assert.equal(hub.annotationComment().selector, '#annotationComment');
+    assert.equal(hub.annotationSubmitButton().selector, '#btnAddAnnotation');
+    assert.equal(hub.annotationsList().selector, '#annotationsList');
+    assert.equal(hub.firstAnnotationEditButton().selector, '#annotationsList .annotation-item .ann-edit');
+    assert.equal(hub.firstAnnotationDeleteButton().selector, '#annotationsList .annotation-item .ann-delete');
     assert.deepEqual(calls, [
       'click:#btnTypedEditStructs',
       'wait:#pof-typed-struct-popup',
