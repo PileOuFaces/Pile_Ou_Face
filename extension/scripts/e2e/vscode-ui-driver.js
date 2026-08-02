@@ -325,6 +325,18 @@ class HubPage {
     return this.target.locator('#infoContent');
   }
 
+  binarySections() {
+    return this.target.locator('#sectionsContent');
+  }
+
+  binaryFunctions() {
+    return this.target.locator('#functionsContent');
+  }
+
+  binaryFunctionsCount() {
+    return this.target.locator('#functionsCount');
+  }
+
   dashboardStaticAction() {
     return this.target.locator('.action-card[data-action="static-open"]');
   }

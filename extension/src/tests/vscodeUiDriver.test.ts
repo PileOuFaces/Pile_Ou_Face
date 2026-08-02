@@ -141,9 +141,18 @@ describe('VS Code UI E2E driver', () => {
       },
     };
 
-    new HubPage(target).binaryInfo();
+    const hub = new HubPage(target);
+    hub.binaryInfo();
+    hub.binarySections();
+    hub.binaryFunctions();
+    hub.binaryFunctionsCount();
 
-    assert.deepEqual(selectors, ['#infoContent']);
+    assert.deepEqual(selectors, [
+      '#infoContent',
+      '#sectionsContent',
+      '#functionsContent',
+      '#functionsCount',
+    ]);
   });
 
   it('falls back to a DOM click when Electron ignores panel navigation coordinates', async () => {
