@@ -290,6 +290,38 @@ class HubPage {
     return this.target.locator('#staticBinaryPath');
   }
 
+  topBarBinaryName() {
+    return this.target.locator('#topBarBinaryName');
+  }
+
+  topBarBinaryMenu() {
+    return this.target.locator('#topBarBinaryMenu');
+  }
+
+  currentBinaryName() {
+    return this.target.locator('#topBarCurrentBinaryName');
+  }
+
+  dashboardStaticAction() {
+    return this.target.locator('.action-card[data-action="static-open"]');
+  }
+
+  autoTriageBinary() {
+    return this.target.locator('[data-auto-triage-binary]');
+  }
+
+  autoTriageButton() {
+    return this.target.locator('[data-action="auto-triage"]');
+  }
+
+  disassemblyBinarySummary() {
+    return this.target.locator('#disasmSummaryBinary');
+  }
+
+  decompileAugmentButton() {
+    return this.target.locator('#btnAugmentDecompile');
+  }
+
   typeManagerButton() {
     return this.target.locator('#btnTypedEditStructs');
   }

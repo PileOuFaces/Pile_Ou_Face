@@ -492,6 +492,37 @@ async function run() {
     }
   }));
 
+  suite.addTest(new Mocha.Test('guides the user from an empty workspace without enabling unavailable actions', async () => {
+    let target = null;
+    try {
+      await vscode.commands.executeCommand('pileOuFace.goToAddress');
+      target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+      const hub = new HubPage(target);
+
+      await hub.openPanel('dashboard');
+      await hub.topBarBinaryName().waitForText('Choisir un fichier', 30000);
+      await hub.autoTriageBinary().waitForText('Aucun binaire', 30000);
+      assert.equal(await hub.autoTriageButton().isEnabled(), false, 'auto-triage must stay disabled without a binary');
+
+      await hub.dashboardStaticAction().click();
+      await hub.expectActive(hub.panel('static'), 'static panel opened from the empty dashboard');
+      await hub.topBarBinaryMenu().waitFor({ state: 'visible' });
+      await hub.currentBinaryName().waitForText('Aucun fichier sélectionné', 30000);
+      await hub.disassemblyBinarySummary().waitForText('Aucun fichier', 30000);
+      assert.equal(await hub.decompileAugmentButton().isEnabled(), false, 'AI augmentation must stay disabled without decompiled code');
+    } catch (error) {
+      const artifacts = await captureUiFailure(
+        target,
+        process.env.POF_E2E_ARTIFACTS_DIR,
+        'hub-empty-workspace',
+      );
+      error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
+      throw error;
+    } finally {
+      target?.close();
+    }
+  }));
+
   suite.addTest(new Mocha.Test('drives the hub through real webview controls', async () => {
     let target = null;
     try {
