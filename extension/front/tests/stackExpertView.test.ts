@@ -130,6 +130,58 @@ describe('stackExpertView — buildExpertRowItems', () => {
     expect(rows[0].badges).to.include('RET');
   });
 
+  it('raw backend corrupted flag alone is not an authoritative verdict', () => {
+    // Regression: a legitimate stack-protector canary write (role="local")
+    // used to reach `corrupted: true` / flags: ["corrupted"] from the
+    // backend's per-slot heuristic with no crossing-write evidence behind
+    // it (diagnostics stays empty). Only an actual backend diagnostic may
+    // promote a slot to CORRUPT here.
+    const rows = mod.buildExpertRowItems([
+      makeSlot({
+        kind: 'local',
+        corrupted: true,
+        flags: ['corrupted'],
+        diagnosticCorrupted: false,
+        diagnostics: []
+      })
+    ]);
+    expect(rows[0].isCorrupted).to.equal(false);
+    expect(rows[0].badges).to.not.include('CORRUPT');
+    expect(rows[0].badges).to.not.include('CORROMPU');
+  });
+
+  it('backend diagnostic stays authoritative for saved_bp corruption', () => {
+    const rows = mod.buildExpertRowItems([
+      makeSlot({
+        kind: 'saved_bp',
+        diagnosticCorrupted: true,
+        diagnosticSeverity: 'warning',
+        diagnostics: [{ message: 'saved rbp overwritten' }]
+      })
+    ]);
+    expect(rows[0].isSavedBp).to.equal(true);
+    expect(rows[0].isCorrupted).to.equal(true);
+    expect(rows[0].badges).to.include('CORRUPT');
+  });
+
+  it('a legitimate write with raw corrupted=true stays informative, never CORRUPT', () => {
+    const rows = mod.buildExpertRowItems([
+      makeSlot({
+        kind: 'local',
+        changed: true,
+        recentWrite: true,
+        corrupted: true,
+        flags: ['changed', 'recent_write', 'corrupted'],
+        diagnosticCorrupted: false,
+        diagnostics: []
+      })
+    ]);
+    expect(rows[0].isChanged).to.equal(true);
+    expect(rows[0].badges).to.include('CHANGED');
+    expect(rows[0].badges).to.not.include('CORRUPT');
+    expect(rows[0].badges).to.not.include('CORROMPU');
+  });
+
   it('saved rbp slot is marked isSavedBp', () => {
     const rows = mod.buildExpertRowItems([makeSlot({ kind: 'saved_bp' })]);
     expect(rows[0].isSavedBp).to.equal(true);

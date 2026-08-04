@@ -249,9 +249,10 @@ function rowHasBadge(row, badge) {
     .some((entry) => normalizeExpertBadge(entry) === badge);
 }
 
+// Raw slot corruption flags are heuristic. Backend diagnostics are the only
+// authoritative corruption verdict.
 function hasExpertCorruptionSignal(slot) {
-  if (slot?.diagnosticCorrupted || slot?.corrupted) return true;
-  if (hasFlag(slot, 'corrupted')) return true;
+  if (slot?.diagnosticCorrupted) return true;
   return (Array.isArray(slot?.badges) ? slot.badges : []).some((badge) => /corrupt|corrompu/i.test(String(badge || '')));
 }
 
