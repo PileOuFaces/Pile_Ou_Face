@@ -525,10 +525,9 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.cache/pip
-          # La liste de dépendances est inline dans ce fichier (pas de
-          # requirements.txt côté sibling, cf. commentaire ci-dessous) — la
-          # hasher directement invalide le cache dès qu'elle change ici.
-          key: auth-e2e-pip-${{ runner.os }}-${{ hashFiles('.github/workflows/ci.yml') }}
+          # Le lockfile Auth est la source reproductible des dépendances de ce
+          # serveur sibling ; toute mise à jour invalide automatiquement le cache.
+          key: auth-e2e-pip-${{ runner.os }}-${{ hashFiles('pof-auth-sibling/requirements.lock') }}
           restore-keys: |
             auth-e2e-pip-${{ runner.os }}-
 
@@ -536,19 +535,12 @@ jobs:
         if: steps.secret_check.outputs.has_pat == 'true'
         run: |
           python3 -m venv pof-auth-sibling/.venv
-          # Installe les dépendances runtime directement plutôt que `pip install -e .` :
-          # le pyproject.toml de Pile_ou_Face_auth a un layout plat (k8s/, alembic/, app/
-          # au même niveau) qui déclenche l'heuristique setuptools "multiple top-level
-          # packages" selon la version de setuptools récupérée par l'isolation de build
-          # (non pinnée côté auth) — marche localement, casse en CI de façon non
-          # déterministe. Pas besoin d'installer `app` comme paquet : uvicorn tourne
-          # avec le repo en CWD (working-directory ci-dessous), comme les tests du
-          # repo auth le font déjà. Garder cette liste synchronisée avec
-          # pof-auth-sibling/pyproject.toml si ses dépendances changent.
+          # Uvicorn importe `app` depuis le checkout utilisé comme CWD. Seules
+          # les dépendances runtime doivent donc être installées ici, depuis le
+          # lockfile hashé maintenu par Auth plutôt qu'une liste dupliquée.
           pof-auth-sibling/.venv/bin/pip install \
-            'fastapi>=0.111' 'uvicorn[standard]>=0.29' 'sqlalchemy>=2.0' 'alembic>=1.13' \
-            'psycopg2-binary>=2.9' 'pydantic-settings>=2.2' 'pydantic[email]>=2.7' \
-            'python-jose[cryptography]>=3.3' 'passlib[bcrypt]>=1.7' 'bcrypt<4.1' 'slowapi>=0.1.9'
+            --require-hashes \
+            --requirement pof-auth-sibling/requirements.lock
           pof-auth-sibling/.venv/bin/pip install -e './pof-plugins-sibling[dev]'
           cd pof-plugins-sibling
           npm ci
