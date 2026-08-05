@@ -8,9 +8,11 @@ import unittest
 ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "../../.."))
 sys.path.insert(0, ROOT)
 
+from backends.static.annotations.struct_db import get_struct_db_path
 from backends.static.annotations.structs import (
     compute_struct_layout,
-    get_struct_store_path,
+    import_type_definitions,
+    list_struct_store,
     load_struct_store,
     parse_struct_definitions,
     save_struct_source,
@@ -56,14 +58,16 @@ class TestStructs(unittest.TestCase):
                   uint16_t count;
                 } Header;
                 """,
+                "/tmp/demo.bin",
                 workspace_root=storage,
             )
-            store = load_struct_store(storage)
+            store = load_struct_store("/tmp/demo.bin", storage)
             self.assertIn("Header", store["definitions"])
             self.assertIn("typedef struct Header", store["source"])
             self.assertEqual(
-                get_struct_store_path(storage), os.path.join(storage, "structs.json")
+                get_struct_db_path(storage), os.path.join(storage, "types.db")
             )
+            self.assertTrue(os.path.isfile(os.path.join(storage, "types.db")))
             self.assertFalse(os.path.exists(os.path.join(tmp, ".pile-ou-face")))
 
     def test_parse_enum_and_union_definitions(self):
@@ -86,6 +90,53 @@ class TestStructs(unittest.TestCase):
         self.assertEqual(definitions["Mode"]["value_map"]["MODE_RW"], 3)
         self.assertEqual(definitions["Payload"]["kind"], "union")
         self.assertEqual(len(definitions["Payload"]["fields"]), 2)
+
+    def test_parse_explicit_compound_field_kinds_and_qualifiers(self):
+        definitions = parse_struct_definitions(
+            """
+            struct Child { uint32_t value; };
+            union Choice { uint32_t number; char text[4]; };
+            enum Mode { MODE_OFF, MODE_ON };
+            struct Parent {
+              const struct Child *child;
+              volatile union Choice choice;
+              enum Mode mode;
+            };
+            """
+        )
+        fields = definitions["Parent"]["fields"]
+        self.assertEqual(
+            [field["type_kind"] for field in fields], ["struct", "union", "enum"]
+        )
+        self.assertEqual(fields[0]["type"], "Child")
+
+    def test_parse_enum_arithmetic_and_unary_expressions(self):
+        definitions = parse_struct_definitions(
+            """
+            enum Numbers {
+              NEG = -2,
+              POS = +2,
+              INV = ~0,
+              SUM = POS + 3,
+              DIFF = SUM - 1,
+              PRODUCT = DIFF * 2,
+              QUOTIENT = PRODUCT / 4,
+              REMAINDER = PRODUCT % 3,
+              MASKED = PRODUCT & 6,
+              TOGGLED = MASKED ^ 3
+            };
+            """
+        )
+        values = definitions["Numbers"]["value_map"]
+        self.assertEqual(values["NEG"], -2)
+        self.assertEqual(values["QUOTIENT"], 2)
+        self.assertEqual(values["TOGGLED"], 3)
+
+    def test_rejects_unknown_enum_symbol_and_unsupported_source(self):
+        with self.assertRaisesRegex(ValueError, "inconnu"):
+            parse_struct_definitions("enum Broken { VALUE = UNKNOWN + 1 };")
+        with self.assertRaisesRegex(ValueError, "Aucun type C reconnu"):
+            parse_struct_definitions("int global_counter;")
 
     # ── C++ enum class ───────────────────────────────────────────────────────────
 
@@ -344,6 +395,29 @@ class TestStructs(unittest.TestCase):
         with self.assertRaises(ValueError):
             compute_struct_layout(definitions, "DoesNotExist", 8)
 
+    def test_error_layout_enum_cannot_be_applied_as_struct(self):
+        definitions = parse_struct_definitions("enum Mode { OFF, ON };")
+        with self.assertRaisesRegex(ValueError, "ne peut pas être appliqué"):
+            compute_struct_layout(definitions, "Mode", 8)
+
+    def test_pointer_sized_primitives_follow_target_architecture(self):
+        definitions = parse_struct_definitions(
+            "typedef struct Sizes { size_t size; uintptr_t address; } Sizes;"
+        )
+        layout = compute_struct_layout(definitions, "Sizes", 4)
+        self.assertEqual([field["size"] for field in layout["fields"]], [4, 4])
+        self.assertEqual(layout["size"], 8)
+
+    def test_reused_nested_type_has_stable_cached_layout(self):
+        definitions = parse_struct_definitions(
+            """
+            struct Child { uint32_t value; };
+            struct Parent { struct Child first; struct Child second; };
+            """
+        )
+        layout = compute_struct_layout(definitions, "Parent", 8)
+        self.assertEqual([field["offset"] for field in layout["fields"]], [0, 4])
+
     def test_error_layout_unknown_field_type(self):
         definitions = parse_struct_definitions("typedef struct S { Phantom x; } S;")
         with self.assertRaises(ValueError):
@@ -365,11 +439,27 @@ class TestStructs(unittest.TestCase):
     def test_roundtrip_enum_class(self):
         source = "enum class Color : uint8_t { Red = 0, Green = 1, Blue = 2 };"
         with tempfile.TemporaryDirectory() as tmp:
-            save_struct_source(source, workspace_root=tmp)
-            store = load_struct_store(tmp)
+            save_struct_source(source, "/tmp/demo.bin", workspace_root=tmp)
+            store = load_struct_store("/tmp/demo.bin", tmp)
         color = store["definitions"]["Color"]
         self.assertEqual(color["kind"], "enum")
         self.assertEqual(color["value_map"]["Blue"], 2)
+
+    def test_list_store_exposes_all_type_kinds_and_counts(self):
+        source = """
+        typedef struct Header { uint32_t magic; uint16_t count; } Header;
+        typedef union Payload { uint32_t raw; char text[4]; } Payload;
+        enum Mode { MODE_NONE, MODE_READ, MODE_WRITE };
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            save_struct_source(source, "/tmp/demo.bin", workspace_root=tmp)
+            catalog = list_struct_store("/tmp/demo.bin", tmp)["structs"]
+
+        by_name = {entry["name"]: entry for entry in catalog}
+        self.assertEqual(by_name["Header"]["field_count"], 2)
+        self.assertEqual(by_name["Payload"]["field_count"], 2)
+        self.assertEqual(by_name["Mode"]["value_count"], 3)
+        self.assertEqual(by_name["Mode"]["kind"], "enum")
 
     def test_roundtrip_fn_ptr_struct(self):
         source = """
@@ -379,8 +469,8 @@ class TestStructs(unittest.TestCase):
         } Ops;
         """
         with tempfile.TemporaryDirectory() as tmp:
-            save_struct_source(source, workspace_root=tmp)
-            store = load_struct_store(tmp)
+            save_struct_source(source, "/tmp/demo.bin", workspace_root=tmp)
+            store = load_struct_store("/tmp/demo.bin", tmp)
         ops = store["definitions"]["Ops"]
         self.assertEqual(ops["fields"][0]["type_kind"], "fn_ptr")
         self.assertEqual(ops["fields"][1]["name"], "write")
@@ -388,11 +478,31 @@ class TestStructs(unittest.TestCase):
     def test_roundtrip_multidim_array(self):
         source = "typedef struct M { float mat[4][4]; } M;"
         with tempfile.TemporaryDirectory() as tmp:
-            save_struct_source(source, workspace_root=tmp)
-            store = load_struct_store(tmp)
+            save_struct_source(source, "/tmp/demo.bin", workspace_root=tmp)
+            store = load_struct_store("/tmp/demo.bin", tmp)
         field = store["definitions"]["M"]["fields"][0]
         self.assertEqual(field["array_dims"], [4, 4])
         self.assertEqual(field["array_len"], 16)
+
+    def test_type_catalogs_are_isolated_by_binary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            save_struct_source("struct Alpha { uint32_t value; };", "/tmp/a.bin", tmp)
+            save_struct_source("struct Beta { uint32_t value; };", "/tmp/b.bin", tmp)
+
+            self.assertEqual(
+                [
+                    item["name"]
+                    for item in list_struct_store("/tmp/a.bin", tmp)["structs"]
+                ],
+                ["Alpha"],
+            )
+            self.assertEqual(
+                [
+                    item["name"]
+                    for item in list_struct_store("/tmp/b.bin", tmp)["structs"]
+                ],
+                ["Beta"],
+            )
 
     # ── Scénario mixte ───────────────────────────────────────────────────────────
 
@@ -465,6 +575,112 @@ class TestStructs(unittest.TestCase):
         self.assertEqual(packet_layout["fields"][1]["offset"], 4)
         self.assertEqual(packet_layout["fields"][1]["type_kind"], "union")
         self.assertEqual(packet_layout["size"], 8)
+
+    # ── Typedefs et prototypes (Lot 3, #129) ────────────────────────────────────
+
+    def test_parse_simple_pointer_typedef(self):
+        definitions = parse_struct_definitions("typedef char* PSTR;")
+        self.assertIn("PSTR", definitions)
+        self.assertEqual(definitions["PSTR"]["kind"], "typedef")
+        self.assertEqual(definitions["PSTR"]["fields"][0]["type"], "char")
+        self.assertEqual(definitions["PSTR"]["fields"][0]["pointer_level"], 1)
+
+    def test_parse_typedef_alias_to_existing_struct(self):
+        definitions = parse_struct_definitions(
+            """
+            struct Foo { uint32_t x; };
+            typedef struct Foo Foo;
+            """
+        )
+        self.assertEqual(definitions["Foo"]["kind"], "struct")
+        layout = compute_struct_layout(definitions, "Foo", 8)
+        self.assertEqual(layout["fields"][0]["name"], "x")
+
+    def test_parse_typedef_function_pointer_as_function_kind(self):
+        definitions = parse_struct_definitions("typedef void (*Callback)(int, void*);")
+        self.assertIn("Callback", definitions)
+        self.assertEqual(definitions["Callback"]["kind"], "function")
+
+    def test_parse_bare_prototype_as_function_kind(self):
+        definitions = parse_struct_definitions("int add(int a, int b);")
+        self.assertIn("add", definitions)
+        self.assertEqual(definitions["add"]["kind"], "function")
+        self.assertEqual(len(definitions["add"]["fields"]), 3)  # ret + 2 params
+
+    def test_compute_layout_resolves_typedef_indirection(self):
+        definitions = parse_struct_definitions(
+            """
+            typedef char* PSTR;
+            typedef struct Demo {
+              uint32_t tag;
+              PSTR name;
+            } Demo;
+            """
+        )
+        layout = compute_struct_layout(definitions, "Demo", 8)
+        name_field = layout["fields"][1]
+        self.assertEqual(name_field["offset"], 8)
+        self.assertEqual(name_field["size"], 8)
+        self.assertEqual(name_field["tag"], "ptr")
+
+    def test_layout_rejects_typedef_not_pointing_to_struct(self):
+        definitions = parse_struct_definitions("typedef char* PSTR;")
+        with self.assertRaisesRegex(ValueError, "ne pointe pas vers un struct/union"):
+            compute_struct_layout(definitions, "PSTR", 8)
+
+    def test_import_type_definitions_merges_without_wiping_catalog(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first = {
+                "PSTR": {
+                    "kind": "typedef",
+                    "fields": [
+                        {
+                            "name": "",
+                            "type": "char",
+                            "type_kind": "primitive",
+                            "pointer_level": 1,
+                            "array_len": None,
+                            "array_dims": None,
+                            "display_type": "char*",
+                        }
+                    ],
+                },
+            }
+            import_type_definitions(
+                "/tmp/demo.bin", first, "ghidra", workspace_root=tmp
+            )
+            second = {
+                "Color": {
+                    "kind": "enum",
+                    "values": [{"name": "RED", "value": 0}],
+                    "value_map": {"RED": 0},
+                },
+            }
+            result = import_type_definitions(
+                "/tmp/demo.bin", second, "ai-proposal", workspace_root=tmp
+            )
+            names = {entry["name"] for entry in result["structs"]}
+            self.assertEqual(names, {"PSTR", "Color"})
+
+    def test_import_type_definitions_rejects_invalid_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                import_type_definitions(
+                    "/tmp/demo.bin",
+                    {"1Bad": {"kind": "typedef", "fields": []}},
+                    "ai-proposal",
+                    workspace_root=tmp,
+                )
+
+    def test_import_type_definitions_rejects_empty_source_label(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                import_type_definitions(
+                    "/tmp/demo.bin",
+                    {"Foo": {"kind": "typedef", "fields": []}},
+                    "  ",
+                    workspace_root=tmp,
+                )
 
 
 if __name__ == "__main__":

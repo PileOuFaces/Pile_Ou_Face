@@ -13,6 +13,8 @@ const readline = require('readline');
 const fileManager = require('./fileManager');
 const { detectPythonExecutable, getExtensionPath, buildRuntimeEnv } = require('./utils');
 const { makeAnnotationsBridge } = require('./annotationsBridge');
+const { makeChatHistoryBridge } = require('./chatHistoryBridge');
+const { makePatchHistoryBridge } = require('./patchHistoryBridge');
 const { makeMappingStore } = require('./mappingStore');
 const {
   cancelAiProcess,
@@ -270,6 +272,19 @@ function sharedHandlers(ctx) {
     getOverlayMappingPath: (binaryPath) =>
       getDisasmMappingPathForBinary(binaryPath, { root, storageDir, getTempDir }),
   });
+  const chatHistoryBridge = ctx.chatHistoryBridge || makeChatHistoryBridge({
+    root,
+    workspacePath: root,
+    extensionPath: context?.extensionPath || getExtensionPath() || root,
+    getPythonExecutable: () => detectPythonExecutable(root),
+    buildPythonEnv: () => buildRuntimeEnv(root, storageDir),
+  });
+  const patchHistoryBridge = ctx.patchHistoryBridge || makePatchHistoryBridge({
+    root,
+    extensionPath: context?.extensionPath || getExtensionPath() || root,
+    getPythonExecutable: () => detectPythonExecutable(root),
+    buildPythonEnv: () => buildRuntimeEnv(root, storageDir),
+  });
   const safePostMessage = (message) => {
     try {
       panel.webview.postMessage(message);
@@ -318,6 +333,7 @@ function sharedHandlers(ctx) {
     if (context) await forgetRecentBinaryState(context, target);
     await Promise.resolve(clearRawProfile?.(target));
     if (answer === 'Retirer et nettoyer') {
+      await patchHistoryBridge.deleteHistory(target);
       const result = fileManager.cleanupForBinary(storageDir || root, target, {
         purgeStale: true,
         root,
@@ -535,6 +551,7 @@ function sharedHandlers(ctx) {
         purgeStale: true,
         root,
       });
+      await patchHistoryBridge.deleteHistory(absPath);
       if (result.total > 0) {
         panel.webview.postMessage({ type: 'refreshGeneratedFiles' });
         panel.webview.postMessage({ type: 'generatedFiles', files: fileManager.listAll(storageDir || root) });
@@ -594,8 +611,10 @@ function sharedHandlers(ctx) {
       panel.webview.postMessage({ type: 'refreshGeneratedFiles' });
       panel.webview.postMessage({ type: 'generatedFiles', files: fileManager.listAll(storageDir || root) });
     },
-    purgeStaleCache: () => {
-      const { removed } = fileManager.purgeStaleCache(storageDir || root, root);
+    purgeStaleCache: async () => {
+      const { removed: removedFiles } = fileManager.purgeStaleCache(storageDir || root, root);
+      const { removed: removedPatches = 0 } = await patchHistoryBridge.purgeMissing(root);
+      const removed = removedFiles + removedPatches;
       vscode.window.showInformationMessage(
         removed > 0
           ? `Reverse Workspace : ${removed} entrée(s) de cache obsolète(s) supprimée(s).`
@@ -606,6 +625,30 @@ function sharedHandlers(ctx) {
     },
     hubError: (message) => {
       vscode.window.showErrorMessage(message.message || 'Erreur');
+    },
+    hubLoadChatHistory: async () => {
+      try {
+        const result = await chatHistoryBridge.loadHistory();
+        panel.webview.postMessage({ type: 'hubChatHistory', ...result });
+      } catch (err) {
+        panel.webview.postMessage({
+          type: 'hubChatHistoryError',
+          error: String(err?.message || err),
+        });
+      }
+    },
+    hubSaveChatHistory: async (message) => {
+      try {
+        await chatHistoryBridge.saveHistory({
+          conversations: message.conversations,
+          activeConversationId: message.activeConversationId,
+        });
+      } catch (err) {
+        panel.webview.postMessage({
+          type: 'hubChatHistoryError',
+          error: String(err?.message || err),
+        });
+      }
     },
     hubLoadAnnotations: async (message) => {
       const { binaryPath } = message;
@@ -687,6 +730,28 @@ function sharedHandlers(ctx) {
         notifyAnnotations(binaryPath, annotations, overlay);
       } catch (err) {
         vscode.window.showErrorMessage(`Impossible de supprimer l'annotation : ${err?.message || err}`);
+      }
+    },
+    hubRejectAiAnnotations: async (message) => {
+      const { binaryPath, addr } = message;
+      if (!binaryPath) return;
+      const normAddr = addr ? (addr.startsWith('0x') ? addr : `0x${addr}`) : '';
+      try {
+        const { annotations, overlay } = await annotationsBridge.rejectAiAnnotations(binaryPath, normAddr);
+        notifyAnnotations(binaryPath, annotations, overlay);
+      } catch (err) {
+        vscode.window.showErrorMessage(`Impossible de rejeter les suggestions IA : ${err?.message || err}`);
+      }
+    },
+    hubValidateAiAnnotations: async (message) => {
+      const { binaryPath, addr } = message;
+      if (!binaryPath) return;
+      const normAddr = addr ? (addr.startsWith('0x') ? addr : `0x${addr}`) : '';
+      try {
+        const { annotations, overlay } = await annotationsBridge.validateAiAnnotations(binaryPath, normAddr);
+        notifyAnnotations(binaryPath, annotations, overlay);
+      } catch (err) {
+        vscode.window.showErrorMessage(`Impossible de valider les suggestions IA : ${err?.message || err}`);
       }
     },
     hubAiProvidersGet: () => {

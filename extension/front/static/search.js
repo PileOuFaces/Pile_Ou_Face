@@ -1480,7 +1480,10 @@ function syncTypedDataStructSelect(structs, preferredName) {
   const select = document.getElementById('typedDataStructSelect');
   const applyBtn = document.getElementById('btnTypedApplyStruct');
   if (!select) return;
-  const list = Array.isArray(structs) ? structs : [];
+  const list = (Array.isArray(structs) ? structs : []).filter((entry) => {
+    const kind = typeof entry === 'string' ? 'struct' : String((entry && entry.kind) || 'struct');
+    return kind === 'struct' || kind === 'union';
+  });
   const currentValue = preferredName !== undefined ? preferredName : (select.value || '');
   select.options.length = 0;
   if (list.length === 0) {
@@ -1551,7 +1554,7 @@ function getTypedStructList() {
 function ensureTypedStructCatalogLoaded() {
   if (typedDataUiState.loadingStructs || typedDataUiState.structsLoaded) return;
   typedDataUiState.loadingStructs = true;
-  vscode.postMessage({ type: 'hubLoadStructs' });
+  vscode.postMessage({ type: 'hubLoadStructs', binaryPath: getStaticBinaryPath() });
 }
 
 function getPreferredHexStructName() {
@@ -1666,7 +1669,67 @@ function openTypedDataStructFromSelection(structName, ctx = getHexStructSelectio
   }));
 }
 
-function openTypedStructEditor(sourceText) {
+function renderTypedStructCatalog(container, types) {
+  container.replaceChildren();
+  const list = Array.isArray(types) ? types : [];
+  if (list.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'typed-data-type-catalog-empty';
+    empty.textContent = 'Aucun type défini. Collez une définition C ci-dessous pour commencer.';
+    container.appendChild(empty);
+    return;
+  }
+  list.forEach((entry) => {
+    const kind = String(entry?.kind || 'struct');
+    const count = kind === 'enum'
+      ? Number(entry?.value_count || 0)
+      : Number(entry?.field_count || 0);
+    const item = document.createElement('div');
+    item.className = 'typed-data-type-catalog-item';
+    const badge = document.createElement('span');
+    badge.className = `typed-data-type-kind typed-data-type-kind-${kind}`;
+    badge.textContent = kind;
+    const name = document.createElement('strong');
+    name.textContent = String(entry?.name || 'Type sans nom');
+    const details = document.createElement('span');
+    details.className = 'typed-data-type-count';
+    if (kind === 'enum') {
+      details.textContent = `${count} valeur${count > 1 ? 's' : ''}`;
+    } else if (kind === 'typedef') {
+      details.textContent = 'alias';
+    } else if (kind === 'function') {
+      const paramCount = Math.max(0, count - 1);
+      details.textContent = `${paramCount} paramètre${paramCount > 1 ? 's' : ''}`;
+    } else {
+      details.textContent = `${count} champ${count > 1 ? 's' : ''}`;
+    }
+    item.append(badge, name, details);
+    container.appendChild(item);
+  });
+}
+
+function updateTypedStructEditorResult(data, error) {
+  const popup = document.getElementById('pof-typed-struct-popup');
+  if (!popup) return;
+  const saveBtn = popup.querySelector('[data-action="save-types"]');
+  const status = popup.querySelector('.typed-data-struct-editor-status');
+  if (saveBtn) {
+    saveBtn.disabled = false;
+    saveBtn.textContent = 'Sauvegarder';
+  }
+  if (status) {
+    status.textContent = error
+      ? String(error)
+      : `${Array.isArray(data?.structs) ? data.structs.length : 0} type(s) sauvegardé(s).`;
+    status.classList.toggle('is-error', !!error);
+  }
+  if (!error) {
+    const catalog = popup.querySelector('.typed-data-type-catalog');
+    if (catalog) renderTypedStructCatalog(catalog, data?.structs || []);
+  }
+}
+
+function openTypedStructEditor(sourceText, types = typedDataUiState.structs) {
   document.getElementById('pof-typed-struct-popup')?.remove();
   const popup = document.createElement('div');
   popup.id = 'pof-typed-struct-popup';
@@ -1679,6 +1742,10 @@ function openTypedStructEditor(sourceText) {
     <div class="typed-data-struct-editor-title">Éditeur de types C</div>
     <div class="typed-data-struct-editor-hint">Collez une ou plusieurs d\u00e9finitions C s\u00e9par\u00e9es par une ligne vide (<code>typedef struct</code>, <code>union</code>, <code>enum</code>). Tous les types d\u00e9finis ici apparaissent dans le menu d\u00e9roulant.</div>
   `;
+
+  const catalog = document.createElement('div');
+  catalog.className = 'typed-data-type-catalog';
+  renderTypedStructCatalog(catalog, types);
 
   const textarea = document.createElement('textarea');
   textarea.className = 'note-popup-input';
@@ -1696,17 +1763,32 @@ function openTypedStructEditor(sourceText) {
   const saveBtn = document.createElement('button');
   saveBtn.className = 'btn btn-xs btn-primary';
   saveBtn.type = 'button';
+  saveBtn.dataset.action = 'save-types';
   saveBtn.textContent = 'Sauvegarder';
   saveBtn.addEventListener('click', () => {
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Sauvegarde…';
+    status.textContent = 'Validation des définitions C…';
+    status.classList.remove('is-error');
     setTypedDataStructStatus('Sauvegarde des types C…');
-    vscode.postMessage({ type: 'hubSaveStructs', sourceText: textarea.value });
-    popup.remove();
+    vscode.postMessage({
+      type: 'hubSaveStructs',
+      binaryPath: getStaticBinaryPath(),
+      sourceText: textarea.value,
+    });
   });
+
+  const status = document.createElement('div');
+  status.className = 'typed-data-struct-editor-status';
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
 
   actions.appendChild(cancelBtn);
   actions.appendChild(saveBtn);
   popup.appendChild(head);
+  popup.appendChild(catalog);
   popup.appendChild(textarea);
+  popup.appendChild(status);
   popup.appendChild(actions);
   document.body.appendChild(popup);
   textarea.focus();

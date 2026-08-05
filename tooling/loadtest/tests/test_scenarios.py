@@ -6,6 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
+from loadtest.__main__ import DEFAULT_BUDGETS
 from loadtest.scenarios import FIXTURE_PROFILES, SCENARIOS
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
@@ -21,6 +22,14 @@ class TestFixtureProfiles(unittest.TestCase):
         by_name = {p.name: p for p in FIXTURE_PROFILES}
         self.assertLess(by_name["small"].padding_bytes, by_name["medium"].padding_bytes)
         self.assertLess(by_name["medium"].padding_bytes, by_name["large"].padding_bytes)
+
+    def test_every_profile_has_a_valid_budget(self):
+        self.assertEqual(
+            {profile.name for profile in FIXTURE_PROFILES}, set(DEFAULT_BUDGETS)
+        )
+        for budget in DEFAULT_BUDGETS.values():
+            self.assertLess(budget.warn_rss_bytes, budget.fail_rss_bytes)
+            self.assertLess(budget.warn_duration_s, budget.fail_duration_s)
 
 
 class TestScenarioRegistry(unittest.TestCase):
@@ -54,7 +63,9 @@ class TestScenarioRegistry(unittest.TestCase):
                 if scenario.script.startswith("tooling/")
                 else EXTENSION_ROOT / scenario.script
             )
-            self.assertTrue(script_path.exists(), f"{scenario.name} script missing: {script_path}")
+            self.assertTrue(
+                script_path.exists(), f"{scenario.name} script missing: {script_path}"
+            )
 
     def test_each_scenario_builds_args_referencing_the_binary(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -66,7 +77,11 @@ class TestScenarioRegistry(unittest.TestCase):
                 args = scenario.build_args(binary_path, out_dir)
                 prepare_args = [
                     arg
-                    for _, command_args in (scenario.prepare(binary_path, out_dir) if scenario.prepare else ())
+                    for _, command_args in (
+                        scenario.prepare(binary_path, out_dir)
+                        if scenario.prepare
+                        else ()
+                    )
                     for arg in command_args
                 ]
                 self.assertIn(
@@ -74,12 +89,18 @@ class TestScenarioRegistry(unittest.TestCase):
                     args + prepare_args,
                     f"{scenario.name} doit référencer le binaire",
                 )
-                self.assertTrue(scenario.script, f"{scenario.name} doit avoir un script")
+                self.assertTrue(
+                    scenario.script, f"{scenario.name} doit avoir un script"
+                )
                 if scenario.writes_output:
-                    self.assertIn("--output", args, f"{scenario.name} doit passer --output")
+                    self.assertIn(
+                        "--output", args, f"{scenario.name} doit passer --output"
+                    )
                     output_index = args.index("--output") + 1
                     self.assertLess(
-                        output_index, len(args), f"{scenario.name} doit avoir une valeur après --output"
+                        output_index,
+                        len(args),
+                        f"{scenario.name} doit avoir une valeur après --output",
                     )
                     output_value = args[output_index]
                     self.assertTrue(

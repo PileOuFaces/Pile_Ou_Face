@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Annotations persistantes sur les adresses d'un binaire.
 
-Stocke commentaires et renommages dans le cache SQLite (.pfdb).
-Façade de haut niveau sur DisasmCache.annotations.
+Stocke commentaires, renommages, bookmarks et revues dans la base SQLite
+dédiée aux annotations. Façade de haut niveau sur AnnotationDb.
 
 Usage:
     from backends.static.annotations.annotations import AnnotationStore
@@ -41,7 +41,7 @@ KIND_BOOKMARK_COLOR = "bookmark_color"
 class AnnotationStore:
     """Façade pour les annotations persistantes d'un binaire.
 
-    Gère commentaires et renommages via le cache SQLite.
+    Gère les annotations via l'unique base SQLite dédiée.
     """
 
     def __init__(self, binary_path: str, cache_path: str | None = None) -> None:
@@ -49,30 +49,66 @@ class AnnotationStore:
 
         Args:
             binary_path: Chemin absolu vers le binaire analysé.
-            cache_path: Chemin vers le fichier cache SQLite (None = chemin auto).
+            cache_path: Chemin vers la base SQLite (None = chemin auto).
         """
         self._binary_path = binary_path
         self._cache = AnnotationDb(cache_path)
 
-    def comment(self, addr: str, text: str) -> None:
+    def comment(self, addr: str, text: str, source: str = "user") -> None:
         """Ajoute ou remplace un commentaire sur une adresse.
 
         Args:
             addr: Adresse (ex: "0x401000")
             text: Texte du commentaire
+            source: Origine de l'annotation (ex: "user", "script")
         """
-        self._cache.save_annotation(self._binary_path, addr, KIND_COMMENT, text)
+        self._cache.save_annotation(
+            self._binary_path, addr, KIND_COMMENT, text, source=source
+        )
         logger.debug("Comment set: %s → %r", addr, text)
 
-    def rename(self, addr: str, name: str) -> None:
+    def rename(self, addr: str, name: str, source: str = "user") -> None:
         """Renomme la fonction ou le symbole à une adresse.
 
         Args:
             addr: Adresse (ex: "0x401000")
             name: Nouveau nom (ex: "my_main")
+            source: Origine de l'annotation (ex: "user", "script")
         """
-        self._cache.save_annotation(self._binary_path, addr, KIND_RENAME, name)
+        self._cache.save_annotation(
+            self._binary_path, addr, KIND_RENAME, name, source=source
+        )
         logger.debug("Rename set: %s → %r", addr, name)
+
+    def ai_comment(self, addr: str, text: str) -> bool:
+        """Suggère un commentaire au nom de l'IA, sans écraser une note humaine.
+
+        Returns:
+            True si écrit, False si une annotation manuelle occupait déjà
+            ce (addr, kind) et a été préservée.
+        """
+        written = self._cache.save_ai_annotation(
+            self._binary_path, addr, KIND_COMMENT, text
+        )
+        logger.debug(
+            "AI comment %s: %s → %r", "set" if written else "skipped (user)", addr, text
+        )
+        return written
+
+    def ai_rename(self, addr: str, name: str) -> bool:
+        """Suggère un renommage au nom de l'IA, sans écraser un renommage humain.
+
+        Returns:
+            True si écrit, False si une annotation manuelle occupait déjà
+            ce (addr, kind) et a été préservée.
+        """
+        written = self._cache.save_ai_annotation(
+            self._binary_path, addr, KIND_RENAME, name
+        )
+        logger.debug(
+            "AI rename %s: %s → %r", "set" if written else "skipped (user)", addr, name
+        )
+        return written
 
     def get(self, addr: str) -> builtins.list[dict]:
         """Retourne toutes les annotations pour une adresse.
@@ -120,6 +156,34 @@ class AnnotationStore:
         n = self._cache.delete_annotation(self._binary_path, addr, kind=kind)
         logger.debug("Deleted %d annotation(s) at %s (kind=%s)", n, addr, kind)
         return n
+
+    def reject_ai(self, addr: str | None = None) -> int:
+        """Delete only AI-authored rename/comment suggestions."""
+        removed = 0
+        for row in self.list(addr=addr):
+            if row.get("source") != "ai" or row.get("kind") not in {
+                KIND_COMMENT,
+                KIND_RENAME,
+            }:
+                continue
+            removed += self._cache.delete_annotation(
+                self._binary_path, row["addr"], kind=row["kind"]
+            )
+        return removed
+
+    def validate_ai(self, addr: str | None = None) -> int:
+        """Promote AI suggestions to user-authored annotations in place."""
+        validated = 0
+        for row in self.list(addr=addr):
+            if row.get("source") != "ai":
+                continue
+            if row.get("kind") == KIND_COMMENT:
+                self.comment(row["addr"], row["value"])
+                validated += 1
+            elif row.get("kind") == KIND_RENAME:
+                self.rename(row["addr"], row["value"])
+                validated += 1
+        return validated
 
     def set_review(self, addr: str, status: str = "", notes: str = "") -> None:
         """Définit le statut de revue et/ou les notes sur une adresse.
@@ -229,9 +293,11 @@ def _grouped_export(store: AnnotationStore) -> dict:
         entry = out.setdefault(row["addr"], {})
         if row["kind"] == KIND_COMMENT:
             entry["comment"] = row["value"]
+            entry["commentSource"] = row["source"]
             entry["updated"] = row["updated_at"]
         elif row["kind"] == KIND_RENAME:
             entry["name"] = row["value"]
+            entry["nameSource"] = row["source"]
             entry["updated"] = row["updated_at"]
         elif row["kind"] == KIND_REVIEW_STATUS:
             entry["reviewStatus"] = row["value"]
@@ -307,6 +373,15 @@ def main() -> int:
     )
     p_del_annotation.add_argument("--addr", required=True)
 
+    p_reject_ai = sub.add_parser(
+        "reject-ai", help="Delete AI suggestions while preserving user annotations"
+    )
+    p_reject_ai.add_argument("--addr")
+    p_validate_ai = sub.add_parser(
+        "validate-ai", help="Promote AI suggestions to user annotations"
+    )
+    p_validate_ai.add_argument("--addr")
+
     # annotate (comment + rename in one call, used by the VS Code extension bridge)
     p_annotate = sub.add_parser(
         "annotate", help="Set comment and/or rename in one call"
@@ -371,6 +446,14 @@ def main() -> int:
             store.delete(args.addr, kind=KIND_COMMENT)
             store.delete(args.addr, kind=KIND_RENAME)
             _print_grouped(store, args, overlay_mutation={"deleted": True})
+
+        elif args.cmd == "reject-ai":
+            store.reject_ai(addr=getattr(args, "addr", None))
+            _print_grouped(store, args, overlay_mutation={"deleted": True})
+
+        elif args.cmd == "validate-ai":
+            store.validate_ai(addr=getattr(args, "addr", None))
+            _print_grouped(store, args, overlay_mutation=None)
 
         elif args.cmd == "annotate":
             if args.comment is not None:

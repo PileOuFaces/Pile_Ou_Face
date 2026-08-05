@@ -109,7 +109,7 @@ Les metriques finales sont normalisees en `prompt_tokens`,
 
 ## UX du chat
 
-- historique local separe par conversation ;
+- historique SQLite séparé par workspace et conversation ;
 - modele selectionne persistant ;
 - auto-scroll uniquement lorsque l'utilisateur est deja proche du bas ;
 - widget flottant redimensionnable avec taille persistante ;
@@ -129,7 +129,7 @@ Les metriques finales sont normalisees en `prompt_tokens`,
 - export de la conversation active en Markdown lisible ou JSON structure. Le
   snapshot `pile-ou-face.ai-conversation.v1` inclut les modeles, dates, chemin
   du binaire et tokens entree/sortie/total par message et pour la conversation.
-- gestion locale de l'historique avec titres personnalises persistants,
+- gestion SQLite de l'historique avec titres personnalises persistants,
   recherche sans accents dans les titres/modeles/messages et tri par date,
   titre ou modele. Le choix de tri est memorise dans l'etat du webview.
 - budget de contexte visible dans le Dashboard et le widget : estimation

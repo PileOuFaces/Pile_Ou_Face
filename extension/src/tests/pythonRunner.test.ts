@@ -84,6 +84,22 @@ describe("pythonRunner", () => {
     expect(calledOpts.maxBuffer).to.equal(1024);
   });
 
+  it("writes an explicit input payload to stdin", async () => {
+    const end = sinon.stub();
+    const execFileStub = sinon.stub().callsFake((cmd, args, opts, cb) => {
+      cb(null, "ok", "");
+      return { stdin: { end } };
+    });
+    const pythonRunner = proxyquire("../shared/pythonRunner", {
+      child_process: { execFile: execFileStub },
+    });
+    const runPython = pythonRunner.makeRunPython({ root: "/tmp/root" });
+
+    await runPython(["backends/foo.py"], { input: '{"ok":true}' });
+
+    expect(end.calledOnceWithExactly('{"ok":true}')).to.equal(true);
+  });
+
   it("falls back to root when extensionPath is not provided", async () => {
     const path = require("path");
     const execFileStub = sinon.stub().callsFake((cmd, args, opts, cb) => {

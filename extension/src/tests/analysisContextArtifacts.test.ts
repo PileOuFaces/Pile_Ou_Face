@@ -166,4 +166,31 @@ describe('analysisContext artifact fallback', () => {
 
     fs.rmSync(root, { recursive: true, force: true });
   });
+
+  it('shares concurrent symbol extraction requests for the same binary', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pof-symbol-inflight-'));
+    const tempDir = path.join(root, '.pile-ou-face');
+    fs.mkdirSync(tempDir, { recursive: true });
+    const binary = path.join(root, 'sample.elf');
+    fs.writeFileSync(binary, 'ELF');
+
+    let resolveExtraction;
+    const runPythonJson = sinon.stub().returns(new Promise((resolve) => {
+      resolveExtraction = resolve;
+    }));
+    const ctx = makeContext(root, tempDir, [], { runPythonJson });
+
+    const first = ctx.loadBinarySymbols(binary, { useCache: false });
+    const second = ctx.loadBinarySymbols(binary, { useCache: false });
+    expect(runPythonJson.calledOnce).to.equal(true);
+    resolveExtraction({ symbols: [{ name: 'main' }] });
+
+    expect(await Promise.all([first, second])).to.deep.equal([
+      [{ name: 'main' }],
+      [{ name: 'main' }],
+    ]);
+    expect(runPythonJson.calledOnce).to.equal(true);
+
+    fs.rmSync(root, { recursive: true, force: true });
+  });
 });

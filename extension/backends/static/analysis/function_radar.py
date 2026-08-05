@@ -21,6 +21,7 @@ from backends.shared.log import configure_logging, get_logger
 from backends.shared.utils import normalize_addr
 from backends.shared.utils import parse_addr as _addr_to_int
 from backends.static.analysis.analysis_index import build_analysis_index
+from backends.static.annotations.annotation_db import AnnotationDb
 from backends.static.binary.imports_analysis import analyze_imports
 from backends.static.binary.symbols import extract_symbols
 from backends.static.cache.cache import DisasmCache, default_cache_path
@@ -29,7 +30,7 @@ from backends.static.disasm.cfg import build_cfg
 from backends.static.disasm.disasm import disassemble_with_capstone
 from backends.static.disasm.discover_functions import discover_functions
 from backends.static.disasm.xrefs import build_xref_map
-from backends.static.search.strings import extract_strings
+from backends.static.search.strings import extract_strings, extract_strings_system
 
 logger = get_logger(__name__)
 
@@ -191,7 +192,12 @@ def _load_or_compute_strings(
         return cached
     if cached == []:
         return []
-    strings = extract_strings(binary_path, min_len=4, encoding="auto")
+    # The radar only correlates printable indicators with xrefs. Prefer the
+    # streaming system extractor so a 200 MiB input is not materialized as one
+    # Python bytes object; retain the multi-encoding implementation as fallback.
+    strings = extract_strings_system(binary_path, min_len=4)
+    if not strings:
+        strings = extract_strings(binary_path, min_len=4, encoding="auto")
     if strings:
         cache.save_strings(binary_path, strings)
     return strings
@@ -620,21 +626,28 @@ def build_function_radar(
             "error": "Fichier introuvable",
         }
 
-    build_analysis_index(binary_path, cache_db=cache_db, force=False)
     db_path = cache_db or default_cache_path(binary_path)
+
+    # Populate strings before the heavyweight index. Running the streaming
+    # extractor after CFG/disassembly construction makes the parent and child
+    # RSS overlap; on large binaries that overlap alone costs hundreds of MiB.
+    with DisasmCache(db_path) as cache:
+        if cache.get_strings_for_addresses(binary_path, set()) is None:
+            _load_or_compute_strings(cache, binary_path)
+
+    build_analysis_index(binary_path, cache_db=db_path, force=False)
 
     with DisasmCache(db_path) as cache:
         lines = _load_or_compute_disasm(cache, binary_path)
         symbols = _load_or_compute_symbols(cache, binary_path)
         discovered = _load_or_compute_functions(cache, binary_path, lines, symbols)
         cfg = _load_or_compute_cfg(cache, binary_path, lines)
-        xref_map = _load_or_compute_xrefs(cache, binary_path, lines)
-        imports = _load_or_compute_imports(cache, binary_path)
-        string_target_addrs = {
-            normalize_addr(target_addr) for target_addr in xref_map or {}
-        }
-        strings = _load_or_compute_strings(cache, binary_path, string_target_addrs)
-        annotations = cache.get_annotations(binary_path)
+    try:
+        with AnnotationDb() as annotation_db:
+            annotations = annotation_db.get_annotations(binary_path)
+    except Exception as exc:
+        logger.debug("Annotations unavailable for %s: %s", binary_path, exc)
+        annotations = []
 
     catalog = _merge_function_catalog(symbols, discovered, annotations)
     function_ranges = _build_function_ranges(catalog)
@@ -696,6 +709,31 @@ def build_function_radar(
         if successor_count > 1 or block.get("is_switch"):
             entry["branch_count"] += max(1, successor_count)
 
+    call_graph = build_call_graph(cfg, symbols, lines=lines, binary_path=binary_path)
+    call_edges = [
+        (
+            normalize_addr(edge.get("from", "")),
+            normalize_addr(edge.get("to", "")),
+            str(edge.get("to_name") or ""),
+        )
+        for edge in call_graph.get("edges", []) or []
+    ]
+
+    # The CFG duplicates disassembly records inside its blocks. Keeping both of
+    # them alive while SQLite deserializes xrefs and strings creates the largest
+    # function-radar RSS spike on big binaries. Only compact call edges are
+    # needed beyond this point, so release the heavyweight analysis structures
+    # before loading the next phase.
+    del call_graph, cfg, discovered, lines, symbols
+
+    with DisasmCache(db_path) as cache:
+        xref_map = _load_or_compute_xrefs(cache, binary_path, [])
+        imports = _load_or_compute_imports(cache, binary_path)
+        string_target_addrs = {
+            normalize_addr(target_addr) for target_addr in xref_map or {}
+        }
+        strings = _load_or_compute_strings(cache, binary_path, string_target_addrs)
+
     imported_name_to_findings: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for finding in imports.get("suspicious", []) or []:
         imported_name_to_findings[
@@ -724,10 +762,7 @@ def build_function_radar(
                 }
             )
 
-    call_graph = build_call_graph(cfg, symbols, lines=lines, binary_path=binary_path)
-    for edge in call_graph.get("edges", []) or []:
-        from_addr = normalize_addr(edge.get("from", ""))
-        to_addr = normalize_addr(edge.get("to", ""))
+    for from_addr, to_addr, to_name in call_edges:
         source = metrics.get(from_addr)
         if source is not None:
             source["outgoing_calls"] += 1
@@ -737,10 +772,8 @@ def build_function_radar(
         if source is None:
             continue
         imported_hits = (
-            imported_name_to_findings.get(
-                _normalize_symbol_name(edge.get("to_name", ""))
-            )
-            or imported_name_to_findings.get(_normalize_symbol_name(edge.get("to", "")))
+            imported_name_to_findings.get(_normalize_symbol_name(to_name))
+            or imported_name_to_findings.get(_normalize_symbol_name(to_addr))
             or []
         )
         for hit in imported_hits:

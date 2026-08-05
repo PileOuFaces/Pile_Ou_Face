@@ -75,6 +75,11 @@
         "category": "Pile ou Face"
       },
       {
+        "command": "pileOuFace.autoTriage",
+        "title": "Pile ou Face: Auto-triage IA",
+        "category": "Pile ou Face"
+      },
+      {
         "command": "pileOuFace.goToSymbolInDisasm",
         "title": "Aller au symbole"
       },
@@ -281,6 +286,47 @@
           "default": false,
           "description": "Active les snapshots de diagnostic performance webview/extension host dans les logs Pile ou Face. Désactivé par défaut pour les versions publiées."
         },
+        "pileOuFace.autoTriage.enabled": {
+          "type": "boolean",
+          "default": false,
+          "tags": [
+            "usesOnlineServices"
+          ],
+          "description": "Lance automatiquement l'auto-triage IA (nommage/commentaires de fonctions par un LLM) juste après un désassemblage réussi. Désactivé par défaut : le code du binaire n'est envoyé au provider IA qu'après consentement explicite, désassemblage manuel via la commande « Pile ou Face: Auto-triage IA » ou activation de ce réglage."
+        },
+        "pileOuFace.autoTriage.model": {
+          "type": "string",
+          "default": "",
+          "description": "Modèle IA dédié à l'auto-triage (nommage/commentaires de fonctions), distinct du modèle utilisé dans l'onglet Assistant — utile pour choisir un modèle plus petit/rapide pour ce traitement en masse. Format : nom de modèle Ollama (ex. « qwen2.5-coder:7b ») ou « provider@modèle » pour un fournisseur cloud. Laisser vide pour réutiliser le modèle configuré pour le chat."
+        },
+        "pileOuFace.autoTriage.maxFunctions": {
+          "type": "integer",
+          "default": 200,
+          "minimum": 1,
+          "maximum": 1000,
+          "description": "Nombre maximal de fonctions analysées par un auto-triage."
+        },
+        "pileOuFace.autoTriage.maxSeconds": {
+          "type": "integer",
+          "default": 600,
+          "minimum": 30,
+          "maximum": 7200,
+          "description": "Durée maximale en secondes d'un auto-triage, contrôlée entre deux fonctions."
+        },
+        "pileOuFace.autoTriage.maxTokensPerRequest": {
+          "type": "integer",
+          "default": 2048,
+          "minimum": 128,
+          "maximum": 32768,
+          "description": "Nombre maximal de tokens générés par réponse IA pendant l'auto-triage."
+        },
+        "pileOuFace.autoTriage.maxTotalTokens": {
+          "type": "integer",
+          "default": 100000,
+          "minimum": 1024,
+          "maximum": 1000000,
+          "description": "Budget maximal de tokens comptabilisés sur l'ensemble d'un auto-triage, résumé inclus."
+        },
         "pileOuFace.telemetry.enabled": {
           "type": "boolean",
           "default": true,
@@ -315,6 +361,8 @@
     "test": "tsx node_modules/.bin/_mocha '{front/tests,src/tests}/**/*.test.ts' --ignore 'front/tests/hubPayloadCore.test.ts' --require src/tests/setup.ts --exit",
     "test:watch": "tsx node_modules/.bin/_mocha '{front/tests,src/tests}/**/*.test.ts' --watch --ignore 'front/tests/hubPayloadCore.test.ts' --require src/tests/setup.ts",
     "test:coverage": "c8 tsx node_modules/.bin/_mocha '{front/tests,src/tests}/**/*.test.ts' --ignore 'front/tests/hubPayloadCore.test.ts' --require src/tests/setup.ts --exit",
+    "test:auto-triage:coverage": "c8 --all --include front/static/autoTriageController.js --reporter=text --check-coverage --lines 80 --statements 80 --functions 80 --branches 80 tsx node_modules/.bin/_mocha front/tests/autoTriageController.behavior.test.ts --require src/tests/setup.ts --exit && tsx node_modules/.bin/_mocha src/tests/staticHandlersAutoTriage.test.ts --require src/tests/setup.ts --exit && backends/.venv/bin/python scripts/auto-triage-python-coverage.py",
+    "test:decompile-augmentation:coverage": "c8 --all --include front/static/decompileAugmentationController.js --reporter=text --check-coverage --lines 80 --statements 80 --functions 80 --branches 80 tsx node_modules/.bin/_mocha front/tests/decompileAugmentationController.behavior.test.ts --require src/tests/setup.ts --exit && backends/.venv/bin/python -m coverage run --branch --source=backends.static.decompile.augment -m pytest backends/static/decompile/tests/test_augment.py && backends/.venv/bin/python -m coverage report --include=backends/static/decompile/augment.py --fail-under=80 --show-missing",
     "coverage:summary": "node scripts/coverage-summary.mjs --python coverage-python.json --javascript coverage/coverage-summary.json --output .pile-ou-face/test-artifacts/coverage-summary.md",
     "nexus:analyze": "npx gitnexus analyze ..",
     "nexus:status": "npx gitnexus status",
@@ -330,7 +378,7 @@
     "@types/mocha": "^10.0.10",
     "@types/node": "^25.9.1",
     "@types/vscode": "^1.120.0",
-    "@vscode/test-electron": "^3.0.0",
+    "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.3.2",
     "c8": "^10.1.3",
     "chai": "^4.3.10",

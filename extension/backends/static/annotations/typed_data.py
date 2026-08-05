@@ -716,7 +716,7 @@ def get_typed_data(
     raw_endian: str | None = None,
 ) -> dict:
     """Inspect typed data in a binary section (.data/.rodata) as integers, pointers, strings or a named struct."""
-    struct_store = load_struct_store()
+    struct_store = load_struct_store(binary_path)
     struct_entries = [
         {
             "name": name,

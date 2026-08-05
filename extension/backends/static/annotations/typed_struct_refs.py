@@ -13,15 +13,7 @@ from typing import Any
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 from backends.shared.utils import normalize_addr as _normalize_addr
-
-TYPED_STRUCT_REFS_FILE_NAME = "typed_struct_refs.json"
-
-
-def get_typed_struct_refs_path(workspace_root: str | None = None) -> str:
-    root = (
-        workspace_root or os.environ.get("POF_STORAGE_DIR", "").strip() or os.getcwd()
-    )
-    return os.path.join(root, TYPED_STRUCT_REFS_FILE_NAME)
+from backends.static.annotations.struct_db import StructDb
 
 
 def _normalize_binary_key(binary_path: str | None) -> str:
@@ -79,27 +71,7 @@ def _sanitize_applied_struct(applied_struct: dict[str, Any]) -> dict[str, Any]:
 
 
 def load_typed_struct_ref_store(workspace_root: str | None = None) -> dict[str, Any]:
-    store_path = get_typed_struct_refs_path(workspace_root)
-    if not os.path.isfile(store_path):
-        return {"entries": []}
-    try:
-        with open(store_path, encoding="utf-8") as fh:
-            payload = json.load(fh)
-    except Exception:
-        return {"entries": []}
-    entries = payload.get("entries") if isinstance(payload, dict) else []
-    if not isinstance(entries, list):
-        entries = []
-    return {"entries": entries}
-
-
-def _write_store(
-    entries: list[dict[str, Any]], workspace_root: str | None = None
-) -> None:
-    store_path = get_typed_struct_refs_path(workspace_root)
-    os.makedirs(os.path.dirname(store_path), exist_ok=True)
-    with open(store_path, "w", encoding="utf-8") as fh:
-        json.dump({"entries": entries}, fh, indent=2, sort_keys=True)
+    return {"entries": StructDb(workspace_root).list_typed_refs()}
 
 
 def save_typed_struct_ref(
@@ -111,7 +83,6 @@ def save_typed_struct_ref(
     if not binary_key:
         raise ValueError("Chemin binaire manquant.")
     sanitized = _sanitize_applied_struct(applied_struct)
-    store = load_typed_struct_ref_store(workspace_root)
     entry = {
         "binary": binary_key,
         "name": sanitized["name"],
@@ -123,25 +94,9 @@ def save_typed_struct_ref(
         "align": sanitized["align"],
         "fields": sanitized["fields"],
     }
-    deduped = [
-        current
-        for current in store["entries"]
-        if not (
-            _normalize_binary_key(current.get("binary")) == binary_key
-            and _normalize_addr(current.get("addr", "")) == sanitized["addr"]
-            and str(current.get("name") or "").strip() == sanitized["name"]
-        )
-    ]
-    deduped.append(entry)
-    deduped.sort(
-        key=lambda item: (
-            _normalize_binary_key(item.get("binary")),
-            _safe_int(item.get("addr"), 0),
-            str(item.get("name") or ""),
-        )
-    )
-    _write_store(deduped, workspace_root)
-    return {"error": None, "entry": entry, "entries": deduped}
+    database = StructDb(workspace_root)
+    database.save_typed_ref(entry)
+    return {"error": None, "entry": entry, "entries": database.list_typed_refs()}
 
 
 def list_typed_struct_refs(
@@ -149,14 +104,7 @@ def list_typed_struct_refs(
     workspace_root: str | None = None,
 ) -> dict[str, Any]:
     binary_key = _normalize_binary_key(binary_path) if binary_path else ""
-    store = load_typed_struct_ref_store(workspace_root)
-    entries = store["entries"]
-    if binary_key:
-        entries = [
-            entry
-            for entry in entries
-            if _normalize_binary_key(entry.get("binary")) == binary_key
-        ]
+    entries = StructDb(workspace_root).list_typed_refs(binary_key or None)
     return {"error": None, "entries": entries}
 
 

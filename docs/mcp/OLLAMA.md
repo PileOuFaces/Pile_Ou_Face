@@ -65,7 +65,9 @@ Le hub UI integre maintenant la discussion Ollama directement dans le `Dashboard
 3. Dans `Discussion Ollama + MCP`, cliquer sur `Rafraîchir`
 4. Choisir le modele, ecrire un message, puis `Envoyer`
 
-La discussion conserve un historique local (messages user/assistant) pour que les prompts suivants gardent le contexte des resultats precedents.
+La discussion conserve les messages user/assistant dans la base SQLite
+`~/.pile-ou-face/chat-history.db`, isolés par workspace. SQLite est l'unique
+stockage de l'historique ; le webview ne conserve que ses préférences d'UI.
 Le bouton `Nouvelle discussion` ouvre un nouveau fil sans perdre les precedents.
 Un panneau `Historique des conversations` permet de rouvrir une ancienne discussion, et le bouton `Vider` supprime tout l'historique.
 Un widget flottant `IA` est disponible depuis tous les onglets du hub pour discuter sans quitter l'outil en cours.

@@ -14,67 +14,36 @@ from __future__ import annotations
 __mcp_enabled__ = True
 
 import argparse
-import hashlib
 import json
 import os
 import sys
 from datetime import UTC, datetime
-from pathlib import Path
 from uuid import uuid4
 
 # Allow running as a script directly (not only via `python -m`)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
+from backends.static.patch.patch_db import (  # noqa: E402
+    MAX_PATCH_BYTES,
+    MAX_PATCHES_PER_BINARY,
+    PatchDb,
+)
 
 # ---------------------------------------------------------------------------
 # Storage helpers
 # ---------------------------------------------------------------------------
 
 
-def _patches_dir(binary_path: str) -> Path:
-    """Return the patch storage directory for a binary."""
-    storage_dir = os.environ.get("POF_STORAGE_DIR", "").strip()
-    if storage_dir:
-        return Path(storage_dir) / "patches"
-
-    binary_abs = os.path.abspath(binary_path)
-    start = os.path.dirname(binary_abs)
-    return Path(start) / "patches"
-
-
-def _patch_file(binary_path: str) -> Path:
-    """Return the JSON patch file path for this binary (does not create dirs)."""
-    binary_abs = os.path.abspath(binary_path)
-    key = hashlib.sha256(binary_abs.encode()).hexdigest()[:16]
-    patches_dir = _patches_dir(binary_path)
-    return patches_dir / f"{key}.json"
-
-
 def _load(binary_path: str) -> dict:
-    """Load patch data from JSON file, or return empty structure."""
-    patch_file = _patch_file(binary_path)
-    if not patch_file.exists():
-        return {
-            "binary": os.path.abspath(binary_path),
-            "patches": [],
-            "redo_patches": [],
-        }
-    with open(patch_file, encoding="utf-8") as f:
-        data = json.load(f)
-    if not isinstance(data, dict):
-        data = {}
-    data.setdefault("binary", os.path.abspath(binary_path))
-    data.setdefault("patches", [])
-    data.setdefault("redo_patches", [])
-    return data
+    """Load patch data from the SQLite source of truth."""
+    with PatchDb() as db:
+        return db.load(binary_path)
 
 
 def _save(binary_path: str, data: dict) -> None:
-    """Write patch data to JSON file, creating parent dirs as needed."""
-    f = _patch_file(binary_path)
-    f.parent.mkdir(parents=True, exist_ok=True)
-    with open(f, "w", encoding="utf-8") as fh:
-        json.dump(data, fh, indent=2)
+    """Replace this binary's patch history transactionally in SQLite."""
+    with PatchDb() as db:
+        db.save(binary_path, data)
 
 
 def _decode_hex_bytes(
@@ -127,6 +96,17 @@ def apply_patch(
     if error:
         return {"ok": False, "error": error}
     assert raw is not None
+    if not raw:
+        return {"ok": False, "error": "No patch bytes provided."}
+    if len(raw) > MAX_PATCH_BYTES:
+        return {"ok": False, "error": f"Patch exceeds {MAX_PATCH_BYTES} bytes."}
+
+    data = _load(binary_path)
+    if len(data["patches"]) + len(data["redo_patches"]) >= MAX_PATCHES_PER_BINARY:
+        return {
+            "ok": False,
+            "error": f"Patch history limit reached ({MAX_PATCHES_PER_BINARY}).",
+        }
 
     file_size = os.path.getsize(binary_abs)
     if offset < 0 or offset + len(raw) > file_size:
@@ -147,7 +127,6 @@ def apply_patch(
         "comment": comment,
     }
 
-    data = _load(binary_path)
     data["patches"].append(entry)
     data["redo_patches"] = []
     _save(binary_path, data)
@@ -247,6 +226,18 @@ def revert_all(binary_path: str) -> dict:
     return {"ok": True}
 
 
+def delete_history(binary_path: str) -> dict:
+    """Delete all persisted patch history for one binary."""
+    with PatchDb() as db:
+        return {"ok": True, "removed": db.delete(binary_path)}
+
+
+def purge_missing(workspace_root: str) -> dict:
+    """Delete missing-binary histories scoped to one workspace."""
+    with PatchDb() as db:
+        return {"ok": True, "removed": db.purge_missing(workspace_root)}
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -281,6 +272,12 @@ def main() -> int:
     p_revert_all = sub.add_parser("revert-all")
     p_revert_all.add_argument("--binary", required=True)
 
+    p_delete = sub.add_parser("delete")
+    p_delete.add_argument("--binary", required=True)
+
+    p_purge = sub.add_parser("purge-missing")
+    p_purge.add_argument("--workspace", required=True)
+
     args = parser.parse_args()
 
     if args.command == "list":
@@ -293,6 +290,10 @@ def main() -> int:
         result = redo_patch(args.binary, getattr(args, "patch_id", None))
     elif args.command == "revert-all":
         result = revert_all(args.binary)
+    elif args.command == "delete":
+        result = delete_history(args.binary)
+    elif args.command == "purge-missing":
+        result = purge_missing(args.workspace)
     else:
         result = {"ok": False, "error": f"Unknown command: {args.command}"}
 

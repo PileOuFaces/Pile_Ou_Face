@@ -15,7 +15,7 @@ from typing import Any
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
-STRUCTS_FILE_NAME = "structs.json"
+from backends.static.annotations.struct_db import StructDb
 
 _COMPOUND_RE = re.compile(
     r"(?:(?:typedef)\s+)?(?P<kind>struct|union)(?:\s+(?P<tag>[A-Za-z_]\w*))?\s*\{(?P<body>.*?)\}\s*(?P<alias>[A-Za-z_]\w*)?\s*;",
@@ -38,6 +38,18 @@ _ARRAY_DIMS_RE = re.compile(r"(\[\s*\d+\s*\])+$")
 _ARRAY_DIM_RE = re.compile(r"\[\s*(\d+)\s*\]")
 # Function pointer field: void (*name)(args) — captures the pointer name
 _FUNC_PTR_RE = re.compile(r"\(\s*\*\s*(?:const\s+)?([A-Za-z_]\w*)\s*\)")
+# Function-pointer typedef: typedef <ret> (*<alias>)(<params>);
+_TYPEDEF_FUNC_RE = re.compile(
+    r"typedef\s+(?P<ret>[A-Za-z_][\w\s\*]*?)\(\s*\*\s*(?P<alias>[A-Za-z_]\w*)\s*\)\s*\((?P<params>[^;{}]*)\)\s*;"
+)
+# Bare function prototype (signature catalog only, not executable): <ret> <name>(<params>);
+_PROTOTYPE_RE = re.compile(
+    r"(?P<ret>[A-Za-z_][\w\s\*]*?)\b(?P<name>[A-Za-z_]\w*)\s*\((?P<params>[^;{}()]*)\)\s*;"
+)
+# Simple typedef alias: typedef <type> <alias>; (no inline struct/union/enum body)
+_TYPEDEF_RE = re.compile(
+    r"typedef\s+(?P<spec>(?:struct|union|enum)?\s*[A-Za-z_][\w\s\*]*?)\s+(?P<alias>[A-Za-z_]\w*)\s*;"
+)
 _QUALIFIERS = {"const", "volatile", "restrict"}
 _PRIMITIVE_TYPES = {
     "_Bool",
@@ -70,14 +82,6 @@ _PRIMITIVE_TYPES = {
     "uintptr_t",
     "void",
 }
-
-
-def get_struct_store_path(workspace_root: str | None = None) -> str:
-    """Return the filesystem path where struct definitions are stored."""
-    root = (
-        workspace_root or os.environ.get("POF_STORAGE_DIR", "").strip() or os.getcwd()
-    )
-    return os.path.join(root, STRUCTS_FILE_NAME)
 
 
 def _strip_comments(source_text: str) -> str:
@@ -159,6 +163,49 @@ def _parse_field(field_spec: str) -> dict[str, Any]:
         "array_dims": array_dims,
         "display_type": normalized_type + ("*" * pointer_level) + display_array,
     }
+
+
+def _parse_type_spec(spec_text: str) -> dict[str, Any]:
+    """Parse a bare type reference (no field name), e.g. a return type or typedef target."""
+    left = " ".join(spec_text.strip().split())
+    if not left:
+        raise ValueError("Type manquant.")
+    pointer_level = left.count("*")
+    type_name = " ".join(left.replace("*", " ").split())
+    if not type_name:
+        raise ValueError(f"Type manquant: {spec_text}")
+    normalized_type, type_kind = _normalize_type_name(type_name)
+    return {
+        "name": "",
+        "type": normalized_type,
+        "type_kind": type_kind,
+        "pointer_level": pointer_level,
+        "array_len": None,
+        "array_dims": None,
+        "display_type": normalized_type + ("*" * pointer_level),
+    }
+
+
+def _parse_params(params_text: str) -> list[dict[str, Any]]:
+    """Parse a comma-separated parameter list into field-like entries."""
+    text = params_text.strip()
+    if not text or text == "void":
+        return []
+    params: list[dict[str, Any]] = []
+    for index, raw_param in enumerate(text.split(",")):
+        candidate = " ".join(raw_param.strip().split())
+        if not candidate:
+            continue
+        name_match = re.search(r"([A-Za-z_]\w*)\s*$", candidate)
+        param_name = f"arg{index}"
+        left = candidate
+        if name_match and candidate[: name_match.start()].strip():
+            param_name = name_match.group(1)
+            left = candidate[: name_match.start()].strip()
+        spec = _parse_type_spec(left)
+        spec["name"] = param_name
+        params.append(spec)
+    return params
 
 
 def _eval_enum_expr(expr: str, symbols: dict[str, int]) -> int:
@@ -277,59 +324,135 @@ def parse_struct_definitions(source_text: str) -> dict[str, dict[str, Any]]:
             "values": members,
             "value_map": {member["name"]: member["value"] for member in members},
         }
+    for match in _TYPEDEF_FUNC_RE.finditer(cleaned):
+        alias = (match.group("alias") or "").strip()
+        if not alias:
+            continue
+        ret_field = _parse_type_spec(match.group("ret"))
+        params = _parse_params(match.group("params"))
+        definitions[alias] = {
+            "name": alias,
+            "kind": "function",
+            "fields": [ret_field] + params,
+        }
+    for match in _PROTOTYPE_RE.finditer(cleaned):
+        name = (match.group("name") or "").strip()
+        ret_text = (match.group("ret") or "").strip()
+        if not name or not ret_text or name in definitions:
+            continue
+        if re.search(r"\btypedef\b", ret_text):
+            continue
+        ret_field = _parse_type_spec(ret_text)
+        params = _parse_params(match.group("params"))
+        definitions[name] = {
+            "name": name,
+            "kind": "function",
+            "fields": [ret_field] + params,
+        }
+    for match in _TYPEDEF_RE.finditer(cleaned):
+        alias = (match.group("alias") or "").strip()
+        spec = (match.group("spec") or "").strip()
+        if not alias or not spec or alias in definitions:
+            continue
+        field = _parse_type_spec(spec)
+        definitions[alias] = {
+            "name": alias,
+            "kind": "typedef",
+            "fields": [field],
+        }
     if source_text.strip() and not definitions:
         raise ValueError("Aucun type C reconnu dans la définition fournie.")
     return definitions
 
 
-def load_struct_store(workspace_root: str | None = None) -> dict[str, Any]:
+def _normalize_binary_key(binary_path: str) -> str:
+    if not binary_path:
+        raise ValueError("Chemin binaire manquant.")
+    return os.path.normcase(os.path.abspath(binary_path))
+
+
+def load_struct_store(
+    binary_path: str, workspace_root: str | None = None
+) -> dict[str, Any]:
     """Load the full struct store with all type definitions and source."""
-    store_path = get_struct_store_path(workspace_root)
-    if not os.path.isfile(store_path):
-        return {"source": "", "definitions": {}}
-    try:
-        with open(store_path, encoding="utf-8") as fh:
-            payload = json.load(fh)
-    except Exception:
-        return {"source": "", "definitions": {}}
-    source = payload.get("source") if isinstance(payload, dict) else ""
-    definitions = payload.get("definitions") if isinstance(payload, dict) else {}
-    if not isinstance(source, str):
-        source = ""
-    if not isinstance(definitions, dict):
-        definitions = {}
-    return {"source": source, "definitions": definitions}
+    return StructDb(workspace_root).load_definitions(_normalize_binary_key(binary_path))
 
 
-def list_struct_store(workspace_root: str | None = None) -> dict[str, Any]:
+def list_struct_store(
+    binary_path: str, workspace_root: str | None = None
+) -> dict[str, Any]:
     """List all user-defined struct/union/enum types currently saved in the workspace."""
-    store = load_struct_store(workspace_root)
-    structs = [
-        {
-            "name": name,
-            "kind": str((definition or {}).get("kind") or "struct"),
-            "field_count": len((definition or {}).get("fields") or []),
-        }
-        for name, definition in sorted(store["definitions"].items())
-        if str((definition or {}).get("kind") or "struct") in {"struct", "union"}
-    ]
-    return {"structs": structs, "source": store["source"], "error": None}
+    store = load_struct_store(binary_path, workspace_root)
+    types = []
+    for name, definition in sorted(store["definitions"].items()):
+        kind = str((definition or {}).get("kind") or "struct")
+        entry = {"name": name, "kind": kind}
+        if kind == "enum":
+            entry["value_count"] = len((definition or {}).get("values") or [])
+        else:
+            entry["field_count"] = len((definition or {}).get("fields") or [])
+        types.append(entry)
+    return {"structs": types, "source": store["source"], "error": None}
 
 
 def save_struct_source(
-    source_text: str, workspace_root: str | None = None
+    source_text: str, binary_path: str, workspace_root: str | None = None
 ) -> dict[str, Any]:
     """Save C-style struct/union/enum definitions so they can be applied to binary data."""
     definitions = parse_struct_definitions(source_text)
-    store_path = get_struct_store_path(workspace_root)
-    os.makedirs(os.path.dirname(store_path), exist_ok=True)
-    payload = {
-        "source": source_text,
-        "definitions": definitions,
-    }
-    with open(store_path, "w", encoding="utf-8") as fh:
-        json.dump(payload, fh, indent=2, sort_keys=True)
-    return list_struct_store(workspace_root)
+    binary_key = _normalize_binary_key(binary_path)
+    StructDb(workspace_root).replace_definitions(binary_key, source_text, definitions)
+    return list_struct_store(binary_key, workspace_root)
+
+
+_VALID_DEFINITION_KINDS = {"struct", "union", "enum", "typedef", "function"}
+
+
+def _validate_definition(name: str, definition: dict[str, Any]) -> None:
+    kind = str(definition.get("kind") or "")
+    if kind not in _VALID_DEFINITION_KINDS:
+        raise ValueError(f"Type de définition invalide pour {name}: {kind!r}.")
+    if kind == "enum":
+        for value in definition.get("values") or []:
+            if "name" not in value or "value" not in value:
+                raise ValueError(f"Valeur d'enum invalide dans {name}.")
+        return
+    for field in definition.get("fields") or []:
+        if "name" not in field or "type" not in field:
+            raise ValueError(f"Champ invalide dans {name}.")
+        field.setdefault("type_kind", "struct")
+        field.setdefault("pointer_level", 0)
+        field.setdefault("array_len", None)
+        field.setdefault("array_dims", None)
+        field.setdefault("display_type", field["type"])
+
+
+def import_type_definitions(
+    binary: str,
+    definitions: dict[str, dict[str, Any]],
+    source_label: str,
+    workspace_root: str | None = None,
+) -> dict[str, Any]:
+    """Programmatic JSON entrypoint to merge type definitions into a binary's catalog.
+
+    Accepts the same shape produced by parse_struct_definitions(). Intended for
+    future importers (Ghidra/IDB exports, AI-proposed types) to feed the catalog
+    incrementally, without wiping the binary's existing definitions.
+    """
+    if not definitions:
+        raise ValueError("Aucune définition à importer.")
+    if not source_label or not source_label.strip():
+        raise ValueError("source_label manquant.")
+    for name, definition in definitions.items():
+        if not name or not re.fullmatch(r"[A-Za-z_]\w*", name):
+            raise ValueError(f"Nom de type invalide: {name!r}.")
+        _validate_definition(name, definition)
+        definition.setdefault("name", name)
+    binary_key = _normalize_binary_key(binary)
+    StructDb(workspace_root).merge_definitions(
+        binary_key, definitions, source_label.strip()
+    )
+    return list_struct_store(binary_key, workspace_root)
 
 
 _PRIMITIVE_LAYOUTS: dict[str, tuple[int, int, str]] = {
@@ -377,6 +500,30 @@ def _primitive_layout(type_name: str, ptr_size: int) -> tuple[int, int, str] | N
     return _PRIMITIVE_LAYOUTS.get(type_name)
 
 
+def _resolve_typedef_chain(
+    definitions: dict[str, dict[str, Any]], type_name: str
+) -> tuple[str, dict[str, Any] | None, int]:
+    """Follow typedef aliases to their underlying type.
+
+    Returns (resolved_name, resolved_definition, extra_pointer_level) where
+    extra_pointer_level accumulates pointer indirection carried by the typedef
+    chain itself (e.g. `typedef char* PSTR;`).
+    """
+    seen: set[str] = set()
+    extra_pointer_level = 0
+    current = type_name
+    while True:
+        definition = definitions.get(current)
+        if not definition or str(definition.get("kind") or "") != "typedef":
+            return current, definition, extra_pointer_level
+        if current in seen:
+            raise ValueError(f"Typedef récursif non supporté: {type_name}")
+        seen.add(current)
+        target_field = (definition.get("fields") or [{}])[0]
+        extra_pointer_level += int(target_field.get("pointer_level") or 0)
+        current = str(target_field.get("type") or "")
+
+
 def compute_struct_layout(
     definitions: dict[str, dict[str, Any]],
     struct_name: str,
@@ -391,6 +538,19 @@ def compute_struct_layout(
         if name in stack:
             raise ValueError(f"Type récursif non supporté: {name}")
         definition = definitions.get(name)
+        if definition and str(definition.get("kind") or "") == "typedef":
+            resolved_name, resolved_definition, _ = _resolve_typedef_chain(
+                definitions, name
+            )
+            if not resolved_definition or str(
+                resolved_definition.get("kind") or ""
+            ) not in {"struct", "union"}:
+                raise ValueError(
+                    f"Le typedef {name} ne pointe pas vers un struct/union applicable."
+                )
+            layout = build(resolved_name, stack | {name})
+            cache[name] = layout
+            return layout
         if not definition:
             raise ValueError(f"Type inconnu: {name}")
         definition_kind = str(definition.get("kind") or "struct")
@@ -407,7 +567,12 @@ def compute_struct_layout(
             array_len = field.get("array_len")
             array_len = int(array_len) if array_len is not None else None
             base_type = str(field.get("type") or "")
-            named_definition = definitions.get(base_type) if base_type else None
+            resolved_base_type, named_definition, typedef_pointer_bonus = (
+                _resolve_typedef_chain(definitions, base_type)
+                if base_type
+                else (base_type, None, 0)
+            )
+            pointer_level += typedef_pointer_bonus
             if pointer_level > 0:
                 elem_size = ptr_size
                 elem_align = ptr_size
@@ -426,15 +591,25 @@ def compute_struct_layout(
                 "struct",
                 "union",
             }:
-                nested = build(base_type, next_stack)
+                nested = build(resolved_base_type, next_stack)
                 elem_size = int(nested["size"])
                 elem_align = int(nested["align"])
                 tag = str(nested.get("kind") or field_kind)
                 resolved_kind = str(nested.get("kind") or field_kind)
+            elif (
+                named_definition
+                and str(named_definition.get("kind") or "") == "function"
+            ):
+                elem_size = ptr_size
+                elem_align = ptr_size
+                tag = "fn_ptr"
+                resolved_kind = "pointer"
             else:
-                primitive = _primitive_layout(base_type, ptr_size)
+                primitive = _primitive_layout(resolved_base_type, ptr_size)
                 if primitive is None:
-                    raise ValueError(f"Type de champ non supporté: {base_type}")
+                    raise ValueError(
+                        f"Type de champ non supporté: {resolved_base_type}"
+                    )
                 elem_size, elem_align, tag = primitive
                 resolved_kind = "primitive"
 
@@ -493,17 +668,30 @@ def _load_source_text(args: argparse.Namespace) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Manage user-defined C types")
-    parser.add_argument("action", choices=["list", "save"])
+    parser.add_argument("action", choices=["list", "save", "import"])
     parser.add_argument("--source-text", default="")
     parser.add_argument("--source-file")
+    parser.add_argument("--defs-file")
+    parser.add_argument("--source-label", default="import")
     parser.add_argument("--workspace-root")
+    parser.add_argument("--binary", required=True)
     args = parser.parse_args()
 
     try:
         if args.action == "list":
-            result = list_struct_store(args.workspace_root)
+            result = list_struct_store(args.binary, args.workspace_root)
+        elif args.action == "import":
+            if not args.defs_file:
+                raise ValueError("--defs-file requis pour l'action import.")
+            with open(args.defs_file, encoding="utf-8") as fh:
+                definitions = json.load(fh)
+            result = import_type_definitions(
+                args.binary, definitions, args.source_label, args.workspace_root
+            )
         else:
-            result = save_struct_source(_load_source_text(args), args.workspace_root)
+            result = save_struct_source(
+                _load_source_text(args), args.binary, args.workspace_root
+            )
     except Exception as exc:
         result = {"error": str(exc), "structs": [], "source": ""}
 

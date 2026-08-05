@@ -196,6 +196,7 @@ function createHub(config) {
   let hubDispatchRef = null;
   let hubWebviewDispatchRef = null;
   let pendingAiPrompt = '';
+  let pendingAutoTriageBinary = '';
   let latestTraceRunId = 0;
   let activeDynamicAbortController = null;
   const perfDiagnosticsEnabled = () => {
@@ -255,6 +256,7 @@ function createHub(config) {
 
   return function openHub(initialPanel = 'dashboard', options = {}) {
     if (options.aiPrompt) pendingAiPrompt = String(options.aiPrompt);
+    if (options.autoTriageBinary) pendingAutoTriageBinary = String(options.autoTriageBinary);
     const folders = vscode.workspace.workspaceFolders;
     if (!folders || folders.length === 0) {
       vscode.window.showErrorMessage('Aucun workspace ouvert.');
@@ -401,6 +403,10 @@ function createHub(config) {
       if (pendingAiPrompt) {
         hubPanelRef.webview.postMessage({ type: 'hubPrefillAiPrompt', prompt: pendingAiPrompt });
         pendingAiPrompt = '';
+      }
+      if (pendingAutoTriageBinary) {
+        hubPanelRef.webview.postMessage({ type: 'hubAutoTriageOpenPanel', binaryPath: pendingAutoTriageBinary });
+        pendingAutoTriageBinary = '';
       }
       globalThis.setTimeout(() => {
         runHubStartupAction(hubHandlersRef).catch((error) => {
@@ -930,9 +936,14 @@ function createHub(config) {
       clearDynamicTraceHistory: traceHistoryHandlers.clearDynamicTraceHistory,
       hubReady: () => {
         panel.webview.postMessage({ type: 'hubPerfDiagnosticsConfig', enabled: perfDiagnosticsEnabled() });
-        if (!pendingAiPrompt) return;
-        panel.webview.postMessage({ type: 'hubPrefillAiPrompt', prompt: pendingAiPrompt });
-        pendingAiPrompt = '';
+        if (pendingAiPrompt) {
+          panel.webview.postMessage({ type: 'hubPrefillAiPrompt', prompt: pendingAiPrompt });
+          pendingAiPrompt = '';
+        }
+        if (pendingAutoTriageBinary) {
+          panel.webview.postMessage({ type: 'hubAutoTriageOpenPanel', binaryPath: pendingAutoTriageBinary });
+          pendingAutoTriageBinary = '';
+        }
       },
     };
     hubDispatchRef = hubDispatchMap;
@@ -1102,16 +1113,6 @@ function createHub(config) {
         const rawSymbols = await runPythonJson(getSymbolsScript(root), args).catch(() => []);
         return Array.isArray(rawSymbols) ? rawSymbols : (rawSymbols.symbols || []);
       };
-      const getBinaryAnnotationsJsonPath = (absPath) => {
-        const hash = crypto
-          .createHash('sha256')
-          .update(absPath)
-          .update(fs.existsSync(absPath) ? String(fs.statSync(absPath).mtimeMs) : '')
-          .digest('hex')
-          .slice(0, 16);
-        return path.join(storageDir, 'annotations', `${hash}.json`);
-      };
-
       const buildRunTraceInit = async (forcedBinaryPath = '', preset = null, forcedSourcePath = '', payloadTargetMode = 'auto') => {
         const requestedPayloadTargetMode = normalizePayloadTargetMode(preset?.payloadTargetMode || payloadTargetMode);
         const latestTrace = loadLatestTrace();
@@ -1262,7 +1263,8 @@ function createHub(config) {
       const hasBufferSize = payload.bufferSize !== null && payload.bufferSize !== undefined && payload.bufferSize !== '';
       const bufferOffset = hasBufferOffset ? String(payload.bufferOffset) : null;
       const bufferSize = hasBufferSize ? String(payload.bufferSize) : null;
-      const maxSteps = String(payload.maxSteps || '800');
+      const requestedMaxSteps = Number(payload.maxSteps ?? 800);
+      const maxSteps = String(requestedMaxSteps);
       const telemetryInput = payload.input && typeof payload.input === 'object' ? payload.input : {};
       const telemetryPayloadMode = mapPayloadMode(telemetryInput.mode || payload.payloadMode);
       const telemetryBinaryInfo = useExistingBinary && binaryPath
@@ -1344,6 +1346,11 @@ function createHub(config) {
           runTelemetry.complete();
           runTraceResult = 'completed';
         } else {
+          if (!Number.isInteger(requestedMaxSteps) || requestedMaxSteps < 1 || requestedMaxSteps > 10000) {
+            runTelemetry.fail('invalid_input');
+            vscode.window.showErrorMessage('Le nombre de pas doit etre compris entre 1 et 10 000.');
+            return;
+          }
           if (useExistingBinary && !binaryPath) {
             runTelemetry.fail('invalid_input');
             vscode.window.showErrorMessage('Chemin binaire requis.');
@@ -1576,6 +1583,13 @@ function createHub(config) {
         if (!pendingAiPrompt || !hubPanelRef || hubPanelRef.disposed) return;
         panel.webview.postMessage({ type: 'hubPrefillAiPrompt', prompt: pendingAiPrompt });
         pendingAiPrompt = '';
+      }, 500);
+    }
+    if (pendingAutoTriageBinary) {
+      globalThis.setTimeout(() => {
+        if (!pendingAutoTriageBinary || !hubPanelRef || hubPanelRef.disposed) return;
+        panel.webview.postMessage({ type: 'hubAutoTriageOpenPanel', binaryPath: pendingAutoTriageBinary });
+        pendingAutoTriageBinary = '';
       }, 500);
     }
     return panel;

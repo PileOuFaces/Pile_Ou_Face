@@ -54,6 +54,7 @@ def build_diagnostics(
     disasm_lines: list[dict] | None = None,
     crash: dict | None = None,
     max_steps_reached: bool = False,
+    trace_size_reached: bool = False,
 ) -> list[dict]:
     """Build deterministic crash/error diagnostics from trace enrichment."""
     diagnostics: list[dict] = []
@@ -111,6 +112,8 @@ def build_diagnostics(
     # reported when there's already a genuine crash for this run.
     if max_steps_reached and crash is None:
         diagnostics.append(_max_steps_diagnostic(snapshots))
+    if trace_size_reached and crash is None:
+        diagnostics.append(_trace_size_diagnostic(snapshots))
 
     deduped = _dedupe_diagnostics(diagnostics)
     _attach_to_analysis(analysis_by_step, deduped)
@@ -454,6 +457,16 @@ def _diagnose_crash(
         confidence = 0.96
         ret_target = None
         message = str(crash.get("reason") or "Crash fatal Unicorn.").strip()
+    elif classification == "stack_chk_fail":
+        # The program's own stack protector detected a corrupted canary and
+        # called __stack_chk_fail -- direct evidence, not a heuristic guess.
+        kind = "stack_chk_fail"
+        severity = "error"
+        confidence = 0.97
+        ret_target = None
+        message = str(
+            crash.get("reason") or "Protecteur de pile declenche (__stack_chk_fail)."
+        ).strip()
     elif classification in ("benign_termination", "emulator_stop"):
         # run_pipeline._build_crash_report already downgraded this from
         # fatal_crash after finding zero corruption evidence (no overflow
@@ -983,6 +996,27 @@ def _max_steps_diagnostic(snapshots: list[dict]) -> dict:
             "function": _function_name(last_snapshot, {}),
             "instructionAddress": _instruction_address(last_snapshot),
             "message": "Limite de pas d'execution atteinte : le trace a ete tronque, ce n'est pas un crash.",
+            "before": None,
+            "after": None,
+            "bytes": "",
+            "probableSource": None,
+            "payloadOffset": None,
+            "confidence": 1.0,
+        }
+    )
+
+
+def _trace_size_diagnostic(snapshots: list[dict]) -> dict:
+    last_snapshot = snapshots[-1] if isinstance(snapshots, list) and snapshots else {}
+    step = _step_number(last_snapshot, max(0, len(snapshots) - 1)) if snapshots else 0
+    return _clean_diag(
+        {
+            "severity": "info",
+            "kind": "trace_size_limit_reached",
+            "step": step,
+            "function": _function_name(last_snapshot, {}),
+            "instructionAddress": _instruction_address(last_snapshot),
+            "message": "Limite de taille de trace atteinte : la trace partielle reste exploitable, ce n'est pas un crash.",
             "before": None,
             "after": None,
             "bytes": "",

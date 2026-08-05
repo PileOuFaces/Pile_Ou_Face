@@ -84,18 +84,6 @@ class TestCacheHelpers(unittest.TestCase):
         k2 = _cache_key("/bin/ls", "0x401000", decompiler="ghidra")
         self.assertNotEqual(k1, k2)
 
-    def test_cache_key_changes_with_annotations_mtime(self):
-        import time
-
-        with tempfile.TemporaryDirectory() as d:
-            ann_path = Path(d) / "ann.json"
-            ann_path.write_text('{"0x401000": {"name": "foo"}}')
-            k1 = _cache_key("/bin/ls", "0x401000", annotations_json=str(ann_path))
-            time.sleep(0.01)
-            ann_path.write_text('{"0x401000": {"name": "bar"}}')
-            k2 = _cache_key("/bin/ls", "0x401000", annotations_json=str(ann_path))
-            self.assertNotEqual(k1, k2)
-
     def test_cache_key_changes_with_sqlite_annotations_signature(self):
         k1 = _cache_key(
             "/bin/ls",
@@ -106,6 +94,19 @@ class TestCacheHelpers(unittest.TestCase):
             "/bin/ls",
             "0x401000",
             annotations_signature="rename:0x401000:bar",
+        )
+        self.assertNotEqual(k1, k2)
+
+    def test_cache_key_changes_with_typed_var_bindings_signature(self):
+        k1 = _cache_key(
+            "/bin/ls",
+            "0x401000",
+            typed_var_bindings_signature="abc123",
+        )
+        k2 = _cache_key(
+            "/bin/ls",
+            "0x401000",
+            typed_var_bindings_signature="def456",
         )
         self.assertNotEqual(k1, k2)
 
@@ -136,7 +137,7 @@ class TestCacheHelpers(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             subdir = Path(d) / "nested" / "cache"
             _write_cache("deadbeefcafe1234", subdir, {"x": 1})
-            self.assertTrue((subdir / "deadbeefcafe1234.json").exists())
+            self.assertTrue((subdir / "static-cache.sqlite3").exists())
 
     def test_write_cache_can_embed_binary_metadata(self):
         with tempfile.TemporaryDirectory() as d:
@@ -192,6 +193,10 @@ class TestDecompileFunctionCache(unittest.TestCase):
                 return_value="",
             ),
             mock.patch(
+                "backends.static.decompile.decompile.typed_var_binding_signature",
+                return_value="",
+            ),
+            mock.patch(
                 "backends.static.disasm.stack_frame.analyse_stack_frame",
                 return_value=self._empty_stack,
             ),
@@ -211,6 +216,7 @@ class TestDecompileFunctionCache(unittest.TestCase):
                 "0x401000",
                 stack_signature=_stack_signature(self._empty_stack, None),
                 typed_structs_signature="",
+                typed_var_bindings_signature="",
             )
             _write_cache(key, cache_dir, cached)
 
@@ -235,6 +241,10 @@ class TestDecompileFunctionCache(unittest.TestCase):
                 ),
                 mock.patch(
                     "backends.static.decompile.decompile.typed_struct_signature",
+                    return_value="",
+                ),
+                mock.patch(
+                    "backends.static.decompile.decompile.typed_var_binding_signature",
                     return_value="",
                 ),
                 mock.patch(
@@ -281,6 +291,10 @@ class TestDecompileFunctionCache(unittest.TestCase):
                     return_value="",
                 ),
                 mock.patch(
+                    "backends.static.decompile.decompile.typed_var_binding_signature",
+                    return_value="",
+                ),
+                mock.patch(
                     "backends.static.disasm.stack_frame.analyse_stack_frame",
                     return_value=self._empty_stack,
                 ),
@@ -297,6 +311,7 @@ class TestDecompileFunctionCache(unittest.TestCase):
                 "0x401000",
                 stack_signature=_stack_signature(self._empty_stack, None),
                 typed_structs_signature="",
+                typed_var_bindings_signature="",
             )
             cached = _read_cache(key, cache_dir)
             self.assertIsNotNone(cached)
@@ -335,6 +350,7 @@ class TestDecompileFunctionCache(unittest.TestCase):
                 "0x401000",
                 stack_signature=_stack_signature(self._empty_stack, None),
                 typed_structs_signature="",
+                typed_var_bindings_signature="",
             )
             self.assertIsNone(_read_cache(key, cache_dir))
 

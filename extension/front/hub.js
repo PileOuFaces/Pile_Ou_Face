@@ -117,6 +117,7 @@ let runtimeSessionController = null;
 const staticToolsWidgetsControllerFactory = window.POFHub?.staticToolsWidgetsController || window.POFHubStaticToolsWidgetsController;
 const staticToolsWidgetsController = staticToolsWidgetsControllerFactory?.initStaticToolsWidgetsController?.() || null;
 window.staticToolsWidgetsController = staticToolsWidgetsController;
+window.POFHubAutoTriageController?.initAutoTriage?.();
 const toastControllerFactory = window.POFHub?.toastController || window.POFHubToastController;
 const toastController = toastControllerFactory?.initToastController?.() || null;
 const archBadgeControllerFactory = window.POFHub?.archBadgeController || window.POFHubArchBadgeController;

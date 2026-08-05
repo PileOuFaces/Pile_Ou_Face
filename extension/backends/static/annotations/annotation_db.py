@@ -75,7 +75,23 @@ class AnnotationDb:
             "CREATE INDEX IF NOT EXISTS idx_annotations_binary_sha256 "
             "ON annotations(binary_sha256)"
         )
+        self._migrate_source_column()
         self._conn.commit()
+
+    def _migrate_source_column(self) -> None:
+        """Add the ``source`` column to pre-existing databases.
+
+        Distinguishes manually-authored annotations ("user") from ones
+        written by an AI agent ("ai"), so AI writers never silently
+        clobber a human edit (see ``save_ai_annotation``).
+        """
+        columns = {
+            row["name"] for row in self._conn.execute("PRAGMA table_info(annotations)")
+        }
+        if "source" not in columns:
+            self._conn.execute(
+                "ALTER TABLE annotations ADD COLUMN source TEXT NOT NULL DEFAULT 'user'"
+            )
 
     def _ensure_binary(self, sha256: str, binary_path: str) -> None:
         self._conn.execute(
@@ -90,20 +106,20 @@ class AnnotationDb:
         sha256 = hash_binary_content(binary_path)
         if addr is None:
             cur = self._conn.execute(
-                "SELECT addr, kind, value, updated_at FROM annotations "
+                "SELECT addr, kind, value, source, updated_at FROM annotations "
                 "WHERE binary_sha256 = ? ORDER BY addr, kind",
                 (sha256,),
             )
         else:
             cur = self._conn.execute(
-                "SELECT addr, kind, value, updated_at FROM annotations "
+                "SELECT addr, kind, value, source, updated_at FROM annotations "
                 "WHERE binary_sha256 = ? AND addr = ? ORDER BY kind",
                 (sha256, addr),
             )
         return [dict(row) for row in cur.fetchall()]
 
     def save_annotation(
-        self, binary_path: str, addr: str, kind: str, value: str
+        self, binary_path: str, addr: str, kind: str, value: str, source: str = "user"
     ) -> None:
         sha256 = hash_binary_content(binary_path)
         self._ensure_binary(sha256, binary_path)
@@ -113,12 +129,44 @@ class AnnotationDb:
         )
         self._conn.execute(
             """
-            INSERT INTO annotations (binary_sha256, addr, kind, value, updated_at)
-            VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            INSERT INTO annotations (binary_sha256, addr, kind, value, source, updated_at)
+            VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            """,
+            (sha256, addr, kind, value, source),
+        )
+        self._conn.commit()
+
+    def save_ai_annotation(
+        self, binary_path: str, addr: str, kind: str, value: str
+    ) -> bool:
+        """Write an AI-authored suggestion without ever overwriting a human edit.
+
+        Returns True if the value was written, False if a manually-authored
+        ("user") annotation already occupies this (addr, kind) slot and was
+        left untouched.
+        """
+        sha256 = hash_binary_content(binary_path)
+        self._ensure_binary(sha256, binary_path)
+        cur = self._conn.execute(
+            "SELECT source FROM annotations WHERE binary_sha256 = ? AND addr = ? AND kind = ?",
+            (sha256, addr, kind),
+        )
+        row = cur.fetchone()
+        if row is not None and row["source"] == "user":
+            return False
+        self._conn.execute(
+            "DELETE FROM annotations WHERE binary_sha256 = ? AND addr = ? AND kind = ?",
+            (sha256, addr, kind),
+        )
+        self._conn.execute(
+            """
+            INSERT INTO annotations (binary_sha256, addr, kind, value, source, updated_at)
+            VALUES (?, ?, ?, ?, 'ai', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
             """,
             (sha256, addr, kind, value),
         )
         self._conn.commit()
+        return True
 
     def delete_annotation(
         self, binary_path: str, addr: str, kind: str | None = None

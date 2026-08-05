@@ -7,10 +7,10 @@ import unittest
 ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "../../.."))
 sys.path.insert(0, ROOT)
 
+from backends.static.annotations.struct_db import get_struct_db_path
 from backends.static.annotations.typed_struct_refs import (
     build_typed_struct_index,
     collect_typed_struct_hints,
-    get_typed_struct_refs_path,
     list_typed_struct_refs,
     save_typed_struct_ref,
     typed_struct_signature,
@@ -61,7 +61,7 @@ class TestTypedStructRefs(unittest.TestCase):
                 typed_struct_signature("/tmp/demo.bin", workspace_root=storage)
             )
             self.assertEqual(
-                get_typed_struct_refs_path(storage),
-                os.path.join(storage, "typed_struct_refs.json"),
+                get_struct_db_path(storage),
+                os.path.join(storage, "types.db"),
             )
             self.assertFalse(os.path.exists(os.path.join(tmp, ".pile-ou-face")))

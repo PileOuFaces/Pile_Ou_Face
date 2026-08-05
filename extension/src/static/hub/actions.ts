@@ -89,11 +89,20 @@ function createActions({
     return functionAddrsStore.getFunctionAddrs(mappingPath);
   };
 
+  const autoTriageAfterDisasmEnabled = () => {
+    try {
+      return Boolean(vscode.workspace.getConfiguration?.('pileOuFace')?.get?.('autoTriage.enabled', false));
+    } catch (_) {
+      return false;
+    }
+  };
+
   const finalizeDisasmOpen = async ({
     disasmPath,
     pathForWebview,
     binaryMeta,
     mappingPath = null,
+    absBinaryPath = null,
     openInEditor = true,
     notifyWebview = true,
     auditPrefix = 'finalizeDisasmOpen',
@@ -144,6 +153,13 @@ function createActions({
       stepStart = Date.now();
       refreshSidebar(pathForWebview);
       auditPerfStep(`${auditPrefix}.refreshSidebar`, Date.now() - stepStart, auditDetails);
+    }
+    if (notifyWebview && absBinaryPath && autoTriageAfterDisasmEnabled()) {
+      panel.webview.postMessage({
+        type: 'hubAutoTriageOpenPanel',
+        binaryPath: absBinaryPath,
+        autoStart: true,
+      });
     }
   };
 
@@ -584,6 +600,7 @@ function createActions({
           pathForWebview,
           binaryMeta: artifacts.binaryMeta,
           mappingPath: artifacts.mappingPath,
+          absBinaryPath: absPath,
           openInEditor: true,
         });
       } catch (err) {
@@ -718,8 +735,6 @@ function createActions({
         const disasmExists = fs.existsSync(disasmPath);
         const mappingExists = fs.existsSync(mappingPath);
         const cacheValid = useCache && cacheEligible && disasmExists && mappingExists;
-        const annotationsJsonPath = analysisCtx.getBinaryAnnotationsJsonPath(absPath);
-        const annotationsJsonPresent = fs.existsSync(annotationsJsonPath);
         const annotationOverlayRefresh = auditCommon.refreshReason === 'annotation-overlay';
         let rebuildReason = 'cache-valid';
         if (!cacheValid) {
@@ -743,7 +758,6 @@ function createActions({
           cacheValid,
           rebuildReason,
           annotationOverlayRefresh,
-          annotationsJsonPresent,
           binaryKind: artifacts.binaryMeta.kind,
         };
         auditPerfStep('hubOpenDisasm.resolveArtifacts', Date.now() - stepStart, auditContext);
@@ -754,7 +768,6 @@ function createActions({
             binaryMeta: artifacts.binaryMeta,
             section,
             syntax: message.syntax || 'intel',
-            annotationsJson: annotationsJsonPresent ? annotationsJsonPath : null,
             dwarfLines: artifacts.binaryMeta.kind !== 'raw',
             emitProgress: true,
             progressTitle: `Désassemblage de ${path.basename(absPath)}`,
@@ -776,6 +789,7 @@ function createActions({
           pathForWebview,
           binaryMeta: artifacts.binaryMeta,
           mappingPath: artifacts.mappingPath,
+          absBinaryPath: absPath,
           openInEditor: message.openInEditor !== false,
           notifyWebview: !section,
           auditPrefix: 'hubOpenDisasm.finalize',

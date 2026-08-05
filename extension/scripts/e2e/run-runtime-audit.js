@@ -2,6 +2,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const net = require('net');
 const { spawnSync } = require('child_process');
 const { runTests } = require('@vscode/test-electron');
 
@@ -10,6 +11,23 @@ const FIXTURE_SPECS = [
   { name: 'tiny', paddedBytes: 0 },
   { name: 'padded-1mb', paddedBytes: 1024 * 1024 },
 ];
+
+function reserveLocalPort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      const port = address && typeof address === 'object' ? address.port : 0;
+      server.close((error) => {
+        if (error) reject(error);
+        else if (!port) reject(new Error('Unable to reserve a CDP port'));
+        else resolve(port);
+      });
+    });
+  });
+}
 
 function createFixtureBinary(extensionRoot, workspacePath, spec) {
   const fixturePath = path.join(workspacePath, `e2e-fixture-${spec.name}.elf`);
@@ -203,6 +221,8 @@ async function main() {
   const extensionsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pof-e2e-extensions-'));
   const logsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pof-e2e-logs-'));
   const extensionTestsPath = path.resolve(__dirname, 'runtime-audit-suite.js');
+  const cdpPort = await reserveLocalPort();
+  const cdpEndpoint = `http://127.0.0.1:${cdpPort}`;
   const fixtures = [
     ...FIXTURE_SPECS.map((spec) => createFixtureBinary(extensionRoot, workspacePath, spec)),
     ...createRealCorpusFixtures(extensionRoot, workspacePath),
@@ -224,6 +244,8 @@ async function main() {
   process.env.POF_E2E_FIXTURE_BINARY = fixtures[0].path;
   process.env.POF_E2E_FIXTURES_JSON = JSON.stringify(fixtures);
   process.env.POF_E2E_PERF_PATH = perfPath;
+  process.env.POF_E2E_CDP_ENDPOINT = cdpEndpoint;
+  process.env.POF_E2E_ARTIFACTS_DIR = path.dirname(perfPath);
 
   let failed = false;
   try {
@@ -237,6 +259,8 @@ async function main() {
         `--logsPath=${logsDir}`,
         '--skip-welcome',
         '--skip-release-notes',
+        `--remote-debugging-port=${cdpPort}`,
+        '--remote-allow-origins=*',
       ],
       extensionTestsEnv: {
         POF_AUDIT_TRACE: '1',
@@ -246,6 +270,9 @@ async function main() {
         POF_E2E_FIXTURE_BINARY: fixtures[0].path,
         POF_E2E_FIXTURES_JSON: JSON.stringify(fixtures),
         POF_E2E_PERF_PATH: perfPath,
+        POF_E2E_CDP_ENDPOINT: cdpEndpoint,
+        POF_E2E_ARTIFACTS_DIR: path.dirname(perfPath),
+        POF_E2E_UI_ONLY: process.env.POF_E2E_UI_ONLY || '',
       },
     });
     console.log(`[e2e] perf samples: ${perfPath}`);

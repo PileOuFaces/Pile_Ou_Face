@@ -515,13 +515,22 @@ def _build_crash_report(
                 _slot_value_text(ret_slot_data, analysis, "return_address")
             )
     code_ranges = _build_code_ranges(meta, disasm_lines or [])
-    classification = _classify_crash(
-        fault_addr=fault_address,
-        ret_target=ret_target,
-        ip_after=ip_after,
-        meta=meta,
-        code_ranges=code_ranges,
-    )
+    if crash_type == "stack_chk_fail":
+        # The traced program's own stack protector already confirmed a
+        # corrupted canary -- this is stronger evidence than anything
+        # _classify_crash can infer from ret_target/fault_addr/code-address,
+        # and running it through that generic heuristic would misclassify
+        # a successful protection as "control_hijack" (the instruction
+        # pointer at the call site still sits inside known code).
+        classification = "stack_chk_fail"
+    else:
+        classification = _classify_crash(
+            fault_addr=fault_address,
+            ret_target=ret_target,
+            ip_after=ip_after,
+            meta=meta,
+            code_ranges=code_ranges,
+        )
     if classification == "fatal_crash" and not _has_control_corruption_evidence(
         analysis or {}, payload_offset
     ):
@@ -696,6 +705,7 @@ def run_pipeline(
         and configured_max_steps
         and steps_executed >= configured_max_steps
     )
+    trace_size_reached = bool(trace_meta.get("trace_limit_reached"))
     diagnostics = build_diagnostics(
         snapshots,
         analysis_by_step,
@@ -703,6 +713,7 @@ def run_pipeline(
         disasm_lines=disasm.get("lines") if disasm else None,
         crash=crash,
         max_steps_reached=max_steps_reached,
+        trace_size_reached=trace_size_reached,
     )
     meta["observability"] = {
         "cpu_time_ms": max(0, round((time.process_time() - cpu_started) * 1000)),
@@ -724,6 +735,7 @@ def run_pipeline(
                 "disasm_lines": disasm.get("lines") if disasm else None,
                 "crash": crash,
                 "max_steps_reached": max_steps_reached,
+                "trace_size_reached": trace_size_reached,
             },
             "output": diagnostics,
         },
@@ -821,7 +833,12 @@ def _derive_disasm_path(output_path: str) -> str:
 
 
 def _main(argv: list[str] | None = None) -> int:
-    from backends.dynamic.engine.unicorn.config import TraceConfig
+    from backends.dynamic.engine.unicorn.config import (
+        DEFAULT_MAX_TRACE_BYTES,
+        MAX_USER_TRACE_BYTES,
+        MAX_USER_TRACE_STEPS,
+        TraceConfig,
+    )
 
     parser = argparse.ArgumentParser(description="Generate a trace JSON with Unicorn")
     parser.add_argument("--binary", required=True, help="Raw x86_64 binary")
@@ -834,6 +851,12 @@ def _main(argv: list[str] | None = None) -> int:
         "--stack-size", type=int, default=0x100000, help="Stack size bytes"
     )
     parser.add_argument("--max-steps", type=int, default=200, help="Max instructions")
+    parser.add_argument(
+        "--max-trace-bytes",
+        type=int,
+        default=DEFAULT_MAX_TRACE_BYTES,
+        help="Maximum serialized snapshot bytes",
+    )
     parser.add_argument("--stack-entries", type=int, default=24, help="Stack entries")
     parser.add_argument(
         "--arch-bits", type=int, default=64, choices=[32, 64], help="Architecture bits"
@@ -873,6 +896,11 @@ def _main(argv: list[str] | None = None) -> int:
     parser.add_argument("--patch-payload", default=None, metavar="HEX")
     parser.add_argument("--inject-at-start", action="store_true")
     args = parser.parse_args(argv)
+
+    if not 1 <= args.max_steps <= MAX_USER_TRACE_STEPS:
+        parser.error(f"--max-steps must be between 1 and {MAX_USER_TRACE_STEPS}")
+    if not 1 <= args.max_trace_bytes <= MAX_USER_TRACE_BYTES:
+        parser.error(f"--max-trace-bytes must be between 1 and {MAX_USER_TRACE_BYTES}")
 
     stdin_text = _expand_payload_expression(args.stdin)
     stdin_data = stdin_text.encode("utf-8", errors="ignore")
@@ -947,6 +975,7 @@ def _main(argv: list[str] | None = None) -> int:
         stack_base=int(args.stack_base, 16),
         stack_size=args.stack_size,
         max_steps=args.max_steps,
+        max_trace_bytes=args.max_trace_bytes,
         stack_entries=args.stack_entries,
         arch_bits=args.arch_bits,
         interp_base=0x70000000 if args.arch_bits == 32 else 0x7F0000000000,

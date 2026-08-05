@@ -83,7 +83,13 @@ from .memory_mapping import (
 )
 from .regs import get_pc_sp, get_rbp, get_reg_order
 from .resolve import addr2line_map, resolve_symbol_addr
-from .stack import align_up, build_initial_stack, init_stack, inject_stack_payload
+from .stack import (
+    align_up,
+    build_initial_stack,
+    init_stack,
+    init_tls,
+    inject_stack_payload,
+)
 from .syscalls import ReadSyscallEmulator
 
 _FAKE_GETPID = 1337
@@ -744,9 +750,21 @@ def _simulate_symbol_with_args(
         mark()
         return 1
 
-    if key in {"exit", "_exit", "abort", "__stack_chk_fail"}:
-        if key == "__stack_chk_fail":
-            state["termination_category"] = "canary_failure"
+    if key == "__stack_chk_fail":
+        # The traced program's own stack protector detected a corrupted
+        # canary and is about to abort. Record this as a typed crash context
+        # instead of silently stopping like a normal exit()/abort() -- until
+        # this fix, that signal was discarded here, making a real stack-smash
+        # detection indistinguishable from a benign program exit in the
+        # final trace (see dynamic-engine stabilization audit).
+        state["termination_category"] = "canary_failure"
+        _record_crash_context(state, "stack_chk_fail", uc)
+        with contextlib.suppress(UcError):
+            uc.emu_stop()
+        mark()
+        return 0
+
+    if key in {"exit", "_exit", "abort"}:
         with contextlib.suppress(UcError):
             uc.emu_stop()
         mark()
@@ -1183,6 +1201,7 @@ def trace_raw(
 
     # Initialise la pile + prépare hooks/snapshots.
     sp = init_stack(uc, config)
+    init_tls(uc, config)
     inject_stack_payload(uc, sp, config)
 
     sp_reg = get_pc_sp(config.arch_bits)[1]
@@ -1240,15 +1259,23 @@ def trace_raw(
     finally:
         collector.finalize_pending(uc)
 
+    # A stack-protector trigger (__stack_chk_fail) stops the emulator cleanly
+    # via emu_stop(), so `error` stays None here even though it is a real
+    # crash -- surface it as a typed crash using the crash_context recorded
+    # in _simulate_symbol_with_args instead of dropping it as a benign stop.
+    stack_chk_fail_hit = (
+        isinstance(external_skip_state.get("crash_context"), dict)
+        and external_skip_state["crash_context"].get("type") == "stack_chk_fail"
+    )
     crash = (
         _finalize_crash_report(
             collector,
             uc,
             config.arch_bits,
-            error,
+            error or "",
             external_skip_state,
         )
-        if error
+        if error or stack_chk_fail_hit
         else None
     )
 
@@ -1257,6 +1284,12 @@ def trace_raw(
         "crash": crash,
         "meta": {
             "steps": collector.step,
+            "trace_bytes": collector.trace_bytes,
+            "trace_limit_reached": collector.trace_limit_reached,
+            "trace_limit_bytes": config.max_trace_bytes,
+            "truncation_reason": (
+                "max_trace_bytes" if collector.trace_limit_reached else None
+            ),
             "error": error,
             "base": hex(load_base),
             "stack_base": hex(config.stack_base),
@@ -1427,6 +1460,7 @@ def trace_elf(
         )
     # Initialise la pile et prépare argc/argv/auxv.
     init_stack(uc, config)
+    init_tls(uc, config)
     auxv = [
         (3, phdr_vaddr),  # AT_PHDR
         (4, header["phentsize"]),  # AT_PHENT
@@ -1533,15 +1567,23 @@ def trace_elf(
     finally:
         collector.finalize_pending(uc)
 
+    # A stack-protector trigger (__stack_chk_fail) stops the emulator cleanly
+    # via emu_stop(), so `error` stays None here even though it is a real
+    # crash -- surface it as a typed crash using the crash_context recorded
+    # in _simulate_symbol_with_args instead of dropping it as a benign stop.
+    stack_chk_fail_hit = (
+        isinstance(external_skip_state.get("crash_context"), dict)
+        and external_skip_state["crash_context"].get("type") == "stack_chk_fail"
+    )
     crash = (
         _finalize_crash_report(
             collector,
             uc,
             config.arch_bits,
-            error,
+            error or "",
             external_skip_state,
         )
-        if error
+        if error or stack_chk_fail_hit
         else None
     )
 
@@ -1564,6 +1606,12 @@ def trace_elf(
         "crash": crash,
         "meta": {
             "steps": collector.step,
+            "trace_bytes": collector.trace_bytes,
+            "trace_limit_reached": collector.trace_limit_reached,
+            "trace_limit_bytes": config.max_trace_bytes,
+            "truncation_reason": (
+                "max_trace_bytes" if collector.trace_limit_reached else None
+            ),
             "error": error,
             "base": hex(base),
             "stack_base": hex(config.stack_base),

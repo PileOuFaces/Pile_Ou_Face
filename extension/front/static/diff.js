@@ -248,7 +248,7 @@ document.getElementById('typedDataStructOffset')?.addEventListener('input', () =
 document.getElementById('btnTypedEditStructs')?.addEventListener('click', () => {
   typedDataUiState.pendingEditorOpen = true;
   typedDataUiState.loadingStructs = true;
-  vscode.postMessage({ type: 'hubLoadStructs' });
+  vscode.postMessage({ type: 'hubLoadStructs', binaryPath: getStaticBinaryPath() });
 });
 
 }

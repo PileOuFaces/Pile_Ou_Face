@@ -167,6 +167,55 @@ class TestAnnotationStore(unittest.TestCase):
         self.assertEqual(bookmarks, [])
         self.assertEqual(comment, "kept")
 
+    def test_ai_comment_written_on_empty_slot(self):
+        with self._store() as store:
+            written = store.ai_comment("0x401000", "ai guess")
+            comment = store.get_comment("0x401000")
+        self.assertTrue(written)
+        self.assertEqual(comment, "ai guess")
+
+    def test_ai_comment_does_not_overwrite_user_comment(self):
+        with self._store() as store:
+            store.comment("0x401000", "human note")
+            written = store.ai_comment("0x401000", "ai guess")
+            comment = store.get_comment("0x401000")
+        self.assertFalse(written)
+        self.assertEqual(comment, "human note")
+
+    def test_ai_rename_does_not_overwrite_user_rename(self):
+        with self._store() as store:
+            store.rename("0x401000", "human_name")
+            written = store.ai_rename("0x401000", "ai_name")
+            name = store.get_name("0x401000")
+        self.assertFalse(written)
+        self.assertEqual(name, "human_name")
+
+    def test_reject_ai_preserves_human_fields(self):
+        with self._store() as store:
+            store.rename("0x401000", "human_name")
+            store.ai_comment("0x401000", "ai comment")
+            removed = store.reject_ai("0x401000")
+            rows = store.list(addr="0x401000")
+        self.assertEqual(removed, 1)
+        self.assertEqual(
+            [(row["kind"], row["source"]) for row in rows], [(KIND_RENAME, "user")]
+        )
+
+    def test_validate_ai_promotes_suggestions_to_user_source(self):
+        with self._store() as store:
+            store.ai_rename("0x401000", "ai_name")
+            store.ai_comment("0x401000", "ai comment")
+            validated = store.validate_ai("0x401000")
+            rows = store.list(addr="0x401000")
+        self.assertEqual(validated, 2)
+        self.assertEqual({row["source"] for row in rows}, {"user"})
+
+    def test_export_json_surfaces_source(self):
+        with self._store() as store:
+            store.comment("0x401000", "human note")
+            rows = store.export_json()
+        self.assertEqual(rows[0]["source"], "user")
+
 
 if __name__ == "__main__":
     unittest.main()

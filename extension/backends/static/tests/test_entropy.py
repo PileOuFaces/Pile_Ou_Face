@@ -2,8 +2,12 @@
 """Tests pour backends.static.binary.entropy."""
 
 import sys
+import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(ROOT) not in sys.path:
@@ -15,6 +19,7 @@ from backends.static.binary.entropy import (
     entropy_of_bytes,
     entropy_of_file,
     high_entropy_regions,
+    main,
 )
 
 
@@ -25,6 +30,9 @@ class TestEntropyOfBytes(unittest.TestCase):
     def test_uniform_single_byte_returns_zero(self):
         # Tous les bytes identiques → entropie 0
         self.assertEqual(entropy_of_bytes(b"\x00" * 100), 0.0)
+
+    def test_uniform_nonzero_byte_returns_zero(self):
+        self.assertEqual(entropy_of_bytes(b"A" * 100), 0.0)
 
     def test_two_symbols_equal_probability(self):
         # 50% \x00 + 50% \xff → entropie = 1.0 bit (base 2)
@@ -135,6 +143,46 @@ class TestHighEntropyRegions(unittest.TestCase):
         self.assertIn("offset", region)
         self.assertIn("entropy", region)
         self.assertGreaterEqual(region["entropy"], 7.0)
+
+
+class TestEntropyCli(unittest.TestCase):
+    def test_main_writes_json_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            binary_path = Path(tmp) / "sample.bin"
+            output_path = Path(tmp) / "entropy.json"
+            binary_path.write_bytes(bytes(range(256)) * 4)
+
+            with (
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "entropy.py",
+                        "--binary",
+                        str(binary_path),
+                        "--output",
+                        str(output_path),
+                    ],
+                ),
+                redirect_stdout(StringIO()) as stdout,
+            ):
+                self.assertEqual(main(), 0)
+
+            self.assertTrue(output_path.exists())
+            self.assertIn("Entropy written", stdout.getvalue())
+
+    def test_main_reports_missing_file_to_stdout(self):
+        with (
+            patch.object(
+                sys,
+                "argv",
+                ["entropy.py", "--binary", "/definitely/missing/pof.bin"],
+            ),
+            redirect_stdout(StringIO()) as stdout,
+        ):
+            self.assertEqual(main(), 1)
+
+        self.assertIn("Fichier introuvable", stdout.getvalue())
 
 
 if __name__ == "__main__":

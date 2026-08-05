@@ -736,10 +736,24 @@ function renderDecompilePayload(container, payload) {
   decompileUiState.selectedAddr = payload.full ? '' : (payload.addr || decompileUiState.selectedAddr);
   if (result.error) {
     cancelPendingDecompileHighlight();
+    window.decompileAugmentationController?.setSource(null);
     container.textContent = `Erreur : ${_ERROR_TYPE_MESSAGES[result.error_type] || result.error}`;
     return;
   }
-  const code = result.code || (result.functions || []).map((f) => `// ${f.addr}\n${f.code}`).join('\n\n');
+  const rawCode = result.code || (result.functions || []).map((f) => `// ${f.addr}\n${f.code}`).join('\n\n');
+  window.decompileAugmentationController?.setSource({
+    binaryPath: decompileUiState.renderedBinaryPath,
+    addr: decompileUiState.renderedAddr,
+    functionName: payload.funcName || '',
+    code: rawCode,
+    functions: Array.isArray(result.functions) ? result.functions : [],
+  });
+  const acceptedAugmentation = window.decompileAugmentationController?.state?.result;
+  const code = Array.isArray(acceptedAugmentation?.accepted_ids)
+    && acceptedAugmentation.accepted_ids.length > 0
+    && acceptedAugmentation.augmented_code
+    ? String(acceptedAugmentation.augmented_code)
+    : rawCode;
   const wrap = document.createElement('div');
   const callTargets = extractDecompileCallTargets(code, payload.addr);
   const addressTargets = extractDecompileAddressTargets(code, payload.addr);
@@ -975,6 +989,22 @@ function renderDecompilePayload(container, payload) {
   });
   tabDataCache.decompile = { binaryPath: decompileUiState.renderedBinaryPath || getStaticBinaryPath() };
 }
+
+function applyAcceptedDecompileAugmentation(result) {
+  const pre = document.querySelector('#decompileContent .decompile-output');
+  const code = String(result?.augmented_code || '');
+  if (!pre || !code) return false;
+  scheduleDecompileHighlight(pre, code, {
+    binaryPath: decompileUiState.renderedBinaryPath,
+    decompiler: decompileUiState.renderedDecompiler,
+    addr: decompileUiState.renderedAddr,
+    activeStackName: decompileUiState.pendingStackEntryName || decompileUiState.activeStackEntryName,
+    searchQuery: decompileUiState.searchQuery || '',
+  });
+  return true;
+}
+
+window.applyAcceptedDecompileAugmentation = applyAcceptedDecompileAugmentation;
 
 function resetHexActiveUiState() {
   (hexActiveUiState.selectedRowEls || []).forEach((el) => {

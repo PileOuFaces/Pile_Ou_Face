@@ -1,10 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // @ts-nocheck
-/**
- * @file staticCache.js
- * @brief Cache persistant pour l'analyse statique (sections, infos, symboles, strings, CFG).
- * Similaire à Cutter : évite de relancer les outils à chaque ouverture d'onglet.
- */
+/** SQLite-only, bounded cache for static-analysis results. */
 
 const fs = require('fs');
 const path = require('path');
@@ -13,35 +9,28 @@ const cp = require('child_process');
 const { getExtensionPath } = require('./utils');
 
 const CACHE_DIR_NAME = 'static_cache';
-const META_FILE = 'meta.json';
-const CACHE_INDEX_DB = 'cache-index.sqlite3';
+const CACHE_DB_NAME = 'static-cache.sqlite3';
 
-/**
- * Génère une clé de cache à partir du chemin absolu et des métadonnées du fichier.
- * Invalide automatiquement si le binaire change (mtime, size).
- */
 function getCacheKey(absPath) {
   try {
     const stat = fs.statSync(absPath);
-    const input = `${absPath}:${stat.mtimeMs}:${stat.size}`;
-    return crypto.createHash('sha256').update(input).digest('hex').slice(0, 16);
+    return crypto.createHash('sha256')
+      .update(`${path.resolve(absPath)}:${stat.mtimeMs}:${stat.size}`)
+      .digest('hex').slice(0, 16);
   } catch {
     return null;
   }
 }
 
-/**
- * Retourne le répertoire de cache pour un storageDir.
- */
 function getCacheDir(storageDir) {
   return path.join(storageDir, CACHE_DIR_NAME);
 }
 
-function getCacheIndexDbPath(storageDir) {
-  return path.join(getCacheDir(storageDir), CACHE_INDEX_DB);
+function getStaticCacheDbPath(storageDir) {
+  return path.join(getCacheDir(storageDir), CACHE_DB_NAME);
 }
 
-function getCacheIndexScriptPath(root) {
+function getCacheScriptPath(root) {
   const base = getExtensionPath() || root;
   return path.join(base, 'backends', 'static', 'cache', 'cache_index.py');
 }
@@ -56,146 +45,82 @@ function detectPythonExecutable(root) {
   return candidates.find((candidate) => fs.existsSync(candidate)) || 'python3';
 }
 
-function runCacheIndex(storageDir, args, { parseJson = true } = {}) {
+function runCacheStore(storageDir, args, { input } = {}) {
   try {
     const extensionPath = getExtensionPath();
-    const scriptPath = getCacheIndexScriptPath(extensionPath);
+    const scriptPath = getCacheScriptPath(extensionPath);
     if (!fs.existsSync(scriptPath)) return null;
-    const workspaceRoot = path.resolve(storageDir);
-    const pythonExe = detectPythonExecutable(extensionPath);
+    fs.mkdirSync(getCacheDir(storageDir), { recursive: true });
     const result = cp.spawnSync(
-      pythonExe,
-      [scriptPath, '--db', getCacheIndexDbPath(storageDir), ...args, '--workspace-root', workspaceRoot],
+      detectPythonExecutable(extensionPath),
+      [scriptPath, '--db', getStaticCacheDbPath(storageDir), ...args],
       {
         cwd: storageDir,
         env: { ...process.env, PYTHONPATH: extensionPath || storageDir },
         encoding: 'utf8',
+        input,
         timeout: 10000,
       }
     );
     if (result.error || result.status !== 0) return null;
     const stdout = String(result.stdout || '').trim();
-    if (!parseJson) return stdout;
     return stdout ? JSON.parse(stdout) : null;
   } catch {
     return null;
   }
 }
 
-/**
- * Lit le fichier meta.json pour vérifier la validité du cache.
- */
-function readMeta(cacheDir, key) {
-  const metaPath = path.join(cacheDir, key, META_FILE);
-  try {
-    const raw = fs.readFileSync(metaPath, 'utf8');
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
+function cacheVariant(type, options = {}) {
+  if (type !== 'strings') return '';
+  const enc = String(options.encoding || 'utf-8').replace(/[^a-z0-9-]/gi, '_');
+  const section = String(options.section || '').replace(/[^a-z0-9._-]/gi, '_') || 'all';
+  return `${options.minLen || 4}_${enc}_${section}_v2`;
 }
 
-/**
- * Vérifie si le cache est valide pour le binaire.
- */
-function isCacheValid(cacheDir, key, absPath) {
-  const meta = readMeta(cacheDir, key);
-  if (!meta) return false;
+function readCache(storageDir, absPath, type, options = {}) {
+  const key = getCacheKey(absPath);
+  if (!key) return null;
+  const result = runCacheStore(storageDir, [
+    'get', '--namespace', type, '--cache-key', key, '--variant', cacheVariant(type, options),
+  ]);
+  return result?.found === true ? result.payload : null;
+}
+
+function writeCache(storageDir, absPath, type, data, options = {}) {
+  const key = getCacheKey(absPath);
+  if (!key) return false;
   try {
     const stat = fs.statSync(absPath);
-    return meta.mtimeMs === stat.mtimeMs && meta.size === stat.size && meta.path === absPath;
+    const result = runCacheStore(storageDir, [
+      'put', '--namespace', type, '--cache-key', key,
+      '--variant', cacheVariant(type, options),
+      '--binary-path', path.resolve(absPath),
+      '--binary-mtime-ms', String(stat.mtimeMs),
+      '--binary-size', String(stat.size),
+    ], { input: JSON.stringify(data) });
+    return result?.stored === true;
   } catch {
     return false;
   }
 }
 
-/**
- * Lit les données en cache. Retourne null si absent ou invalide.
- * @param {string} storageDir - Répertoire de stockage des artifacts
- * @param {string} absPath - Chemin absolu du binaire
- * @param {string} type - 'sections' | 'info' | 'symbols' | 'strings' | 'cfg'
- * @param {object} options - Pour strings: { minLen }
- */
-function readCache(storageDir, absPath, type, options = {}) {
-  const key = getCacheKey(absPath);
-  if (!key) return null;
-
-  const cacheDir = getCacheDir(storageDir);
-  if (!isCacheValid(cacheDir, key, absPath)) return null;
-
-  let file = type;
-  if (type === 'strings') {
-    const enc = options.encoding || 'utf-8';
-    const sec = (options.section || '').replace(/[^a-zA-Z0-9._-]/g, '_') || 'all';
-    file = `strings_${options.minLen || 4}_${enc.replace(/[^a-z0-9-]/g, '_')}_${sec}_v2`;
-  }
-  const cachePath = path.join(cacheDir, key, `${file}.json`);
-  try {
-    const raw = fs.readFileSync(cachePath, 'utf8');
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
+function listCacheEntries(storageDir) {
+  const payload = runCacheStore(storageDir, ['list']);
+  return Array.isArray(payload?.entries) ? payload.entries : [];
 }
 
-/**
- * Écrit les données en cache.
- */
-function writeCache(storageDir, absPath, type, data, options = {}) {
-  const key = getCacheKey(absPath);
-  if (!key) return;
-
-  const cacheDir = getCacheDir(storageDir);
-  const keyDir = path.join(cacheDir, key);
-  if (!fs.existsSync(keyDir)) {
-    fs.mkdirSync(keyDir, { recursive: true });
-  }
-
-  try {
-    const stat = fs.statSync(absPath);
-    const meta = { path: absPath, mtimeMs: stat.mtimeMs, size: stat.size };
-    fs.writeFileSync(path.join(keyDir, META_FILE), JSON.stringify(meta, null, 2), 'utf8');
-
-    let file = type;
-    if (type === 'strings') {
-      const enc = options.encoding || 'utf-8';
-      const sec = (options.section || '').replace(/[^a-zA-Z0-9._-]/g, '_') || 'all';
-      file = `strings_${options.minLen || 4}_${enc.replace(/[^a-z0-9-]/g, '_')}_${sec}_v2`;
-    }
-    const cachePath = path.join(keyDir, `${file}.json`);
-    fs.writeFileSync(cachePath, JSON.stringify(data), 'utf8');
-    const cacheStat = fs.statSync(cachePath);
-    runCacheIndex(storageDir, [
-      'upsert',
-      '--cache-key', key,
-      '--binary-path', path.resolve(absPath),
-      '--cache-type', type,
-      '--cache-file', `${file}.json`,
-      '--cache-path', cachePath,
-      '--cache-dir', keyDir,
-      '--payload-bytes', String(cacheStat.size),
-      '--binary-mtime-ms', String(stat.mtimeMs),
-      '--binary-size', String(stat.size),
-      '--updated-at-ms', String(cacheStat.mtimeMs),
-    ], { parseJson: false });
-  } catch (err) {
-    // Silently ignore cache write errors
-  }
+function pruneCacheEntries(storageDir) {
+  return Number(runCacheStore(storageDir, ['prune'])?.removed || 0);
 }
 
-function listIndexedCacheEntries(storageDir) {
-  const payload = runCacheIndex(storageDir, ['list']);
-  return Array.isArray(payload?.entries) ? payload.entries : null;
+function clearCacheEntries(storageDir) {
+  return Number(runCacheStore(storageDir, ['clear'])?.removed || 0);
 }
 
-function pruneIndexedCacheEntries(storageDir) {
-  const payload = runCacheIndex(storageDir, ['prune']);
-  return Number(payload?.removed || 0);
-}
-
-function clearIndexedCacheEntries(storageDir) {
-  const payload = runCacheIndex(storageDir, ['clear']);
-  return Number(payload?.removed || 0);
+function deleteCacheEntriesForBinary(storageDir, binaryPath) {
+  return Number(runCacheStore(storageDir, [
+    'delete-binary', '--binary-path', path.resolve(binaryPath),
+  ])?.removed || 0);
 }
 
 module.exports = {
@@ -203,9 +128,9 @@ module.exports = {
   writeCache,
   getCacheKey,
   getCacheDir,
-  getCacheIndexDbPath,
-  readMeta,
-  listIndexedCacheEntries,
-  pruneIndexedCacheEntries,
-  clearIndexedCacheEntries,
+  getStaticCacheDbPath,
+  listCacheEntries,
+  pruneCacheEntries,
+  clearCacheEntries,
+  deleteCacheEntriesForBinary,
 };

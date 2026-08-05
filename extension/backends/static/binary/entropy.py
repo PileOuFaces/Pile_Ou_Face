@@ -28,6 +28,11 @@ def entropy_of_bytes(data: bytes) -> float:
     """
     if not data:
         return 0.0
+    # Repeated padding is common in firmware images and large sparse fixtures.
+    # bytes.count runs in native code and avoids building 256 counters for each
+    # overlapping window while preserving the exact entropy result.
+    if data.count(data[:1]) == len(data):
+        return 0.0
     counts = [0] * 256
     for b in data:
         counts[b] += 1

@@ -10,20 +10,15 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const {
-  getCacheDir,
-  readMeta,
-  listIndexedCacheEntries,
-  pruneIndexedCacheEntries,
-  clearIndexedCacheEntries,
+  listCacheEntries: listSqliteCacheEntries,
+  pruneCacheEntries,
+  clearCacheEntries,
+  deleteCacheEntriesForBinary,
 } = require('./staticCache');
 
 const CACHE_DIR_NAME = 'static_cache';
-const DECOMPILE_CACHE_DIR_NAME = 'decompile_cache';
-const ANNOTATIONS_DIR_NAME = 'annotations';
-const PATCHES_DIR_NAME = 'patches';
 const PFDB_DIR_NAME = 'pfdb';
 const MANIFEST_FILE = 'manifest.json';
-const META_FILE = 'meta.json';
 
 // Fichiers/dossiers dans storageDir/ qui ne doivent JAMAIS être supprimés
 // par le clean — configuration utilisateur persistante.
@@ -32,8 +27,6 @@ const PROTECTED_NAMES = new Set([
   'compilers.json',
   'licenses',
   'plugins',
-  'annotations',
-  'patches',
   'pfdb',
 ]);
 
@@ -127,94 +120,11 @@ function listWorkspaceFiles(root) {
 
 function buildWorkspaceStateFingerprints(root) {
   const files = listWorkspaceFiles(root);
-  const annotationKeys = new Set();
-  const patchKeys = new Set();
   const pfdbNames = new Set();
   for (const file of files) {
-    annotationKeys.add(hash16(`${file.path}:${file.mtimeMs}:${file.size}`));
-    patchKeys.add(hash16(file.path));
     pfdbNames.add(`${sanitizePfdbFilename(file.name)}.${hash16(file.path)}.pfdb`);
   }
-  return { files, annotationKeys, patchKeys, pfdbNames };
-}
-
-function readJsonFile(filePath) {
-  try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-  } catch {
-    return null;
-  }
-}
-
-function purgeStaleAnnotations(storageDir, fingerprints) {
-  const dir = path.join(getBaseDir(storageDir), ANNOTATIONS_DIR_NAME);
-  if (!fs.existsSync(dir)) return 0;
-  let removed = 0;
-  for (const name of fs.readdirSync(dir)) {
-    if (!name.endsWith('.json')) continue;
-    const key = name.replace(/\.json$/i, '');
-    if (!fingerprints.annotationKeys.has(key)) {
-      removeRecursive(path.join(dir, name));
-      removed++;
-    }
-  }
-  return removed;
-}
-
-function purgeStalePatches(storageDir, fingerprints) {
-  const dir = path.join(getBaseDir(storageDir), PATCHES_DIR_NAME);
-  if (!fs.existsSync(dir)) return 0;
-  let removed = 0;
-  for (const name of fs.readdirSync(dir)) {
-    if (!name.endsWith('.json')) continue;
-    const fullPath = path.join(dir, name);
-    const key = name.replace(/\.json$/i, '');
-    const payload = readJsonFile(fullPath);
-    const binaryPath = String(payload?.binary || '').trim();
-    const expectedKey = binaryPath ? hash16(path.resolve(binaryPath)) : '';
-    const keep = expectedKey && key === expectedKey && fingerprints.patchKeys.has(expectedKey) && fs.existsSync(binaryPath);
-    if (!keep) {
-      removeRecursive(fullPath);
-      removed++;
-    }
-  }
-  return removed;
-}
-
-function purgeStaleDecompileCache(storageDir) {
-  const dir = path.join(getBaseDir(storageDir), DECOMPILE_CACHE_DIR_NAME);
-  if (!fs.existsSync(dir)) return 0;
-  let removed = 0;
-  for (const name of fs.readdirSync(dir)) {
-    if (!name.endsWith('.json')) continue;
-    const fullPath = path.join(dir, name);
-    const payload = readJsonFile(fullPath);
-    const meta = payload?._cache_meta;
-    if (!meta || typeof meta !== 'object') {
-      removeRecursive(fullPath);
-      removed++;
-      continue;
-    }
-    const binaryPath = String(meta.binary_path || '').trim();
-    if (!binaryPath || !fs.existsSync(binaryPath)) {
-      removeRecursive(fullPath);
-      removed++;
-      continue;
-    }
-    try {
-      const stat = fs.statSync(binaryPath);
-      const sameMtime = Math.abs(Number(meta.binary_mtime_ms || 0) - Number(stat.mtimeMs || 0)) <= 0.001;
-      const sameSize = Number(meta.binary_size || -1) === Number(stat.size || -2);
-      if (!sameMtime || !sameSize) {
-        removeRecursive(fullPath);
-        removed++;
-      }
-    } catch {
-      removeRecursive(fullPath);
-      removed++;
-    }
-  }
-  return removed;
+  return { files, pfdbNames };
 }
 
 function purgeStalePfdb(storageDir, fingerprints) {
@@ -264,20 +174,7 @@ function cleanupArtifactsForBinary(storageDir, binaryPath) {
 function cleanupCacheEntriesForBinary(storageDir, binaryPath) {
   const target = path.resolve(String(binaryPath || '').trim());
   if (!target) return 0;
-  let removed = 0;
-  const seenPaths = new Set();
-  for (const entry of listCacheEntries(storageDir)) {
-    const entryBinaryPath = String(entry?.binaryPath || '').trim();
-    const entryPath = String(entry?.path || '').trim();
-    if (!entryBinaryPath || !entryPath) continue;
-    if (path.resolve(entryBinaryPath) !== target) continue;
-    if (seenPaths.has(entryPath) || !fs.existsSync(entryPath)) continue;
-    seenPaths.add(entryPath);
-    removeRecursive(entryPath);
-    removed++;
-  }
-  if (removed > 0) pruneIndexedCacheEntries(storageDir);
-  return removed;
+  return deleteCacheEntriesForBinary(storageDir, target);
 }
 
 function cleanupSupportFilesForBinary(storageDir, binaryPath) {
@@ -285,34 +182,6 @@ function cleanupSupportFilesForBinary(storageDir, binaryPath) {
   if (!target) return 0;
   const baseDir = getBaseDir(storageDir);
   let removed = 0;
-
-  const decompileDir = path.join(baseDir, DECOMPILE_CACHE_DIR_NAME);
-  if (fs.existsSync(decompileDir)) {
-    for (const name of fs.readdirSync(decompileDir)) {
-      if (!name.endsWith('.json')) continue;
-      const fullPath = path.join(decompileDir, name);
-      const payload = readJsonFile(fullPath);
-      const binaryPathInCache = String(payload?._cache_meta?.binary_path || '').trim();
-      if (binaryPathInCache && path.resolve(binaryPathInCache) === target) {
-        removeRecursive(fullPath);
-        removed++;
-      }
-    }
-  }
-
-  const patchesDir = path.join(baseDir, PATCHES_DIR_NAME);
-  if (fs.existsSync(patchesDir)) {
-    for (const name of fs.readdirSync(patchesDir)) {
-      if (!name.endsWith('.json')) continue;
-      const fullPath = path.join(patchesDir, name);
-      const payload = readJsonFile(fullPath);
-      const patchBinaryPath = String(payload?.binary || '').trim();
-      if (patchBinaryPath && path.resolve(patchBinaryPath) === target) {
-        removeRecursive(fullPath);
-        removed++;
-      }
-    }
-  }
 
   const pfdbDir = path.join(baseDir, PFDB_DIR_NAME);
   if (fs.existsSync(pfdbDir)) {
@@ -381,50 +250,8 @@ function listArtifacts(storageDir) {
  * Liste les entrées du cache statique (static_cache/).
  */
 function listCacheEntries(storageDir) {
-  const indexedEntries = listIndexedCacheEntries(storageDir);
-  if (Array.isArray(indexedEntries)) {
-    return indexedEntries.sort((a, b) => Number(b.mtime || 0) - Number(a.mtime || 0));
-  }
-  const cacheDir = getCacheDir(storageDir);
-  const items = [];
-  if (!fs.existsSync(cacheDir)) return items;
-  for (const key of fs.readdirSync(cacheDir)) {
-    const keyDir = path.join(cacheDir, key);
-    if (!fs.statSync(keyDir).isDirectory()) continue;
-    const meta = readMeta(cacheDir, key);
-    const binaryPath = meta?.path || '—';
-    let binaryExists = false;
-    let status = 'missing';
-    if (meta?.path && fs.existsSync(meta.path)) {
-      binaryExists = true;
-      try {
-        const stat = fs.statSync(meta.path);
-        status = (meta.mtimeMs === stat.mtimeMs && meta.size === stat.size) ? 'ok' : 'stale';
-      } catch {
-        status = 'missing';
-      }
-    }
-    let size = 0;
-    const cacheTypes = [];
-    for (const f of fs.readdirSync(keyDir)) {
-      size += getSize(path.join(keyDir, f));
-      if (f !== META_FILE && f.endsWith('.json')) {
-        cacheTypes.push(f.replace(/\.json$/i, ''));
-      }
-    }
-    items.push({
-      key,
-      path: keyDir,
-      binaryPath,
-      binaryExists,
-      status,
-      size,
-      mtime: meta ? (fs.statSync(path.join(keyDir, 'meta.json')).mtimeMs || 0) : 0,
-      cacheTypes: cacheTypes.sort(),
-      fileCount: cacheTypes.length,
-    });
-  }
-  return items.sort((a, b) => b.mtime - a.mtime);
+  return listSqliteCacheEntries(storageDir)
+    .sort((a, b) => Number(b.mtime || 0) - Number(a.mtime || 0));
 }
 
 /**
@@ -453,23 +280,7 @@ function listAll(storageDir) {
  */
 function purgeStaleCache(storageDir, root) {
   const fingerprints = buildWorkspaceStateFingerprints(root);
-  const entries = listCacheEntries(storageDir);
-  let removed = 0;
-  const seenPaths = new Set();
-  for (const entry of entries) {
-    if (String(entry.status || '') === 'ok') continue;
-    const keyDir = String(entry.path || '').trim();
-    if (!keyDir || seenPaths.has(keyDir)) continue;
-    seenPaths.add(keyDir);
-    if (fs.existsSync(keyDir)) {
-      removeRecursive(keyDir);
-      removed++;
-    }
-  }
-  pruneIndexedCacheEntries(storageDir);
-  removed += purgeStaleAnnotations(storageDir, fingerprints);
-  removed += purgeStalePatches(storageDir, fingerprints);
-  removed += purgeStaleDecompileCache(storageDir);
+  let removed = pruneCacheEntries(storageDir);
   removed += purgeStalePfdb(storageDir, fingerprints);
   return { removed };
 }
@@ -483,7 +294,6 @@ function cleanupAll(storageDir, options = {}) {
   let removedCache = 0;
   let purgedStale = 0;
   const baseDir = getBaseDir(storageDir);
-  const cacheDir = getCacheDir(storageDir);
   if (!cacheOnly && fs.existsSync(baseDir)) {
     for (const name of fs.readdirSync(baseDir)) {
       if (name === CACHE_DIR_NAME) continue;
@@ -493,22 +303,11 @@ function cleanupAll(storageDir, options = {}) {
       removedArtifacts++;
     }
   }
-  if (!artifactsOnly && fs.existsSync(cacheDir)) {
+  if (!artifactsOnly) {
     if (purgeStale) {
-      for (const entry of listCacheEntries(storageDir)) {
-        if (String(entry.status || '') !== 'ok' && fs.existsSync(entry.path)) {
-          const keyDir = entry.path;
-          removeRecursive(keyDir);
-          purgedStale++;
-        }
-      }
-      pruneIndexedCacheEntries(storageDir);
+      purgedStale = pruneCacheEntries(storageDir);
     } else {
-      for (const name of fs.readdirSync(cacheDir)) {
-        removeRecursive(path.join(cacheDir, name));
-        removedCache++;
-      }
-      clearIndexedCacheEntries(storageDir);
+      removedCache = clearCacheEntries(storageDir);
     }
   }
   if (!artifactsOnly) {

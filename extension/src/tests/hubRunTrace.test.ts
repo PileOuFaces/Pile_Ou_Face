@@ -114,6 +114,40 @@ describe('hub runTrace isolation', () => {
     sinon.restore();
   });
 
+  it('rejects a dynamic trace step limit above the public cap', async () => {
+    const openHub = createHub({
+      context: {
+        extensionUri: {},
+        subscriptions: [],
+        workspaceState: { get: () => ({}), update: async () => {} },
+        globalState: { get: () => ({}), update: async () => {} }
+      },
+      logChannel: { appendLine: () => {}, append: () => {} },
+      getTempDir: () => '/tmp/pof',
+      ensureTempDir: () => '/tmp/pof',
+      runCommand,
+      detectPythonExecutable: () => '/usr/bin/python3',
+      ensureStaticAsm,
+      readTraceJson,
+      writeTraceJson,
+      setViewMode: () => {},
+      payloadToHex: () => '',
+      parseStdinExpression: () => '',
+      check32BitToolchain: () => ({ ok: true }),
+      openVisualizerWebview
+    });
+    openHub();
+
+    await onMessage({
+      type: 'runTrace',
+      config: { traceMode: 'dynamic', maxSteps: 10001 }
+    });
+
+    expect(vscode.window.showErrorMessage.calledOnce).to.equal(true);
+    expect(vscode.window.showErrorMessage.firstCall.args[0]).to.include('10 000');
+    expect(runCommand.called).to.equal(false);
+  });
+
   it('ignores an older runTrace result when a newer run finishes first', async () => {
     const pendingRuns = [];
     runCommand.callsFake(async (_command, args) => {

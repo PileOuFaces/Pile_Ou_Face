@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "sample_count": 3,
+  "environment": {
+    "machine": "x86_64",
+    "python": "3.11"
+  },
+  "results": [
+    {
+      "scenario": "analysis_index",
+      "fixture": "medium",
+      "peak_rss_bytes": 135974912,
+      "elapsed_s": 2.7
+    },
+    {
+      "scenario": "call_graph",
+      "fixture": "medium",
+      "peak_rss_bytes": 132427776,
+      "elapsed_s": 0.71
+    },
+    {
+      "scenario": "cfg",
+      "fixture": "medium",
+      "peak_rss_bytes": 134696960,
+      "elapsed_s": 0.61
+    },
+    {
+      "scenario": "disasm",
+      "fixture": "medium",
+      "peak_rss_bytes": 117301248,
+      "elapsed_s": 0.81
+    },
+    {
+      "scenario": "entropy",
+      "fixture": "medium",
+      "peak_rss_bytes": 127488000,
+      "elapsed_s": 6.11
+    },
+    {
+      "scenario": "exception_handlers",
+      "fixture": "medium",
+      "peak_rss_bytes": 86425600,
+      "elapsed_s": 0.39
+    },
+    {
+      "scenario": "function_radar",
+      "fixture": "medium",
+      "peak_rss_bytes": 166793216,
+      "elapsed_s": 4.23
+    },
+    {
+      "scenario": "headers",
+      "fixture": "medium",
+      "peak_rss_bytes": 123875328,
+      "elapsed_s": 0.49
+    },
+    {
+      "scenario": "hex_view",
+      "fixture": "medium",
+      "peak_rss_bytes": 100114432,
+      "elapsed_s": 0.47
+    },
+    {
+      "scenario": "imports",
+      "fixture": "medium",
+      "peak_rss_bytes": 87756800,
+      "elapsed_s": 0.39
+    },
+    {
+      "scenario": "pe_resources",
+      "fixture": "medium",
+      "peak_rss_bytes": 86351872,
+      "elapsed_s": 0.36
+    },
+    {
+      "scenario": "sections",
+      "fixture": "medium",
+      "peak_rss_bytes": 87748608,
+      "elapsed_s": 0.39
+    },
+    {
+      "scenario": "strings",
+      "fixture": "medium",
+      "peak_rss_bytes": 114200576,
+      "elapsed_s": 1.64
+    },
+    {
+      "scenario": "symbols",
+      "fixture": "medium",
+      "peak_rss_bytes": 89272320,
+      "elapsed_s": 0.4
+    },
+    {
+      "scenario": "xrefs_map",
+      "fixture": "medium",
+      "peak_rss_bytes": 92229632,
+      "elapsed_s": 0.52
+    }
+  ]
+}

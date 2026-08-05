@@ -12,6 +12,11 @@ const {
   requiresUiConsumed,
   responseTypesForMessage,
 } = require('./runtime-audit-feature-map');
+const {
+  HubPage,
+  captureUiFailure,
+  connectToHubWebview,
+} = require('./vscode-ui-driver');
 
 const AUDIT_FILE = 'audit-runtime-usage.jsonl';
 const E2E_AUDIT_MOCHA_TIMEOUT_MS = 120000;
@@ -392,6 +397,26 @@ function isOllamaBridgeScript(args) {
   return Array.isArray(args) && args.some((arg) => String(arg || '').endsWith(path.join('backends', 'mcp', 'ollama_bridge.py')));
 }
 
+function isAiConsentScript(args) {
+  return Array.isArray(args) && args.some((arg) => String(arg || '').endsWith(path.join('backends', 'mcp', 'ai_consent.py')));
+}
+
+function isAutoTriageScript(args) {
+  return Array.isArray(args) && args.some((arg) => String(arg || '').endsWith(path.join('backends', 'mcp', 'auto_triage.py')));
+}
+
+function isDecompileAugmentScript(args) {
+  return Array.isArray(args) && args.some((arg) => String(arg || '').endsWith(path.join('backends', 'static', 'decompile', 'augment.py')));
+}
+
+function isXrefsScript(args) {
+  return Array.isArray(args) && args.some((arg) => String(arg || '').endsWith(path.join('backends', 'static', 'disasm', 'xrefs.py')));
+}
+
+function isSymbolsScript(args) {
+  return Array.isArray(args) && args.some((arg) => String(arg || '').endsWith(path.join('backends', 'static', 'binary', 'symbols.py')));
+}
+
 function createMockProviderList() {
   return JSON.stringify({
     providers: [{ name: 'openai', configured: true, model: 'e2e-model' }],
@@ -470,11 +495,11 @@ async function run() {
 
     const stopPerf = startPerfSampler('hub-startup');
     try {
-      await vscode.commands.executeCommand('pileOuFace.open');
+      await vscode.commands.executeCommand('pileOuFace.goToAddress');
 
       const { events } = await waitForAuditEvents(userDataDir, (candidateEvents) => (
         hasEvent(candidateEvents, 'audit', 'audit_start')
-        && hasEvent(candidateEvents, 'command', 'pileOuFace.open')
+        && hasEvent(candidateEvents, 'command', 'pileOuFace.goToAddress')
         && hasEvent(candidateEvents, 'webview_message', 'hubReady')
         && hasEvent(candidateEvents, 'webview_message', 'hubLoadPluginState')
       ));
@@ -484,6 +509,731 @@ async function run() {
     } catch (error) {
       stopPerf({ ok: false, error: String(error && error.message ? error.message : error) });
       throw error;
+    }
+  }));
+
+  suite.addTest(new Mocha.Test('guides the user from an empty workspace without enabling unavailable actions', async () => {
+    let target = null;
+    try {
+      await vscode.commands.executeCommand('pileOuFace.goToAddress');
+      target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+      const hub = new HubPage(target);
+
+      await hub.openPanel('dashboard');
+      await hub.topBarBinaryName().waitForText('Choisir un fichier', 30000);
+      await hub.autoTriageBinary().waitForText('Aucun binaire', 30000);
+      assert.equal(await hub.autoTriageButton().isEnabled(), false, 'auto-triage must stay disabled without a binary');
+
+      await hub.dashboardStaticAction().click();
+      await hub.expectActive(hub.panel('static'), 'static panel opened from the empty dashboard');
+      await hub.topBarBinaryMenu().waitFor({ state: 'visible' });
+      await hub.currentBinaryName().waitForText('Aucun fichier sélectionné', 30000);
+      await hub.disassemblyBinarySummary().waitForText('Aucun fichier', 30000);
+      assert.equal(await hub.decompileAugmentButton().isEnabled(), false, 'AI augmentation must stay disabled without decompiled code');
+    } catch (error) {
+      const artifacts = await captureUiFailure(
+        target,
+        process.env.POF_E2E_ARTIFACTS_DIR,
+        'hub-empty-workspace',
+      );
+      error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
+      throw error;
+    } finally {
+      target?.close();
+    }
+  }));
+
+  suite.addTest(new Mocha.Test('persists the simplified static interface across a hub reload', async () => {
+    const userDataDir = process.env.POF_E2E_USER_DATA_DIR;
+    assert.ok(userDataDir, 'POF_E2E_USER_DATA_DIR is required');
+    let target = null;
+    let hub = null;
+    const isSettingsSave = (event) => event.kind === 'webview_message' && event.name === 'hubSaveSettings';
+    try {
+      await vscode.commands.executeCommand('pileOuFace.goToAddress');
+      target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+      hub = new HubPage(target);
+      await hub.openPanel('options');
+
+      const savesBeforeSimpleMode = countCurrentAuditEvents(userDataDir, isSettingsSave);
+      await hub.interfaceModeButton('simple').click();
+      await hub.interfaceModeInput().waitForValue('simple', 30000);
+      await hub.interfaceModeButton('simple').waitForAttribute('aria-pressed', 'true', 30000);
+      await hub.staticFeaturePicker().waitForAttribute('class', 'is-disabled', 30000);
+      await waitForAuditEvents(userDataDir, (events) => countEvents(events, isSettingsSave) > savesBeforeSimpleMode);
+
+      await hub.openPanel('static');
+      await hub.group('code').click();
+      assert.equal(await hub.subTab('callgraph').textContent(), null, 'specialized call graph tab must be hidden in simple mode');
+      assert.notEqual(await hub.subTab('disasm').textContent(), null, 'essential disassembly tab must remain visible in simple mode');
+
+      target.close();
+      target = null;
+      hub = null;
+      await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+      await vscode.commands.executeCommand('pileOuFace.goToAddress');
+      target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+      hub = new HubPage(target);
+      await hub.openPanel('options');
+      await hub.interfaceModeInput().waitForValue('simple', 30000);
+      await hub.interfaceModeButton('simple').waitForAttribute('aria-pressed', 'true', 30000);
+
+      const savesBeforeRestore = countCurrentAuditEvents(userDataDir, isSettingsSave);
+      await hub.interfaceModeButton('advanced').clickDom();
+      await hub.interfaceModeInput().waitForValue('advanced', 30000);
+      await hub.staticFeaturesAllButton().waitForEnabled(30000);
+      await hub.staticFeaturesAllButton().clickDom();
+      await waitForAuditEvents(userDataDir, (events) => countEvents(events, isSettingsSave) > savesBeforeRestore);
+    } catch (error) {
+      const artifacts = await captureUiFailure(
+        target,
+        process.env.POF_E2E_ARTIFACTS_DIR,
+        'hub-settings-persistence',
+      );
+      error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
+      throw error;
+    } finally {
+      try {
+        if (!hub) {
+          await vscode.commands.executeCommand('pileOuFace.goToAddress');
+          target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+          hub = new HubPage(target);
+        }
+        if (hub) {
+          const savesBeforeCleanup = countCurrentAuditEvents(userDataDir, isSettingsSave);
+          await hub.openPanel('options');
+          if (await hub.interfaceModeButton('advanced').getAttribute('aria-pressed') !== 'true') {
+            await hub.interfaceModeButton('advanced').clickDom();
+            await hub.interfaceModeInput().waitForValue('advanced', 30000);
+          }
+          await hub.staticFeaturesAllButton().clickDom();
+          await waitForAuditEvents(userDataDir, (events) => countEvents(events, isSettingsSave) > savesBeforeCleanup);
+        }
+      } catch {
+        // Preserve the original assertion while keeping best-effort test isolation.
+      }
+      target?.close();
+    }
+  }));
+
+  suite.addTest(new Mocha.Test('retries auto-triage from the real confirmation UI without reopening the modal', async () => {
+    const userDataDir = process.env.POF_E2E_USER_DATA_DIR;
+    assert.ok(userDataDir, 'POF_E2E_USER_DATA_DIR is required');
+    const [fixture] = readFixtureSpecs();
+    assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
+    const [auditPath] = findAuditFiles(userDataDir)
+      .sort((left, right) => fs.statSync(right).mtimeMs - fs.statSync(left).mtimeMs);
+    assert.ok(auditPath, 'runtime audit file must identify the extension storage directory');
+    const storageDir = path.dirname(auditPath);
+    const binaryPath = path.join(storageDir, 'e2e-auto-triage.bin');
+    const mappingPath = path.join(storageDir, 'e2e-auto-triage.disasm.mapping.json');
+    let reportPath = '';
+    let target = null;
+    let attempt = 0;
+    const originalExecFile = childProcess.execFile;
+    const originalSpawn = childProcess.spawn;
+    try {
+      fs.copyFileSync(fixture.path, binaryPath);
+      fs.writeFileSync(mappingPath, JSON.stringify({ function_addrs: ['0x400078'] }), 'utf8');
+
+      await withChildProcessMocks({
+        execFile: (file, args = [], options = {}, callback = undefined) => {
+          if (!isAiConsentScript(args)) {
+            return originalExecFile.call(childProcess, file, args, options, callback);
+          }
+          const cb = typeof options === 'function' ? options : callback;
+          const proc = new EventEmitter();
+          process.nextTick(() => cb?.(null, JSON.stringify({ consented: true }), ''));
+          return proc;
+        },
+        spawn: (file, args = [], options = {}) => {
+          if (!isAutoTriageScript(args)) {
+            return originalSpawn.call(childProcess, file, args, options);
+          }
+          attempt += 1;
+          const proc = new EventEmitter();
+          proc.stdout = new PassThrough();
+          proc.stderr = new PassThrough();
+          proc.kill = () => true;
+          reportPath = String(args[args.indexOf('--report-out') + 1] || '');
+          process.nextTick(() => {
+            if (attempt === 1) {
+              proc.stderr.end('provider offline');
+              proc.stdout.end();
+              proc.emit('close', 1);
+              return;
+            }
+            fs.writeFileSync(reportPath, '# Rapport auto-triage E2E\n', 'utf8');
+            proc.stdout.write(`${JSON.stringify({ type: 'selection_done', total: 1, provider: 'openai', model: 'e2e-model' })}\n`);
+            proc.stdout.write(`${JSON.stringify({ type: 'function_done', index: 0, total: 1 })}\n`);
+            proc.stdout.write(`${JSON.stringify({ type: 'done', stats: { processed: 1, tokens_used: 7 } })}\n`);
+            proc.stdout.end();
+            proc.stderr.end();
+            proc.emit('close', 0);
+          });
+          return proc;
+        },
+      }, async () => {
+        await vscode.commands.executeCommand('pileOuFace.goToAddress');
+        target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+        const hub = new HubPage(target);
+        await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+          type: 'hubUseBinaryPath',
+          binaryPath,
+        });
+        await hub.binaryPath().waitForValue(path.basename(binaryPath), 30000);
+        await hub.openPanel('dashboard');
+        await hub.autoTriageBinary().waitForText(path.basename(binaryPath), 30000);
+        await hub.autoTriageButton().waitFor({ state: 'visible' });
+        await hub.autoTriageButton().waitForEnabled(30000);
+        assert.equal(await hub.autoTriageButton().isEnabled(), true, 'auto-triage must be available after preflight');
+
+        await hub.autoTriageButton().click();
+        await hub.autoTriageModal().waitFor({ state: 'visible' });
+        assert.equal(await hub.autoTriageModal().getAttribute('hidden'), null, 'confirmation modal must be open');
+        await hub.autoTriageConfirmButton().click();
+        await hub.autoTriageState().waitForText('Échec', 30000);
+        await hub.autoTriageHelp().waitForText('provider offline', 30000);
+        assert.equal(await hub.autoTriageModal().getAttribute('hidden'), '', 'confirmation modal must close after the failed run starts');
+        assert.equal(await hub.autoTriageButton().isEnabled(), true, 'retry must be available after a provider error');
+
+        await hub.autoTriageButton().click();
+        await hub.autoTriageModal().waitFor({ state: 'visible' });
+        await hub.autoTriageConfirmButton().click();
+        await hub.autoTriageState().waitForText('Terminé', 30000);
+        await hub.autoTriageResult().waitFor({ state: 'visible' });
+        await hub.autoTriageResultTitle().waitForText('Dernier auto-triage terminé', 30000);
+        assert.equal(await hub.autoTriageModal().getAttribute('hidden'), '', 'confirmation modal must stay closed after success');
+        assert.equal(attempt, 2, 'one failed run and one successful retry must execute');
+      });
+    } catch (error) {
+      const artifacts = await captureUiFailure(
+        target,
+        process.env.POF_E2E_ARTIFACTS_DIR,
+        'hub-auto-triage-retry',
+      );
+      error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
+      throw error;
+    } finally {
+      target?.close();
+      for (const filePath of [binaryPath, mappingPath, reportPath].filter(Boolean)) {
+        try { fs.rmSync(filePath, { force: true }); } catch { /* Best-effort fixture cleanup. */ }
+      }
+    }
+  }));
+
+  suite.addTest(new Mocha.Test('accepts global decompile augmentation and restores it from cache through the real UI', async () => {
+    const [fixture] = readFixtureSpecs();
+    assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
+    const functionAddr = String(fixture.entry || '0x400078');
+    const rawCode = 'int main(void) { return 0; }';
+    const augmentedCode = 'int main(void) { /* validated by E2E */ return 0; }';
+    let target = null;
+    let accepted = false;
+    let suggestCalls = 0;
+    const originalExecFile = childProcess.execFile;
+    const augmentationResult = () => ({
+      ok: true,
+      found: accepted,
+      cached: accepted,
+      cache_key: 'e2e-decompile-augmentation',
+      raw_code: rawCode,
+      augmented_code: augmentedCode,
+      accepted_ids: accepted ? ['summary'] : [],
+      proposal: { summary: 'Nom et commentaire proposés par le test E2E' },
+    });
+    try {
+      await withChildProcessMocks({
+        execFile: (file, args = [], options = {}, callback = undefined) => {
+          const cb = typeof options === 'function' ? options : callback;
+          if (isAiConsentScript(args)) {
+            const proc = new EventEmitter();
+            process.nextTick(() => cb?.(null, JSON.stringify({ consented: true }), ''));
+            return proc;
+          }
+          if (isDecompileAugmentScript(args)) {
+            const proc = new EventEmitter();
+            const action = String(args[args.indexOf('--action') + 1] || '');
+            process.nextTick(() => {
+              if (action === 'suggest') suggestCalls += 1;
+              if (action === 'accept') accepted = true;
+              cb?.(null, JSON.stringify(augmentationResult()), '');
+            });
+            return proc;
+          }
+          if (Array.isArray(args) && args.some((arg) => String(arg || '').endsWith(path.join('backends', 'static', 'decompile', 'decompile.py')))) {
+            const proc = new EventEmitter();
+            const result = args.includes('--list')
+              ? createMockDecompilerList()
+              : JSON.stringify({
+                ok: true,
+                functions: [{ addr: functionAddr, name: 'main', code: rawCode }],
+                score: 100,
+              });
+            process.nextTick(() => cb?.(null, result, ''));
+            return proc;
+          }
+          return originalExecFile.call(childProcess, file, args, options, callback);
+        },
+      }, async () => {
+        await vscode.commands.executeCommand('pileOuFace.goToAddress');
+        target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+        let hub = new HubPage(target);
+        await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+          type: 'hubUseBinaryPath',
+          binaryPath: fixture.path,
+        });
+        await hub.binaryPath().waitForValue(path.basename(fixture.path), 30000);
+        await hub.openPanel('static');
+        await hub.openStaticTab('code', 'decompile');
+        await hub.decompileOutput().waitForText(rawCode, 30000);
+        assert.equal(await hub.decompileFunctionSelect().inputValue(), '', 'the fixture remains in global decompile mode');
+        assert.equal(await hub.decompileAugmentButton().isEnabled(), true, 'a global result with one function must enable augmentation');
+
+        await hub.decompileAugmentButton().click();
+        await hub.decompileAugmentReview().waitFor({ state: 'visible', timeout: 30000 });
+        await hub.decompileAugmentSuggestions().waitForText('Nom et commentaire proposés', 30000);
+        await hub.decompileAugmentAcceptButton().click();
+        await hub.decompileAugmentStatus().waitForText('Version IA appliquée et enregistrée dans le cache.', 30000);
+        await hub.decompileOutput().waitForText('validated by E2E', 30000);
+        assert.equal(await hub.decompileAugmentReview().getAttribute('hidden'), '', 'review must close after acceptance');
+        assert.equal(suggestCalls, 1, 'the provider suggestion must run exactly once');
+
+        target.close();
+        target = null;
+        await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+        await vscode.commands.executeCommand('pileOuFace.goToAddress');
+        target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+        hub = new HubPage(target);
+        await hub.openPanel('static');
+        await hub.openStaticTab('code', 'decompile');
+        await hub.decompileOutput().waitForText('validated by E2E', 30000);
+        await hub.decompileAugmentStatus().waitForText('Version IA acceptée restaurée depuis le cache.', 30000);
+        assert.equal(suggestCalls, 1, 'restoring the accepted cache must not call the provider again');
+      });
+    } catch (error) {
+      const artifacts = await captureUiFailure(
+        target,
+        process.env.POF_E2E_ARTIFACTS_DIR,
+        'hub-decompile-augmentation-cache',
+      );
+      error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
+      throw error;
+    } finally {
+      target?.close();
+    }
+  }));
+
+  suite.addTest(new Mocha.Test('drives the hub through real webview controls', async () => {
+    let target = null;
+    try {
+      const [fixture] = readFixtureSpecs();
+      assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
+      await vscode.commands.executeCommand('pileOuFace.goToAddress');
+      target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+      const hub = new HubPage(target);
+
+      await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+        type: 'hubUseBinaryPath',
+        binaryPath: fixture.path,
+      });
+      await hub.binaryPath().waitForValue(path.basename(fixture.path), 30000);
+
+      await hub.openPanel('dashboard');
+      await hub.openPanel('static');
+      await hub.openStaticTab('data', 'typed_data');
+
+      await hub.openTypeManager();
+      await hub.typeEditorSource().fill('struct E2EUiType { int x; int y; };');
+      await hub.typeEditorSaveButton().click();
+      await sleep(250);
+      if (!String(await hub.typeEditorStatus().textContent() || '').trim()) {
+        await hub.typeEditorSaveButton().clickDom();
+      }
+      await hub.typeEditorStatus().waitForText('sauvegardé(s)', 30000);
+      await hub.typeEditorCatalog().waitForText('E2EUiType', 30000);
+
+      await hub.typeEditorCloseButton().clickDom();
+      await hub.openTypeManager();
+      await hub.typeEditorCatalog().waitForText('E2EUiType', 30000);
+
+      const invalidSource = 'struct E2EInvalidType { int; };';
+      await hub.typeEditorSource().fill(invalidSource);
+      await hub.typeEditorSaveButton().click();
+      await sleep(250);
+      if (!String(await hub.typeEditorStatus().textContent() || '').trim()) {
+        await hub.typeEditorSaveButton().clickDom();
+      }
+      await hub.typeEditorStatus().waitForText('Type manquant', 30000);
+      await hub.typeEditor().waitFor({ state: 'visible' });
+      assert.equal(await hub.typeEditorSource().inputValue(), invalidSource);
+      assert.match(
+        String(await hub.typeEditorStatus().getAttribute('class') || ''),
+        /\bis-error\b/,
+      );
+      await hub.typeEditorCloseButton().clickDom();
+
+      await hub.openPanel('outils');
+      await hub.offsetHexInput().fill('0x14');
+      await hub.offsetDecimalInput().waitForValue('20', 30000);
+      await hub.offsetBaseInput().fill('0x400000');
+      await hub.offsetDeltaInput().fill('0x78');
+      await hub.offsetResultInput().waitForValue('0x400078', 30000);
+
+      await hub.openPanel('dashboard');
+      await hub.expectActive(hub.panel('dashboard'), 'dashboard panel after returning');
+    } catch (error) {
+      const artifacts = await captureUiFailure(
+        target,
+        process.env.POF_E2E_ARTIFACTS_DIR,
+        'hub-real-webview-controls',
+      );
+      error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
+      throw error;
+    } finally {
+      target?.close();
+    }
+  }));
+
+  suite.addTest(new Mocha.Test('restores the selected binary and visible analysis after reopening the hub', async () => {
+    const [fixture] = readFixtureSpecs();
+    assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
+    const binaryName = path.basename(fixture.path);
+    let target = null;
+    const originalExecFile = childProcess.execFile;
+    try {
+      await withChildProcessMocks({
+        execFile: (file, args = [], options = {}, callback = undefined) => {
+          if (!isSymbolsScript(args)) {
+            return originalExecFile.call(childProcess, file, args, options, callback);
+          }
+          const cb = typeof options === 'function' ? options : callback;
+          const proc = new EventEmitter();
+          const payload = {
+            symbols: [{
+              addr: String(fixture.entry || '0x400078'),
+              name: 'entry_e2e',
+              type: 'T',
+              size: 16,
+            }],
+          };
+          process.nextTick(() => cb?.(null, JSON.stringify(payload), ''));
+          return proc;
+        },
+      }, async () => {
+        await vscode.commands.executeCommand('pileOuFace.goToAddress');
+        target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+        let hub = new HubPage(target);
+
+        await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+          type: 'hubUseBinaryPath',
+          binaryPath: fixture.path,
+        });
+        await hub.binaryPath().waitForValue(binaryName, 30000);
+        await hub.topBarBinaryName().waitForText(binaryName, 30000);
+        await hub.openPanel('static');
+        await hub.openStaticTab('data', 'info');
+        const visibleInfo = await hub.binaryInfo().waitForText('Entry point', 30000);
+        assert.match(visibleInfo, /Format/);
+        assert.match(visibleInfo, /Bits/);
+
+        await hub.openStaticTab('data', 'sections');
+        const visibleSections = await hub.binarySections().waitForText('.text', 30000);
+        assert.match(visibleSections, /section\(s\)/);
+
+        await hub.openStaticTab('code', 'discovered');
+        const visibleFunctionCount = await hub.binaryFunctionsCount().waitForText('fonction', 30000);
+        assert.match(visibleFunctionCount, /\d+ fonction/);
+        await hub.binaryFunctions().waitFor({ state: 'visible', timeout: 30000 });
+
+        const functionExportPath = path.join(
+          process.env.POF_E2E_ARTIFACTS_DIR,
+          'function-dossier-e2e.json',
+        );
+        await withWindowMocks({
+          showSaveDialog: async () => vscode.Uri.file(functionExportPath),
+        }, async () => {
+          await hub.functionDossierButton().click();
+          const startedAt = Date.now();
+          while (!fs.existsSync(functionExportPath) && Date.now() - startedAt < 5000) {
+            await sleep(50);
+          }
+        });
+        assert.ok(fs.existsSync(functionExportPath), 'the function dossier must be written after the UI export');
+        const exportedFunction = JSON.parse(fs.readFileSync(functionExportPath, 'utf8'));
+        assert.ok(String(exportedFunction.function.name || '').trim(), 'the exported function must keep a visible name');
+        assert.equal(exportedFunction.function.addr, String(fixture.entry || '0x400078'));
+
+        await hub.firstFunctionDisasmButton().click();
+        await hub.expectActive(hub.subTab('disasm'), 'disassembly opened from the function list');
+        await hub.goToAddressInput().waitForValue(String(fixture.entry || '0x400078'), 30000);
+
+        target.close();
+        target = null;
+        await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+        await vscode.commands.executeCommand('pileOuFace.goToAddress');
+        target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+        hub = new HubPage(target);
+
+        await hub.binaryPath().waitForValue(binaryName, 30000);
+        await hub.topBarBinaryName().waitForText(binaryName, 30000);
+        await hub.openPanel('static');
+        await hub.openStaticTab('data', 'info');
+        const restoredInfo = await hub.binaryInfo().waitForText('Entry point', 30000);
+        assert.equal(restoredInfo, visibleInfo, 'the reopened hub must render the same binary analysis');
+      });
+    } catch (error) {
+      const artifacts = await captureUiFailure(
+        target,
+        process.env.POF_E2E_ARTIFACTS_DIR,
+        'hub-analysis-reload',
+      );
+      error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
+      throw error;
+    } finally {
+      target?.close();
+    }
+  }));
+
+  suite.addTest(new Mocha.Test('creates, restores, updates and deletes an annotation through the UI', async () => {
+    let target = null;
+    try {
+      const [fixture] = readFixtureSpecs();
+      assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
+      await vscode.commands.executeCommand('pileOuFace.goToAddress');
+      target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+      const hub = new HubPage(target);
+
+      await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+        type: 'hubUseBinaryPath',
+        binaryPath: fixture.path,
+      });
+      await hub.binaryPath().waitForValue(path.basename(fixture.path), 30000);
+      await hub.openPanel('static');
+      await hub.openStaticTab('code', 'disasm');
+
+      await hub.entryPointButton().click();
+      await hub.annotationAddress().waitForAttribute('data-addr', '0x', 30000);
+      await hub.annotationName().fill('e2e_entry');
+      await hub.annotationComment().fill('Annotation créée depuis l’interface');
+      await hub.annotationSubmitButton().clickDom();
+      await hub.annotationsList().waitForText('e2e_entry', 30000);
+      await hub.annotationsList().waitForText('Annotation créée depuis l’interface', 30000);
+
+      await hub.openPanel('dashboard');
+      await hub.openPanel('static');
+      await hub.openStaticTab('code', 'disasm');
+      await hub.annotationsList().waitForText('e2e_entry', 30000);
+
+      await hub.firstAnnotationEditButton().clickDom();
+      await hub.annotationName().waitForValue('e2e_entry', 30000);
+      await hub.annotationName().fill('e2e_entry_updated');
+      await hub.annotationComment().fill('Annotation modifiée depuis l’interface');
+      await hub.annotationSubmitButton().clickDom();
+      await hub.annotationsList().waitForText('e2e_entry_updated', 30000);
+      await hub.annotationsList().waitForText('Annotation modifiée depuis l’interface', 30000);
+
+      await hub.firstAnnotationDeleteButton().clickDom();
+      await hub.annotationsList().waitForText('Aucune annotation.', 30000);
+
+      await hub.openPanel('dashboard');
+      await hub.openPanel('static');
+      await hub.openStaticTab('code', 'disasm');
+      await hub.annotationsList().waitForText('Aucune annotation.', 30000);
+    } catch (error) {
+      const artifacts = await captureUiFailure(
+        target,
+        process.env.POF_E2E_ARTIFACTS_DIR,
+        'hub-annotation-lifecycle',
+      );
+      error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
+      throw error;
+    } finally {
+      target?.close();
+    }
+  }));
+
+  suite.addTest(new Mocha.Test('isolates annotations when switching between recent binaries and reopening the hub', async () => {
+    const userDataDir = process.env.POF_E2E_USER_DATA_DIR;
+    assert.ok(userDataDir, 'POF_E2E_USER_DATA_DIR is required');
+    let target = null;
+    try {
+      const [sourceFixture] = readFixtureSpecs()
+        .sort((left, right) => Number(left.sizeBytes || 0) - Number(right.sizeBytes || 0));
+      assert.ok(sourceFixture?.path && fs.existsSync(sourceFixture.path), 'UI fixture binary must exist');
+      const isolationRoot = process.env.POF_E2E_WORKSPACE_DIR || path.dirname(sourceFixture.path);
+      const fixtureA = {
+        ...sourceFixture,
+        path: path.join(isolationRoot, `e2e-isolation-a-${process.pid}.elf`),
+      };
+      const fixtureB = {
+        ...sourceFixture,
+        path: path.join(isolationRoot, `e2e-isolation-b-${process.pid}.elf`),
+      };
+      fs.copyFileSync(sourceFixture.path, fixtureA.path);
+      fs.appendFileSync(fixtureA.path, `pof-e2e-isolation-a-${process.pid}`);
+      fs.copyFileSync(sourceFixture.path, fixtureB.path);
+      fs.appendFileSync(fixtureB.path, `pof-e2e-isolation-b-${process.pid}`);
+      const binaryAName = path.basename(fixtureA.path);
+      const binaryBName = path.basename(fixtureB.path);
+
+      await vscode.commands.executeCommand('pileOuFace.goToAddress');
+      target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+      let hub = new HubPage(target);
+      const countDisasmResponses = () => countCurrentAuditEvents(userDataDir, (event) => (
+        event.kind === 'webview_post_message' && event.name === 'hubDisasmReady'
+      ));
+      const waitForNextDisasm = (previousCount) => waitForAuditEvents(userDataDir, (events) => (
+        countEvents(events, (event) => event.kind === 'webview_post_message' && event.name === 'hubDisasmReady') > previousCount
+      ), 30000);
+
+      let disasmResponses = countDisasmResponses();
+      await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+        type: 'hubUseBinaryPath',
+        binaryPath: fixtureA.path,
+      });
+      await hub.binaryPath().waitForValue(binaryAName, 30000);
+      await waitForNextDisasm(disasmResponses);
+      await hub.entryPointButton().clickDom();
+      await hub.annotationAddress().waitForAttribute('data-addr', '0x', 30000);
+      await hub.annotationName().fill('e2e_binary_a');
+      await hub.annotationComment().fill('Annotation isolée du premier binaire');
+      await hub.annotationSubmitButton().clickDom();
+      await hub.annotationsList().waitForText('e2e_binary_a', 30000);
+
+      disasmResponses = countDisasmResponses();
+      await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+        type: 'hubUseBinaryPath',
+        binaryPath: fixtureB.path,
+      });
+      await hub.binaryPath().waitForValue(binaryBName, 30000);
+      await waitForNextDisasm(disasmResponses);
+      await hub.annotationsList().waitForText('Aucune annotation.', 30000);
+      await hub.entryPointButton().clickDom();
+      await hub.annotationAddress().waitForAttribute('data-addr', '0x', 30000);
+      await hub.annotationName().fill('e2e_binary_b');
+      await hub.annotationComment().fill('Annotation isolée du second binaire');
+      await hub.annotationSubmitButton().clickDom();
+      await hub.annotationsList().waitForText('e2e_binary_b', 30000);
+
+      disasmResponses = countDisasmResponses();
+      await hub.topBarBinaryButton().clickDom();
+      await hub.topBarBinaryMenu().waitFor({ state: 'visible', timeout: 30000 });
+      await hub.recentBinaryButton(binaryAName).clickDom();
+      await hub.binaryPath().waitForValue(binaryAName, 30000);
+      await waitForNextDisasm(disasmResponses);
+      await hub.annotationsList().waitForText('e2e_binary_a', 30000);
+      assert.ok(
+        !String(await hub.annotationsList().textContent() || '').includes('e2e_binary_b'),
+        'the first binary must not display the second binary annotation',
+      );
+
+      target.close();
+      target = null;
+      await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+      await vscode.commands.executeCommand('pileOuFace.goToAddress');
+      target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+      hub = new HubPage(target);
+      await hub.binaryPath().waitForValue(binaryAName, 30000);
+      await hub.annotationsList().waitForText('e2e_binary_a', 30000);
+
+      disasmResponses = countDisasmResponses();
+      await hub.topBarBinaryButton().clickDom();
+      await hub.topBarBinaryMenu().waitFor({ state: 'visible', timeout: 30000 });
+      await hub.recentBinaryButton(binaryBName).clickDom();
+      await hub.binaryPath().waitForValue(binaryBName, 30000);
+      await waitForNextDisasm(disasmResponses);
+      await hub.annotationsList().waitForText('e2e_binary_b', 30000);
+      assert.ok(
+        !String(await hub.annotationsList().textContent() || '').includes('e2e_binary_a'),
+        'the second binary must not display the first binary annotation',
+      );
+    } catch (error) {
+      const artifacts = await captureUiFailure(
+        target,
+        process.env.POF_E2E_ARTIFACTS_DIR,
+        'hub-binary-isolation',
+      );
+      error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
+      throw error;
+    } finally {
+      target?.close();
+    }
+  }));
+
+  suite.addTest(new Mocha.Test('navigates incoming and outgoing xrefs through the real UI', async () => {
+    const [fixture] = readFixtureSpecs();
+    assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
+    const targetAddr = String(fixture.entry || '0x400078');
+    const sourceAddr = '0x400080';
+    let target = null;
+    const xrefsModes = [];
+    const originalExecFile = childProcess.execFile;
+    try {
+      await withChildProcessMocks({
+        execFile: (file, args = [], options = {}, callback = undefined) => {
+          if (!isXrefsScript(args)) {
+            return originalExecFile.call(childProcess, file, args, options, callback);
+          }
+          const cb = typeof options === 'function' ? options : callback;
+          const proc = new EventEmitter();
+          const mode = String(args[args.indexOf('--mode') + 1] || 'to');
+          xrefsModes.push(mode);
+          const payload = mode === 'from'
+            ? { refs: [], targets: [targetAddr] }
+            : {
+              refs: [{
+                from_addr: sourceAddr,
+                function_name: 'caller_e2e',
+                function_addr: sourceAddr,
+                type: 'call',
+                text: `call ${targetAddr}`,
+              }],
+              targets: [],
+            };
+          process.nextTick(() => cb?.(null, JSON.stringify(payload), ''));
+          return proc;
+        },
+      }, async () => {
+        await vscode.commands.executeCommand('pileOuFace.goToAddress');
+        target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+        const hub = new HubPage(target);
+        await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+          type: 'hubUseBinaryPath',
+          binaryPath: fixture.path,
+        });
+        await hub.binaryPath().waitForValue(path.basename(fixture.path), 30000);
+        await hub.openPanel('static');
+        await hub.openStaticTab('code', 'disasm');
+
+        await hub.goToAddressInput().fill(targetAddr);
+        await hub.xrefsMode().fill('to');
+        await hub.xrefsButton().clickDom();
+        await hub.xrefsResult().waitForText(`Références vers ${targetAddr}`, 30000);
+        await hub.xrefsResult().waitForText('caller_e2e', 30000);
+        await hub.xrefsResult().waitForText(`call ${targetAddr}`, 30000);
+
+        await hub.firstXrefsJumpButton().clickDom();
+        await hub.goToAddressInput().waitForValue(sourceAddr, 30000);
+        await hub.annotationAddress().waitForAttribute('data-addr', sourceAddr, 30000);
+
+        await hub.xrefsMode().fill('from');
+        await hub.xrefsButton().clickDom();
+        await hub.xrefsResult().waitForText(`Références depuis ${sourceAddr}`, 30000);
+        await hub.xrefsResult().waitForText(targetAddr, 30000);
+        assert.ok(xrefsModes.includes('to'), 'an incoming xrefs lookup must execute');
+        assert.ok(xrefsModes.includes('from'), 'an outgoing xrefs lookup must execute');
+      });
+    } catch (error) {
+      const artifacts = await captureUiFailure(
+        target,
+        process.env.POF_E2E_ARTIFACTS_DIR,
+        'hub-xrefs-navigation',
+      );
+      error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
+      throw error;
+    } finally {
+      target?.close();
     }
   }));
 
@@ -827,11 +1577,13 @@ async function run() {
     const sourcePath = path.join(workspaceDir, 'e2e-runtime-audit-source.c');
     const rulePath = path.join(workspaceDir, 'e2e-runtime-audit-rule.yar');
     const pluginBundlePath = path.join(workspaceDir, 'e2e-runtime-audit-plugin.pofplug');
+    const licensePath = path.join(workspaceDir, 'e2e-runtime-audit-plugin.license');
     const patchBinaryPath = path.join(workspaceDir, 'e2e-runtime-audit-patch-copy.bin');
     fs.writeFileSync(scriptPath, 'print({"ok": True})\n', 'utf8');
     fs.writeFileSync(sourcePath, 'int main(void) { return 0; }\n', 'utf8');
     fs.writeFileSync(rulePath, 'rule E2ERuntimeAuditRule { condition: true }\n', 'utf8');
     fs.writeFileSync(pluginBundlePath, 'not a real plugin bundle\n', 'utf8');
+    fs.writeFileSync(licensePath, 'not a real plugin license\n', 'utf8');
     fs.copyFileSync(binaryPath, patchBinaryPath);
 
     await vscode.commands.executeCommand('pileOuFace.goToAddress');
@@ -889,8 +1641,8 @@ async function run() {
       { type: 'hubLoadExceptionHandlers', binaryPath },
       { type: 'hubLoadTypedData', binaryPath, valueType: 'u8', page: 0 },
       { type: 'hubPreviewTypedStruct', binaryPath, structName: 'E2E_Missing', structAddr: addr },
-      { type: 'hubLoadStructs' },
-      { type: 'hubSaveStructs', sourceText: 'struct E2EPoint { int x; int y; };' },
+      { type: 'hubLoadStructs', binaryPath },
+      { type: 'hubSaveStructs', binaryPath, sourceText: 'struct E2EPoint { int x; int y; };' },
       { type: 'hubSaveTypedStructRef', binaryPath, appliedStruct: { name: 'E2EPoint', addr, fields: [] } },
       { type: 'hubPayloadToHex', payload: 'A*4' },
       { type: 'hubAutoFromCmp', binaryPath, cmpAddr: addr },
@@ -1130,6 +1882,10 @@ async function run() {
       });
     });
   }));
+
+  if (['1', 'true', 'yes'].includes(String(process.env.POF_E2E_UI_ONLY || '').toLowerCase())) {
+    mocha.grep(/real webview controls|real confirmation UI|restores it from cache through the real UI|restores the selected binary and visible analysis|incoming and outgoing xrefs through the real UI/);
+  }
 
   return new Promise((resolve, reject) => {
     mocha.run((failures) => {

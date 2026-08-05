@@ -591,33 +591,6 @@ def disassemble_raw_blob(
     return lines
 
 
-def _load_annotation_maps(
-    annotations_json_path: str | None,
-) -> tuple[dict[int, str], dict[int, str]]:
-    """Load {int_addr: name/comment} from annotations JSON. Returns ({}, {}) if absent/invalid."""
-    if not annotations_json_path:
-        return {}, {}
-    try:
-        data = json.loads(Path(annotations_json_path).read_text(encoding="utf-8"))
-        labels = {}
-        comments = {}
-        for addr_str, entry in data.items():
-            try:
-                addr = int(addr_str, 16) if addr_str.startswith("0x") else int(addr_str)
-                if isinstance(entry, dict):
-                    name = (entry.get("name") or "").strip()
-                    comment = (entry.get("comment") or "").strip()
-                    if name:
-                        labels[addr] = name
-                    if comment:
-                        comments[addr] = comment
-            except (ValueError, AttributeError):
-                pass
-        return labels, comments
-    except Exception:
-        return {}, {}
-
-
 def _merge_annotation_rows(
     rows: list[dict],
     label_map: dict[int, str],
@@ -966,13 +939,13 @@ def _resolve_cache_db_path(cache_db_path: str | None, binary_path: str) -> str |
 
 def _load_disasm_context(
     binary_path: str,
-    annotations_json_path: str | None = None,
     cache_db_path: str | None = None,
     annotations_db_path: str | None = "auto",
     *,
     raw_mode: bool = False,
 ) -> dict:
-    label_map, comment_map = _load_annotation_maps(annotations_json_path)
+    label_map: dict[int, str] = {}
+    comment_map: dict[int, str] = {}
     functions: list[dict] = []
     stack_frames: dict[str, dict] = {}
     typed_struct_index = build_typed_struct_index(binary_path)
@@ -986,7 +959,6 @@ def _load_disasm_context(
             with DisasmCache(resolved_cache) as cache:
                 cached_functions = cache.get_functions(binary_path) or []
                 cached_symbols = cache.get_symbols(binary_path) or []
-                cached_annotations = cache.get_annotations(binary_path) or []
                 functions = [
                     fn
                     for fn in cached_functions
@@ -1011,12 +983,6 @@ def _load_disasm_context(
                     if addr is None or not name:
                         continue
                     label_map.setdefault(addr, name)
-                _merge_annotation_rows(
-                    cached_annotations,
-                    label_map,
-                    comment_map,
-                    override=False,
-                )
                 for fn in functions:
                     func_addr = str(fn.get("addr") or "")
                     if not func_addr:
@@ -1742,7 +1708,6 @@ def disassemble(
     raw_arch: str | None = None,
     raw_base_addr: str | None = None,
     raw_endian: str | None = None,
-    annotations_json: str | None = None,
     annotations_db: str | None = "auto",
     dwarf_lines: bool = False,
     cache_db_path: str | None = None,
@@ -1815,7 +1780,6 @@ def disassemble(
 
     context = _load_disasm_context(
         binary_path,
-        annotations_json_path=annotations_json,
         cache_db_path=cache_db_path,
         annotations_db_path=annotations_db,
         raw_mode=bool(raw_arch),
@@ -1956,10 +1920,6 @@ def main() -> int:
         help="Endianness for raw blobs (default: little)",
     )
     parser.add_argument(
-        "--annotations-json",
-        help="Path to annotations JSON {addr: {name, comment}} for label injection",
-    )
-    parser.add_argument(
         "--annotations-db",
         default="auto",
         help="SQLite annotations DB path. Use 'auto' for the default AnnotationStore DB.",
@@ -2032,7 +1992,6 @@ def main() -> int:
                 _emit_progress(
                     progress_callback, "cache", "Cache SQLite trouvé", percent=20
                 )
-                ann_json = getattr(args, "annotations_json", None)
                 cached_line_map = None
                 if getattr(args, "dwarf_lines", False):
                     from backends.static.binary.dwarf import extract_line_mapping
@@ -2046,7 +2005,6 @@ def main() -> int:
                     cached_line_map = extract_line_mapping(args.binary) or None
                 context = _load_disasm_context(
                     args.binary,
-                    annotations_json_path=ann_json,
                     cache_db_path=cache_db,
                     annotations_db_path=getattr(args, "annotations_db", "auto"),
                 )
@@ -2098,7 +2056,6 @@ def main() -> int:
                 raw_arch=getattr(args, "raw_arch", None),
                 raw_base_addr=getattr(args, "raw_base_addr", None),
                 raw_endian=getattr(args, "raw_endian", None),
-                annotations_json=getattr(args, "annotations_json", None),
                 annotations_db=getattr(args, "annotations_db", "auto"),
                 dwarf_lines=getattr(args, "dwarf_lines", False),
                 cache_db_path=cache_db,
@@ -2146,7 +2103,6 @@ def main() -> int:
             raw_arch=getattr(args, "raw_arch", None),
             raw_base_addr=getattr(args, "raw_base_addr", None),
             raw_endian=getattr(args, "raw_endian", None),
-            annotations_json=getattr(args, "annotations_json", None),
             annotations_db=getattr(args, "annotations_db", "auto"),
             dwarf_lines=getattr(args, "dwarf_lines", False),
             cache_db_path=cache_db,

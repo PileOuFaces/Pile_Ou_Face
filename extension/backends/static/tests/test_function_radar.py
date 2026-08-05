@@ -3,20 +3,31 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backends.static.analysis.function_radar import (
+    _load_or_compute_cfg,
+    _load_or_compute_disasm,
+    _load_or_compute_functions,
+    _load_or_compute_imports,
     _load_or_compute_strings,
+    _load_or_compute_symbols,
+    _load_or_compute_xrefs,
     build_function_radar,
+    main,
 )
+from backends.static.annotations.annotation_db import AnnotationDb
 from backends.static.cache.cache import DisasmCache
 
 
@@ -25,6 +36,56 @@ class TestFunctionRadar(unittest.TestCase):
         result = build_function_radar("/tmp/does-not-exist.bin")
         self.assertEqual(result["error"], "Fichier introuvable")
         self.assertEqual(result["summary"]["function_count"], 0)
+
+    def test_prewarms_strings_before_index_and_handles_empty_catalog(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            binary_path = Path(tmp) / "empty.bin"
+            cache_db = Path(tmp) / "empty.pfdb"
+            binary_path.write_bytes(b"\x00")
+            events = []
+
+            def prewarm(cache, path, target_addrs=None):
+                events.append("strings")
+                cache.save_strings(
+                    path, [{"addr": "0x0", "value": "empty", "length": 5}]
+                )
+                return []
+
+            def index(*_args, **_kwargs):
+                events.append("index")
+                return {"stats": {}}
+
+            with (
+                patch(
+                    "backends.static.analysis.function_radar._load_or_compute_strings",
+                    side_effect=prewarm,
+                ),
+                patch(
+                    "backends.static.analysis.function_radar.build_analysis_index",
+                    side_effect=index,
+                ),
+                patch(
+                    "backends.static.analysis.function_radar._load_or_compute_disasm",
+                    return_value=[],
+                ),
+                patch(
+                    "backends.static.analysis.function_radar._load_or_compute_symbols",
+                    return_value=[],
+                ),
+                patch(
+                    "backends.static.analysis.function_radar._load_or_compute_functions",
+                    return_value=[],
+                ),
+                patch(
+                    "backends.static.analysis.function_radar._load_or_compute_cfg",
+                    return_value={},
+                ),
+            ):
+                result = build_function_radar(str(binary_path), cache_db=str(cache_db))
+
+            self.assertEqual(events, ["strings", "index"])
+            self.assertEqual(result["summary"]["function_count"], 0)
+            self.assertIsNone(result["error"])
 
     def test_prioritizes_functions_with_entry_imports_strings_and_annotations(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -177,13 +238,21 @@ class TestFunctionRadar(unittest.TestCase):
                         }
                     ],
                 )
-                cache.save_annotation(
+            annotation_db = Path(tmp) / "annotations.db"
+            with AnnotationDb(annotation_db) as db:
+                db.save_annotation(
                     str(binary_path), "0x401030", "comment", "decrypt routine"
                 )
 
-            with patch(
-                "backends.static.analysis.function_radar.build_analysis_index"
-            ) as mocked_index:
+            with (
+                patch(
+                    "backends.static.analysis.function_radar.build_analysis_index"
+                ) as mocked_index,
+                patch(
+                    "backends.static.analysis.function_radar.AnnotationDb",
+                    side_effect=lambda: AnnotationDb(annotation_db),
+                ),
+            ):
                 mocked_index.return_value = {"binary": str(binary_path)}
                 result = build_function_radar(
                     str(binary_path), cache_db=str(cache_db), hotspot_limit=6
@@ -241,7 +310,7 @@ class TestFunctionRadar(unittest.TestCase):
                 )
             )
 
-    def test_load_or_compute_strings_uses_full_auto_scan(self):
+    def test_load_or_compute_strings_prefers_streaming_system_scan(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             binary_path = tmp_path / "sample.bin"
@@ -259,16 +328,41 @@ class TestFunctionRadar(unittest.TestCase):
 
             with DisasmCache(str(cache_db)) as cache:
                 with patch(
-                    "backends.static.analysis.function_radar.extract_strings",
+                    "backends.static.analysis.function_radar.extract_strings_system",
                     return_value=expected,
-                ) as mocked_extract:
+                ) as mocked_system:
+                    with patch(
+                        "backends.static.analysis.function_radar.extract_strings"
+                    ) as mocked_extract:
+                        result = _load_or_compute_strings(cache, str(binary_path))
+
+            self.assertEqual(result, expected)
+            mocked_system.assert_called_once_with(str(binary_path), min_len=4)
+            mocked_extract.assert_not_called()
+
+    def test_load_or_compute_strings_falls_back_to_auto_scan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            binary_path = Path(tmp) / "sample.bin"
+            cache_db = Path(tmp) / "sample.pfdb"
+            binary_path.write_bytes(b"hello world\x00")
+            expected = [{"addr": "0x0", "value": "hello world", "length": 11}]
+
+            with DisasmCache(str(cache_db)) as cache:
+                with (
+                    patch(
+                        "backends.static.analysis.function_radar.extract_strings_system",
+                        return_value=[],
+                    ),
+                    patch(
+                        "backends.static.analysis.function_radar.extract_strings",
+                        return_value=expected,
+                    ) as mocked_extract,
+                ):
                     result = _load_or_compute_strings(cache, str(binary_path))
 
             self.assertEqual(result, expected)
             mocked_extract.assert_called_once_with(
-                str(binary_path),
-                min_len=4,
-                encoding="auto",
+                str(binary_path), min_len=4, encoding="auto"
             )
 
     def test_load_or_compute_strings_uses_targeted_cache_lookup(self):
@@ -296,6 +390,96 @@ class TestFunctionRadar(unittest.TestCase):
 
             self.assertEqual(len(result), 1)
             self.assertEqual(result[0]["value"], "matched")
+
+    def test_analysis_loaders_compute_and_persist_cache_misses(self):
+        cache = MagicMock()
+        cache.get_disasm.return_value = None
+        cache.get_symbols.return_value = None
+        cache.get_imports_analysis.return_value = None
+        cache.get_functions.return_value = None
+        cache.get_cfg.return_value = None
+        cache.get_xref_map.return_value = None
+        lines = [{"addr": "0x1000", "text": "ret"}]
+        symbols = [{"addr": "0x1000", "name": "entry", "type": "T"}]
+        functions = [{"addr": "0x1000", "name": "entry"}]
+        cfg = {"blocks": [], "edges": []}
+        xrefs = {"0x2000": [{"from_addr": "0x1000"}]}
+        imports = {"imports": [], "error": None}
+
+        with (
+            patch(
+                "backends.static.analysis.function_radar.disassemble_with_capstone",
+                return_value=lines,
+            ),
+            patch(
+                "backends.static.analysis.function_radar.extract_symbols",
+                return_value=symbols,
+            ),
+            patch(
+                "backends.static.analysis.function_radar.analyze_imports",
+                return_value=imports,
+            ),
+            patch(
+                "backends.static.analysis.function_radar.discover_functions",
+                return_value=functions,
+            ) as discover,
+            patch(
+                "backends.static.analysis.function_radar.build_cfg", return_value=cfg
+            ),
+            patch(
+                "backends.static.analysis.function_radar.build_xref_map",
+                return_value=xrefs,
+            ),
+        ):
+            self.assertEqual(_load_or_compute_disasm(cache, "/tmp/bin"), lines)
+            self.assertEqual(_load_or_compute_symbols(cache, "/tmp/bin"), symbols)
+            self.assertEqual(_load_or_compute_imports(cache, "/tmp/bin"), imports)
+            self.assertEqual(
+                _load_or_compute_functions(cache, "/tmp/bin", lines, symbols),
+                functions,
+            )
+            self.assertEqual(_load_or_compute_cfg(cache, "/tmp/bin", lines), cfg)
+            self.assertEqual(_load_or_compute_xrefs(cache, "/tmp/bin", lines), xrefs)
+
+        discover.assert_called_once_with(
+            lines, known_addrs={"0x1000"}, binary_path="/tmp/bin"
+        )
+        cache.save_disasm.assert_called_once_with("/tmp/bin", lines)
+        cache.save_symbols.assert_called_once_with("/tmp/bin", symbols)
+        cache.save_imports_analysis.assert_called_once_with("/tmp/bin", imports)
+        cache.save_functions.assert_called_once_with("/tmp/bin", functions)
+        cache.save_cfg.assert_called_once_with("/tmp/bin", cfg)
+        cache.save_xref_map.assert_called_once_with("/tmp/bin", xrefs)
+
+    def test_main_emits_json_and_normalizes_zero_hotspot_limit(self):
+        payload = {"functions": [], "error": None}
+        stdout = StringIO()
+        with (
+            patch(
+                "backends.static.analysis.function_radar.build_function_radar",
+                return_value=payload,
+            ) as mocked_build,
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "function_radar.py",
+                    "--binary",
+                    "/tmp/sample.bin",
+                    "--cache-db",
+                    "/tmp/sample.pfdb",
+                    "--hotspot-limit",
+                    "0",
+                ],
+            ),
+            redirect_stdout(stdout),
+        ):
+            self.assertEqual(main(), 0)
+
+        mocked_build.assert_called_once_with(
+            "/tmp/sample.bin", cache_db="/tmp/sample.pfdb", hotspot_limit=8
+        )
+        self.assertEqual(json.loads(stdout.getvalue()), payload)
 
 
 if __name__ == "__main__":

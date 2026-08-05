@@ -320,6 +320,7 @@ function normalizeStoredOllamaHistory(raw) {
       updatedAt: Number.isFinite(updatedAt) ? updatedAt : Date.now(),
       messages,
       model: String(entry?.model || '').trim(),
+      binaryPath: String(entry?.binaryPath || '').trim(),
     });
   });
   normalized.sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
@@ -342,6 +343,7 @@ function syncActiveOllamaConversationInHistory(touch = true) {
       updatedAt: now,
       messages: [...ollamaUiState.conversation],
       model: getCurrentOllamaModel() || ollamaUiState.lastModel || '',
+      binaryPath: getStaticBinaryPath(),
     });
   } else {
     existing.messages = [...ollamaUiState.conversation];
@@ -349,6 +351,7 @@ function syncActiveOllamaConversationInHistory(touch = true) {
       existing.title = buildOllamaConversationTitle(existing.messages);
     }
     existing.model = getCurrentOllamaModel() || ollamaUiState.lastModel || existing.model || '';
+    existing.binaryPath = getStaticBinaryPath() || existing.binaryPath || '';
     if (touch) existing.updatedAt = now;
   }
   ollamaUiState.history.sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
@@ -358,33 +361,26 @@ function syncActiveOllamaConversationInHistory(touch = true) {
 }
 
 function persistOllamaConversation() {
-  _saveStorage({
-    ollamaConversation: ollamaUiState.conversation,
-    ollamaConversationHistory: ollamaUiState.history,
-    ollamaActiveConversationId: ollamaUiState.activeConversationId,
+  vscode.postMessage({
+    type: 'hubSaveChatHistory',
+    conversations: ollamaUiState.history,
+    activeConversationId: ollamaUiState.activeConversationId,
   });
 }
 
 function hydrateOllamaConversationHistory() {
-  const stored = _loadStorage();
-  let history = normalizeStoredOllamaHistory(stored.ollamaConversationHistory);
-  let changed = false;
-  if (!history.length) {
-    const legacyMessages = _normalizeOllamaConversationMessages(stored.ollamaConversation);
-    history = [
-      {
-        id: createOllamaConversationId(),
-        title: buildOllamaConversationTitle(legacyMessages),
-        customTitle: false,
-        generationSettings: null,
-        updatedAt: Date.now(),
-        messages: legacyMessages,
-        model: String(stored.ollamaModel || '').trim(),
-      },
-    ];
-    changed = true;
-  }
-  const savedActiveId = String(stored.ollamaActiveConversationId || '').trim();
+  window.POFHubState?.removeStorageKeys?.([
+    'ollamaConversation',
+    'ollamaConversationHistory',
+    'ollamaActiveConversationId',
+  ]);
+  applyOllamaConversationHistory([], '');
+  vscode.postMessage({ type: 'hubLoadChatHistory' });
+}
+
+function applyOllamaConversationHistory(rawHistory, activeConversationId) {
+  let history = normalizeStoredOllamaHistory(rawHistory);
+  const savedActiveId = String(activeConversationId || '').trim();
   let active = history.find((entry) => entry.id === savedActiveId) || history[0];
   if (!active) {
     active = {
@@ -394,15 +390,16 @@ function hydrateOllamaConversationHistory() {
       generationSettings: null,
       updatedAt: Date.now(),
       messages: [],
-      model: String(stored.ollamaModel || '').trim(),
+      model: getCurrentOllamaModel() || ollamaUiState.lastModel || '',
+      binaryPath: getStaticBinaryPath(),
     };
     history = [active];
-    changed = true;
   }
   ollamaUiState.history = history;
   ollamaUiState.activeConversationId = active.id;
   ollamaUiState.conversation = _normalizeOllamaConversationMessages(active.messages);
-  if (changed) persistOllamaConversation();
+  renderOllamaConversation();
+  renderOllamaConversationHistory();
 }
 
 function switchOllamaConversation(conversationId) {
@@ -1291,14 +1288,25 @@ function requestOllamaModels() {
 
 // Quick actions
 document.querySelectorAll('.action-card').forEach((card) => {
-  card.addEventListener('click', () => {
+  card.addEventListener('click', (event) => {
     if (card.dataset.action === 'static-open') {
       showPanel('static');
-      if (!getStaticBinaryPath()) openBinaryMenu();
+      if (!getStaticBinaryPath()) {
+        event.stopPropagation();
+        openBinaryMenu();
+      }
     } else if (card.dataset.action === 'dynamic-run') {
       showPanel('dynamic');
     } else if (card.dataset.action === 'outils-open') {
       showPanel('outils');
+    } else if (card.dataset.action === 'auto-triage') {
+      const binaryPath = getStaticBinaryPath();
+      if (!binaryPath) {
+        showPanel('static');
+        openBinaryMenu();
+        return;
+      }
+      window.POFHubAutoTriageController?.startRun?.(binaryPath);
     }
   });
 });
@@ -1509,6 +1517,11 @@ function resetStackAndDecompileDerivedState() {
 }
 
 function resetTypedDataDerivedState() {
+  typedDataUiState.structSource = '';
+  typedDataUiState.structs = [];
+  typedDataUiState.structsLoaded = false;
+  typedDataUiState.loadingStructs = false;
+  typedDataUiState.pendingEditorOpen = false;
   typedDataUiState.appliedStructName = '';
   typedDataUiState.appliedStructOffset = '0x0';
   typedDataUiState.appliedStructAddr = '';
@@ -1615,6 +1628,23 @@ function resetStaticBinaryDerivedState() {
   window._lastDisasmAddr = '';
   window.lastBinaryArch = '';
   window._annotations = {};
+  const annotationBadge = document.getElementById('annotationAddrBadge');
+  if (annotationBadge) {
+    annotationBadge.textContent = '\u2014';
+    annotationBadge.dataset.addr = '';
+    annotationBadge.classList.remove('has-addr');
+  }
+  const annotationName = document.getElementById('annotationName');
+  if (annotationName) annotationName.value = '';
+  const annotationComment = document.getElementById('annotationComment');
+  if (annotationComment) annotationComment.value = '';
+  const annotationSubmit = document.getElementById('btnAddAnnotation');
+  if (annotationSubmit) {
+    annotationSubmit.disabled = true;
+    annotationSubmit.textContent = 'Annoter';
+    annotationSubmit.title = "Sélectionnez d'abord une adresse";
+  }
+  if (typeof renderAnnotationsList === 'function') renderAnnotationsList({});
   resetGraphDerivedState();
   updateActiveContextBars('');
   renderBookmarks();
@@ -2044,6 +2074,7 @@ document.querySelectorAll('[data-ollama-model-select="true"]').forEach((selectEl
   selectEl.addEventListener('change', (event) => {
     const value = String(event.target?.value || '').trim();
     if (!value) return;
+    ollamaUiState.modelUserSelected = true;
     if (value.includes('@')) {
       // Cloud model selected — just sync state without re-rendering Ollama list
       rememberOllamaModel(value, true);

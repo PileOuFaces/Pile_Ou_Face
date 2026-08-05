@@ -284,34 +284,6 @@ class TestDecompileFunctionStackVars(unittest.TestCase):
         self.assertIn("second_tmp", second.get("code", ""))
         self.assertEqual(second.get("stack_frame", {}).get("abi"), "win64")
 
-    def test_annotations_are_reported_in_result_payload(self):
-        fake_stack = {"vars": [], "args": []}
-        with tempfile.TemporaryDirectory() as d:
-            ann_path = Path(d) / "annotations.json"
-            ann_path.write_text(
-                '{"0x401000": {"name": "decrypt_cfg", "comment": "Point d\'entree de decryption"}}',
-                encoding="utf-8",
-            )
-            with ExitStack() as stack:
-                for p in self._base_patches("int f() { return DAT_00401000; }"):
-                    stack.enter_context(p)
-                stack.enter_context(
-                    mock.patch(
-                        "backends.static.disasm.stack_frame.analyse_stack_frame",
-                        return_value=fake_stack,
-                    )
-                )
-                result = decompile_function(
-                    "/bin/ls",
-                    "0x401000",
-                    annotations_json=str(ann_path),
-                    cache_dir=Path(d),
-                )
-        annotations = result.get("annotations") or []
-        self.assertEqual(len(annotations), 1)
-        self.assertEqual(annotations[0]["name"], "decrypt_cfg")
-        self.assertIn("decryption", annotations[0]["comment"])
-
     def test_sqlite_annotations_are_reported_in_result_payload(self):
         fake_stack = {"vars": [], "args": []}
         with tempfile.TemporaryDirectory() as d:
