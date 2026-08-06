@@ -101,11 +101,13 @@ def _is_version_compatible(
     if max_version:
         max_parts = _parse_version(max_version)
         if -1 in max_parts:
-            for index, value in enumerate(max_parts):
-                if value == -1:
-                    break
-                if index >= len(host_tuple) or host_tuple[index] != value:
-                    return False
+            # "0.2.x" bounds every version whose prefix up to the wildcard is
+            # <= (0, 2): comparing only that prefix (not requiring equality)
+            # is what makes max_version an upper bound instead of an exact-
+            # minor pin — a host on 0.1.x must stay compatible with "0.2.x".
+            wildcard_index = max_parts.index(-1)
+            if host_tuple[:wildcard_index] > max_parts[:wildcard_index]:
+                return False
         elif host_tuple > max_parts:
             return False
     return True

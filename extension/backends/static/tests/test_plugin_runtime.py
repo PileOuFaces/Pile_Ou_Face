@@ -183,6 +183,34 @@ class TestPluginRuntime(unittest.TestCase):
             self.assertEqual(states["pof.disabled"], "disabled")
             self.assertEqual(states["pof.incompatible"], "incompatible")
 
+    def test_registry_wildcard_max_version_accepts_lower_minor(self):
+        # A host on 0.1.0 must stay within a "0.1.0 -> 0.2.x" range: the
+        # wildcard is an upper bound, not a pin on the host's own minor.
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            plugin_dir = base / "pof.wide-range"
+            plugin_dir.mkdir()
+            (plugin_dir / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "id": "pof.wide-range",
+                        "name": "pof.wide-range",
+                        "version": "0.1.0",
+                        "kind": "analysis-pack",
+                        "host": {
+                            "api_version": 1,
+                            "min_version": "0.1.0",
+                            "max_version": "0.2.x",
+                        },
+                        "entrypoints": {"python": {"module": "plugin_main"}},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            records = build_plugin_registry([base], host_version="0.1.0")
+            states = {record.plugin_id: record.state for record in records}
+            self.assertEqual(states["pof.wide-range"], "active")
+
     def test_plugin_python_path_adds_and_removes_path(self):
         with tempfile.TemporaryDirectory() as tmp:
             plugin_root = Path(tmp)
