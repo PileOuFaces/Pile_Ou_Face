@@ -763,6 +763,14 @@ async function run() {
             });
             return proc;
           }
+          if (isSymbolsScript(args)) {
+            const proc = new EventEmitter();
+            const result = JSON.stringify({
+              symbols: [{ addr: functionAddr, name: 'main', type: 'T', size: 16 }],
+            });
+            process.nextTick(() => cb?.(null, result, ''));
+            return proc;
+          }
           if (Array.isArray(args) && args.some((arg) => String(arg || '').endsWith(path.join('backends', 'static', 'decompile', 'decompile.py')))) {
             const proc = new EventEmitter();
             let result;
@@ -802,10 +810,16 @@ async function run() {
         await hub.binaryPath().waitForValue(path.basename(fixture.path), 30000);
         await hub.openPanel('static');
         await hub.openStaticTab('code', 'decompile');
+        await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+          type: 'hubLoadSymbols',
+          binaryPath: fixture.path,
+          useCache: false,
+        });
         await hub.decompileOutput().waitForText(rawCode, 30000);
         assert.equal(await hub.decompileFunctionSelect().inputValue(), '', 'the fixture remains in global decompile mode');
         assert.equal(await hub.decompileAugmentButton().isEnabled(), true, 'a global result with one function must enable augmentation');
 
+        await hub.decompileFunctionSelect().waitForText('main', 30000);
         await hub.decompileFunctionSelect().fill(functionAddr);
         await hub.decompileContent().waitForText('Erreur du décompilateur — vérifiez les logs', 30000);
         assert.equal(await hub.decompileFunctionSelect().inputValue(), functionAddr, 'the failed function selection must stay selected');
