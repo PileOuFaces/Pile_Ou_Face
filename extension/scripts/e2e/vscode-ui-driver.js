@@ -449,6 +449,38 @@ class HubPage {
     return this.target.locator('#btnAcceptDecompileAugment');
   }
 
+  pluginInstallButton() {
+    return this.target.locator('#btnPluginAdd');
+  }
+
+  pluginStateList() {
+    return this.target.locator('#pluginStateList');
+  }
+
+  pluginConsentButton() {
+    return this.target.locator('#pluginStateList .plugin-consent-grant');
+  }
+
+  toastContainer() {
+    return this.target.locator('#pof-toast-container');
+  }
+
+  scriptEditor() {
+    return this.target.locator('#scriptEditor');
+  }
+
+  scriptRunButton() {
+    return this.target.locator('#btnRunScript');
+  }
+
+  scriptStatus() {
+    return this.target.locator('#scriptStatus');
+  }
+
+  scriptOutput() {
+    return this.target.locator('#scriptOutput');
+  }
+
   interfaceModeButton(mode) {
     return this.target.locator(`[data-interface-mode="${mode}"]`);
   }

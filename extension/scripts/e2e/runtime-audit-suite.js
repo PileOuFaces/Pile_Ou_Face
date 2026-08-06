@@ -864,6 +864,158 @@ async function run() {
     }
   }));
 
+  suite.addTest(new Mocha.Test('installs and authorizes a plugin, then runs scripts through the real UI', async () => {
+    const [fixture] = readFixtureSpecs();
+    assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
+    const pluginBundlePath = path.join(path.dirname(fixture.path), 'e2e-safe-plugin.pofplug');
+    let target = null;
+    let installed = false;
+    let consented = false;
+    let consentCalls = 0;
+    let pluginInvocations = 0;
+    let scriptAttempts = 0;
+    const originalExecFile = childProcess.execFile;
+    const originalSpawn = childProcess.spawn;
+    const pluginRuntimeResult = () => JSON.stringify({
+      search_paths: [],
+      summary: installed ? { [consented ? 'active' : 'pending_consent']: 1 } : {},
+      attached: {
+        commands: consented ? ['e2e.inspect'] : [],
+        command_sources: consented ? { 'e2e.inspect': 'pof.e2e-safe-plugin' } : {},
+      },
+      plugins: installed ? [{
+        id: 'pof.e2e-safe-plugin',
+        state: consented ? 'active' : 'pending_consent',
+        root_path: path.dirname(pluginBundlePath),
+        manifest: {
+          name: 'E2E Safe Plugin',
+          version: '1.0.0',
+          kind: 'analysis-pack',
+          capabilities: { analysis: ['safe-fixture'] },
+          ui: { family: 'e2e' },
+        },
+      }] : [],
+    });
+    try {
+      fs.writeFileSync(pluginBundlePath, 'deterministic plugin fixture\n', 'utf8');
+      await withWindowMocks({
+        showOpenDialog: async () => [vscode.Uri.file(pluginBundlePath)],
+      }, async () => withChildProcessMocks({
+        execFile: (file, args = [], options = {}, callback = undefined) => {
+          const cb = typeof options === 'function' ? options : callback;
+          const script = String(args[0] || '');
+          const proc = new EventEmitter();
+          if (script.endsWith(path.join('backends', 'plugins', 'install_plugin.py'))) {
+            installed = true;
+            process.nextTick(() => cb?.(null, JSON.stringify({
+              ok: true,
+              plugin_id: 'pof.e2e-safe-plugin',
+              installed_to: path.dirname(pluginBundlePath),
+            }), ''));
+            return proc;
+          }
+          if (script.endsWith(path.join('backends', 'plugins', 'runtime.py'))) {
+            if (args.includes('consent-grant')) {
+              consentCalls += 1;
+              consented = true;
+              process.nextTick(() => cb?.(null, JSON.stringify({ ok: true }), ''));
+              return proc;
+            }
+            if (args.includes('invoke-feature')) pluginInvocations += 1;
+            process.nextTick(() => cb?.(null, pluginRuntimeResult(), ''));
+            return proc;
+          }
+          if (script.endsWith(path.join('backends', 'static', 'repl', 'repl.py'))) {
+            scriptAttempts += 1;
+            if (scriptAttempts === 1) {
+              process.nextTick(() => cb?.(null, JSON.stringify({
+                ok: true,
+                stdout: 'script fixture succeeded\n',
+                stderr: '',
+                duration_ms: 7,
+              }), ''));
+            } else {
+              const error = new Error('script fixture failed');
+              error.stderr = 'script fixture exploded';
+              process.nextTick(() => cb?.(error, '', error.stderr));
+            }
+            return proc;
+          }
+          return originalExecFile.call(childProcess, file, args, options, callback);
+        },
+        spawn: (file, args = [], options = {}) => {
+          const script = String(args[0] || '');
+          if (!script.endsWith(path.join('backends', 'plugins', 'runtime.py'))) {
+            return originalSpawn.call(childProcess, file, args, options);
+          }
+          if (args.includes('consent-grant')) {
+            consentCalls += 1;
+            consented = true;
+          }
+          if (args.includes('invoke-feature')) pluginInvocations += 1;
+          const proc = new EventEmitter();
+          proc.stdin = new PassThrough();
+          proc.stdout = new PassThrough();
+          proc.stderr = new PassThrough();
+          proc.kill = () => true;
+          process.nextTick(() => {
+            proc.stdout.end(args.includes('consent-grant')
+              ? JSON.stringify({ ok: true })
+              : pluginRuntimeResult());
+            proc.stderr.end();
+            proc.emit('close', 0);
+          });
+          return proc;
+        },
+      }, async () => {
+        await vscode.commands.executeCommand('pileOuFace.goToAddress');
+        target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+        const hub = new HubPage(target);
+        await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+          type: 'hubUseBinaryPath',
+          binaryPath: fixture.path,
+        });
+        await hub.binaryPath().waitForValue(path.basename(fixture.path), 30000);
+
+        await hub.openPanel('options');
+        await hub.pluginInstallButton().click();
+        await hub.toastContainer().waitForText('Plugin installé', 30000);
+        await hub.pluginStateList().waitForText('E2E Safe Plugin', 30000);
+        await hub.pluginStateList().waitForText('en attente d’autorisation', 30000);
+        assert.equal(consentCalls, 0, 'a newly installed plugin must not be authorized implicitly');
+        assert.equal(pluginInvocations, 0, 'a plugin awaiting consent must not execute');
+
+        await hub.pluginConsentButton().click();
+        await hub.pluginStateList().waitForText('e2e.inspect', 30000);
+        assert.equal(consentCalls, 1, 'authorization must be triggered once from the real UI');
+
+        await hub.openPanel('static');
+        await hub.openStaticTab('code', 'script');
+        await hub.scriptEditor().fill('print("script fixture")');
+        await hub.scriptRunButton().click();
+        await hub.scriptStatus().waitForText('✓', 30000);
+        await hub.scriptOutput().waitForText('script fixture succeeded', 30000);
+
+        await hub.scriptEditor().fill('raise RuntimeError("fixture")');
+        await hub.scriptRunButton().click();
+        await hub.scriptStatus().waitForText('Erreur', 30000);
+        await hub.scriptOutput().waitForText('script fixture exploded', 30000);
+        assert.equal(scriptAttempts, 2, 'success and error scripts must both execute from the UI');
+      }));
+    } catch (error) {
+      const artifacts = await captureUiFailure(
+        target,
+        process.env.POF_E2E_ARTIFACTS_DIR,
+        'hub-plugin-consent-script',
+      );
+      error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
+      throw error;
+    } finally {
+      target?.close();
+      try { fs.rmSync(pluginBundlePath, { force: true }); } catch { /* Best-effort fixture cleanup. */ }
+    }
+  }));
+
   suite.addTest(new Mocha.Test('drives the hub through real webview controls', async () => {
     let target = null;
     try {

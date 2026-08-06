@@ -111,6 +111,37 @@ describe('VS Code UI E2E driver', () => {
     ]);
   });
 
+  it('exposes plugin consent and script execution through stable selectors', () => {
+    const selectors: string[] = [];
+    const target = {
+      locator(selector: string) {
+        selectors.push(selector);
+        return { selector };
+      },
+    };
+    const hub = new HubPage(target);
+
+    hub.pluginInstallButton();
+    hub.pluginStateList();
+    hub.pluginConsentButton();
+    hub.toastContainer();
+    hub.scriptEditor();
+    hub.scriptRunButton();
+    hub.scriptStatus();
+    hub.scriptOutput();
+
+    assert.deepEqual(selectors, [
+      '#btnPluginAdd',
+      '#pluginStateList',
+      '#pluginStateList .plugin-consent-grant',
+      '#pof-toast-container',
+      '#scriptEditor',
+      '#btnRunScript',
+      '#scriptStatus',
+      '#scriptOutput',
+    ]);
+  });
+
   it('exposes address navigation and xrefs through stable selectors', () => {
     const selectors: string[] = [];
     const target = {
