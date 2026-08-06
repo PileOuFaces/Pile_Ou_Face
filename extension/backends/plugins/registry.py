@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -99,14 +100,15 @@ def _is_version_compatible(
     if min_version and host_tuple < _parse_version(min_version):
         return False
     if max_version:
-        max_parts = _parse_version(max_version)
-        if -1 in max_parts:
-            for index, value in enumerate(max_parts):
-                if value == -1:
-                    break
-                if index >= len(host_tuple) or host_tuple[index] != value:
-                    return False
-        elif host_tuple > max_parts:
+        # "x" (parsed as -1 by _parse_version) marks an open trailing
+        # component, e.g. "0.2.x" caps the major.minor at 0.2 but accepts any
+        # patch — and, as an upper bound, any version below 0.2 as well.
+        # Substituting +inf turns that into a plain tuple comparison instead
+        # of requiring an exact prefix match against max_version.
+        max_bound = tuple(
+            math.inf if part == -1 else part for part in _parse_version(max_version)
+        )
+        if host_tuple > max_bound:
             return False
     return True
 
