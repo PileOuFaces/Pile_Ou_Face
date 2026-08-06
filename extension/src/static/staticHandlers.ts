@@ -415,6 +415,11 @@ async function _postDecompilerImageUpdateStatus(panel, result, options = {}) {
 function staticHandlers(config) {
   const { root, panel, context, logChannel, storageDir, globalDir } = config;
   const extensionPath = context?.extensionPath || root;
+  // Same source of truth as telemetryEvents.ts (extensionVersion): drives the
+  // plugin host min/max_version compatibility check in backends/plugins/registry.py.
+  // Was hardcoded to '0.1.0' and never updated across 7 package.json bumps —
+  // any plugin declaring min_version above 0.1.0 could never attach.
+  const pluginHostVersion = String(context?.extension?.packageJSON?.version || '0.0.0');
   const getSavedSettings = () => {
     try {
       return context?.globalState?.get('pof-settings', {}) || {};
@@ -674,7 +679,7 @@ function staticHandlers(config) {
     const args = [
       scriptPath,
       '--host-version',
-      '0.1.0',
+      pluginHostVersion,
       '--api-version',
       '1',
       ...runtimeArgs,
@@ -755,7 +760,7 @@ function staticHandlers(config) {
     const { stdout } = await new Promise((resolve, reject) => {
       cp.execFile(getPythonExecutable(), [
         scriptPath,
-        '--host-version', '0.1.0',
+        '--host-version', pluginHostVersion,
         '--api-version', '1',
         ...runtimeArgs,
       ], {

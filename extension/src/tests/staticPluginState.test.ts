@@ -17,7 +17,10 @@ function createHandlers(staticHandlers, postMessage) {
   return staticHandlers({
     root: "/workspace",
     panel: { webview: { postMessage } },
-    context: { globalState: { get: () => ({}) } },
+    context: {
+      globalState: { get: () => ({}) },
+      extension: { packageJSON: { version: "0.2.0" } },
+    },
   });
 }
 
@@ -64,7 +67,7 @@ describe("staticHandlers plugin bridge", () => {
     expect(execFile.firstCall.args[1]).to.deep.equal([
       "/workspace/backends/plugins/runtime.py",
       "--host-version",
-      "0.1.0",
+      "0.2.0",
       "--api-version",
       "1",
       "list",

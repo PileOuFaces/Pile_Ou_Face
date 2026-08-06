@@ -221,6 +221,9 @@ async function main() {
     }
 
     async function runtimeInvoke(contentKeys, commandId, payload) {
+      // Diagnostics are limited to plugin_id / state / declared vs registered
+      // command ids / non-fatal attach errors — never content_keys, private
+      // keys or tokens, none of which pass through this subprocess boundary.
       return runPythonJson(pythonExe, [
         '-c',
         [
@@ -231,6 +234,8 @@ async function main() {
           'records = apply_plugin_licensing(records)',
           'response, _, records = invoke_plugin_command(records, sys.argv[2], json.loads(sys.argv[3]))',
           'response["plugin_states"] = {record.plugin_id: record.state for record in records}',
+          'response["plugin_errors"] = {record.plugin_id: record.error for record in records if record.error}',
+          'response["declared_commands"] = {record.plugin_id: sorted(c.get("id", "") for c in (record.manifest.raw.get("commands") or [])) for record in records if record.manifest}',
           'print(json.dumps(response))',
         ].join('\n'),
         tmpPluginRoot,
@@ -404,6 +409,11 @@ async function main() {
         signature: signEnrollmentChallenge(hijackChallenge.challenge, firstPrivateKey),
       });
     } catch (err) {
+      // 409 here is the expected, idempotent contract for a claimed device id
+      // (app/routers/plugins.py enroll() -> InstallationOwnershipError /
+      // InstallationKeyMismatchError), not a transient/blocking failure.
+      // status + detail are safe to log: no token/key/DEK crosses this path.
+      console.log(`[authLicensingInteropE2E] enroll hijack attempt rejected: status=${err.status} detail=${err.message}`);
       expectStatus(err, 409, 'cross-tenant device enrollment');
       ownershipRejected = true;
     }
@@ -414,7 +424,14 @@ async function main() {
     assert(runtimeState.active === true, `real runtime must unlock the packaged plugin (${runtimeState.error || 'unknown error'})`);
     assert(!fs.existsSync(runtimeState.root), 'decrypted runtime directory must be deleted when the plugin process exits');
     const commandSmoke = await runtimeInvoke(keys, 'audit.cross_analyze.run', { dossiers_by_function: {} });
-    assert(commandSmoke.ok === true, `packaged premium command must execute (${commandSmoke.error || 'unknown error'})`);
+    assert(
+      commandSmoke.ok === true,
+      `packaged premium command must execute (${commandSmoke.error || 'unknown error'}); `
+        + `plugin_states=${JSON.stringify(commandSmoke.plugin_states)} `
+        + `plugin_errors=${JSON.stringify(commandSmoke.plugin_errors)} `
+        + `declared_commands=${JSON.stringify(commandSmoke.declared_commands)} `
+        + `available_commands=${JSON.stringify(commandSmoke.available_commands)}`,
+    );
     assert(commandSmoke.plugin_id === pluginId, 'executed command must be registered by the licensed premium plugin');
     assert(commandSmoke.result && typeof commandSmoke.result === 'object', 'premium command must return a structured result');
     console.log('[authLicensingInteropE2E] PASS: real ONLINE_STANDARD bundle decrypts, loads and executes a packaged premium command');

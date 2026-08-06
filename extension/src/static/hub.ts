@@ -169,6 +169,12 @@ function createHub(config) {
     enabledStaticFeatures: [],
   };
 
+  // Same source of truth as telemetryEvents.ts (extensionVersion): drives the
+  // plugin host min/max_version compatibility check in backends/plugins/registry.py.
+  // Was hardcoded to '0.1.0' and never updated across 7 package.json bumps —
+  // any plugin declaring min_version above 0.1.0 could never attach.
+  const pluginHostVersion = String(context?.extension?.packageJSON?.version || '0.0.0');
+
   const RAW_PROFILE_KEY = 'reverse-workspace.raw-profiles';
   const sanitizeKey = (binaryPath) => path.resolve(binaryPath);
   const loadRawProfiles = () => context.workspaceState.get(RAW_PROFILE_KEY, {});
@@ -691,7 +697,7 @@ function createHub(config) {
     } = {}) => {
       try {
         const response = await runPluginRuntimeJson([
-          '--host-version', '0.1.0',
+          '--host-version', pluginHostVersion,
           '--api-version', '1',
           'invoke-feature',
           featureId,
