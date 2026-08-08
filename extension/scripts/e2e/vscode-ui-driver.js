@@ -398,6 +398,10 @@ class HubPage {
     return this.target.locator('[data-action="auto-triage-confirm"]');
   }
 
+  autoTriageCancelButton() {
+    return this.target.locator('[data-action="auto-triage-cancel"]');
+  }
+
   autoTriageState() {
     return this.target.locator('[data-auto-triage-state]');
   }

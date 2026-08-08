@@ -397,6 +397,7 @@ describe('VS Code UI E2E driver', () => {
     assert.equal(hub.autoTriageButton().selector, '[data-action="auto-triage"]');
     assert.equal(hub.autoTriageModal().selector, '[data-auto-triage-modal]');
     assert.equal(hub.autoTriageConfirmButton().selector, '[data-action="auto-triage-confirm"]');
+    assert.equal(hub.autoTriageCancelButton().selector, '[data-action="auto-triage-cancel"]');
     assert.equal(hub.autoTriageState().selector, '[data-auto-triage-state]');
     assert.equal(hub.autoTriageHelp().selector, '[data-auto-triage-help]');
     assert.equal(hub.autoTriageResult().selector, '[data-auto-triage-result]');
