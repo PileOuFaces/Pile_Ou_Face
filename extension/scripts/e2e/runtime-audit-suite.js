@@ -624,7 +624,7 @@ async function run() {
         assert.equal(ollamaModel, 'qwen-e2e', 'the Ollama model selected through the UI must be persisted');
 
         await hub.aiDefaultProvider().fill('openai');
-        await hub.aiDefaultProvider().waitForValue('openai', 30000);
+        await hub.aiDefaultProvider().waitForAttribute('title', 'Provider automatique enregistré : openai', 30000);
         assert.equal(defaultProvider, 'openai', 'the automatic provider must change from the real select control');
       });
     } catch (error) {

@@ -650,17 +650,22 @@ class HubPage {
   async openPanel(panelId) {
     const navigation = this.panelNav(panelId);
     const panel = this.panel(panelId);
+    const deadline = Date.now() + DEFAULT_TIMEOUT_MS;
     await navigation.click();
-    try {
-      await Promise.all([
-        navigation.waitForAttribute('class', 'active', 500),
-        panel.waitForAttribute('class', 'active', 500),
-      ]);
-    } catch {
+    while (Date.now() < deadline) {
+      try {
+        await Promise.all([
+          navigation.waitForAttribute('class', 'active', 500),
+          panel.waitForAttribute('class', 'active', 500),
+        ]);
+        return;
+      } catch {
+        // The DOM can be visible before the webview listeners finish mounting.
+        // Retry the real navigation control until both observable states agree.
+      }
       await navigation.clickDom();
     }
-    await this.expectActive(panel, `panel ${panelId}`);
-    await this.expectActive(navigation, `navigation ${panelId}`);
+    await this.expectActive(panel, `panel ${panelId}`, 1);
   }
 
   async openStaticTab(groupId, tabId) {

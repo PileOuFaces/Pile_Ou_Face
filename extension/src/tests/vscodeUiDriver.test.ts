@@ -231,7 +231,7 @@ describe('VS Code UI E2E driver', () => {
           async clickDom() { calls.push(`dom:${selector}`); },
           async waitFor() {},
           async waitForAttribute() {
-            if (selector === '#panel-options' && panelWaits++ === 0) {
+            if (selector === '#panel-options' && panelWaits++ < 2) {
               throw new Error('navigation remained active but panel did not open');
             }
           },
@@ -243,6 +243,7 @@ describe('VS Code UI E2E driver', () => {
 
     assert.deepEqual(calls, [
       'physical:.icon-nav-item[data-panel="options"]',
+      'dom:.icon-nav-item[data-panel="options"]',
       'dom:.icon-nav-item[data-panel="options"]',
     ]);
   });
