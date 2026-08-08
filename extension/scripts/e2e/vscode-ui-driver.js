@@ -630,8 +630,14 @@ class HubPage {
   async openStaticTab(groupId, tabId) {
     await this.group(groupId).click();
     await this.expectActive(this.group(groupId), `group ${groupId}`);
-    await this.subTab(tabId).click();
-    await this.expectActive(this.subTab(tabId), `sub-tab ${tabId}`);
+    const subTab = this.subTab(tabId);
+    await subTab.click();
+    try {
+      await subTab.waitForAttribute('class', 'active', 500);
+    } catch {
+      await subTab.clickDom();
+    }
+    await this.expectActive(subTab, `sub-tab ${tabId}`);
   }
 
   async openTypeManager() {

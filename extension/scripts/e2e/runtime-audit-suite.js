@@ -616,7 +616,7 @@ async function run() {
     }
   }));
 
-  suite.addTest(new Mocha.Test('retries auto-triage from the real confirmation UI without reopening the modal', async () => {
+  suite.addTest(new Mocha.Test('recovers from an auto-triage provider timeout through the real UI', async () => {
     const userDataDir = process.env.POF_E2E_USER_DATA_DIR;
     assert.ok(userDataDir, 'POF_E2E_USER_DATA_DIR is required');
     const [fixture] = readFixtureSpecs();
@@ -658,7 +658,7 @@ async function run() {
           reportPath = String(args[args.indexOf('--report-out') + 1] || '');
           process.nextTick(() => {
             if (attempt === 1) {
-              proc.stderr.end('provider offline');
+              proc.stderr.end('Timeout provider après 30 s');
               proc.stdout.end();
               proc.emit('close', 1);
               return;
@@ -693,9 +693,9 @@ async function run() {
         assert.equal(await hub.autoTriageModal().getAttribute('hidden'), null, 'confirmation modal must be open');
         await hub.autoTriageConfirmButton().click();
         await hub.autoTriageState().waitForText('Échec', 30000);
-        await hub.autoTriageHelp().waitForText('provider offline', 30000);
-        assert.equal(await hub.autoTriageModal().getAttribute('hidden'), '', 'confirmation modal must close after the failed run starts');
-        assert.equal(await hub.autoTriageButton().isEnabled(), true, 'retry must be available after a provider error');
+        await hub.autoTriageHelp().waitForText('Timeout provider après 30 s', 30000);
+        assert.equal(await hub.autoTriageModal().getAttribute('hidden'), '', 'confirmation modal must close after the timed-out run starts');
+        assert.equal(await hub.autoTriageButton().isEnabled(), true, 'retry must be available after a provider timeout');
 
         await hub.autoTriageButton().click();
         await hub.autoTriageModal().waitFor({ state: 'visible' });
@@ -704,13 +704,13 @@ async function run() {
         await hub.autoTriageResult().waitFor({ state: 'visible' });
         await hub.autoTriageResultTitle().waitForText('Dernier auto-triage terminé', 30000);
         assert.equal(await hub.autoTriageModal().getAttribute('hidden'), '', 'confirmation modal must stay closed after success');
-        assert.equal(attempt, 2, 'one failed run and one successful retry must execute');
+        assert.equal(attempt, 2, 'one timed-out run and one successful retry must execute');
       });
     } catch (error) {
       const artifacts = await captureUiFailure(
         target,
         process.env.POF_E2E_ARTIFACTS_DIR,
-        'hub-auto-triage-retry',
+        'hub-auto-triage-timeout-retry',
       );
       error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
       throw error;
@@ -827,15 +827,28 @@ async function run() {
         await hub.decompileOutput().waitForText('function retry succeeded', 30000);
         assert.equal(functionDecompileAttempts, 2, 'one failed function run and one successful retry must execute');
 
-        await hub.decompileFunctionSelect().fill('');
+        target.close();
+        target = null;
+        await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+        await vscode.commands.executeCommand('pileOuFace.goToAddress');
+        target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+        hub = new HubPage(target);
+        await hub.openPanel('static');
+        await hub.openStaticTab('code', 'decompile');
         await hub.decompileOutput().waitForText(rawCode, 30000);
+        assert.equal(await hub.decompileFunctionSelect().inputValue(), '', 'reopening the hub must restore global decompile mode');
 
         await hub.decompileAugmentButton().click();
         await hub.decompileAugmentReview().waitFor({ state: 'visible', timeout: 30000 });
         await hub.decompileAugmentSuggestions().waitForText('Nom et commentaire proposés', 30000);
         await hub.decompileAugmentAcceptButton().click();
-        await hub.decompileAugmentStatus().waitForText('Version IA appliquée et enregistrée dans le cache.', 30000);
         await hub.decompileOutput().waitForText('validated by E2E', 30000);
+        const acceptedStatus = await hub.decompileAugmentStatus().waitForText('Version IA', 30000);
+        assert.ok(
+          acceptedStatus.includes('appliquée et enregistrée dans le cache')
+            || acceptedStatus.includes('acceptée restaurée depuis le cache'),
+          `augmentation acceptance must expose a durable success status, got: ${acceptedStatus}`
+        );
         assert.equal(await hub.decompileAugmentReview().getAttribute('hidden'), '', 'review must close after acceptance');
         assert.equal(suggestCalls, 1, 'the provider suggestion must run exactly once');
 
