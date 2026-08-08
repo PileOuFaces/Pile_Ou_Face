@@ -407,6 +407,11 @@ describe('VS Code UI E2E driver', () => {
       hub.recentBinaryButton('fixture.elf').selector,
       '#topBarRecentList > .top-bar-menu-item[title="fixture.elf"]',
     );
+    assert.equal(
+      hub.recentBinaryButton('/tmp/e2e/fixture.elf').selector,
+      '#topBarRecentList > .top-bar-menu-item[title="/tmp/e2e/fixture.elf"], '
+        + '#topBarRecentList > .top-bar-menu-item[title="fixture.elf"]',
+    );
     assert.equal(hub.firstFunctionDisasmButton().selector, '#functionsContent .functions-row-action[data-view="disasm"]');
     assert.equal(hub.functionDossierButton().selector, '#functionsDetails .functions-export-action');
     assert.equal(hub.offsetHexInput().selector, '#offsetHex');

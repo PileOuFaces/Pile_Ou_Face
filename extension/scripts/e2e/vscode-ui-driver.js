@@ -322,7 +322,12 @@ class HubPage {
   }
 
   recentBinaryButton(binaryPath) {
-    return this.target.locator(`#topBarRecentList > .top-bar-menu-item[title=${JSON.stringify(String(binaryPath))}]`);
+    const requestedPath = String(binaryPath);
+    const candidates = [...new Set([requestedPath, path.basename(requestedPath)])];
+    const selector = candidates
+      .map((candidate) => `#topBarRecentList > .top-bar-menu-item[title=${JSON.stringify(candidate)}]`)
+      .join(', ');
+    return this.target.locator(selector);
   }
 
   currentBinaryName() {
