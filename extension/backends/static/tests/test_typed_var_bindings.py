@@ -10,6 +10,8 @@ sys.path.insert(0, ROOT)
 from backends.static.annotations.struct_db import StructDb
 from backends.static.annotations.typed_var_bindings import (
     build_typed_var_binding_index,
+    build_typed_var_binding_map_by_func,
+    format_typed_var_binding,
     list_typed_var_bindings,
     save_typed_var_binding,
     typed_var_binding_signature,
@@ -119,6 +121,66 @@ class TestTypedVarBindings(unittest.TestCase):
             )
             self.assertEqual(len(listed["entries"]), 1)
             self.assertEqual(listed["entries"][0]["type_name"], "Widget")
+
+    def test_build_map_by_func_groups_raw_entries_by_func_then_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = os.path.join(tmp, "storage")
+            _seed_definitions(storage)
+            save_typed_var_binding(
+                _BINARY,
+                "0x401000",
+                {
+                    "var_kind": "param",
+                    "var_key": "1",
+                    "type_name": "Widget",
+                    "type_kind": "struct",
+                    "pointer_level": 1,
+                },
+                workspace_root=storage,
+            )
+            save_typed_var_binding(
+                _BINARY,
+                "0x401000",
+                {
+                    "var_kind": "local",
+                    "var_key": "-16",
+                    "type_name": "Mode",
+                    "type_kind": "enum",
+                    "pointer_level": 0,
+                },
+                workspace_root=storage,
+            )
+            save_typed_var_binding(
+                _BINARY,
+                "0x402000",
+                {
+                    "var_kind": "param",
+                    "var_key": "1",
+                    "type_name": "Point",
+                    "type_kind": "struct",
+                    "pointer_level": 0,
+                },
+                workspace_root=storage,
+            )
+
+            grouped = build_typed_var_binding_map_by_func(
+                _BINARY, workspace_root=storage
+            )
+
+            self.assertEqual(set(grouped.keys()), {"0x401000", "0x402000"})
+            self.assertEqual(set(grouped["0x401000"].keys()), {"param:1", "local:-16"})
+            self.assertEqual(grouped["0x401000"]["param:1"]["type_name"], "Widget")
+            self.assertEqual(grouped["0x401000"]["local:-16"]["type_name"], "Mode")
+            self.assertEqual(set(grouped["0x402000"].keys()), {"param:1"})
+            self.assertEqual(grouped["0x402000"]["param:1"]["type_name"], "Point")
+
+    def test_build_map_by_func_empty_when_no_bindings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = os.path.join(tmp, "storage")
+            _seed_definitions(storage)
+            self.assertEqual(
+                build_typed_var_binding_map_by_func(_BINARY, workspace_root=storage), {}
+            )
 
     def test_build_index_resolves_struct_fields_and_nested_enum(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -477,6 +539,36 @@ class TestTypedVarBindings(unittest.TestCase):
                 ),
                 0,
             )
+
+
+class TestFormatTypedVarBinding(unittest.TestCase):
+    def test_formats_pointer_to_struct(self):
+        self.assertEqual(
+            format_typed_var_binding(
+                {"type_name": "Widget", "type_kind": "struct", "pointer_level": 1}
+            ),
+            "Widget *",
+        )
+
+    def test_formats_double_pointer(self):
+        self.assertEqual(
+            format_typed_var_binding(
+                {"type_name": "Widget", "type_kind": "struct", "pointer_level": 2}
+            ),
+            "Widget **",
+        )
+
+    def test_formats_bare_enum(self):
+        self.assertEqual(
+            format_typed_var_binding(
+                {"type_name": "Mode", "type_kind": "enum", "pointer_level": 0}
+            ),
+            "Mode",
+        )
+
+    def test_empty_type_name_yields_empty_string(self):
+        self.assertEqual(format_typed_var_binding({"type_name": ""}), "")
+        self.assertEqual(format_typed_var_binding({}), "")
 
 
 if __name__ == "__main__":

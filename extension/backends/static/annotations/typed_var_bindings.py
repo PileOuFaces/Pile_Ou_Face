@@ -114,6 +114,38 @@ def _var_identity(var_kind: str, var_key: str) -> str:
     return f"{var_kind}:{var_key}"
 
 
+def build_typed_var_binding_map_by_func(
+    binary_path: str, workspace_root: str | None = None
+) -> dict[str, dict[str, dict[str, Any]]]:
+    """Group raw typed_var_bindings rows for a binary by func_addr, then by
+    "kind:key" identity, for disasm-side operand annotation (no field/enum
+    chain expansion — see build_typed_var_binding_index for that).
+    """
+    entries = list_typed_var_bindings(binary_path, None, workspace_root).get(
+        "entries", []
+    )
+    result: dict[str, dict[str, dict[str, Any]]] = {}
+    for entry in entries:
+        func_addr = str(entry.get("func_addr") or "")
+        var_kind = entry.get("var_kind")
+        var_key = entry.get("var_key")
+        if not func_addr or not var_kind or var_key is None:
+            continue
+        result.setdefault(func_addr, {})[_var_identity(var_kind, var_key)] = entry
+    return result
+
+
+def format_typed_var_binding(entry: dict[str, Any]) -> str:
+    """Render a typed_var_bindings row as a short type annotation, e.g. "Widget *"."""
+    type_name = str(entry.get("type_name") or "").strip()
+    if not type_name:
+        return ""
+    pointer_level = _safe_int(entry.get("pointer_level"), 0)
+    if pointer_level > 0:
+        return f"{type_name} {'*' * pointer_level}"
+    return type_name
+
+
 def _expand_struct_fields(
     identity: str,
     type_name: str,

@@ -28,6 +28,10 @@ from backends.static.annotations.typed_struct_refs import (
     build_typed_struct_index,
     collect_typed_struct_hints,
 )
+from backends.static.annotations.typed_var_bindings import (
+    build_typed_var_binding_map_by_func,
+    format_typed_var_binding,
+)
 from backends.static.binary.arch import (
     FEATURES,
     detect_binary_arch,
@@ -879,15 +883,22 @@ def _find_function_context(
     return None
 
 
-def _extract_stack_hints_from_frame(op_str: str, frame: dict | None) -> list[dict]:
+def _extract_stack_hints_from_frame(
+    op_str: str,
+    frame: dict | None,
+    typed_bindings: dict[str, dict] | None = None,
+) -> list[dict]:
     if not frame:
         return []
     hints = []
     seen: set[tuple[str, str, str]] = set()
+    arg_ordinal = 0
     for kind_name, kind_label in (("args", "arg"), ("vars", "var")):
         for entry in frame.get(kind_name, []) or []:
             location = str(entry.get("location") or "").strip()
             name = str(entry.get("name") or "").strip()
+            if kind_name == "args" and name:
+                arg_ordinal += 1
             if not location or not name:
                 continue
             if not _location_matches_text(location, op_str):
@@ -896,13 +907,23 @@ def _extract_stack_hints_from_frame(op_str: str, frame: dict | None) -> list[dic
             if key in seen:
                 continue
             seen.add(key)
-            hints.append(
-                {
-                    "kind": kind_label,
-                    "name": name,
-                    "location": location,
-                }
-            )
+            hint = {
+                "kind": kind_label,
+                "name": name,
+                "location": location,
+            }
+            if typed_bindings:
+                if kind_name == "args":
+                    identity = f"param:{arg_ordinal}"
+                else:
+                    offset = entry.get("offset")
+                    identity = f"local:{offset}" if isinstance(offset, int) else None
+                binding = typed_bindings.get(identity) if identity else None
+                if binding:
+                    type_str = format_typed_var_binding(binding)
+                    if type_str:
+                        hint["type"] = type_str
+            hints.append(hint)
     return hints
 
 
@@ -949,6 +970,7 @@ def _load_disasm_context(
     functions: list[dict] = []
     stack_frames: dict[str, dict] = {}
     typed_struct_index = build_typed_struct_index(binary_path)
+    typed_var_binding_map = build_typed_var_binding_map_by_func(binary_path)
 
     resolved_cache = _resolve_cache_db_path(cache_db_path, binary_path)
 
@@ -1028,6 +1050,7 @@ def _load_disasm_context(
         "function_ranges": function_ranges,
         "stack_frames": stack_frames,
         "typed_struct_index": typed_struct_index,
+        "typed_var_binding_map": typed_var_binding_map,
     }
 
 
@@ -1161,6 +1184,7 @@ def _apply_labels(
     function_ranges: list[tuple[int, int | None, dict]] | None = None,
     stack_frames: dict[str, dict] | None = None,
     typed_struct_index: dict[str, object] | None = None,
+    typed_var_binding_map: dict[str, dict] | None = None,
 ) -> list[str]:
     """Return formatted ASM lines with function context, labels, comments and optional DWARF info."""
     output = []
@@ -1170,6 +1194,7 @@ def _apply_labels(
     comment_map = comment_map or {}
     function_ranges = function_ranges or []
     stack_frames = stack_frames or {}
+    typed_var_binding_map = typed_var_binding_map or {}
     emitted_function_banners: set[int] = set()
     for line in lines:
         try:
@@ -1226,11 +1251,14 @@ def _apply_labels(
         if current_function is not None:
             func_addr = _normalize_addr(current_function.get("addr", ""))
             stack_hints = _extract_stack_hints_from_frame(
-                op_str, stack_frames.get(func_addr)
+                op_str,
+                stack_frames.get(func_addr),
+                typed_var_binding_map.get(func_addr),
             )
             if stack_hints:
                 hint_str = ", ".join(
                     f"{hint['kind']} {hint['name']} @ {hint['location']}"
+                    + (f" ({hint['type']})" if hint.get("type") else "")
                     for hint in stack_hints
                 )
                 comment_parts.append(hint_str)
@@ -1269,6 +1297,7 @@ def _write_disasm_outputs(
     function_ranges: list[tuple[int, int | None, dict]] | None = None,
     stack_frames: dict[str, dict] | None = None,
     typed_struct_index: dict[str, object] | None = None,
+    typed_var_binding_map: dict[str, dict] | None = None,
     line_map: dict | None = None,
     progress_callback: Callable[[dict], None] | None = None,
     raw_profile: dict | None = None,
@@ -1278,6 +1307,7 @@ def _write_disasm_outputs(
     comment_map = comment_map or {}
     function_ranges = function_ranges or []
     stack_frames = stack_frames or {}
+    typed_var_binding_map = typed_var_binding_map or {}
 
     _emit_progress(
         progress_callback, "format", "Formatage du désassemblage", percent=90
@@ -1289,6 +1319,7 @@ def _write_disasm_outputs(
         or stack_frames
         or line_map
         or typed_struct_index
+        or typed_var_binding_map
     ):
         asm_output = _apply_labels(
             lines,
@@ -1298,6 +1329,7 @@ def _write_disasm_outputs(
             function_ranges=function_ranges,
             stack_frames=stack_frames,
             typed_struct_index=typed_struct_index,
+            typed_var_binding_map=typed_var_binding_map,
         )
     else:
         asm_output = [f"  {line['addr']}:  {line['text']}" for line in lines]
@@ -1350,6 +1382,7 @@ def _write_disasm_outputs(
         stack_hints = _extract_stack_hints_from_frame(
             line.get("operands", ""),
             stack_frames.get(function_addr) if function_addr else None,
+            typed_var_binding_map.get(function_addr) if function_addr else None,
         )
         typed_struct_hints = _extract_typed_struct_hints(
             line.get("text", ""), typed_struct_index
@@ -1433,6 +1466,7 @@ def _stream_write_disasm_outputs(
     function_ranges: list[tuple[int, int | None, dict]] | None = None,
     stack_frames: dict[str, dict] | None = None,
     typed_struct_index: dict[str, object] | None = None,
+    typed_var_binding_map: dict[str, dict] | None = None,
     line_map: dict | None = None,
     progress_callback: Callable[[dict], None] | None = None,
     raw_profile: dict | None = None,
@@ -1464,6 +1498,7 @@ def _stream_write_disasm_outputs(
     comment_map = comment_map or {}
     function_ranges = function_ranges or []
     stack_frames = stack_frames or {}
+    typed_var_binding_map = typed_var_binding_map or {}
 
     # --- Passe 1 : attribution CFG (vue globale nécessaire, structures
     # légères — cf. _build_cfg_attribution) ---
@@ -1570,11 +1605,14 @@ def _stream_write_disasm_outputs(
                         or ""
                     ).strip()
                     stack_hints = _extract_stack_hints_from_frame(
-                        op_str, stack_frames.get(function_addr)
+                        op_str,
+                        stack_frames.get(function_addr),
+                        typed_var_binding_map.get(function_addr),
                     )
                     if stack_hints:
                         hint_str = ", ".join(
                             f"{h['kind']} {h['name']} @ {h['location']}"
+                            + (f" ({h['type']})" if h.get("type") else "")
                             for h in stack_hints
                         )
                         comment_parts.append(hint_str)
@@ -1850,6 +1888,7 @@ def disassemble(
             function_ranges=context["function_ranges"],
             stack_frames=context["stack_frames"],
             typed_struct_index=context["typed_struct_index"],
+            typed_var_binding_map=context["typed_var_binding_map"],
             line_map=line_map,
             progress_callback=progress_callback,
             raw_profile=raw_profile,
@@ -1880,6 +1919,7 @@ def disassemble(
         function_ranges=context["function_ranges"],
         stack_frames=context["stack_frames"],
         typed_struct_index=context["typed_struct_index"],
+        typed_var_binding_map=context["typed_var_binding_map"],
         line_map=line_map,
         progress_callback=progress_callback,
         raw_profile=raw_profile,
@@ -2021,6 +2061,7 @@ def main() -> int:
                     function_ranges=context["function_ranges"],
                     stack_frames=context["stack_frames"],
                     typed_struct_index=context["typed_struct_index"],
+                    typed_var_binding_map=context["typed_var_binding_map"],
                     line_map=cached_line_map,
                     progress_callback=progress_callback,
                 )
