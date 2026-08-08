@@ -410,6 +410,78 @@ class TestDisasmEnrichmentFormatting(unittest.TestCase):
             self.assertEqual(saved_lines[0]["stack_hints"][0]["name"], "arg_rdi")
             self.assertEqual(saved_lines[0]["stack_hints"][0]["kind"], "arg")
 
+    def test_write_outputs_include_typed_var_binding_hints(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out_asm = Path(tmp) / "out.asm"
+            out_map = Path(tmp) / "out.json"
+            lines = [
+                {
+                    "addr": "0x401000",
+                    "text": "89 c7                mov      edi, eax",
+                    "bytes": "89 c7",
+                    "mnemonic": "mov",
+                    "operands": "edi, eax",
+                },
+                {
+                    "addr": "0x401002",
+                    "text": "48 89 44 24 18       mov      qword ptr [rsp + 0x18], rax",
+                    "bytes": "48 89 44 24 18",
+                    "mnemonic": "mov",
+                    "operands": "qword ptr [rsp + 0x18], rax",
+                },
+            ]
+            mapping = _write_disasm_outputs(
+                lines,
+                "/tmp/fake.bin",
+                str(out_asm),
+                str(out_map),
+                function_ranges=[
+                    (
+                        0x401000,
+                        0x401010,
+                        {"addr": "0x401000", "name": "entry_main", "size": 0x10},
+                    )
+                ],
+                stack_frames={
+                    "0x401000": {
+                        "args": [
+                            {"name": "arg_rdi", "location": "rdi", "source": "abi"}
+                        ],
+                        "vars": [
+                            {
+                                "name": "saved_tmp",
+                                "location": "[rsp+0x18]",
+                                "source": "auto",
+                                "offset": 0x18,
+                            }
+                        ],
+                    }
+                },
+                typed_var_binding_map={
+                    "0x401000": {
+                        "param:1": {
+                            "type_name": "Widget",
+                            "type_kind": "struct",
+                            "pointer_level": 1,
+                        },
+                        "local:24": {
+                            "type_name": "Mode",
+                            "type_kind": "enum",
+                            "pointer_level": 0,
+                        },
+                    }
+                },
+            )
+            del mapping
+
+            asm = out_asm.read_text(encoding="utf-8")
+            saved_lines = _db_lines(out_map)
+
+            self.assertIn("arg arg_rdi @ rdi (Widget *)", asm)
+            self.assertIn("var saved_tmp @ [rsp+0x18] (Mode)", asm)
+            self.assertEqual(saved_lines[0]["stack_hints"][0]["type"], "Widget *")
+            self.assertEqual(saved_lines[1]["stack_hints"][0]["type"], "Mode")
+
     def test_generic_macho_header_symbol_falls_back_to_discovered_functions(self):
         lines = [
             {
@@ -865,6 +937,7 @@ class TestDisassembleStreamingPath(unittest.TestCase):
                 ],
                 "stack_frames": {},
                 "typed_struct_index": None,
+                "typed_var_binding_map": {},
             }
 
             out_asm_stream = tmp_path / "stream.asm"
