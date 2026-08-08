@@ -67,17 +67,21 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/pip
-          key: scheduled-tripartite-pip-${{ runner.os }}-${{ hashFiles('.github/workflows/tripartite-scheduled.yml') }}
+          # Auth owns its dependency graph. Hash its lockfile so dependency
+          # updates invalidate this cross-repo cache automatically.
+          key: scheduled-tripartite-pip-${{ runner.os }}-${{ hashFiles('pof-auth-sibling/requirements.lock') }}
           restore-keys: |
             scheduled-tripartite-pip-${{ runner.os }}-
 
       - name: Install dependencies
         run: |
           python3 -m venv pof-auth-sibling/.venv
+          # Keep the scheduled job aligned with Auth develops. A duplicated
+          # package list drifted and omitted prometheus-client, preventing the
+          # real server from starting while the E2E only reported a timeout.
           pof-auth-sibling/.venv/bin/pip install \
-            'fastapi>=0.111' 'uvicorn[standard]>=0.29' 'sqlalchemy>=2.0' 'alembic>=1.13' \
-            'psycopg2-binary>=2.9' 'pydantic-settings>=2.2' 'pydantic[email]>=2.7' \
-            'python-jose[cryptography]>=3.3' 'passlib[bcrypt]>=1.7' 'bcrypt<4.1' 'slowapi>=0.1.9'
+            --require-hashes \
+            --requirement pof-auth-sibling/requirements.lock
           pof-auth-sibling/.venv/bin/pip install -e './pof-plugins-sibling[dev]'
           cd pof-plugins-sibling
           npm ci
