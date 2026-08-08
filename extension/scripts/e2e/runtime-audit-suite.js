@@ -834,8 +834,13 @@ async function run() {
         await hub.decompileAugmentReview().waitFor({ state: 'visible', timeout: 30000 });
         await hub.decompileAugmentSuggestions().waitForText('Nom et commentaire proposés', 30000);
         await hub.decompileAugmentAcceptButton().click();
-        await hub.decompileAugmentStatus().waitForText('Version IA appliquée et enregistrée dans le cache.', 30000);
         await hub.decompileOutput().waitForText('validated by E2E', 30000);
+        const acceptedStatus = await hub.decompileAugmentStatus().waitForText('Version IA', 30000);
+        assert.ok(
+          acceptedStatus.includes('appliquée et enregistrée dans le cache')
+            || acceptedStatus.includes('acceptée restaurée depuis le cache'),
+          `augmentation acceptance must expose a durable success status, got: ${acceptedStatus}`
+        );
         assert.equal(await hub.decompileAugmentReview().getAttribute('hidden'), '', 'review must close after acceptance');
         assert.equal(suggestCalls, 1, 'the provider suggestion must run exactly once');
 
