@@ -470,6 +470,10 @@ class HubPage {
     return this.target.locator('#pluginStateList .plugin-consent-grant');
   }
 
+  pluginConsentRefuseButton() {
+    return this.target.locator('#pluginStateList .plugin-consent-refuse');
+  }
+
   toastContainer() {
     return this.target.locator('#pof-toast-container');
   }

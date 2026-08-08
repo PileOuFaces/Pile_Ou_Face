@@ -899,7 +899,7 @@ async function run() {
     }
   }));
 
-  suite.addTest(new Mocha.Test('installs and authorizes a plugin, then runs scripts through the real UI', async () => {
+  suite.addTest(new Mocha.Test('refuses then authorizes a plugin, and runs scripts through the real UI', async () => {
     const [fixture] = readFixtureSpecs();
     assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
     const pluginBundlePath = path.join(path.dirname(fixture.path), 'e2e-safe-plugin.pofplug');
@@ -907,6 +907,7 @@ async function run() {
     let installed = false;
     let consented = false;
     let consentCalls = 0;
+    let refusalCalls = 0;
     let pluginInvocations = 0;
     let scriptAttempts = 0;
     const originalExecFile = childProcess.execFile;
@@ -956,6 +957,12 @@ async function run() {
               process.nextTick(() => cb?.(null, JSON.stringify({ ok: true }), ''));
               return proc;
             }
+            if (args.includes('consent-revoke')) {
+              refusalCalls += 1;
+              consented = false;
+              process.nextTick(() => cb?.(null, JSON.stringify({ ok: true }), ''));
+              return proc;
+            }
             if (args.includes('invoke-feature')) pluginInvocations += 1;
             process.nextTick(() => cb?.(null, pluginRuntimeResult(), ''));
             return proc;
@@ -987,6 +994,10 @@ async function run() {
             consentCalls += 1;
             consented = true;
           }
+          if (args.includes('consent-revoke')) {
+            refusalCalls += 1;
+            consented = false;
+          }
           if (args.includes('invoke-feature')) pluginInvocations += 1;
           const proc = new EventEmitter();
           proc.stdin = new PassThrough();
@@ -994,7 +1005,7 @@ async function run() {
           proc.stderr = new PassThrough();
           proc.kill = () => true;
           process.nextTick(() => {
-            proc.stdout.end(args.includes('consent-grant')
+            proc.stdout.end(args.includes('consent-grant') || args.includes('consent-revoke')
               ? JSON.stringify({ ok: true })
               : pluginRuntimeResult());
             proc.stderr.end();
@@ -1019,6 +1030,12 @@ async function run() {
         await hub.pluginStateList().waitForText('en attente d’autorisation', 30000);
         assert.equal(consentCalls, 0, 'a newly installed plugin must not be authorized implicitly');
         assert.equal(pluginInvocations, 0, 'a plugin awaiting consent must not execute');
+
+        await hub.pluginConsentRefuseButton().click();
+        await hub.pluginConsentRefuseButton().waitFor({ state: 'visible', timeout: 30000 });
+        assert.equal(refusalCalls, 1, 'refusal must be triggered once from the real UI');
+        assert.equal(consentCalls, 0, 'refusing must not authorize the plugin');
+        assert.equal(pluginInvocations, 0, 'refusing consent must not execute the plugin');
 
         await hub.pluginConsentButton().click();
         await hub.pluginStateList().waitForText('e2e.inspect', 30000);

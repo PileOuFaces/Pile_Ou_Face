@@ -257,6 +257,47 @@ describe("staticHandlers plugin bridge", () => {
     expect(postMessage.called).to.equal(false);
   });
 
+  it("revokes plugin consent then re-fetches the pending state", async () => {
+    const execFile = sinon.stub().callsFake((_pythonBin, args, _options, callback) => {
+      if (args.includes("consent-revoke")) {
+        expect(args).to.include("acme.new-plugin");
+        callback(null, JSON.stringify({ ok: true, plugin_id: "acme.new-plugin" }), "");
+        return;
+      }
+      if (args.includes("list")) {
+        callback(null, JSON.stringify({
+          search_paths: [],
+          summary: { pending_consent: 1 },
+          attached: { commands: [], command_sources: {} },
+          plugins: [{
+            id: "acme.new-plugin",
+            state: "pending_consent",
+            manifest: {
+              name: "New Plugin",
+              version: "1.0.0",
+              kind: "analysis-pack",
+              ui: { family: "acme" },
+            },
+          }],
+        }), "");
+        return;
+      }
+      callback(new Error(`unexpected args: ${args.join(" ")}`));
+    });
+    const postMessage = sinon.spy();
+    const handlers = createHandlers(loadStaticHandlers(execFile), postMessage);
+
+    await handlers.hubRevokePluginConsent({ pluginId: "acme.new-plugin" });
+
+    expect(execFile.callCount).to.equal(2);
+    expect(execFile.firstCall.args[1]).to.include.members(["consent-revoke", "acme.new-plugin"]);
+    expect(postMessage.firstCall.args[0]).to.include({ type: "hubPluginState" });
+    expect(postMessage.firstCall.args[0].state.plugins[0]).to.include({
+      id: "acme.new-plugin",
+      state: "pending_consent",
+    });
+  });
+
   it("returns a generic error when no feature is provided", async () => {
     const execFile = sinon.stub();
     const postMessage = sinon.spy();
