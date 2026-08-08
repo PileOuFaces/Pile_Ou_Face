@@ -616,7 +616,7 @@ async function run() {
     }
   }));
 
-  suite.addTest(new Mocha.Test('retries auto-triage from the real confirmation UI without reopening the modal', async () => {
+  suite.addTest(new Mocha.Test('recovers from an auto-triage provider timeout through the real UI', async () => {
     const userDataDir = process.env.POF_E2E_USER_DATA_DIR;
     assert.ok(userDataDir, 'POF_E2E_USER_DATA_DIR is required');
     const [fixture] = readFixtureSpecs();
@@ -658,7 +658,7 @@ async function run() {
           reportPath = String(args[args.indexOf('--report-out') + 1] || '');
           process.nextTick(() => {
             if (attempt === 1) {
-              proc.stderr.end('provider offline');
+              proc.stderr.end('Timeout provider après 30 s');
               proc.stdout.end();
               proc.emit('close', 1);
               return;
@@ -693,9 +693,9 @@ async function run() {
         assert.equal(await hub.autoTriageModal().getAttribute('hidden'), null, 'confirmation modal must be open');
         await hub.autoTriageConfirmButton().click();
         await hub.autoTriageState().waitForText('Échec', 30000);
-        await hub.autoTriageHelp().waitForText('provider offline', 30000);
-        assert.equal(await hub.autoTriageModal().getAttribute('hidden'), '', 'confirmation modal must close after the failed run starts');
-        assert.equal(await hub.autoTriageButton().isEnabled(), true, 'retry must be available after a provider error');
+        await hub.autoTriageHelp().waitForText('Timeout provider après 30 s', 30000);
+        assert.equal(await hub.autoTriageModal().getAttribute('hidden'), '', 'confirmation modal must close after the timed-out run starts');
+        assert.equal(await hub.autoTriageButton().isEnabled(), true, 'retry must be available after a provider timeout');
 
         await hub.autoTriageButton().click();
         await hub.autoTriageModal().waitFor({ state: 'visible' });
@@ -704,13 +704,13 @@ async function run() {
         await hub.autoTriageResult().waitFor({ state: 'visible' });
         await hub.autoTriageResultTitle().waitForText('Dernier auto-triage terminé', 30000);
         assert.equal(await hub.autoTriageModal().getAttribute('hidden'), '', 'confirmation modal must stay closed after success');
-        assert.equal(attempt, 2, 'one failed run and one successful retry must execute');
+        assert.equal(attempt, 2, 'one timed-out run and one successful retry must execute');
       });
     } catch (error) {
       const artifacts = await captureUiFailure(
         target,
         process.env.POF_E2E_ARTIFACTS_DIR,
-        'hub-auto-triage-retry',
+        'hub-auto-triage-timeout-retry',
       );
       error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
       throw error;
