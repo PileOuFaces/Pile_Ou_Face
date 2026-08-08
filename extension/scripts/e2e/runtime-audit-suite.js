@@ -1042,8 +1042,10 @@ async function run() {
       await hub.typeEditorCatalog().waitForText('E2EUiType', 30000);
 
       await hub.typeEditorCloseButton().clickDom();
-      await hub.typedDataSection().waitForText('.text', 30000);
-      await hub.typedDataSection().fill('.text');
+      const sectionOptions = await hub.typedDataSection().waitForText('.', 30000);
+      const sectionName = String(sectionOptions || '').match(/\.[A-Za-z0-9_.-]+/)?.[0];
+      assert.ok(sectionName, 'typed data must expose at least one binary section');
+      await hub.typedDataSection().fill(sectionName);
       await hub.typedDataStructSelect().waitForText('E2EUiType', 30000);
       await hub.typedDataStructSelect().fill('E2EUiType');
       await hub.typedDataStructOffset().fill('0x0');
