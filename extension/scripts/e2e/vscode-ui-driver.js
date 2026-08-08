@@ -322,7 +322,12 @@ class HubPage {
   }
 
   recentBinaryButton(binaryPath) {
-    return this.target.locator(`#topBarRecentList > .top-bar-menu-item[title=${JSON.stringify(String(binaryPath))}]`);
+    const requestedPath = String(binaryPath);
+    const candidates = [...new Set([requestedPath, path.basename(requestedPath)])];
+    const selector = candidates
+      .map((candidate) => `#topBarRecentList > .top-bar-menu-item[title=${JSON.stringify(candidate)}]`)
+      .join(', ');
+    return this.target.locator(selector);
   }
 
   currentBinaryName() {
@@ -523,6 +528,30 @@ class HubPage {
 
   typeEditorCloseButton() {
     return this.target.locator('#pof-typed-struct-popup .typed-data-struct-editor-actions .btn:first-child');
+  }
+
+  typedDataSection() {
+    return this.target.locator('#typedDataSection');
+  }
+
+  typedDataStructSelect() {
+    return this.target.locator('#typedDataStructSelect');
+  }
+
+  typedDataStructOffset() {
+    return this.target.locator('#typedDataStructOffset');
+  }
+
+  typedDataApplyStructButton() {
+    return this.target.locator('#btnTypedApplyStruct');
+  }
+
+  typedDataStructStatus() {
+    return this.target.locator('#typedDataStructStatus');
+  }
+
+  typedDataContent() {
+    return this.target.locator('#typedDataContent');
   }
 
   entryPointButton() {

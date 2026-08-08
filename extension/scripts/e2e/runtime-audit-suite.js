@@ -1037,25 +1037,30 @@ async function run() {
 
       await hub.openTypeManager();
       await hub.typeEditorSource().fill('struct E2EUiType { int x; int y; };');
-      await hub.typeEditorSaveButton().click();
-      await sleep(250);
-      if (!String(await hub.typeEditorStatus().textContent() || '').trim()) {
-        await hub.typeEditorSaveButton().clickDom();
-      }
+      await hub.typeEditorSaveButton().clickDom();
       await hub.typeEditorStatus().waitForText('sauvegardé(s)', 30000);
       await hub.typeEditorCatalog().waitForText('E2EUiType', 30000);
 
       await hub.typeEditorCloseButton().clickDom();
+      const sectionOptions = await hub.typedDataSection().waitForText('.', 30000);
+      const sectionName = String(sectionOptions || '').match(/\.[A-Za-z0-9_.-]+/)?.[0];
+      assert.ok(sectionName, 'typed data must expose at least one binary section');
+      await hub.typedDataSection().fill(sectionName);
+      await hub.typedDataStructSelect().waitForText('E2EUiType', 30000);
+      await hub.typedDataStructSelect().fill('E2EUiType');
+      await hub.typedDataStructOffset().fill('0x0');
+      await hub.typedDataApplyStructButton().clickDom();
+      await hub.typedDataStructStatus().waitForText('struct E2EUiType @ +0x0', 30000);
+      await hub.typedDataContent().waitForText('E2EUiType', 30000);
+      await hub.typedDataContent().waitForText('x', 30000);
+      await hub.typedDataContent().waitForText('y', 30000);
+
       await hub.openTypeManager();
       await hub.typeEditorCatalog().waitForText('E2EUiType', 30000);
 
       const invalidSource = 'struct E2EInvalidType { int; };';
       await hub.typeEditorSource().fill(invalidSource);
-      await hub.typeEditorSaveButton().click();
-      await sleep(250);
-      if (!String(await hub.typeEditorStatus().textContent() || '').trim()) {
-        await hub.typeEditorSaveButton().clickDom();
-      }
+      await hub.typeEditorSaveButton().clickDom();
       await hub.typeEditorStatus().waitForText('Type manquant', 30000);
       await hub.typeEditor().waitFor({ state: 'visible' });
       assert.equal(await hub.typeEditorSource().inputValue(), invalidSource);
@@ -1311,7 +1316,7 @@ async function run() {
       disasmResponses = countDisasmResponses();
       await hub.topBarBinaryButton().clickDom();
       await hub.topBarBinaryMenu().waitFor({ state: 'visible', timeout: 30000 });
-      await hub.recentBinaryButton(binaryAName).clickDom();
+      await hub.recentBinaryButton(fixtureA.path).clickDom();
       await hub.binaryPath().waitForValue(binaryAName, 30000);
       await waitForNextDisasm(disasmResponses);
       await hub.annotationsList().waitForText('e2e_binary_a', 30000);
@@ -1332,7 +1337,7 @@ async function run() {
       disasmResponses = countDisasmResponses();
       await hub.topBarBinaryButton().clickDom();
       await hub.topBarBinaryMenu().waitFor({ state: 'visible', timeout: 30000 });
-      await hub.recentBinaryButton(binaryBName).clickDom();
+      await hub.recentBinaryButton(fixtureB.path).clickDom();
       await hub.binaryPath().waitForValue(binaryBName, 30000);
       await waitForNextDisasm(disasmResponses);
       await hub.annotationsList().waitForText('e2e_binary_b', 30000);
