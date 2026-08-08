@@ -45,6 +45,37 @@ def _seed_definitions(storage: str) -> None:
                     {"name": "mode", "type": "Mode", "type_kind": "enum"},
                 ],
             },
+            "Inner": {
+                "kind": "struct",
+                "fields": [
+                    {"name": "value", "type": "int", "type_kind": "primitive"},
+                    {"name": "status", "type": "Mode", "type_kind": "enum"},
+                ],
+            },
+            "Outer": {
+                "kind": "struct",
+                "fields": [
+                    {"name": "tag", "type": "int", "type_kind": "primitive"},
+                    {
+                        "name": "inner",
+                        "type": "Inner",
+                        "type_kind": "pointer",
+                        "pointer_level": 1,
+                    },
+                ],
+            },
+            "Node": {
+                "kind": "struct",
+                "fields": [
+                    {
+                        "name": "next",
+                        "type": "Node",
+                        "type_kind": "pointer",
+                        "pointer_level": 1,
+                    },
+                    {"name": "val", "type": "int", "type_kind": "primitive"},
+                ],
+            },
         },
     )
 
@@ -120,6 +151,60 @@ class TestTypedVarBindings(unittest.TestCase):
             )
             self.assertEqual(index["enum_literal_map"]["local:-16"][2], "MODE_READY")
             self.assertEqual(index["field_access_map"], {})
+
+    def test_build_index_resolves_multilevel_pointer_chain(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = os.path.join(tmp, "storage")
+            _seed_definitions(storage)
+            save_typed_var_binding(
+                _BINARY,
+                "0x401000",
+                {
+                    "var_kind": "param",
+                    "var_key": "1",
+                    "type_name": "Outer",
+                    "type_kind": "struct",
+                    "pointer_level": 1,
+                },
+                workspace_root=storage,
+            )
+            index = build_typed_var_binding_index(
+                _BINARY, "0x401000", workspace_root=storage, ptr_size=8
+            )
+            field_access_map = index["field_access_map"]
+            self.assertEqual(field_access_map["param:1"][0], "tag")
+            self.assertEqual(field_access_map["param:1"][8], "inner")
+            self.assertEqual(field_access_map["param:1->inner"][0], "value")
+            self.assertEqual(field_access_map["param:1->inner"][4], "status")
+
+            enum_literal_map = index["enum_literal_map"]
+            self.assertEqual(
+                enum_literal_map["param:1->inner->status"][2], "MODE_READY"
+            )
+            self.assertEqual(enum_literal_map["param:1->inner->status"][0], "MODE_INIT")
+
+    def test_build_index_stops_recursion_on_self_referential_struct(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = os.path.join(tmp, "storage")
+            _seed_definitions(storage)
+            save_typed_var_binding(
+                _BINARY,
+                "0x401000",
+                {
+                    "var_kind": "param",
+                    "var_key": "1",
+                    "type_name": "Node",
+                    "type_kind": "struct",
+                    "pointer_level": 1,
+                },
+                workspace_root=storage,
+            )
+            index = build_typed_var_binding_index(
+                _BINARY, "0x401000", workspace_root=storage, ptr_size=8
+            )
+            field_access_map = index["field_access_map"]
+            self.assertEqual(field_access_map["param:1"][0], "next")
+            self.assertNotIn("param:1->next", field_access_map)
 
     def test_signature_changes_when_bindings_change(self):
         with tempfile.TemporaryDirectory() as tmp:

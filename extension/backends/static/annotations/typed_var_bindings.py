@@ -14,10 +14,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 from backends.shared.utils import normalize_addr as _normalize_addr
 from backends.static.annotations.struct_db import StructDb
-from backends.static.annotations.structs import compute_struct_layout
+from backends.static.annotations.structs import (
+    _resolve_typedef_chain,
+    compute_struct_layout,
+)
 
 _VAR_KINDS = {"param", "local"}
 _TYPE_KINDS = {"struct", "union", "enum"}
+_MAX_FIELD_CHAIN_DEPTH = 3
 
 
 def _normalize_binary_key(binary_path: str | None) -> str:
@@ -110,6 +114,62 @@ def _var_identity(var_kind: str, var_key: str) -> str:
     return f"{var_kind}:{var_key}"
 
 
+def _expand_struct_fields(
+    identity: str,
+    type_name: str,
+    definitions: dict[str, dict[str, Any]],
+    ptr_size: int,
+    field_access_map: dict[str, dict[int, str]],
+    enum_literal_map: dict[str, dict[int, str]],
+    visited_types: frozenset[str],
+    depth: int,
+) -> None:
+    """Populate field_access_map/enum_literal_map for `identity` and, for any
+    field that is itself a single-level pointer-to-struct/union, recurse to
+    build a chained identity ("base->inner->field") up to `_MAX_FIELD_CHAIN_DEPTH`.
+
+    `visited_types` guards against self-referential chains (e.g. a linked-list
+    `struct Node *next` field) expanding indefinitely.
+    """
+    if depth > _MAX_FIELD_CHAIN_DEPTH or type_name in visited_types:
+        return
+    try:
+        layout = compute_struct_layout(definitions, type_name, ptr_size)
+    except Exception:
+        return
+    next_visited = visited_types | {type_name}
+    for field in layout.get("fields") or []:
+        offset = int(field["offset"])
+        field_name = str(field["name"])
+        field_access_map.setdefault(identity, {})[offset] = field_name
+        if field.get("type_kind") == "enum" and field.get("enum_values"):
+            enum_identity = f"{identity}->{field_name}"
+            enum_literal_map.setdefault(enum_identity, {}).update(
+                {int(item["value"]): str(item["name"]) for item in field["enum_values"]}
+            )
+        elif (
+            field.get("type_kind") == "pointer"
+            and int(field.get("pointer_level") or 0) == 1
+        ):
+            nested_name, nested_definition, _ = _resolve_typedef_chain(
+                definitions, str(field.get("type") or "")
+            )
+            if nested_definition and str(nested_definition.get("kind") or "") in {
+                "struct",
+                "union",
+            }:
+                _expand_struct_fields(
+                    f"{identity}->{field_name}",
+                    nested_name,
+                    definitions,
+                    ptr_size,
+                    field_access_map,
+                    enum_literal_map,
+                    next_visited,
+                    depth + 1,
+                )
+
+
 def build_typed_var_binding_index(
     binary_path: str,
     func_addr: str,
@@ -155,24 +215,19 @@ def build_typed_var_binding_index(
             )
             continue
         if pointer_level != 1:
-            # Only single-level pointer-to-struct is rewritten as base->field.
+            # Only single-level pointer-to-struct is rewritten as base->field;
+            # deeper chains from there are expanded by _expand_struct_fields.
             continue
-        try:
-            layout = compute_struct_layout(definitions, type_name, ptr_size)
-        except Exception:
-            continue
-        for field in layout.get("fields") or []:
-            offset = int(field["offset"])
-            field_name = str(field["name"])
-            field_access_map.setdefault(identity, {})[offset] = field_name
-            if field.get("type_kind") == "enum" and field.get("enum_values"):
-                enum_identity = f"{identity}->{field_name}"
-                enum_literal_map.setdefault(enum_identity, {}).update(
-                    {
-                        int(item["value"]): str(item["name"])
-                        for item in field["enum_values"]
-                    }
-                )
+        _expand_struct_fields(
+            identity,
+            type_name,
+            definitions,
+            ptr_size,
+            field_access_map,
+            enum_literal_map,
+            frozenset(),
+            0,
+        )
 
     return {"field_access_map": field_access_map, "enum_literal_map": enum_literal_map}
 
