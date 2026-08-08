@@ -223,7 +223,7 @@ describe('VS Code UI E2E driver', () => {
 
   it('falls back to a DOM click when Electron ignores panel navigation coordinates', async () => {
     const calls: string[] = [];
-    let navigationWaits = 0;
+    let panelWaits = 0;
     const target = {
       locator(selector: string) {
         return {
@@ -231,8 +231,8 @@ describe('VS Code UI E2E driver', () => {
           async clickDom() { calls.push(`dom:${selector}`); },
           async waitFor() {},
           async waitForAttribute() {
-            if (selector.includes('icon-nav-item') && navigationWaits++ === 0) {
-              throw new Error('physical click ignored');
+            if (selector === '#panel-options' && panelWaits++ === 0) {
+              throw new Error('navigation remained active but panel did not open');
             }
           },
         };

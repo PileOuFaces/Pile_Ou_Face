@@ -649,13 +649,17 @@ class HubPage {
 
   async openPanel(panelId) {
     const navigation = this.panelNav(panelId);
+    const panel = this.panel(panelId);
     await navigation.click();
     try {
-      await navigation.waitForAttribute('class', 'active', 500);
+      await Promise.all([
+        navigation.waitForAttribute('class', 'active', 500),
+        panel.waitForAttribute('class', 'active', 500),
+      ]);
     } catch {
       await navigation.clickDom();
     }
-    await this.expectActive(this.panel(panelId), `panel ${panelId}`);
+    await this.expectActive(panel, `panel ${panelId}`);
     await this.expectActive(navigation, `navigation ${panelId}`);
   }
 
