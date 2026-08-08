@@ -287,7 +287,7 @@ function renderPluginManager(state = pluginUiState) {
               ${plugin.licensePath ? `<div class="plugin-card-meta-row"><strong>Fichier licence</strong><code>${escapeHtml(plugin.licensePath)}</code></div>` : ''}
               ${plugin.rootPath ? `<div class="plugin-card-meta-row"><strong>Dossier</strong><code>${escapeHtml(plugin.rootPath)}</code></div>` : ''}
               ${plugin.licenseMode === 'pofplug' && !licenseUnlocked ? `<div class="plugin-card-meta-row"><button class="btn btn-primary btn-sm" onclick="if(typeof showPanel==='function')showPanel('options')">Se connecter →</button></div>` : ''}
-              ${plugin.state === 'pending_consent' ? `<div class="plugin-card-meta-row"><button class="btn btn-primary btn-sm plugin-consent-grant" data-plugin-id="${escapeHtml(plugin.id || '')}">Autoriser ce plugin</button></div>` : ''}
+              ${plugin.state === 'pending_consent' ? `<div class="plugin-card-meta-row"><button class="btn btn-primary btn-sm plugin-consent-grant" data-plugin-id="${escapeHtml(plugin.id || '')}">Autoriser ce plugin</button><button class="btn btn-secondary btn-sm plugin-consent-refuse" data-plugin-id="${escapeHtml(plugin.id || '')}">Refuser</button></div>` : ''}
             </div>
           </div>
           ${hasFooter ? `
@@ -323,6 +323,15 @@ function renderPluginManager(state = pluginUiState) {
         btn.disabled = true;
         btn.textContent = 'Autorisation…';
         vscode.postMessage({ type: 'hubGrantPluginConsent', pluginId });
+      });
+    });
+    listEl.querySelectorAll('.plugin-consent-refuse').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const pluginId = btn.dataset.pluginId;
+        if (!pluginId) return;
+        btn.disabled = true;
+        btn.textContent = 'Refus…';
+        vscode.postMessage({ type: 'hubRevokePluginConsent', pluginId });
       });
     });
   }

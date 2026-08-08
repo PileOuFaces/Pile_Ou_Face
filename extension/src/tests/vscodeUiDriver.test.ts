@@ -124,6 +124,7 @@ describe('VS Code UI E2E driver', () => {
     hub.pluginInstallButton();
     hub.pluginStateList();
     hub.pluginConsentButton();
+    hub.pluginConsentRefuseButton();
     hub.toastContainer();
     hub.scriptEditor();
     hub.scriptRunButton();
@@ -134,6 +135,7 @@ describe('VS Code UI E2E driver', () => {
       '#btnPluginAdd',
       '#pluginStateList',
       '#pluginStateList .plugin-consent-grant',
+      '#pluginStateList .plugin-consent-refuse',
       '#pof-toast-container',
       '#scriptEditor',
       '#btnRunScript',
