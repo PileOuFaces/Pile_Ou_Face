@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Système de types** (struct/union/enum, typedefs, prototypes) : catalogue de types par binaire, visible et résilient depuis l'éditeur, avec typedefs et prototypes traités comme des types de premier ordre.
+- Rendu sémantique dans le décompilateur : accès champ `ptr->field` (y compris chaînes multi-niveaux `ptr->inner->field`) et littéraux d'enum symboliques, y compris dans les labels `switch`/`case`.
+- Bindings de types pour paramètres et variables locales (`typed_var_bindings`), appliqués au pseudocode décompilé.
+
 ## [0.2.0] - 2026-07-13
 
 Consolide les changements livrés depuis `0.1.0` (les incréments internes `0.1.x` n'avaient pas d'entrées de changelog).
