@@ -2349,7 +2349,8 @@ def _rewrite_typed_enum_literals(
     """Rewrite `base == N` / `base != N` into `base == SYMBOLIC_NAME` for known enum bindings.
 
     Only direct `==`/`!=` comparisons against the bare variable (or `base->field`) name are
-    covered; `switch (mode) { case 2: }` is an explicit fast-follow, not handled here.
+    covered here; `switch (mode) { case 2: }` is handled separately by
+    `_rewrite_typed_enum_switch_cases`.
     """
     if not code or not enum_literal_map:
         return code
@@ -2373,6 +2374,59 @@ def _rewrite_typed_enum_literals(
             return f"{var_expr} {m.group('op')} {name}"
 
         code = pattern.sub(_replace, code)
+    return code
+
+
+def _rewrite_typed_enum_switch_cases(
+    code: str, enum_literal_map: dict[str, dict[int, str]] | None
+) -> str:
+    """Rewrite `case N:` into `case SYMBOLIC_NAME:` inside `switch (base) { ... }` blocks.
+
+    Companion to `_rewrite_typed_enum_literals` for the `switch`/`case` shape that the
+    `==`/`!=` rewrite deliberately doesn't cover. Locates each `switch (var_expr) {`
+    for a known binding, balances braces to find the matching block, and rewrites only
+    the `case` labels inside that span whose literal is a known enum value — labels for
+    unrelated values (or in unrelated switch blocks) are left untouched.
+    """
+    if not code or not enum_literal_map:
+        return code
+    for var_expr, values in sorted(
+        enum_literal_map.items(), key=lambda item: (-len(item[0]), item[0])
+    ):
+        switch_re = re.compile(rf"switch\s*\(\s*{re.escape(var_expr)}\s*\)\s*\{{")
+        search_start = 0
+        while True:
+            m = switch_re.search(code, search_start)
+            if not m:
+                break
+            body_start = m.end()
+            depth = 1
+            i = body_start
+            while i < len(code) and depth > 0:
+                if code[i] == "{":
+                    depth += 1
+                elif code[i] == "}":
+                    depth -= 1
+                i += 1
+            if depth != 0:
+                break
+            body_end = i - 1
+            block = code[body_start:body_end]
+
+            def _replace_case(cm: re.Match, values: dict[int, str] = values) -> str:
+                lit = _parse_numeric_token(cm.group("lit"))
+                if lit is None:
+                    return cm.group(0)
+                name = values.get(lit)
+                if not name:
+                    return cm.group(0)
+                return f"case {name}:"
+
+            new_block = re.sub(
+                r"case\s+(?P<lit>-?0x[0-9a-fA-F]+|-?\d+)\s*:", _replace_case, block
+            )
+            code = code[:body_start] + new_block + code[body_end:]
+            search_start = body_start + len(new_block)
     return code
 
 
@@ -2474,6 +2528,7 @@ def _postprocess_code(
     # 3. Typed var bindings: pointer-arithmetic member access + symbolic enum literals
     code = _rewrite_typed_field_access(code, field_access_map)
     code = _rewrite_typed_enum_literals(code, enum_literal_map)
+    code = _rewrite_typed_enum_switch_cases(code, enum_literal_map)
 
     return code
 
