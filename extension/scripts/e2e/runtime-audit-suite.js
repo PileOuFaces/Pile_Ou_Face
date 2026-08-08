@@ -1037,7 +1037,7 @@ async function run() {
 
       await hub.openTypeManager();
       await hub.typeEditorSource().fill('struct E2EUiType { int x; int y; };');
-      await hub.typeEditorSaveButton().click();
+      await hub.typeEditorSaveButton().clickDom();
       await hub.typeEditorStatus().waitForText('sauvegardé(s)', 30000);
       await hub.typeEditorCatalog().waitForText('E2EUiType', 30000);
 
@@ -1047,7 +1047,7 @@ async function run() {
       await hub.typedDataStructSelect().waitForText('E2EUiType', 30000);
       await hub.typedDataStructSelect().fill('E2EUiType');
       await hub.typedDataStructOffset().fill('0x0');
-      await hub.typedDataApplyStructButton().click();
+      await hub.typedDataApplyStructButton().clickDom();
       await hub.typedDataStructStatus().waitForText('struct E2EUiType @ +0x0', 30000);
       await hub.typedDataContent().waitForText('E2EUiType', 30000);
       await hub.typedDataContent().waitForText('x', 30000);
@@ -1058,7 +1058,7 @@ async function run() {
 
       const invalidSource = 'struct E2EInvalidType { int; };';
       await hub.typeEditorSource().fill(invalidSource);
-      await hub.typeEditorSaveButton().click();
+      await hub.typeEditorSaveButton().clickDom();
       await hub.typeEditorStatus().waitForText('Type manquant', 30000);
       await hub.typeEditor().waitFor({ state: 'visible' });
       assert.equal(await hub.typeEditorSource().inputValue(), invalidSource);
