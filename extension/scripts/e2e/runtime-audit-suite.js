@@ -623,8 +623,7 @@ async function run() {
         await hub.aiProviderModel('ollama').waitForValue('qwen-e2e', 30000);
         assert.equal(ollamaModel, 'qwen-e2e', 'the Ollama model selected through the UI must be persisted');
 
-        await hub.aiDefaultProvider().fill('openai');
-        await hub.aiDefaultProvider().waitForAttribute('title', 'Provider automatique enregistré : openai', 30000);
+        await hub.setAiDefaultProvider('openai');
         assert.equal(defaultProvider, 'openai', 'the automatic provider must change from the real select control');
       });
     } catch (error) {
@@ -650,10 +649,8 @@ async function run() {
       await vscode.commands.executeCommand('pileOuFace.goToAddress');
       target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
       hub = new HubPage(target);
-      await hub.openPanel('options');
-
       const savesBeforeSimpleMode = countCurrentAuditEvents(userDataDir, isSettingsSave);
-      await hub.interfaceModeButton('simple').click();
+      await hub.selectInterfaceMode('simple');
       await hub.interfaceModeInput().waitForValue('simple', 30000);
       await hub.interfaceModeButton('simple').waitForAttribute('aria-pressed', 'true', 30000);
       await hub.staticFeaturePicker().waitForAttribute('class', 'is-disabled', 30000);

@@ -442,6 +442,23 @@ class HubPage {
     return this.target.locator('#aiDefaultProvider');
   }
 
+  async setAiDefaultProvider(provider) {
+    const select = this.aiDefaultProvider();
+    const savedTitle = `Provider automatique enregistré : ${provider}`;
+    const deadline = Date.now() + DEFAULT_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      try {
+        await this.openPanel('options');
+        await select.fill(provider);
+        await select.waitForAttribute('title', savedTitle, 750);
+        return;
+      } catch {
+        // Hub initialization can rerender settings after the first interaction.
+      }
+    }
+    await select.waitForAttribute('title', savedTitle, 1);
+  }
+
   disassemblyBinarySummary() {
     return this.target.locator('#disasmSummaryBinary');
   }
@@ -520,6 +537,26 @@ class HubPage {
 
   interfaceModeButton(mode) {
     return this.target.locator(`[data-interface-mode="${mode}"]`);
+  }
+
+  async selectInterfaceMode(mode) {
+    const button = this.interfaceModeButton(mode);
+    const input = this.interfaceModeInput();
+    const deadline = Date.now() + DEFAULT_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      try {
+        await this.openPanel('options');
+        await button.click();
+        await Promise.all([
+          input.waitForValue(mode, 750),
+          button.waitForAttribute('aria-pressed', 'true', 750),
+        ]);
+        return;
+      } catch {
+        // Retry if late hub initialization restored the previous panel/settings.
+      }
+    }
+    await input.waitForValue(mode, 1);
   }
 
   interfaceModeInput() {

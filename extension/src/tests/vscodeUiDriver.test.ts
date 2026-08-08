@@ -262,6 +262,29 @@ describe('VS Code UI E2E driver', () => {
     assert.deepEqual(calls, ['attached', 'class:active:750']);
   });
 
+  it('retries settings actions when late hub initialization restores the UI', async () => {
+    const calls: string[] = [];
+    let modeAttempts = 0;
+    const hub = new HubPage({});
+    hub.openPanel = async () => { calls.push('open-options'); };
+    hub.interfaceModeButton = () => ({
+      async click() { calls.push('click-simple'); },
+      async waitForAttribute() {
+        if (modeAttempts++ === 0) throw new Error('hub rerendered');
+      },
+    });
+    hub.interfaceModeInput = () => ({
+      async waitForValue() { calls.push('wait-simple'); },
+    });
+
+    await hub.selectInterfaceMode('simple');
+
+    assert.deepEqual(calls, [
+      'open-options', 'click-simple', 'wait-simple',
+      'open-options', 'click-simple', 'wait-simple',
+    ]);
+  });
+
   it('uses CDP to inspect, fill and physically click a DOM control', async () => {
     const sent: string[] = [];
     const evaluations: string[] = [];
