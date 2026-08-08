@@ -819,17 +819,6 @@ async function run() {
         assert.equal(await hub.decompileFunctionSelect().inputValue(), '', 'the fixture remains in global decompile mode');
         assert.equal(await hub.decompileAugmentButton().isEnabled(), true, 'a global result with one function must enable augmentation');
 
-        await hub.decompileFunctionSelect().waitForText('main', 30000);
-        await hub.decompileFunctionSelect().fill(functionAddr);
-        await hub.decompileContent().waitForText('Erreur du décompilateur — vérifiez les logs', 30000);
-        assert.equal(await hub.decompileFunctionSelect().inputValue(), functionAddr, 'the failed function selection must stay selected');
-        await hub.decompileRebuildButton().clickDom();
-        await hub.decompileOutput().waitForText('function retry succeeded', 30000);
-        assert.equal(functionDecompileAttempts, 2, 'one failed function run and one successful retry must execute');
-
-        await hub.decompileFunctionSelect().fill('');
-        await hub.decompileOutput().waitForText(rawCode, 30000);
-
         await hub.decompileAugmentButton().click();
         await hub.decompileAugmentReview().waitFor({ state: 'visible', timeout: 30000 });
         await hub.decompileAugmentSuggestions().waitForText('Nom et commentaire proposés', 30000);
@@ -855,6 +844,14 @@ async function run() {
         await hub.decompileOutput().waitForText('validated by E2E', 30000);
         await hub.decompileAugmentStatus().waitForText('Version IA acceptée restaurée depuis le cache.', 30000);
         assert.equal(suggestCalls, 1, 'restoring the accepted cache must not call the provider again');
+
+        await hub.decompileFunctionSelect().waitForText('main', 30000);
+        await hub.decompileFunctionSelect().fill(functionAddr);
+        await hub.decompileContent().waitForText('Erreur du décompilateur — vérifiez les logs', 30000);
+        assert.equal(await hub.decompileFunctionSelect().inputValue(), functionAddr, 'the failed function selection must stay selected');
+        await hub.decompileRebuildButton().clickDom();
+        await hub.decompileOutput().waitForText('function retry succeeded', 30000);
+        assert.equal(functionDecompileAttempts, 2, 'one failed function run and one successful retry must execute');
       });
     } catch (error) {
       const artifacts = await captureUiFailure(
