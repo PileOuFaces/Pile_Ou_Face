@@ -144,6 +144,35 @@ describe('VS Code UI E2E driver', () => {
     ]);
   });
 
+  it('exposes cloud and Ollama provider settings through stable selectors', () => {
+    const selectors: string[] = [];
+    const target = {
+      locator(selector: string) {
+        selectors.push(selector);
+        return { selector };
+      },
+    };
+    const hub = new HubPage(target);
+
+    hub.aiProviderCard('openai');
+    hub.aiProviderKey('openai');
+    hub.aiProviderModel('openai');
+    hub.aiProviderSaveButton('openai');
+    hub.aiProviderStatus('openai');
+    hub.aiProviderModel('ollama');
+    hub.aiDefaultProvider();
+
+    assert.deepEqual(selectors, [
+      '#aiProvidersState [data-provider="openai"]',
+      '#aiProvidersState [data-provider="openai"] [data-role="key"]',
+      '#aiProvidersState [data-provider="openai"] [data-role="model"]',
+      '#aiProvidersState [data-provider="openai"] .ai-provider-actions button',
+      '#aiProvidersState [data-provider="openai"] .ai-provider-card-status',
+      '#aiProvidersState [data-provider="ollama"] [data-role="model"]',
+      '#aiDefaultProvider',
+    ]);
+  });
+
   it('exposes address navigation and xrefs through stable selectors', () => {
     const selectors: string[] = [];
     const target = {

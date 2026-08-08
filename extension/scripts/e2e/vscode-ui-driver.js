@@ -418,6 +418,30 @@ class HubPage {
     return this.target.locator('[data-auto-triage-result-title]');
   }
 
+  aiProviderCard(provider) {
+    return this.target.locator(`#aiProvidersState [data-provider="${provider}"]`);
+  }
+
+  aiProviderKey(provider) {
+    return this.target.locator(`#aiProvidersState [data-provider="${provider}"] [data-role="key"]`);
+  }
+
+  aiProviderModel(provider) {
+    return this.target.locator(`#aiProvidersState [data-provider="${provider}"] [data-role="model"]`);
+  }
+
+  aiProviderSaveButton(provider) {
+    return this.target.locator(`#aiProvidersState [data-provider="${provider}"] .ai-provider-actions button`);
+  }
+
+  aiProviderStatus(provider) {
+    return this.target.locator(`#aiProvidersState [data-provider="${provider}"] .ai-provider-card-status`);
+  }
+
+  aiDefaultProvider() {
+    return this.target.locator('#aiDefaultProvider');
+  }
+
   disassemblyBinarySummary() {
     return this.target.locator('#disasmSummaryBinary');
   }
