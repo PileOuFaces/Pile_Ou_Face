@@ -51,6 +51,24 @@ class TestRewriteTypedFieldAccess(unittest.TestCase):
     def test_no_op_on_empty_code(self):
         self.assertEqual(_rewrite_typed_field_access("", {"param_2": {8: "mode"}}), "")
 
+    def test_rewrites_multilevel_pointer_chain(self):
+        code = "int a = *(int *)(*(void **)(param_1 + 8) + 0);"
+        result = _rewrite_typed_field_access(
+            code,
+            {
+                "param_1": {8: "inner"},
+                "param_1->inner": {0: "value"},
+            },
+        )
+        self.assertEqual(result, "int a = param_1->inner->value;")
+
+    def test_multilevel_chain_requires_base_level_first(self):
+        # If only the nested-level binding is known (base pointer field unknown),
+        # the chained text never materializes, so nothing substitutes.
+        code = "int a = *(int *)(*(void **)(param_1 + 8) + 0);"
+        result = _rewrite_typed_field_access(code, {"param_1->inner": {0: "value"}})
+        self.assertEqual(result, code)
+
 
 class TestRewriteTypedEnumLiterals(unittest.TestCase):
     def test_rewrites_equality_comparison(self):
