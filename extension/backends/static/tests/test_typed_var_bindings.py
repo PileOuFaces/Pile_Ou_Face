@@ -9,6 +9,7 @@ sys.path.insert(0, ROOT)
 
 from backends.static.annotations.struct_db import StructDb
 from backends.static.annotations.typed_var_bindings import (
+    _safe_int,
     build_typed_var_binding_index,
     list_typed_var_bindings,
     save_typed_var_binding,
@@ -227,7 +228,8 @@ class TestTypedVarBindings(unittest.TestCase):
         # GhostHolder->ghost points at Ghost, whose own field type is unknown to
         # the catalog; compute_struct_layout("Ghost") raises internally and
         # _expand_struct_fields must swallow it rather than propagate, simply
-        # stopping the recursion at that depth.
+        # stopping the recursion at that depth (while logging a warning so the
+        # dropped type binding is diagnosable).
         with tempfile.TemporaryDirectory() as tmp:
             storage = os.path.join(tmp, "storage")
             _seed_definitions(storage)
@@ -243,12 +245,27 @@ class TestTypedVarBindings(unittest.TestCase):
                 },
                 workspace_root=storage,
             )
-            index = build_typed_var_binding_index(
-                _BINARY, "0x401000", workspace_root=storage, ptr_size=8
+            with self.assertLogs(
+                "backends.static.annotations.typed_var_bindings", level="WARNING"
+            ) as logs:
+                index = build_typed_var_binding_index(
+                    _BINARY, "0x401000", workspace_root=storage, ptr_size=8
+                )
+            self.assertTrue(
+                any("Ghost" in record for record in logs.output),
+                logs.output,
             )
             field_access_map = index["field_access_map"]
             self.assertEqual(field_access_map["param:1"][0], "ghost")
             self.assertNotIn("param:1->ghost", field_access_map)
+
+    def test_safe_int_logs_debug_on_unparseable_value(self):
+        with self.assertLogs(
+            "backends.static.annotations.typed_var_bindings", level="DEBUG"
+        ) as logs:
+            result = _safe_int("not-a-number", default=-1)
+        self.assertEqual(result, -1)
+        self.assertTrue(any("not-a-number" in record for record in logs.output))
 
     def test_build_index_returns_empty_maps_when_no_entries(self):
         with tempfile.TemporaryDirectory() as tmp:
