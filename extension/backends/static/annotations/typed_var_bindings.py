@@ -12,12 +12,15 @@ from typing import Any
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
+from backends.shared.log import configure_logging, get_logger
 from backends.shared.utils import normalize_addr as _normalize_addr
 from backends.static.annotations.struct_db import StructDb
 from backends.static.annotations.structs import (
     _resolve_typedef_chain,
     compute_struct_layout,
 )
+
+logger = get_logger(__name__)
 
 _VAR_KINDS = {"param", "local"}
 _TYPE_KINDS = {"struct", "union", "enum"}
@@ -30,6 +33,11 @@ def _normalize_binary_key(binary_path: str | None) -> str:
     try:
         return os.path.normcase(os.path.abspath(str(binary_path)))
     except Exception:
+        logger.debug(
+            "Failed to normalize binary path %r, using raw value",
+            binary_path,
+            exc_info=True,
+        )
         return str(binary_path or "")
 
 
@@ -37,6 +45,12 @@ def _safe_int(value: Any, default: int = 0) -> int:
     try:
         return int(str(value), 0) if isinstance(value, str) else int(value)
     except Exception:
+        logger.debug(
+            "Failed to parse %r as int, falling back to default=%r",
+            value,
+            default,
+            exc_info=True,
+        )
         return default
 
 
@@ -168,6 +182,13 @@ def _expand_struct_fields(
     try:
         layout = compute_struct_layout(definitions, type_name, ptr_size)
     except Exception:
+        logger.warning(
+            "Failed to compute struct layout for type %r (identity=%r), "
+            "type binding will not be applied",
+            type_name,
+            identity,
+            exc_info=True,
+        )
         return
     next_visited = visited_types | {type_name}
     for field in layout.get("fields") or []:
@@ -277,6 +298,7 @@ def typed_var_binding_signature(
 
 
 def main() -> int:
+    configure_logging()
     parser = argparse.ArgumentParser(
         description="Bind function parameters/locals to catalog types for pseudocode rendering"
     )
