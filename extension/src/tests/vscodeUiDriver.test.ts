@@ -383,6 +383,12 @@ describe('VS Code UI E2E driver', () => {
     assert.equal(hub.typeEditorStatus().selector, '#pof-typed-struct-popup .typed-data-struct-editor-status');
     assert.equal(hub.typeEditorSaveButton().selector, '#pof-typed-struct-popup [data-action="save-types"]');
     assert.equal(hub.typeEditorCloseButton().selector, '#pof-typed-struct-popup .typed-data-struct-editor-actions .btn:first-child');
+    assert.equal(hub.typedDataSection().selector, '#typedDataSection');
+    assert.equal(hub.typedDataStructSelect().selector, '#typedDataStructSelect');
+    assert.equal(hub.typedDataStructOffset().selector, '#typedDataStructOffset');
+    assert.equal(hub.typedDataApplyStructButton().selector, '#btnTypedApplyStruct');
+    assert.equal(hub.typedDataStructStatus().selector, '#typedDataStructStatus');
+    assert.equal(hub.typedDataContent().selector, '#typedDataContent');
     assert.equal(hub.topBarBinaryName().selector, '#topBarBinaryName');
     assert.equal(hub.topBarBinaryMenu().selector, '#topBarBinaryMenu');
     assert.equal(hub.currentBinaryName().selector, '#topBarCurrentBinaryName');

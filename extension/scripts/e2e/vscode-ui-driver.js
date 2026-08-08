@@ -525,6 +525,30 @@ class HubPage {
     return this.target.locator('#pof-typed-struct-popup .typed-data-struct-editor-actions .btn:first-child');
   }
 
+  typedDataSection() {
+    return this.target.locator('#typedDataSection');
+  }
+
+  typedDataStructSelect() {
+    return this.target.locator('#typedDataStructSelect');
+  }
+
+  typedDataStructOffset() {
+    return this.target.locator('#typedDataStructOffset');
+  }
+
+  typedDataApplyStructButton() {
+    return this.target.locator('#btnTypedApplyStruct');
+  }
+
+  typedDataStructStatus() {
+    return this.target.locator('#typedDataStructStatus');
+  }
+
+  typedDataContent() {
+    return this.target.locator('#typedDataContent');
+  }
+
   entryPointButton() {
     return this.target.locator('#btnGoToEntry');
   }
