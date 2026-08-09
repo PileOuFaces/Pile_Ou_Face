@@ -1,0 +1,30 @@
+{
+  "issue": 247,
+  "updated": "2026-08-09",
+  "journeys": [
+    { "id": "startup.empty", "status": "covered", "test": "guides the user from an empty workspace without enabling unavailable actions" },
+    { "id": "analysis.load", "status": "covered", "test": "restores the selected binary and visible analysis after reopening the hub" },
+    { "id": "analysis.persistence", "status": "covered", "test": "restores the selected binary and visible analysis after reopening the hub" },
+    { "id": "analysis.error-retry", "status": "covered", "test": "shows a binary analysis backend error and succeeds after a UI retry" },
+    { "id": "navigation.functions-sections", "status": "covered", "test": "restores the selected binary and visible analysis after reopening the hub" },
+    { "id": "navigation.xrefs", "status": "covered", "test": "navigates incoming and outgoing xrefs through the real UI" },
+    { "id": "navigation.calculator-export", "status": "covered", "test": "drives the hub through real webview controls" },
+    { "id": "navigation.loading-empty-error", "status": "gap", "reason": "No single frontend-driven journey currently proves all four visible states." },
+    { "id": "decompile.global-function", "status": "covered", "test": "accepts global decompile augmentation and restores it from cache through the real UI" },
+    { "id": "decompile.tool-error-retry", "status": "covered", "test": "accepts global decompile augmentation and restores it from cache through the real UI" },
+    { "id": "ai.providers", "status": "covered", "test": "configures cloud and Ollama providers through the real UI" },
+    { "id": "ai.auto-triage-consent", "status": "covered", "test": "recovers from an auto-triage provider timeout through the real UI" },
+    { "id": "ai.global-augmentation-cache", "status": "covered", "test": "accepts global decompile augmentation and restores it from cache through the real UI" },
+    { "id": "ai.function-augmentation", "status": "gap", "reason": "The current augmentation journey returns to global mode before accepting the AI proposal." },
+    { "id": "ai.timeout-cancel-retry", "status": "covered", "test": "recovers from an auto-triage provider timeout through the real UI" },
+    { "id": "annotations.crud", "status": "covered", "test": "creates, restores, updates and deletes an annotation through the UI" },
+    { "id": "annotations.binary-isolation", "status": "covered", "test": "isolates annotations when switching between recent binaries and reopening the hub" },
+    { "id": "types.create-invalid-apply", "status": "covered", "test": "drives the hub through real webview controls" },
+    { "id": "plugins.install-consent", "status": "covered", "test": "refuses then authorizes a plugin, and runs scripts through the real UI" },
+    { "id": "scripts.success-error", "status": "covered", "test": "refuses then authorizes a plugin, and runs scripts through the real UI" },
+    { "id": "settings.persistence", "status": "covered", "test": "persists the simplified static interface across a hub reload" },
+    { "id": "recovery.long-operation", "status": "covered", "test": "recovers from an auto-triage provider timeout through the real UI" },
+    { "id": "guardrail.pr-template", "status": "gap", "reason": "The pull-request template does not yet require an impacted journey and E2E decision." },
+    { "id": "guardrail.feature-issue-template", "status": "gap", "reason": "Feature issues do not yet require observable UI acceptance criteria." }
+  ]
+}
