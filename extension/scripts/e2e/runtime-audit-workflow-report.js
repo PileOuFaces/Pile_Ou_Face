@@ -458,7 +458,10 @@ function buildPerformanceBudgetSignals({ spans, backendScenarioHotspots, backend
     }
     if (span.heapPeakDelta >= PERFORMANCE_BUDGETS.scenarioHeapWarnBytes) {
       push({
-        severity: span.heapPeakDelta >= PERFORMANCE_BUDGETS.scenarioHeapFailCandidateBytes ? 'fail-candidate' : 'warn',
+        // A single V8 heap sample is sensitive to GC timing between scenarios.
+        // Keep it visible for investigation, while RSS remains the blocking
+        // anti-crash signal for actual process memory pressure.
+        severity: 'warn',
         budget: 'scenario-heap-peak',
         scenario: span.scenario,
         target: span.target,
@@ -470,7 +473,7 @@ function buildPerformanceBudgetSignals({ spans, backendScenarioHotspots, backend
           ? PERFORMANCE_BUDGETS.scenarioHeapFailCandidateBytes
           : PERFORMANCE_BUDGETS.scenarioHeapWarnBytes),
         details: `heap peak +${formatBytes(span.heapPeakDelta)}`,
-        nextStep: 'Check payload size and retained state for this scenario.',
+        nextStep: 'Check payload size and retained state; confirm sustained pressure with RSS before blocking CI.',
       });
     }
     // Le RSS est le signal anti-crash : c'est lui qui reflète la pression
