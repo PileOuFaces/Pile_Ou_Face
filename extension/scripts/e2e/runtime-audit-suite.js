@@ -677,7 +677,7 @@ async function run() {
       await hub.interfaceModeButton('simple').waitForAttribute('aria-pressed', 'true', 30000);
 
       const savesBeforeRestore = countCurrentAuditEvents(userDataDir, isSettingsSave);
-      await hub.interfaceModeButton('advanced').clickDom();
+      await hub.selectInterfaceMode('advanced');
       await hub.interfaceModeInput().waitForValue('advanced', 30000);
       await hub.staticFeaturesAllButton().waitForEnabled(30000);
       await hub.staticFeaturesAllButton().clickDom();
