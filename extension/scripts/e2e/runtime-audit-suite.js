@@ -1252,6 +1252,7 @@ async function run() {
     fs.copyFileSync(fixture.path, retryFixturePath);
     let target = null;
     let headerAttempts = 0;
+    let failNextHeaderAttempt = false;
     const originalExecFile = childProcess.execFile;
     try {
       await withChildProcessMocks({
@@ -1263,7 +1264,8 @@ async function run() {
           const proc = new EventEmitter();
           headerAttempts += 1;
           process.nextTick(() => {
-            if (headerAttempts === 1) {
+            if (failNextHeaderAttempt) {
+              failNextHeaderAttempt = false;
               cb?.(new Error('Analyse backend temporairement indisponible'), '', 'backend unavailable');
               return;
             }
@@ -1294,13 +1296,24 @@ async function run() {
         await hub.openPanel('static');
         await hub.openStaticTab('data', 'info');
 
+        const attemptsBeforeForcedFailure = headerAttempts;
+        failNextHeaderAttempt = true;
+        await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+          type: 'hubLoadInfo',
+          binaryPath: retryFixturePath,
+          useCache: false,
+        });
         await hub.binaryInfo().waitForText('Analyse backend temporairement indisponible', 30000);
         await hub.binaryInfoRetryButton().waitFor({ state: 'visible', timeout: 30000 });
         await hub.binaryInfoRetryButton().clickDom();
 
         const recoveredInfo = await hub.binaryInfo().waitForText('Entry point', 30000);
         assert.match(recoveredInfo, /ELF/);
-        assert.equal(headerAttempts, 2, 'one failed analysis and one successful UI retry must execute');
+        assert.equal(
+          headerAttempts,
+          attemptsBeforeForcedFailure + 2,
+          'one failed analysis and one successful UI retry must execute',
+        );
       });
     } catch (error) {
       const artifacts = await captureUiFailure(
