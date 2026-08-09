@@ -558,6 +558,14 @@ class HubPage {
           input.waitForValue(mode, 750),
           button.waitForAttribute('aria-pressed', 'true', 750),
         ]);
+        // A late hubSettings response can briefly restore the previous value
+        // after both controls first look correct. Require the selection to stay
+        // settled beyond the settings debounce before accepting it.
+        await new Promise((resolve) => setTimeout(resolve, 750));
+        await Promise.all([
+          input.waitForValue(mode, 1),
+          button.waitForAttribute('aria-pressed', 'true', 1),
+        ]);
         return;
       } catch {
         // Retry if late hub initialization restored the previous panel/settings.

@@ -283,7 +283,7 @@ describe('VS Code UI E2E driver', () => {
 
     assert.deepEqual(calls, [
       'open-options', 'click-simple', 'wait-simple',
-      'open-options', 'click-simple', 'wait-simple',
+      'open-options', 'click-simple', 'wait-simple', 'wait-simple',
     ]);
   });
 
