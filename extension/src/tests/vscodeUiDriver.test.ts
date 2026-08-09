@@ -270,7 +270,7 @@ describe('VS Code UI E2E driver', () => {
     const hub = new HubPage({});
     hub.openPanel = async () => { calls.push('open-options'); };
     hub.interfaceModeButton = () => ({
-      async click() { calls.push('click-simple'); },
+      async clickDom() { calls.push('click-simple'); },
       async waitForAttribute() {
         if (modeAttempts++ === 0) throw new Error('hub rerendered');
       },

@@ -180,4 +180,27 @@ describe('runtime audit workflow report', () => {
     expect(rssSignals[1].severity).to.equal('warn');
     expect(rssSignals[1].scenario).to.equal('hub-handler:hubLoadInfo');
   });
+
+  it('reports transient V8 heap peaks without failing the anti-crash budget', () => {
+    const { buildPerformanceBudgetSignals } = require('../../scripts/e2e/runtime-audit-workflow-report');
+    const signals = buildPerformanceBudgetSignals({
+      spans: [{
+        ok: true,
+        scenario: 'hub-handler:hubSaveAnnotation',
+        target: 'hubSaveAnnotation',
+        durationMs: 500,
+        heapPeakDelta: 36 * 1024 * 1024,
+        rssPeakDelta: 4 * 1024 * 1024,
+      }],
+      backendScenarioHotspots: [],
+      backendActivity: [],
+    });
+
+    const heapSignal = signals.find((signal) => signal.budget === 'scenario-heap-peak');
+    expect(heapSignal).to.include({
+      severity: 'warn',
+      scenario: 'hub-handler:hubSaveAnnotation',
+    });
+    expect(signals.some((signal) => signal.severity === 'fail-candidate')).to.equal(false);
+  });
 });
