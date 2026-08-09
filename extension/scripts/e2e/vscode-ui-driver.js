@@ -550,7 +550,10 @@ class HubPage {
     while (Date.now() < deadline) {
       try {
         await this.openPanel('options');
-        await button.click();
+        // The options panel can still move while late hub settings are applied.
+        // A DOM click targets the idempotent mode button without relying on stale
+        // screen coordinates from the CDP layout snapshot.
+        await button.clickDom();
         await Promise.all([
           input.waitForValue(mode, 750),
           button.waitForAttribute('aria-pressed', 'true', 750),
