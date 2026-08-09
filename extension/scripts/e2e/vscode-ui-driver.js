@@ -721,9 +721,29 @@ class HubPage {
   }
 
   async openStaticTab(groupId, tabId) {
-    await this.group(groupId).click();
-    await this.expectActive(this.group(groupId), `group ${groupId}`);
+    const group = this.group(groupId);
     const subTab = this.subTab(tabId);
+    await group.click();
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        await Promise.all([
+          group.waitForAttribute('class', 'active', 750),
+          subTab.waitFor({ state: 'visible', timeout: 750 }),
+        ]);
+        break;
+      } catch {
+        if (attempt === 0) {
+          // A previous journey may persist simple mode or a reduced feature set.
+          // Restore the complete static workspace before retrying this journey.
+          await this.selectInterfaceMode('advanced');
+          await this.staticFeaturesAllButton().waitForEnabled();
+          await this.staticFeaturesAllButton().clickDom();
+          await this.openPanel('static');
+        }
+      }
+      await group.clickDom();
+    }
+    await subTab.waitFor({ state: 'visible', timeout: 1 });
     await subTab.click();
     try {
       await subTab.waitForAttribute('class', 'active', 500);
