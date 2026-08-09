@@ -1645,6 +1645,7 @@ async function run() {
     let target = null;
     const xrefsModes = [];
     let xrefsAttempt = 0;
+    let exerciseXrefsStates = false;
     let pendingEmptyXrefs = null;
     const originalExecFile = childProcess.execFile;
     try {
@@ -1656,6 +1657,10 @@ async function run() {
           const cb = typeof options === 'function' ? options : callback;
           const proc = new EventEmitter();
           const mode = String(args[args.indexOf('--mode') + 1] || 'to');
+          if (!exerciseXrefsStates) {
+            process.nextTick(() => cb?.(null, JSON.stringify({ refs: [], targets: [] }), ''));
+            return proc;
+          }
           xrefsModes.push(mode);
           xrefsAttempt += 1;
           if (xrefsAttempt === 1) {
@@ -1693,6 +1698,7 @@ async function run() {
         await hub.openPanel('static');
         await hub.openStaticTab('code', 'disasm');
 
+        exerciseXrefsStates = true;
         await hub.goToAddressInput().fill(targetAddr);
         await hub.xrefsMode().fill('from');
         await hub.xrefsButton().clickDom();
