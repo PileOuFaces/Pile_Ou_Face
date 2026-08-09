@@ -417,6 +417,10 @@ function isSymbolsScript(args) {
   return Array.isArray(args) && args.some((arg) => String(arg || '').endsWith(path.join('backends', 'static', 'binary', 'symbols.py')));
 }
 
+function isHeadersScript(args) {
+  return Array.isArray(args) && args.some((arg) => String(arg || '').endsWith(path.join('backends', 'static', 'binary', 'headers.py')));
+}
+
 function createMockProviderList() {
   return JSON.stringify({
     providers: [{ name: 'openai', configured: true, model: 'e2e-model' }],
@@ -1235,6 +1239,97 @@ async function run() {
       throw error;
     } finally {
       target?.close();
+    }
+  }));
+
+  suite.addTest(new Mocha.Test('shows a binary analysis backend error and succeeds after a UI retry', async () => {
+    const [fixture] = readFixtureSpecs();
+    assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
+    const retryFixturePath = path.join(
+      process.env.POF_E2E_ARTIFACTS_DIR,
+      `analysis-retry-${path.basename(fixture.path)}`,
+    );
+    fs.copyFileSync(fixture.path, retryFixturePath);
+    let target = null;
+    let headerAttempts = 0;
+    let failNextHeaderAttempt = false;
+    const originalExecFile = childProcess.execFile;
+    try {
+      await withChildProcessMocks({
+        execFile: (file, args = [], options = {}, callback = undefined) => {
+          if (!isHeadersScript(args)) {
+            return originalExecFile.call(childProcess, file, args, options, callback);
+          }
+          const cb = typeof options === 'function' ? options : callback;
+          const proc = new EventEmitter();
+          headerAttempts += 1;
+          process.nextTick(() => {
+            if (failNextHeaderAttempt) {
+              failNextHeaderAttempt = false;
+              cb?.(new Error('Analyse backend temporairement indisponible'), '', 'backend unavailable');
+              return;
+            }
+            cb?.(null, JSON.stringify({
+              format: 'ELF',
+              machine: 'Advanced Micro Devices X86-64',
+              entry: String(fixture.entry || '0x400078'),
+              type: 'EXEC',
+              bits: 64,
+              endianness: 'Little endian',
+              stripped: 'No',
+              arch: 'i386:x86-64',
+              interp: '—',
+            }), '');
+          });
+          return proc;
+        },
+      }, async () => {
+        await vscode.commands.executeCommand('pileOuFace.goToAddress');
+        target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+        const hub = new HubPage(target);
+
+        await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+          type: 'hubUseBinaryPath',
+          binaryPath: retryFixturePath,
+        });
+        await hub.binaryPath().waitForValue(path.basename(retryFixturePath), 30000);
+        await hub.openPanel('static');
+        await hub.openStaticTab('data', 'info');
+
+        const attemptsBeforeForcedFailure = headerAttempts;
+        failNextHeaderAttempt = true;
+        await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+          type: 'hubLoadInfo',
+          binaryPath: retryFixturePath,
+          useCache: false,
+        });
+        await hub.binaryInfo().waitForText('Analyse backend temporairement indisponible', 30000);
+        await hub.binaryInfoRetryButton().waitFor({ state: 'visible', timeout: 30000 });
+        await hub.binaryInfoRetryButton().clickDom();
+
+        const recoveredInfo = await hub.binaryInfo().waitForText('Entry point', 30000);
+        assert.match(recoveredInfo, /ELF/);
+        assert.equal(
+          headerAttempts,
+          attemptsBeforeForcedFailure + 2,
+          'one failed analysis and one successful UI retry must execute',
+        );
+      });
+    } catch (error) {
+      const artifacts = await captureUiFailure(
+        target,
+        process.env.POF_E2E_ARTIFACTS_DIR,
+        'hub-analysis-error-retry',
+      );
+      error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
+      throw error;
+    } finally {
+      target?.close();
+      try {
+        fs.unlinkSync(retryFixturePath);
+      } catch {
+        // The temporary fixture may already be absent after a failed host teardown.
+      }
     }
   }));
 
@@ -2227,7 +2322,7 @@ async function run() {
   }));
 
   if (['1', 'true', 'yes'].includes(String(process.env.POF_E2E_UI_ONLY || '').toLowerCase())) {
-    mocha.grep(/real webview controls|real confirmation UI|restores it from cache through the real UI|restores the selected binary and visible analysis|incoming and outgoing xrefs through the real UI/);
+    mocha.grep(/real webview controls|real confirmation UI|restores it from cache through the real UI|binary analysis backend error|restores the selected binary and visible analysis|incoming and outgoing xrefs through the real UI/);
   }
 
   return new Promise((resolve, reject) => {

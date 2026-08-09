@@ -1501,7 +1501,18 @@ window.addEventListener('message', (event) => {
     if (!container) return;
     const info = msg.info || {};
     if (info.error) {
-      container.innerHTML = `<p class="hint error">${escapeHtml(info.error)}</p>`;
+      container.innerHTML = `
+        <div class="empty-state">
+          <p class="hint error">${escapeHtml(info.error)}</p>
+          <button type="button" class="btn btn-sm btn-primary" id="btnRetryBinaryInfo">Réessayer</button>
+        </div>`;
+      document.getElementById('btnRetryBinaryInfo')?.addEventListener('click', () => {
+        setStaticLoading('infoContent', 'Chargement infos…');
+        postBinaryAwareMessage('hubLoadInfo', {
+          binaryPath: getStaticBinaryPath(),
+          useCache: false,
+        });
+      });
     } else {
       window.lastBinaryArch = info.arch || '';
       updateTopBarBinaryDisplay(getStaticBinaryPath(), getCurrentBinaryMeta(), info);

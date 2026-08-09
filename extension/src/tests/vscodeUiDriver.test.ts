@@ -209,12 +209,14 @@ describe('VS Code UI E2E driver', () => {
 
     const hub = new HubPage(target);
     hub.binaryInfo();
+    hub.binaryInfoRetryButton();
     hub.binarySections();
     hub.binaryFunctions();
     hub.binaryFunctionsCount();
 
     assert.deepEqual(selectors, [
       '#infoContent',
+      '#btnRetryBinaryInfo',
       '#sectionsContent',
       '#functionsContent',
       '#functionsCount',

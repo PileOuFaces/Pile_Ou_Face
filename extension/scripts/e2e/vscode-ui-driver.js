@@ -338,6 +338,10 @@ class HubPage {
     return this.target.locator('#infoContent');
   }
 
+  binaryInfoRetryButton() {
+    return this.target.locator('#btnRetryBinaryInfo');
+  }
+
   binarySections() {
     return this.target.locator('#sectionsContent');
   }
