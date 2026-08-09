@@ -309,6 +309,10 @@ class HubPage {
     return this.target.locator('#staticBinaryPath');
   }
 
+  useCacheToggle() {
+    return this.target.locator('#useCache');
+  }
+
   topBarBinaryName() {
     return this.target.locator('#topBarBinaryName');
   }
@@ -336,6 +340,10 @@ class HubPage {
 
   binaryInfo() {
     return this.target.locator('#infoContent');
+  }
+
+  binaryInfoRetryButton() {
+    return this.target.locator('#btnRetryBinaryInfo');
   }
 
   binarySections() {
