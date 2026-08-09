@@ -258,7 +258,15 @@ function createLoaders({
         });
       } catch (err) {
         logChannel.appendLine(`[Xrefs] ${err.message}`);
-        hubPost('hubXrefs', { binaryPath, addr, refs: [], targets: [], mode, requestKey });
+        hubPost('hubXrefs', {
+          binaryPath,
+          addr,
+          refs: [],
+          targets: [],
+          mode,
+          requestKey,
+          error: err.message || String(err),
+        });
       }
     },
 

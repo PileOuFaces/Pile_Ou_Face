@@ -1637,13 +1637,15 @@ async function run() {
     }
   }));
 
-  suite.addTest(new Mocha.Test('navigates incoming and outgoing xrefs through the real UI', async () => {
+  suite.addTest(new Mocha.Test('shows loading, empty, error and success xrefs states through the real UI', async () => {
     const [fixture] = readFixtureSpecs();
     assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
     const targetAddr = String(fixture.entry || '0x400078');
     const sourceAddr = '0x400080';
     let target = null;
     const xrefsModes = [];
+    let xrefsAttempt = 0;
+    let pendingEmptyXrefs = null;
     const originalExecFile = childProcess.execFile;
     try {
       await withChildProcessMocks({
@@ -1655,6 +1657,15 @@ async function run() {
           const proc = new EventEmitter();
           const mode = String(args[args.indexOf('--mode') + 1] || 'to');
           xrefsModes.push(mode);
+          xrefsAttempt += 1;
+          if (xrefsAttempt === 1) {
+            pendingEmptyXrefs = () => cb?.(null, JSON.stringify({ refs: [], targets: [] }), '');
+            return proc;
+          }
+          if (xrefsAttempt === 2) {
+            process.nextTick(() => cb?.(new Error('Xrefs temporairement indisponibles'), '', 'xrefs unavailable'));
+            return proc;
+          }
           const payload = mode === 'from'
             ? { refs: [], targets: [targetAddr] }
             : {
@@ -1683,6 +1694,20 @@ async function run() {
         await hub.openStaticTab('code', 'disasm');
 
         await hub.goToAddressInput().fill(targetAddr);
+        await hub.xrefsMode().fill('from');
+        await hub.xrefsButton().clickDom();
+        await hub.xrefsResult().waitForText('Analyse des références croisées', 30000);
+        const pendingStartedAt = Date.now();
+        while (!pendingEmptyXrefs && Date.now() - pendingStartedAt < 5000) {
+          await sleep(10);
+        }
+        assert.ok(pendingEmptyXrefs, 'the loading state must be observed before resolving the backend request');
+        pendingEmptyXrefs();
+        await hub.xrefsResult().waitForText('ne référence aucune adresse', 30000);
+
+        await hub.xrefsButton().clickDom();
+        await hub.xrefsResult().waitForText('Xrefs temporairement indisponibles', 30000);
+
         await hub.xrefsMode().fill('to');
         await hub.xrefsButton().clickDom();
         await hub.xrefsResult().waitForText(`Références vers ${targetAddr}`, 30000);
@@ -1698,7 +1723,7 @@ async function run() {
         await hub.xrefsResult().waitForText(`Références depuis ${sourceAddr}`, 30000);
         await hub.xrefsResult().waitForText(targetAddr, 30000);
         assert.ok(xrefsModes.includes('to'), 'an incoming xrefs lookup must execute');
-        assert.ok(xrefsModes.includes('from'), 'an outgoing xrefs lookup must execute');
+        assert.ok(xrefsModes.includes('from'), 'empty, error and successful outgoing xrefs lookups must execute');
       });
     } catch (error) {
       const artifacts = await captureUiFailure(
@@ -2360,7 +2385,7 @@ async function run() {
   }));
 
   if (['1', 'true', 'yes'].includes(String(process.env.POF_E2E_UI_ONLY || '').toLowerCase())) {
-    mocha.grep(/real webview controls|real confirmation UI|restores it from cache through the real UI|binary analysis backend error|restores the selected binary and visible analysis|incoming and outgoing xrefs through the real UI/);
+    mocha.grep(/real webview controls|real confirmation UI|restores both caches through the real UI|binary analysis backend error|restores the selected binary and visible analysis|loading, empty, error and success xrefs states through the real UI/);
   }
 
   return new Promise((resolve, reject) => {
