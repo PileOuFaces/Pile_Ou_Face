@@ -208,7 +208,6 @@ describe('VS Code UI E2E driver', () => {
     };
 
     const hub = new HubPage(target);
-    hub.useCacheToggle();
     hub.binaryInfo();
     hub.binaryInfoRetryButton();
     hub.binarySections();
@@ -216,7 +215,6 @@ describe('VS Code UI E2E driver', () => {
     hub.binaryFunctionsCount();
 
     assert.deepEqual(selectors, [
-      '#useCache',
       '#infoContent',
       '#btnRetryBinaryInfo',
       '#sectionsContent',

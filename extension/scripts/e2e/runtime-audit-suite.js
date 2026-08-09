@@ -1245,6 +1245,11 @@ async function run() {
   suite.addTest(new Mocha.Test('shows a binary analysis backend error and succeeds after a UI retry', async () => {
     const [fixture] = readFixtureSpecs();
     assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
+    const retryFixturePath = path.join(
+      process.env.POF_E2E_ARTIFACTS_DIR,
+      `analysis-retry-${path.basename(fixture.path)}`,
+    );
+    fs.copyFileSync(fixture.path, retryFixturePath);
     let target = null;
     let headerAttempts = 0;
     const originalExecFile = childProcess.execFile;
@@ -1283,11 +1288,9 @@ async function run() {
 
         await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
           type: 'hubUseBinaryPath',
-          binaryPath: fixture.path,
+          binaryPath: retryFixturePath,
         });
-        await hub.binaryPath().waitForValue(path.basename(fixture.path), 30000);
-        await hub.openPanel('outils');
-        await hub.useCacheToggle().clickDom();
+        await hub.binaryPath().waitForValue(path.basename(retryFixturePath), 30000);
         await hub.openPanel('static');
         await hub.openStaticTab('data', 'info');
 
@@ -1309,6 +1312,11 @@ async function run() {
       throw error;
     } finally {
       target?.close();
+      try {
+        fs.unlinkSync(retryFixturePath);
+      } catch {
+        // The temporary fixture may already be absent after a failed host teardown.
+      }
     }
   }));
 

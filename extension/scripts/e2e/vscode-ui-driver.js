@@ -309,10 +309,6 @@ class HubPage {
     return this.target.locator('#staticBinaryPath');
   }
 
-  useCacheToggle() {
-    return this.target.locator('#useCache');
-  }
-
   topBarBinaryName() {
     return this.target.locator('#topBarBinaryName');
   }
