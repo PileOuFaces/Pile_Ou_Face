@@ -1286,8 +1286,9 @@ async function run() {
           binaryPath: fixture.path,
         });
         await hub.binaryPath().waitForValue(path.basename(fixture.path), 30000);
-        await hub.openPanel('static');
+        await hub.openPanel('outils');
         await hub.useCacheToggle().clickDom();
+        await hub.openPanel('static');
         await hub.openStaticTab('data', 'info');
 
         await hub.binaryInfo().waitForText('Analyse backend temporairement indisponible', 30000);
