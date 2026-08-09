@@ -267,7 +267,16 @@ describe('VS Code UI E2E driver', () => {
   it('retries settings actions when late hub initialization restores the UI', async () => {
     const calls: string[] = [];
     let modeAttempts = 0;
-    const hub = new HubPage({});
+    const hub = new HubPage({
+      locator(selector: string) {
+        assert.equal(selector, 'html');
+        return {
+          async waitForAttribute(name: string, value: string) {
+            calls.push(`ready:${name}:${value}`);
+          },
+        };
+      },
+    });
     hub.openPanel = async () => { calls.push('open-options'); };
     hub.interfaceModeButton = () => ({
       async clickDom() { calls.push('click-simple'); },
@@ -282,8 +291,31 @@ describe('VS Code UI E2E driver', () => {
     await hub.selectInterfaceMode('simple');
 
     assert.deepEqual(calls, [
+      'ready:data-hub-settings-ready:true',
       'open-options', 'click-simple', 'wait-simple',
       'open-options', 'click-simple', 'wait-simple', 'wait-simple',
+    ]);
+  });
+
+  it('retries an idempotent typed struct preview after a dropped response', async () => {
+    const calls: string[] = [];
+    let statusAttempts = 0;
+    const hub = new HubPage({});
+    hub.typedDataApplyStructButton = () => ({
+      async clickDom() { calls.push('apply'); },
+    });
+    hub.typedDataStructStatus = () => ({
+      async waitForText(value: string, timeout: number) {
+        calls.push(`status:${value}:${timeout}`);
+        if (statusAttempts++ === 0) throw new Error('webview refreshed');
+      },
+    });
+
+    await hub.applyTypedStruct('struct E2EUiType @ +0x0');
+
+    assert.deepEqual(calls, [
+      'apply', 'status:struct E2EUiType @ +0x0:10000',
+      'apply', 'status:struct E2EUiType @ +0x0:10000',
     ]);
   });
 

@@ -546,6 +546,7 @@ class HubPage {
   async selectInterfaceMode(mode) {
     const button = this.interfaceModeButton(mode);
     const input = this.interfaceModeInput();
+    await this.target.locator('html').waitForAttribute('data-hub-settings-ready', 'true', DEFAULT_TIMEOUT_MS);
     const deadline = Date.now() + DEFAULT_TIMEOUT_MS;
     while (Date.now() < deadline) {
       try {
@@ -628,6 +629,21 @@ class HubPage {
 
   typedDataApplyStructButton() {
     return this.target.locator('#btnTypedApplyStruct');
+  }
+
+  async applyTypedStruct(expectedStatus) {
+    const button = this.typedDataApplyStructButton();
+    const status = this.typedDataStructStatus();
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await button.clickDom();
+      try {
+        await status.waitForText(expectedStatus, 10000);
+        return;
+      } catch {
+        // Retry the idempotent preview request if a webview refresh dropped it.
+      }
+    }
+    await status.waitForText(expectedStatus, 1);
   }
 
   typedDataStructStatus() {

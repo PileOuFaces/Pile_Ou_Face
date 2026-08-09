@@ -613,6 +613,7 @@ async function run() {
         const hub = new HubPage(target);
 
         await hub.openPanel('options');
+        await target.locator('html').waitForAttribute('data-hub-ai-providers-ready', 'true', 30000);
         await hub.aiProviderCard('openai').waitFor({ state: 'visible', timeout: 30000 });
         await hub.aiProviderStatus('openai').waitForText('Non configuré', 30000);
         await hub.aiProviderKey('openai').fill('e2e-cloud-key');
@@ -1237,8 +1238,7 @@ async function run() {
       await hub.typedDataStructSelect().waitForText('E2EUiType', 30000);
       await hub.typedDataStructSelect().fill('E2EUiType');
       await hub.typedDataStructOffset().fill('0x0');
-      await hub.typedDataApplyStructButton().clickDom();
-      await hub.typedDataStructStatus().waitForText('struct E2EUiType @ +0x0', 30000);
+      await hub.applyTypedStruct('struct E2EUiType @ +0x0');
       await hub.typedDataContent().waitForText('E2EUiType', 30000);
       await hub.typedDataContent().waitForText('x', 30000);
       await hub.typedDataContent().waitForText('y', 30000);

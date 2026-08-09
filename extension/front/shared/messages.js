@@ -2922,6 +2922,7 @@ window.addEventListener('message', (event) => {
   }
   if (msg.type === 'hubSettings') {
     _applySettings(msg.settings);
+    document.documentElement.dataset.hubSettingsReady = 'true';
     return;
   }
   if (msg.type === 'hubSettingsSaved') {
@@ -3424,6 +3425,7 @@ window.addEventListener('message', (event) => {
         errEl.appendChild(ep);
       }
     }
+    document.documentElement.dataset.hubAiProvidersReady = 'true';
     return;
   }
   if (msg.type === 'hubAiProviderDefaultSaved') {
