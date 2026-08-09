@@ -543,6 +543,102 @@ async function run() {
     }
   }));
 
+  suite.addTest(new Mocha.Test('configures cloud and Ollama providers through the real UI', async () => {
+    let target = null;
+    let openAiConfigured = false;
+    let openAiModel = '';
+    let openAiKey = '';
+    let ollamaModel = 'llama-e2e';
+    let defaultProvider = 'ollama';
+    const originalExecFile = childProcess.execFile;
+    const providerState = () => ({
+      providers: [
+        {
+          name: 'openai',
+          configured: openAiConfigured,
+          valid: openAiConfigured,
+          model: openAiModel,
+          models: ['gpt-e2e', 'gpt-e2e-mini'],
+        },
+        {
+          name: 'ollama',
+          configured: true,
+          valid: true,
+          model: ollamaModel,
+          models: ['llama-e2e', 'qwen-e2e'],
+          base_url: 'http://127.0.0.1:11434',
+        },
+      ],
+      default_provider: defaultProvider,
+    });
+    try {
+      await withChildProcessMocks({
+        execFile: (file, args = [], options = {}, callback = undefined) => {
+          if (!isAiProviderScript(args)) {
+            return originalExecFile.call(childProcess, file, args, options, callback);
+          }
+          const cb = typeof options === 'function' ? options : callback;
+          const proc = new EventEmitter();
+          proc.stdin = {
+            write(value) { openAiKey = String(value || '').trim(); },
+            end() {},
+          };
+          if (args.includes('set-default')) {
+            defaultProvider = String(args[args.indexOf('--provider') + 1] || '');
+            process.nextTick(() => cb?.(null, JSON.stringify({ ok: true, default_provider: defaultProvider }), ''));
+            return proc;
+          }
+          if (args.includes('set')) {
+            const provider = String(args[args.indexOf('--provider') + 1] || '');
+            const model = String(args[args.indexOf('--model') + 1] || '');
+            if (provider === 'openai') {
+              openAiConfigured = true;
+              openAiModel = model;
+            } else if (provider === 'ollama') {
+              ollamaModel = model;
+            }
+            process.nextTick(() => cb?.(null, JSON.stringify({ ok: true }), ''));
+            return proc;
+          }
+          process.nextTick(() => cb?.(null, JSON.stringify(providerState()), ''));
+          return proc;
+        },
+      }, async () => {
+        await vscode.commands.executeCommand('pileOuFace.goToAddress');
+        target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+        const hub = new HubPage(target);
+
+        await hub.openPanel('options');
+        await hub.aiProviderCard('openai').waitFor({ state: 'visible', timeout: 30000 });
+        await hub.aiProviderStatus('openai').waitForText('Non configuré', 30000);
+        await hub.aiProviderKey('openai').fill('e2e-cloud-key');
+        await hub.aiProviderModel('openai').fill('gpt-e2e-mini');
+        await hub.aiProviderSaveButton('openai').click();
+        await hub.aiProviderStatus('openai').waitForText('Prêt', 30000);
+        assert.equal(openAiKey, 'e2e-cloud-key', 'the API key entered through the UI must reach stdin');
+        assert.equal(openAiModel, 'gpt-e2e-mini', 'the cloud model selected through the UI must be persisted');
+
+        await hub.aiProviderModel('ollama').fill('qwen-e2e');
+        await hub.aiProviderSaveButton('ollama').click();
+        await hub.aiProviderModel('ollama').waitForValue('qwen-e2e', 30000);
+        assert.equal(ollamaModel, 'qwen-e2e', 'the Ollama model selected through the UI must be persisted');
+
+        await hub.setAiDefaultProvider('openai');
+        assert.equal(defaultProvider, 'openai', 'the automatic provider must change from the real select control');
+      });
+    } catch (error) {
+      const artifacts = await captureUiFailure(
+        target,
+        process.env.POF_E2E_ARTIFACTS_DIR,
+        'hub-ai-provider-settings',
+      );
+      error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
+      throw error;
+    } finally {
+      target?.close();
+    }
+  }));
+
   suite.addTest(new Mocha.Test('persists the simplified static interface across a hub reload', async () => {
     const userDataDir = process.env.POF_E2E_USER_DATA_DIR;
     assert.ok(userDataDir, 'POF_E2E_USER_DATA_DIR is required');
@@ -553,10 +649,8 @@ async function run() {
       await vscode.commands.executeCommand('pileOuFace.goToAddress');
       target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
       hub = new HubPage(target);
-      await hub.openPanel('options');
-
       const savesBeforeSimpleMode = countCurrentAuditEvents(userDataDir, isSettingsSave);
-      await hub.interfaceModeButton('simple').click();
+      await hub.selectInterfaceMode('simple');
       await hub.interfaceModeInput().waitForValue('simple', 30000);
       await hub.interfaceModeButton('simple').waitForAttribute('aria-pressed', 'true', 30000);
       await hub.staticFeaturePicker().waitForAttribute('class', 'is-disabled', 30000);

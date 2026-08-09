@@ -144,6 +144,35 @@ describe('VS Code UI E2E driver', () => {
     ]);
   });
 
+  it('exposes cloud and Ollama provider settings through stable selectors', () => {
+    const selectors: string[] = [];
+    const target = {
+      locator(selector: string) {
+        selectors.push(selector);
+        return { selector };
+      },
+    };
+    const hub = new HubPage(target);
+
+    hub.aiProviderCard('openai');
+    hub.aiProviderKey('openai');
+    hub.aiProviderModel('openai');
+    hub.aiProviderSaveButton('openai');
+    hub.aiProviderStatus('openai');
+    hub.aiProviderModel('ollama');
+    hub.aiDefaultProvider();
+
+    assert.deepEqual(selectors, [
+      '#aiProvidersState [data-provider="openai"]',
+      '#aiProvidersState [data-provider="openai"] [data-role="key"]',
+      '#aiProvidersState [data-provider="openai"] [data-role="model"]',
+      '#aiProvidersState [data-provider="openai"] .ai-provider-actions button',
+      '#aiProvidersState [data-provider="openai"] .ai-provider-card-status',
+      '#aiProvidersState [data-provider="ollama"] [data-role="model"]',
+      '#aiDefaultProvider',
+    ]);
+  });
+
   it('exposes address navigation and xrefs through stable selectors', () => {
     const selectors: string[] = [];
     const target = {
@@ -194,7 +223,7 @@ describe('VS Code UI E2E driver', () => {
 
   it('falls back to a DOM click when Electron ignores panel navigation coordinates', async () => {
     const calls: string[] = [];
-    let navigationWaits = 0;
+    let panelWaits = 0;
     const target = {
       locator(selector: string) {
         return {
@@ -202,8 +231,8 @@ describe('VS Code UI E2E driver', () => {
           async clickDom() { calls.push(`dom:${selector}`); },
           async waitFor() {},
           async waitForAttribute() {
-            if (selector.includes('icon-nav-item') && navigationWaits++ === 0) {
-              throw new Error('physical click ignored');
+            if (selector === '#panel-options' && panelWaits++ < 2) {
+              throw new Error('navigation remained active but panel did not open');
             }
           },
         };
@@ -214,6 +243,7 @@ describe('VS Code UI E2E driver', () => {
 
     assert.deepEqual(calls, [
       'physical:.icon-nav-item[data-panel="options"]',
+      'dom:.icon-nav-item[data-panel="options"]',
       'dom:.icon-nav-item[data-panel="options"]',
     ]);
   });
@@ -230,6 +260,29 @@ describe('VS Code UI E2E driver', () => {
     await new HubPage({}).expectActive(locator, 'delayed panel', 750);
 
     assert.deepEqual(calls, ['attached', 'class:active:750']);
+  });
+
+  it('retries settings actions when late hub initialization restores the UI', async () => {
+    const calls: string[] = [];
+    let modeAttempts = 0;
+    const hub = new HubPage({});
+    hub.openPanel = async () => { calls.push('open-options'); };
+    hub.interfaceModeButton = () => ({
+      async click() { calls.push('click-simple'); },
+      async waitForAttribute() {
+        if (modeAttempts++ === 0) throw new Error('hub rerendered');
+      },
+    });
+    hub.interfaceModeInput = () => ({
+      async waitForValue() { calls.push('wait-simple'); },
+    });
+
+    await hub.selectInterfaceMode('simple');
+
+    assert.deepEqual(calls, [
+      'open-options', 'click-simple', 'wait-simple',
+      'open-options', 'click-simple', 'wait-simple',
+    ]);
   });
 
   it('uses CDP to inspect, fill and physically click a DOM control', async () => {

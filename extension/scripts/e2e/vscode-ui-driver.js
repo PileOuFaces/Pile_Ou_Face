@@ -418,6 +418,47 @@ class HubPage {
     return this.target.locator('[data-auto-triage-result-title]');
   }
 
+  aiProviderCard(provider) {
+    return this.target.locator(`#aiProvidersState [data-provider="${provider}"]`);
+  }
+
+  aiProviderKey(provider) {
+    return this.target.locator(`#aiProvidersState [data-provider="${provider}"] [data-role="key"]`);
+  }
+
+  aiProviderModel(provider) {
+    return this.target.locator(`#aiProvidersState [data-provider="${provider}"] [data-role="model"]`);
+  }
+
+  aiProviderSaveButton(provider) {
+    return this.target.locator(`#aiProvidersState [data-provider="${provider}"] .ai-provider-actions button`);
+  }
+
+  aiProviderStatus(provider) {
+    return this.target.locator(`#aiProvidersState [data-provider="${provider}"] .ai-provider-card-status`);
+  }
+
+  aiDefaultProvider() {
+    return this.target.locator('#aiDefaultProvider');
+  }
+
+  async setAiDefaultProvider(provider) {
+    const select = this.aiDefaultProvider();
+    const savedTitle = `Provider automatique enregistré : ${provider}`;
+    const deadline = Date.now() + DEFAULT_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      try {
+        await this.openPanel('options');
+        await select.fill(provider);
+        await select.waitForAttribute('title', savedTitle, 750);
+        return;
+      } catch {
+        // Hub initialization can rerender settings after the first interaction.
+      }
+    }
+    await select.waitForAttribute('title', savedTitle, 1);
+  }
+
   disassemblyBinarySummary() {
     return this.target.locator('#disasmSummaryBinary');
   }
@@ -496,6 +537,26 @@ class HubPage {
 
   interfaceModeButton(mode) {
     return this.target.locator(`[data-interface-mode="${mode}"]`);
+  }
+
+  async selectInterfaceMode(mode) {
+    const button = this.interfaceModeButton(mode);
+    const input = this.interfaceModeInput();
+    const deadline = Date.now() + DEFAULT_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      try {
+        await this.openPanel('options');
+        await button.click();
+        await Promise.all([
+          input.waitForValue(mode, 750),
+          button.waitForAttribute('aria-pressed', 'true', 750),
+        ]);
+        return;
+      } catch {
+        // Retry if late hub initialization restored the previous panel/settings.
+      }
+    }
+    await input.waitForValue(mode, 1);
   }
 
   interfaceModeInput() {
@@ -625,14 +686,23 @@ class HubPage {
 
   async openPanel(panelId) {
     const navigation = this.panelNav(panelId);
+    const panel = this.panel(panelId);
+    const deadline = Date.now() + DEFAULT_TIMEOUT_MS;
     await navigation.click();
-    try {
-      await navigation.waitForAttribute('class', 'active', 500);
-    } catch {
+    while (Date.now() < deadline) {
+      try {
+        await Promise.all([
+          navigation.waitForAttribute('class', 'active', 500),
+          panel.waitForAttribute('class', 'active', 500),
+        ]);
+        return;
+      } catch {
+        // The DOM can be visible before the webview listeners finish mounting.
+        // Retry the real navigation control until both observable states agree.
+      }
       await navigation.clickDom();
     }
-    await this.expectActive(this.panel(panelId), `panel ${panelId}`);
-    await this.expectActive(navigation, `navigation ${panelId}`);
+    await this.expectActive(panel, `panel ${panelId}`, 1);
   }
 
   async openStaticTab(groupId, tabId) {
