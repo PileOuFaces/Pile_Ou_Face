@@ -842,28 +842,37 @@ async function run() {
     }
   }));
 
-  suite.addTest(new Mocha.Test('accepts global decompile augmentation and restores it from cache through the real UI', async () => {
+  suite.addTest(new Mocha.Test('accepts function and global decompile augmentation and restores both caches through the real UI', async () => {
     const [fixture] = readFixtureSpecs();
     assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
     const functionAddr = String(fixture.entry || '0x400078');
     const rawCode = 'int main(void) { return 0; }';
     const functionCode = 'int main(void) { /* function retry succeeded */ return 0; }';
-    const augmentedCode = 'int main(void) { /* validated by E2E */ return 0; }';
+    const globalAugmentedCode = 'int main(void) { /* global validated by E2E */ return 0; }';
+    const functionAugmentedCode = 'int main(void) { /* function validated by E2E */ return 0; }';
     let target = null;
-    let accepted = false;
     let suggestCalls = 0;
     let functionDecompileAttempts = 0;
+    const acceptedAugmentations = new Set();
+    const augmentationResults = new Map();
     const originalExecFile = childProcess.execFile;
-    const augmentationResult = () => ({
-      ok: true,
-      found: accepted,
-      cached: accepted,
-      cache_key: 'e2e-decompile-augmentation',
-      raw_code: rawCode,
-      augmented_code: augmentedCode,
-      accepted_ids: accepted ? ['summary'] : [],
-      proposal: { summary: 'Nom et commentaire proposés par le test E2E' },
-    });
+    const augmentationResult = (input = {}) => {
+      const sourceCode = String(input.code || rawCode);
+      const cacheKey = `e2e-decompile-augmentation:${input.addr || functionAddr}:${sourceCode}`;
+      const accepted = acceptedAugmentations.has(cacheKey);
+      const result = {
+        ok: true,
+        found: accepted,
+        cached: accepted,
+        cache_key: cacheKey,
+        raw_code: sourceCode,
+        augmented_code: sourceCode === functionCode ? functionAugmentedCode : globalAugmentedCode,
+        accepted_ids: accepted ? ['summary'] : [],
+        proposal: { summary: 'Nom et commentaire proposés par le test E2E' },
+      };
+      augmentationResults.set(cacheKey, result);
+      return result;
+    };
     try {
       await withChildProcessMocks({
         execFile: (file, args = [], options = {}, callback = undefined) => {
@@ -877,9 +886,21 @@ async function run() {
             const proc = new EventEmitter();
             const action = String(args[args.indexOf('--action') + 1] || '');
             process.nextTick(() => {
+              const inputPath = String(args[args.indexOf('--input') + 1] || '');
+              const input = JSON.parse(fs.readFileSync(inputPath, 'utf8'));
               if (action === 'suggest') suggestCalls += 1;
-              if (action === 'accept') accepted = true;
-              cb?.(null, JSON.stringify(augmentationResult()), '');
+              if (action === 'accept') {
+                acceptedAugmentations.add(input.cache_key);
+                const proposed = augmentationResults.get(input.cache_key) || augmentationResult();
+                cb?.(null, JSON.stringify({
+                  ...proposed,
+                  found: true,
+                  cached: true,
+                  accepted_ids: input.selected_ids,
+                }), '');
+                return;
+              }
+              cb?.(null, JSON.stringify(augmentationResult(input)), '');
             });
             return proc;
           }
@@ -947,6 +968,15 @@ async function run() {
         await hub.decompileOutput().waitForText('function retry succeeded', 30000);
         assert.equal(functionDecompileAttempts, 2, 'one failed function run and one successful retry must execute');
 
+        await hub.decompileAugmentButton().clickDom();
+        await hub.decompileAugmentReview().waitFor({ state: 'visible', timeout: 30000 });
+        await hub.decompileAugmentSuggestions().waitForText('Nom et commentaire proposés', 30000);
+        await hub.decompileAugmentAcceptButton().clickDom();
+        await hub.decompileOutput().waitForText('function validated by E2E', 30000);
+        await hub.decompileAugmentStatus().waitForText('Version IA', 30000);
+        assert.equal(await hub.decompileFunctionSelect().inputValue(), functionAddr, 'function augmentation must preserve the selected function');
+        assert.equal(suggestCalls, 1, 'function augmentation must call the provider exactly once');
+
         target.close();
         target = null;
         await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
@@ -958,11 +988,19 @@ async function run() {
         await hub.decompileOutput().waitForText(rawCode, 30000);
         assert.equal(await hub.decompileFunctionSelect().inputValue(), '', 'reopening the hub must restore global decompile mode');
 
-        await hub.decompileAugmentButton().click();
+        await hub.decompileFunctionSelect().fill(functionAddr);
+        await hub.decompileOutput().waitForText('function validated by E2E', 30000);
+        await hub.decompileAugmentStatus().waitForText('Version IA acceptée restaurée depuis le cache.', 30000);
+        assert.equal(suggestCalls, 1, 'restoring the function cache must not call the provider again');
+
+        await hub.decompileFunctionSelect().fill('');
+        await hub.decompileOutput().waitForText(rawCode, 30000);
+
+        await hub.decompileAugmentButton().clickDom();
         await hub.decompileAugmentReview().waitFor({ state: 'visible', timeout: 30000 });
         await hub.decompileAugmentSuggestions().waitForText('Nom et commentaire proposés', 30000);
-        await hub.decompileAugmentAcceptButton().click();
-        await hub.decompileOutput().waitForText('validated by E2E', 30000);
+        await hub.decompileAugmentAcceptButton().clickDom();
+        await hub.decompileOutput().waitForText('global validated by E2E', 30000);
         const acceptedStatus = await hub.decompileAugmentStatus().waitForText('Version IA', 30000);
         assert.ok(
           acceptedStatus.includes('appliquée et enregistrée dans le cache')
@@ -970,7 +1008,7 @@ async function run() {
           `augmentation acceptance must expose a durable success status, got: ${acceptedStatus}`
         );
         assert.equal(await hub.decompileAugmentReview().getAttribute('hidden'), '', 'review must close after acceptance');
-        assert.equal(suggestCalls, 1, 'the provider suggestion must run exactly once');
+        assert.equal(suggestCalls, 2, 'function and global augmentation must each call the provider once');
 
         target.close();
         target = null;
@@ -980,9 +1018,9 @@ async function run() {
         hub = new HubPage(target);
         await hub.openPanel('static');
         await hub.openStaticTab('code', 'decompile');
-        await hub.decompileOutput().waitForText('validated by E2E', 30000);
+        await hub.decompileOutput().waitForText('global validated by E2E', 30000);
         await hub.decompileAugmentStatus().waitForText('Version IA acceptée restaurée depuis le cache.', 30000);
-        assert.equal(suggestCalls, 1, 'restoring the accepted cache must not call the provider again');
+        assert.equal(suggestCalls, 2, 'restoring accepted caches must not call the provider again');
       });
     } catch (error) {
       const artifacts = await captureUiFailure(
