@@ -1644,8 +1644,7 @@ async function run() {
     const sourceAddr = '0x400080';
     let target = null;
     const xrefsModes = [];
-    let xrefsAttempt = 0;
-    let exerciseXrefsStates = false;
+    let nextXrefsOutcome = 'idle';
     let pendingEmptyXrefs = null;
     const originalExecFile = childProcess.execFile;
     try {
@@ -1657,17 +1656,18 @@ async function run() {
           const cb = typeof options === 'function' ? options : callback;
           const proc = new EventEmitter();
           const mode = String(args[args.indexOf('--mode') + 1] || 'to');
-          if (!exerciseXrefsStates) {
+          const outcome = nextXrefsOutcome;
+          nextXrefsOutcome = 'idle';
+          if (outcome === 'idle') {
             process.nextTick(() => cb?.(null, JSON.stringify({ refs: [], targets: [] }), ''));
             return proc;
           }
           xrefsModes.push(mode);
-          xrefsAttempt += 1;
-          if (xrefsAttempt === 1) {
+          if (outcome === 'empty') {
             pendingEmptyXrefs = () => cb?.(null, JSON.stringify({ refs: [], targets: [] }), '');
             return proc;
           }
-          if (xrefsAttempt === 2) {
+          if (outcome === 'error') {
             process.nextTick(() => cb?.(new Error('Xrefs temporairement indisponibles'), '', 'xrefs unavailable'));
             return proc;
           }
@@ -1698,9 +1698,9 @@ async function run() {
         await hub.openPanel('static');
         await hub.openStaticTab('code', 'disasm');
 
-        exerciseXrefsStates = true;
         await hub.goToAddressInput().fill(targetAddr);
         await hub.xrefsMode().fill('from');
+        nextXrefsOutcome = 'empty';
         await hub.xrefsButton().clickDom();
         await hub.xrefsResult().waitForText('Analyse des références croisées', 30000);
         const pendingStartedAt = Date.now();
@@ -1711,10 +1711,12 @@ async function run() {
         pendingEmptyXrefs();
         await hub.xrefsResult().waitForText('ne référence aucune adresse', 30000);
 
+        nextXrefsOutcome = 'error';
         await hub.xrefsButton().clickDom();
         await hub.xrefsResult().waitForText('Xrefs temporairement indisponibles', 30000);
 
         await hub.xrefsMode().fill('to');
+        nextXrefsOutcome = 'success';
         await hub.xrefsButton().clickDom();
         await hub.xrefsResult().waitForText(`Références vers ${targetAddr}`, 30000);
         await hub.xrefsResult().waitForText('caller_e2e', 30000);
@@ -1725,6 +1727,7 @@ async function run() {
         await hub.annotationAddress().waitForAttribute('data-addr', sourceAddr, 30000);
 
         await hub.xrefsMode().fill('from');
+        nextXrefsOutcome = 'success';
         await hub.xrefsButton().clickDom();
         await hub.xrefsResult().waitForText(`Références depuis ${sourceAddr}`, 30000);
         await hub.xrefsResult().waitForText(targetAddr, 30000);
