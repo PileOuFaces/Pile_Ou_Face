@@ -1168,7 +1168,7 @@ async function run() {
         assert.equal(pluginInvocations, 0, 'a plugin awaiting consent must not execute');
 
         await hub.pluginConsentRefuseButton().click();
-        await hub.pluginConsentRefuseButton().waitFor({ state: 'visible', timeout: 30000 });
+        await hub.pluginConsentRefuseButton().waitForEnabled(30000);
         assert.equal(refusalCalls, 1, 'refusal must be triggered once from the real UI');
         assert.equal(consentCalls, 0, 'refusing must not authorize the plugin');
         assert.equal(pluginInvocations, 0, 'refusing consent must not execute the plugin');
