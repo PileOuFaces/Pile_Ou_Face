@@ -1,6 +1,6 @@
 {
   "issue": 247,
-  "updated": "2026-08-09",
+  "updated": "2026-08-15",
   "journeys": [
     { "id": "startup.empty", "status": "covered", "test": "guides the user from an empty workspace without enabling unavailable actions" },
     { "id": "analysis.load", "status": "covered", "test": "restores the selected binary and visible analysis after reopening the hub" },
@@ -23,8 +23,10 @@
     { "id": "plugins.install-consent", "status": "covered", "test": "refuses then authorizes a plugin, and runs scripts through the real UI" },
     { "id": "scripts.success-error", "status": "covered", "test": "refuses then authorizes a plugin, and runs scripts through the real UI" },
     { "id": "settings.persistence", "status": "covered", "test": "persists the simplified static interface across a hub reload" },
-    { "id": "recovery.long-operation", "status": "covered", "test": "recovers from an auto-triage provider timeout through the real UI" },
-    { "id": "guardrail.pr-template", "status": "gap", "reason": "The pull-request template does not yet require an impacted journey and E2E decision." },
-    { "id": "guardrail.feature-issue-template", "status": "gap", "reason": "Feature issues do not yet require observable UI acceptance criteria." }
+    { "id": "recovery.long-operation", "status": "covered", "test": "recovers from an auto-triage provider timeout through the real UI" }
+  ],
+  "guardrails": [
+    { "id": "guardrail.pr-template", "status": "covered", "evidence": ".github/PULL_REQUEST_TEMPLATE.md" },
+    { "id": "guardrail.feature-issue-template", "status": "covered", "evidence": ".github/ISSUE_TEMPLATE/feature.yml" }
   ]
 }
