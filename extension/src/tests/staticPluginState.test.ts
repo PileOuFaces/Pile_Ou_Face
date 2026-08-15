@@ -199,6 +199,100 @@ describe("staticHandlers plugin bridge", () => {
     expect(spawn.calledOnce).to.equal(true);
   });
 
+  it("runs one consented AI follow-up and resumes the same plugin feature", async () => {
+    const execFile = sinon.stub().callsFake((_pythonBin, args, _options, callback) => {
+      if (args.some((arg) => String(arg).endsWith("ai_consent.py")) && args.includes("--check")) {
+        callback(null, JSON.stringify({ consented: true }), "");
+        return;
+      }
+      callback(new Error(`unexpected execFile args: ${args.join(" ")}`));
+    });
+    const invocations = [];
+    let providerPrompt = "";
+    const spawn = sinon.stub().callsFake((_pythonBin, args) => {
+      const proc = new EventEmitter();
+      proc.stdout = new EventEmitter();
+      proc.stderr = new EventEmitter();
+      proc.kill = sinon.spy();
+      proc.stdin = {
+        write: sinon.spy(),
+        end: (value = "") => { providerPrompt += String(value || ""); },
+      };
+      process.nextTick(() => {
+        if (args.some((arg) => String(arg).endsWith("ai_provider.py"))) {
+          proc.stdout.emit("data", JSON.stringify({
+            ok: true,
+            text: "AI explanation",
+            usage: { output_tokens: 12 },
+          }));
+          proc.emit("close", 0);
+          return;
+        }
+        const payloadIndex = args.indexOf("--payload-json");
+        const payload = JSON.parse(args[payloadIndex + 1]);
+        invocations.push(payload);
+        const firstPhase = payload.action !== "ai_resume";
+        proc.stdout.emit("data", JSON.stringify({
+          ok: true,
+          plugin_id: "pof.demo-plugin",
+          command: "demo.scan.run",
+          result: firstPhase
+            ? {
+                ok: true,
+                value: 42,
+                ai_followup: {
+                  version: 1,
+                  prompt: "Explain decoder",
+                  context: { signal: "xor-loop" },
+                  capability: "pof.demo-plugin.ai.explain",
+                },
+              }
+            : {
+                ...payload.partial_result,
+                ai_assistance: {
+                  ...payload.ai_request,
+                  text: payload.ai_result.text,
+                  usage: payload.ai_result.usage,
+                },
+              },
+        }));
+        proc.emit("close", 0);
+      });
+      return proc;
+    });
+    const postMessage = sinon.spy();
+    const handlers = createHandlers(loadStaticHandlers(execFile, spawn), postMessage);
+
+    await handlers.hubPluginInvoke({
+      requestId: "req-ai",
+      feature: "demo_feature",
+      payload: { mode: "deep" },
+    });
+
+    const resultMessage = postMessage.getCalls().map((call) => call.args[0])
+      .find((message) => message.type === "hubPluginResult");
+    expect(invocations, JSON.stringify(resultMessage)).to.have.length(2);
+    expect(invocations[1]).to.deep.include({
+      action: "ai_resume",
+      partial_result: { ok: true, value: 42 },
+    });
+    expect(invocations[1].original_payload).to.include({
+      mode: "deep",
+      workspaceRoot: "/workspace",
+    });
+    expect(invocations[1].ai_result).to.deep.equal({
+      text: "AI explanation",
+      usage: { output_tokens: 12 },
+    });
+    expect(providerPrompt).to.equal("Explain decoder");
+    expect(resultMessage.result.ai_assistance).to.deep.equal({
+      version: 1,
+      capability: "pof.demo-plugin.ai.explain",
+      text: "AI explanation",
+      usage: { output_tokens: 12 },
+    });
+  });
+
   it("grants plugin consent then re-fetches the plugin state", async () => {
     const execFile = sinon.stub().callsFake((_pythonBin, args, _options, callback) => {
       if (args.includes("consent-grant")) {

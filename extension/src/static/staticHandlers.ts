@@ -28,6 +28,11 @@ const { recordRuntimeEvent } = require('../shared/runtimeAudit');
 
 const AUTH_STRICT_LICENSE_ENV = 'BINHOST_DISABLE_LICENSE_FALLBACK';
 const AUTH_CONTENT_KEYS_STDIN_ENV = 'BINHOST_CONTENT_KEYS_STDIN';
+const PLUGIN_AI_FOLLOWUP_VERSION = 1;
+const PLUGIN_AI_MAX_PROMPT_BYTES = 16 * 1024;
+const PLUGIN_AI_MAX_CONTEXT_BYTES = 256 * 1024;
+const PLUGIN_AI_MAX_OUTPUT_BYTES = 1024 * 1024;
+const PLUGIN_AI_MAX_TOKENS = 2048;
 const DOCKER_IMAGE_UPDATE_CACHE_TTL_MS = 10 * 60 * 1000;
 const _dockerImageUpdateCache = new Map();
 let _dockerRuntimeStatusCache = null;
@@ -461,7 +466,7 @@ function staticHandlers(config) {
     let provider = String(message.provider || pythonEnv.POF_DEFAULT_AI_PROVIDER || 'ollama').trim() || 'ollama';
     let model = String(message.model || '').trim();
     const configuredModel = String(
-      vscode.workspace.getConfiguration('pileOuFace').get('autoTriage.model', '') || '',
+      vscode.workspace?.getConfiguration?.('pileOuFace')?.get?.('autoTriage.model', '') || '',
     ).trim();
     if (configuredModel) {
       const atIdx = configuredModel.indexOf('@');
@@ -781,10 +786,90 @@ function staticHandlers(config) {
     ...extra,
   });
 
+  const validatePluginAiFollowup = (value, pluginId) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('ai_followup doit être un objet');
+    }
+    if (value.version !== PLUGIN_AI_FOLLOWUP_VERSION) {
+      throw new Error(`Version ai_followup non supportée: ${String(value.version)}`);
+    }
+    const prompt = String(value.prompt || '').trim();
+    const capability = String(value.capability || '').trim();
+    const contextValue = value.context;
+    if (!prompt) throw new Error('ai_followup.prompt est requis');
+    if (Buffer.byteLength(prompt, 'utf8') > PLUGIN_AI_MAX_PROMPT_BYTES) {
+      throw new Error(`ai_followup.prompt dépasse ${PLUGIN_AI_MAX_PROMPT_BYTES} octets`);
+    }
+    if (!contextValue || typeof contextValue !== 'object' || Array.isArray(contextValue)) {
+      throw new Error('ai_followup.context doit être un objet JSON');
+    }
+    const context = JSON.stringify(contextValue);
+    if (Buffer.byteLength(context, 'utf8') > PLUGIN_AI_MAX_CONTEXT_BYTES) {
+      throw new Error(`ai_followup.context dépasse ${PLUGIN_AI_MAX_CONTEXT_BYTES} octets`);
+    }
+    if (!pluginId || !capability.startsWith(`${pluginId}.ai.`)) {
+      throw new Error(`ai_followup.capability doit appartenir au namespace ${pluginId || '(plugin inconnu)'}.ai.*`);
+    }
+    return { version: PLUGIN_AI_FOLLOWUP_VERSION, prompt, context, capability };
+  };
+
+  const callPluginAiProvider = (followup, { provider, model }) => new Promise((resolve, reject) => {
+    const scriptPath = path.join(extensionPath, 'backends/mcp/ai_provider.py');
+    const args = [scriptPath, 'call', '--provider', provider, '--context', followup.context,
+      '--max-tokens', String(PLUGIN_AI_MAX_TOKENS)];
+    if (model) args.push('--model', model);
+    const proc = cp.spawn(getPythonExecutable(), args, {
+      cwd: root,
+      env: buildPythonEnv(),
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn(value);
+    };
+    const timer = setTimeout(() => {
+      try { proc.kill('SIGTERM'); } catch (_) { /* process may already have exited */ }
+      finish(reject, new Error('Timeout appel IA plugin après 120000 ms'));
+    }, 120000);
+    proc.stdout?.on('data', (chunk) => {
+      stdout += chunk.toString('utf8');
+      if (Buffer.byteLength(stdout, 'utf8') > PLUGIN_AI_MAX_OUTPUT_BYTES) {
+        try { proc.kill('SIGTERM'); } catch (_) { /* process may already have exited */ }
+        finish(reject, new Error(`Réponse IA plugin dépasse ${PLUGIN_AI_MAX_OUTPUT_BYTES} octets`));
+      }
+    });
+    proc.stderr?.on('data', (chunk) => { stderr += chunk.toString('utf8'); });
+    proc.on('error', (error) => finish(reject, error));
+    proc.on('close', (code) => {
+      if (code) {
+        finish(reject, new Error(stderr || `Provider IA exited with code ${code}`));
+        return;
+      }
+      try {
+        const response = JSON.parse(stdout || '{}');
+        if (response.ok !== true) throw new Error(response.error || 'Réponse provider IA invalide');
+        finish(resolve, {
+          text: String(response.text || ''),
+          usage: response.usage && typeof response.usage === 'object' ? response.usage : {},
+        });
+      } catch (error) {
+        finish(reject, error);
+      }
+    });
+    proc.stdin?.end(followup.prompt, 'utf8');
+  });
+
   const invokePluginFeature = async (featureId, payload, {
     timeout = 120000,
     onProgress = null,
   } = {}) => {
+    let activePluginId = '';
+    let aiFollowupStarted = false;
     try {
       const response = await runPluginRuntimeStreaming([
         'invoke-feature',
@@ -793,7 +878,61 @@ function staticHandlers(config) {
         JSON.stringify(payload || {}),
       ], { timeout, onProgress });
       if (response?.ok === true) {
-        return { pluginId: String(response.plugin_id || ''), result: response.result ?? {} };
+        const pluginId = String(response.plugin_id || '');
+        activePluginId = pluginId;
+        const firstResult = response.result ?? {};
+        if (!firstResult?.ai_followup) return { pluginId, result: firstResult };
+
+        aiFollowupStarted = true;
+        const followup = validatePluginAiFollowup(firstResult.ai_followup, pluginId);
+        const pythonEnv = buildPythonEnv();
+        const { provider, model } = resolveAutoTriageProviderModel({}, pythonEnv);
+        let consented = false;
+        try {
+          const { stdout } = await runPython(['backends/mcp/ai_consent.py', '--provider', provider, '--check']);
+          consented = JSON.parse(stdout).consented === true;
+        } catch (error) {
+          if (typeof error?.stdout === 'string' && error.stdout.trim()) {
+            try { consented = JSON.parse(error.stdout).consented === true; } catch (_) { consented = false; }
+          } else {
+            throw new Error(`Vérification du consentement IA impossible: ${error.message || error}`);
+          }
+        }
+        if (!consented) {
+          const choice = await vscode.window.showWarningMessage(
+            `Le plugin ${pluginId} demande l’envoi de données à "${provider}" pour ${followup.capability}. Continuer ?`,
+            { modal: true },
+            'Autoriser',
+          );
+          if (choice !== 'Autoriser') throw new Error('Appel IA plugin annulé : consentement refusé.');
+          await runPython(['backends/mcp/ai_consent.py', '--provider', provider, '--grant']);
+        }
+
+        const aiResult = await callPluginAiProvider(followup, { provider, model });
+        const partialResult = { ...firstResult };
+        delete partialResult.ai_followup;
+        const resumeResponse = await runPluginRuntimeStreaming([
+          'invoke-feature',
+          featureId,
+          '--payload-json',
+          JSON.stringify({
+            action: 'ai_resume',
+            ai_result: aiResult,
+            ai_request: { version: followup.version, capability: followup.capability },
+            original_payload: payload || {},
+            partial_result: partialResult,
+          }),
+        ], { timeout, onProgress });
+        if (resumeResponse?.ok !== true) {
+          throw new Error(String(resumeResponse?.error || `Échec reprise IA plugin: ${featureId}`));
+        }
+        if (resumeResponse.result?.ai_followup) {
+          throw new Error('Une seule relance ai_followup est autorisée par invocation');
+        }
+        return {
+          pluginId: String(resumeResponse.plugin_id || pluginId),
+          result: resumeResponse.result ?? {},
+        };
       }
       const available = Array.isArray(response?.available_commands) ? response.available_commands : [];
       if (available.length === 0) {
@@ -810,6 +949,17 @@ function staticHandlers(config) {
         },
       };
     } catch (error) {
+      if (aiFollowupStarted) {
+        return {
+          pluginId: activePluginId,
+          result: {
+            ok: false,
+            code: 'plugin_ai_followup_failed',
+            error: String(error?.message || error || 'Échec du suivi IA plugin'),
+            feature: featureId,
+          },
+        };
+      }
       return { pluginId: '', result: buildPluginRequiredPayload(featureId) };
     }
   };

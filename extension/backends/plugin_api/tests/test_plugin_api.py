@@ -52,6 +52,37 @@ class TestPluginApiImports(unittest.TestCase):
 
         self.assertTrue(callable(get_raw_arch_info))
 
+    def test_request_ai_followup_builds_versioned_envelope(self):
+        from backends.plugin_api import request_ai_followup
+
+        result = request_ai_followup(
+            "Explain the suspicious decoder",
+            {"function": "decode_config", "signals": ["xor-loop"]},
+            "pof.malware-triage-pro.ai.deobfuscate",
+        )
+
+        self.assertEqual(
+            result,
+            {
+                "ai_followup": {
+                    "version": 1,
+                    "prompt": "Explain the suspicious decoder",
+                    "context": {"function": "decode_config", "signals": ["xor-loop"]},
+                    "capability": "pof.malware-triage-pro.ai.deobfuscate",
+                }
+            },
+        )
+
+    def test_request_ai_followup_rejects_invalid_input(self):
+        from backends.plugin_api import request_ai_followup
+
+        with self.assertRaises(ValueError):
+            request_ai_followup("", {}, "pof.demo.ai.summary")
+        with self.assertRaises(ValueError):
+            request_ai_followup("prompt", {}, "")
+        with self.assertRaises(TypeError):
+            request_ai_followup("prompt", [], "pof.demo.ai.summary")
+
     def test_all_declares_exact_symbol_set(self):
         """__all__ must contain exactly the expected stable symbols — no more, no less."""
         mod = importlib.import_module("backends.plugin_api")
@@ -64,6 +95,8 @@ class TestPluginApiImports(unittest.TestCase):
             "detect_binary_arch_from_path",
             "get_feature_support",
             "get_raw_arch_info",
+            "AI_FOLLOWUP_VERSION",
+            "request_ai_followup",
         }
         self.assertEqual(set(mod.__all__), expected)
 

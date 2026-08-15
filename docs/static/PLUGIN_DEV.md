@@ -844,6 +844,55 @@ répliquer l'outil de compilation/packaging premium : un plugin ouvert n'a pas
 besoin de compilation à bytecode ni de chiffrement, et un dossier brut clair
 est plus simple à auditer pour un utilisateur prudent qu'un binaire zippé.
 
+## Suivi IA délégué au host (`XSYNC-AI-001`)
+
+Un plugin peut demander au host **un seul** appel à son provider IA configuré,
+sans recevoir les clés ni importer l'infrastructure IA interne. Il ajoute à son
+résultat partiel l'enveloppe produite par
+`request_ai_followup(prompt, context, capability)` :
+
+```json
+{
+  "ok": true,
+  "proof_dossiers": [],
+  "ai_followup": {
+    "version": 1,
+    "prompt": "Priorise les hypothèses étayées par ces signaux.",
+    "context": {"signals": ["source-to-sink"]},
+    "capability": "pof.vulnerability-audit-pro.ai.hypothesis"
+  }
+}
+```
+
+Le host valide l'enveloppe, demande le consentement pour son provider actif,
+appelle ce provider, puis invoque une seconde fois **la même feature** avec :
+
+```json
+{
+  "action": "ai_resume",
+  "ai_result": {"text": "...", "usage": {}},
+  "ai_request": {"version": 1, "capability": "pof.vulnerability-audit-pro.ai.hypothesis"},
+  "original_payload": {},
+  "partial_result": {"ok": true, "proof_dossiers": []}
+}
+```
+
+Règles et limites :
+
+- `capability` doit suivre `<plugin_id>.ai.<usage>` ;
+- `prompt` est limité à 16 KiB et `context` à un objet JSON de 256 KiB ;
+- le host limite la génération à 2 048 tokens et la sortie à 1 MiB ;
+- une seule relance est autorisée : un second `ai_followup` est refusé ;
+- la phase `ai_resume` doit fusionner `ai_result` dans le résultat partiel sans
+  refaire l'analyse coûteuse ;
+- provider, modèle, consentement et secrets restent exclusivement côté host ;
+- un refus, une enveloppe invalide, un timeout ou une erreur provider produit
+  `code: "plugin_ai_followup_failed"` ; aucun prompt/contexte n'est journalisé.
+
+La limite de coût v1 est volontairement locale à chaque invocation explicite :
+un appel provider maximum, plafonné à 2 048 tokens. Le champ `usage` renvoyé par
+le provider est transmis à la phase de reprise pour l'affichage et l'audit.
+
 ## Limites actuelles du host
 
 Le host open source ne supporte pas encore :
@@ -857,9 +906,10 @@ Le host open source ne supporte pas encore :
 
 ### Surface Python au-delà de `backends.plugin_api`
 
-`backends.plugin_api` (7 symboles stables : `get_logger`, `configure_logging`,
+`backends.plugin_api` (10 symboles stables : `get_logger`, `configure_logging`,
 `build_offset_to_vaddr`, `ArchInfo`, `FeatureSupport`,
-`detect_binary_arch_from_path`, `get_feature_support`, `get_raw_arch_info`) est
+`detect_binary_arch_from_path`, `get_feature_support`, `get_raw_arch_info`,
+`AI_FOLLOWUP_VERSION`, `request_ai_followup`) est
 la **seule** surface Python dont la stabilité est garantie entre versions du
 host. D'autres modules `backends.*` existent et fonctionnent (désassemblage,
 décompilation, gestion de règles YARA…), mais leur usage n'est pas couvert par
