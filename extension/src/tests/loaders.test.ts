@@ -738,7 +738,7 @@ describe('loaders — hubLoadXrefs', () => {
     expect(posted[0].mode).to.equal('to');
   });
 
-  it('posts empty xrefs and logs when compute throws', async () => {
+  it('posts a visible xrefs error and logs when compute throws', async () => {
     const { panel, posted } = makePanel();
     const { logChannel, lines } = makeLogChannel();
     const runPythonJson = sinon.stub().rejects(new Error('xrefs error'));
@@ -755,6 +755,7 @@ describe('loaders — hubLoadXrefs', () => {
     await loaders.hubLoadXrefs({ addr: '0x401000', binaryPath: '/repo/demo.bin', mode: 'from' });
 
     expect(posted[0].refs).to.deep.equal([]);
+    expect(posted[0].error).to.equal('xrefs error');
     expect(lines.some((l) => l.includes('[Xrefs]'))).to.equal(true);
   });
 });

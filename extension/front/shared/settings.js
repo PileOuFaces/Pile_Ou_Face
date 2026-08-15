@@ -940,23 +940,30 @@ document.getElementById('btnDecompilerOpenConfig')?.addEventListener('click', ()
 // ── Actualisation automatique quand on ouvre le panneau Options ───────────────
 (function _hookOptionsPanel() {
   let _lastOptionsVisible = false;
+  const refreshOptionsState = () => {
+    const list = document.getElementById('decompilerStatusList');
+    if (list && (list.querySelector('.decompiler-status-loading') || list.children.length === 0)) {
+      vscode.postMessage({ type: 'hubListDecompilers', provider: _getConfiguredDecompilerProvider() });
+    }
+    vscode.postMessage({ type: 'hubLoadPluginState' });
+    vscode.postMessage({ type: 'hubAiProvidersGet' });
+  };
   const observer = new MutationObserver(() => {
     const panel = document.getElementById('panel-options');
     const isVisible = panel && !panel.classList.contains('hidden') && panel.style.display !== 'none';
     if (isVisible && !_lastOptionsVisible) {
-      // Vient d'être ouvert
-      const list = document.getElementById('decompilerStatusList');
-      if (list && (list.querySelector('.decompiler-status-loading') || list.children.length === 0)) {
-        vscode.postMessage({ type: 'hubListDecompilers', provider: _getConfiguredDecompilerProvider() });
-      }
-      vscode.postMessage({ type: 'hubLoadPluginState' });
-      vscode.postMessage({ type: 'hubAiProvidersGet' });
+      refreshOptionsState();
     }
     _lastOptionsVisible = !!isVisible;
   });
   // Observer le conteneur principal pour détecter les changements de visibilité
   const root = document.querySelector('.hub-panels') || document.body;
   observer.observe(root, { attributes: true, subtree: true, attributeFilter: ['class', 'style'] });
+  const initialPanel = document.getElementById('panel-options');
+  if (initialPanel && !initialPanel.classList.contains('hidden') && initialPanel.style.display !== 'none') {
+    _lastOptionsVisible = true;
+    refreshOptionsState();
+  }
 })();
 
 // ─── Fin gestionnaire décompilateurs ───────────────────────────────────────

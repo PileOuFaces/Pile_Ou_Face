@@ -613,6 +613,7 @@ async function run() {
         const hub = new HubPage(target);
 
         await hub.openPanel('options');
+        await target.locator('html').waitForAttribute('data-hub-ai-providers-ready', 'true', 30000);
         await hub.aiProviderCard('openai').waitFor({ state: 'visible', timeout: 30000 });
         await hub.aiProviderStatus('openai').waitForText('Non configuré', 30000);
         await hub.aiProviderKey('openai').fill('e2e-cloud-key');
@@ -1168,7 +1169,7 @@ async function run() {
         assert.equal(pluginInvocations, 0, 'a plugin awaiting consent must not execute');
 
         await hub.pluginConsentRefuseButton().click();
-        await hub.pluginConsentRefuseButton().waitFor({ state: 'visible', timeout: 30000 });
+        await hub.pluginConsentRefuseButton().waitForEnabled(30000);
         assert.equal(refusalCalls, 1, 'refusal must be triggered once from the real UI');
         assert.equal(consentCalls, 0, 'refusing must not authorize the plugin');
         assert.equal(pluginInvocations, 0, 'refusing consent must not execute the plugin');
@@ -1237,8 +1238,7 @@ async function run() {
       await hub.typedDataStructSelect().waitForText('E2EUiType', 30000);
       await hub.typedDataStructSelect().fill('E2EUiType');
       await hub.typedDataStructOffset().fill('0x0');
-      await hub.typedDataApplyStructButton().clickDom();
-      await hub.typedDataStructStatus().waitForText('struct E2EUiType @ +0x0', 30000);
+      await hub.applyTypedStruct('struct E2EUiType @ +0x0');
       await hub.typedDataContent().waitForText('E2EUiType', 30000);
       await hub.typedDataContent().waitForText('x', 30000);
       await hub.typedDataContent().waitForText('y', 30000);
@@ -1637,13 +1637,16 @@ async function run() {
     }
   }));
 
-  suite.addTest(new Mocha.Test('navigates incoming and outgoing xrefs through the real UI', async () => {
+  suite.addTest(new Mocha.Test('shows loading, empty, error and success xrefs states through the real UI', async () => {
     const [fixture] = readFixtureSpecs();
     assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
     const targetAddr = String(fixture.entry || '0x400078');
     const sourceAddr = '0x400080';
+    const emptyAddr = '0xdead0001';
+    const errorAddr = '0xdead0002';
     let target = null;
     const xrefsModes = [];
+    let pendingEmptyXrefs = null;
     const originalExecFile = childProcess.execFile;
     try {
       await withChildProcessMocks({
@@ -1654,7 +1657,16 @@ async function run() {
           const cb = typeof options === 'function' ? options : callback;
           const proc = new EventEmitter();
           const mode = String(args[args.indexOf('--mode') + 1] || 'to');
+          const addr = String(args[args.indexOf('--addr') + 1] || '').toLowerCase();
           xrefsModes.push(mode);
+          if (addr === emptyAddr) {
+            pendingEmptyXrefs = () => cb?.(null, JSON.stringify({ refs: [], targets: [] }), '');
+            return proc;
+          }
+          if (addr === errorAddr) {
+            process.nextTick(() => cb?.(new Error('Xrefs temporairement indisponibles'), '', 'xrefs unavailable'));
+            return proc;
+          }
           const payload = mode === 'from'
             ? { refs: [], targets: [targetAddr] }
             : {
@@ -1682,6 +1694,22 @@ async function run() {
         await hub.openPanel('static');
         await hub.openStaticTab('code', 'disasm');
 
+        await hub.goToAddressInput().fill(emptyAddr);
+        await hub.xrefsMode().fill('from');
+        await hub.xrefsButton().clickDom();
+        await hub.xrefsResult().waitForText('Analyse des références croisées', 30000);
+        const pendingStartedAt = Date.now();
+        while (!pendingEmptyXrefs && Date.now() - pendingStartedAt < 5000) {
+          await sleep(10);
+        }
+        assert.ok(pendingEmptyXrefs, 'the loading state must be observed before resolving the backend request');
+        pendingEmptyXrefs();
+        await hub.xrefsResult().waitForText('ne référence aucune adresse', 30000);
+
+        await hub.goToAddressInput().fill(errorAddr);
+        await hub.xrefsButton().clickDom();
+        await hub.xrefsResult().waitForText('Xrefs temporairement indisponibles', 30000);
+
         await hub.goToAddressInput().fill(targetAddr);
         await hub.xrefsMode().fill('to');
         await hub.xrefsButton().clickDom();
@@ -1698,7 +1726,7 @@ async function run() {
         await hub.xrefsResult().waitForText(`Références depuis ${sourceAddr}`, 30000);
         await hub.xrefsResult().waitForText(targetAddr, 30000);
         assert.ok(xrefsModes.includes('to'), 'an incoming xrefs lookup must execute');
-        assert.ok(xrefsModes.includes('from'), 'an outgoing xrefs lookup must execute');
+        assert.ok(xrefsModes.includes('from'), 'empty, error and successful outgoing xrefs lookups must execute');
       });
     } catch (error) {
       const artifacts = await captureUiFailure(
@@ -2360,7 +2388,7 @@ async function run() {
   }));
 
   if (['1', 'true', 'yes'].includes(String(process.env.POF_E2E_UI_ONLY || '').toLowerCase())) {
-    mocha.grep(/real webview controls|real confirmation UI|restores it from cache through the real UI|binary analysis backend error|restores the selected binary and visible analysis|incoming and outgoing xrefs through the real UI/);
+    mocha.grep(/real webview controls|real confirmation UI|restores both caches through the real UI|binary analysis backend error|restores the selected binary and visible analysis|loading, empty, error and success xrefs states through the real UI/);
   }
 
   return new Promise((resolve, reject) => {

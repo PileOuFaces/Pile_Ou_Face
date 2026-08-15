@@ -546,6 +546,7 @@ class HubPage {
   async selectInterfaceMode(mode) {
     const button = this.interfaceModeButton(mode);
     const input = this.interfaceModeInput();
+    await this.target.locator('html').waitForAttribute('data-hub-settings-ready', 'true', DEFAULT_TIMEOUT_MS);
     const deadline = Date.now() + DEFAULT_TIMEOUT_MS;
     while (Date.now() < deadline) {
       try {
@@ -557,6 +558,14 @@ class HubPage {
         await Promise.all([
           input.waitForValue(mode, 750),
           button.waitForAttribute('aria-pressed', 'true', 750),
+        ]);
+        // A late hubSettings response can briefly restore the previous value
+        // after both controls first look correct. Require the selection to stay
+        // settled beyond the settings debounce before accepting it.
+        await new Promise((resolve) => setTimeout(resolve, 750));
+        await Promise.all([
+          input.waitForValue(mode, 1),
+          button.waitForAttribute('aria-pressed', 'true', 1),
         ]);
         return;
       } catch {
@@ -620,6 +629,21 @@ class HubPage {
 
   typedDataApplyStructButton() {
     return this.target.locator('#btnTypedApplyStruct');
+  }
+
+  async applyTypedStruct(expectedStatus) {
+    const button = this.typedDataApplyStructButton();
+    const status = this.typedDataStructStatus();
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await button.clickDom();
+      try {
+        await status.waitForText(expectedStatus, 10000);
+        return;
+      } catch {
+        // Retry the idempotent preview request if a webview refresh dropped it.
+      }
+    }
+    await status.waitForText(expectedStatus, 1);
   }
 
   typedDataStructStatus() {
@@ -713,9 +737,29 @@ class HubPage {
   }
 
   async openStaticTab(groupId, tabId) {
-    await this.group(groupId).click();
-    await this.expectActive(this.group(groupId), `group ${groupId}`);
+    const group = this.group(groupId);
     const subTab = this.subTab(tabId);
+    await group.click();
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        await Promise.all([
+          group.waitForAttribute('class', 'active', 750),
+          subTab.waitFor({ state: 'visible', timeout: 750 }),
+        ]);
+        break;
+      } catch {
+        if (attempt === 0) {
+          // A previous journey may persist simple mode or a reduced feature set.
+          // Restore the complete static workspace before retrying this journey.
+          await this.selectInterfaceMode('advanced');
+          await this.staticFeaturesAllButton().waitForEnabled();
+          await this.staticFeaturesAllButton().clickDom();
+          await this.openPanel('static');
+        }
+      }
+      await group.clickDom();
+    }
+    await subTab.waitFor({ state: 'visible', timeout: 1 });
     await subTab.click();
     try {
       await subTab.waitForAttribute('class', 'active', 500);
