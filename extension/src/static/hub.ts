@@ -269,7 +269,11 @@ function createHub(config) {
     const root = resolveProjectRoot(folders[0].uri.fsPath);
     const backendRoot = getExtensionPath() || root;
     const pythonExe = detectPythonExecutable(root);
-    const pythonEnv = buildRuntimeEnv(root, storageDir);
+    const pythonEnv = buildRuntimeEnv(
+      root,
+      storageDir,
+      globalDir ? { POF_GLOBAL_STORAGE_DIR: globalDir } : {},
+    );
     const getAuthServerUrl = () => {
       try {
         const authConfig = vscode.workspace.getConfiguration('pileOuFace').inspect('authServerUrl');

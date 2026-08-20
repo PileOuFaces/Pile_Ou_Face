@@ -457,7 +457,11 @@ function staticHandlers(config) {
     const localPaths = settings.decompilerLocalPaths && typeof settings.decompilerLocalPaths === 'object'
       ? settings.decompilerLocalPaths
       : {};
-    const env = buildRuntimeEnv(root, storageDir);
+    const env = buildRuntimeEnv(
+      root,
+      storageDir,
+      globalDir ? { POF_GLOBAL_STORAGE_DIR: globalDir } : {},
+    );
     const ghidraPath = String(localPaths.ghidra || '').trim();
     if (ghidraPath) env.GHIDRA_INSTALL_DIR = ghidraPath;
     return env;

@@ -464,6 +464,8 @@ python -m backends.plugins.runtime machine-id
 | Variable | Description |
 |---|---|
 | `POF_PLUGIN_PATH` | Chemins supplémentaires de découverte (séparateur `:`) |
+| `POF_STORAGE_DIR` | Stockage privé du workspace courant |
+| `POF_GLOBAL_STORAGE_DIR` | Stockage privé partagé par tous les workspaces de l'installation (`XSYNC-FSIM-001`) |
 
 ```bash
 POF_PLUGIN_PATH=/mes/plugins:/autres/plugins python -m backends.plugins.runtime list
@@ -481,6 +483,10 @@ BINHOST_PLUGIN_PATH=<context.storageUri>/plugins
 
 Pour les tests CLI hors VS Code, définir `POF_PLUGIN_PATH` ou `BINHOST_PLUGIN_PATH`
 vers le dossier de plugins à tester.
+
+Le host transmet aussi `POF_GLOBAL_STORAGE_DIR` aux commandes de plugins. Ce
+contrat additif permet aux plugins de conserver un corpus commun à plusieurs
+workspaces, tout en gardant `POF_STORAGE_DIR` comme fallback de compatibilité.
 
 ---
 

@@ -65,7 +65,7 @@ describe('plugin runtime online key transport — MODE selection', () => {
       path: require('path'),
       '../shared/utils': {
         detectPythonExecutable: () => '/usr/bin/python3',
-        buildRuntimeEnv: () => ({}),
+        buildRuntimeEnv: (_root, _storageDir, extraEnv = {}) => ({ ...extraEnv }),
       },
       '../shared/sharedHandlers': { normalizeRawArchName: (v) => v },
       '../shared/authService': {
@@ -97,6 +97,8 @@ describe('plugin runtime online key transport — MODE selection', () => {
         secrets: {},
       },
       logChannel: null,
+      storageDir: '/workspace-storage',
+      globalDir: '/global-storage',
     });
 
     return { handlers, execFileStub, spawnStub, spawnCalls };
@@ -124,6 +126,7 @@ describe('plugin runtime online key transport — MODE selection', () => {
     const env = runtimeEnv(spawnCalls);
     expect(env).to.have.property('BINHOST_DISABLE_LICENSE_FALLBACK', '1');
     expect(env).to.have.property('BINHOST_CONTENT_KEYS_STDIN', '1');
+    expect(env).to.have.property('POF_GLOBAL_STORAGE_DIR', '/global-storage');
     expect(env).to.not.have.property('POF_CONTENT_KEY_POF_PLUGIN_X');
     expect(env).to.not.have.property('POF_CONTENT_KEY_POF_PLUGIN_Y');
     expect(JSON.parse(runtimeStdin(spawnCalls))).to.deep.equal({
