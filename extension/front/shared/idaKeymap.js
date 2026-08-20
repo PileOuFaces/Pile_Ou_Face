@@ -33,6 +33,9 @@
 
   function focusAnnotation(addr, fieldId) {
     if (!addr || typeof window.focusAnnotationEditor !== 'function') return false;
+    if (!document.getElementById('staticDisasm')?.classList.contains('active')) {
+      window.PileOuFaceHostApi?.navigateTo?.('showGroup', { group: 'code', tab: 'disasm' });
+    }
     window.focusAnnotationEditor(addr, null, { focus: fieldId === 'annotationComment' });
     const field = document.getElementById(fieldId);
     if (!field) return false;

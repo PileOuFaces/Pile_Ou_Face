@@ -46,6 +46,20 @@ class FakeSocket {
 }
 
 describe('VS Code UI E2E driver', () => {
+  it('dispatches physical key down and key up events through CDP', async () => {
+    const socket = new FakeSocket();
+    const target = new CdpTarget(socket);
+    await target.pressKey('x');
+    const requests = socket.sent.map((payload) => JSON.parse(payload));
+    assert.deepEqual(requests.map((request) => request.method), [
+      'Input.dispatchKeyEvent',
+      'Input.dispatchKeyEvent',
+    ]);
+    assert.equal(requests[0].params.type, 'keyDown');
+    assert.equal(requests[0].params.code, 'KeyX');
+    assert.equal(requests[1].params.type, 'keyUp');
+  });
+
   it('builds escaped DOM expressions for selectors', () => {
     const locator = new CdpLocator({}, 'button[data-label="quoted"]');
     const expression = locator.expression('return Boolean(el);');

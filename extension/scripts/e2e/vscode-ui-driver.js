@@ -81,6 +81,23 @@ class CdpTarget {
     return new CdpLocator(this, selector);
   }
 
+  async pressKey(key) {
+    const value = String(key || '');
+    const lower = value.toLowerCase();
+    const keyCode = lower === ';' ? 186 : (lower.length === 1 ? lower.toUpperCase().charCodeAt(0) : 0);
+    const code = lower === ';' ? 'Semicolon' : (lower.length === 1 ? `Key${lower.toUpperCase()}` : value);
+    const params = {
+      key: value,
+      code,
+      text: value.length === 1 ? value : '',
+      unmodifiedText: value.length === 1 ? value : '',
+      windowsVirtualKeyCode: keyCode,
+      nativeVirtualKeyCode: keyCode,
+    };
+    await this.send('Input.dispatchKeyEvent', { type: 'keyDown', ...params });
+    await this.send('Input.dispatchKeyEvent', { type: 'keyUp', ...params, text: '', unmodifiedText: '' });
+  }
+
   close() {
     this.socket.close();
   }

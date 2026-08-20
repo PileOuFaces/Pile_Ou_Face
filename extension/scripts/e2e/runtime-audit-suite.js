@@ -1637,6 +1637,72 @@ async function run() {
     }
   }));
 
+  suite.addTest(new Mocha.Test('uses the IDA keymap through physical webview keystrokes without stealing input', async () => {
+    let target = null;
+    const keymapConfig = vscode.workspace.getConfiguration('pileOuFace');
+    try {
+      const [fixture] = readFixtureSpecs();
+      assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
+      await keymapConfig.update('keymap', 'ida', vscode.ConfigurationTarget.Global);
+      await vscode.commands.executeCommand('pileOuFace.goToAddress');
+      target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+      const hub = new HubPage(target);
+      await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+        type: 'hubUseBinaryPath',
+        binaryPath: fixture.path,
+      });
+      await hub.binaryPath().waitForValue(path.basename(fixture.path), 30000);
+      await hub.openPanel('static');
+      await hub.openStaticTab('code', 'disasm');
+      await hub.entryPointButton().clickDom();
+      await hub.annotationAddress().waitForAttribute('data-addr', '0x', 30000);
+
+      const waitForFocus = async (id, timeoutMs = 5000) => {
+        const startedAt = Date.now();
+        while (Date.now() - startedAt < timeoutMs) {
+          if (await target.evaluate(`document.activeElement?.id === ${JSON.stringify(id)}`)) return;
+          await sleep(50);
+        }
+        throw new Error(`Timed out waiting for keyboard focus on #${id}`);
+      };
+
+      await target.pressKey('n');
+      await waitForFocus('annotationName');
+      await hub.annotationName().fill('ida_guard');
+      await target.pressKey('x');
+      await hub.annotationName().waitForValue('ida_guardx', 5000);
+
+      await target.evaluate('document.activeElement?.blur()');
+      await target.pressKey('g');
+      await waitForFocus('goToAddrInput');
+      await target.evaluate('document.activeElement?.blur()');
+      await target.pressKey('x');
+      await hub.xrefsResult().waitForText('Références', 30000);
+
+      await hub.openStaticTab('code', 'decompile');
+      await target.evaluate('document.activeElement?.blur()');
+      await target.pressKey(';');
+      await waitForFocus('annotationComment');
+      assert.match(String(await hub.subTab('disasm').getAttribute('class') || ''), /\bactive\b/);
+
+      await hub.openPanel('dashboard');
+      await target.evaluate('document.activeElement?.blur()');
+      await target.pressKey('g');
+      assert.notEqual(await target.evaluate('document.activeElement?.id || ""'), 'goToAddrInput');
+    } catch (error) {
+      const artifacts = await captureUiFailure(
+        target,
+        process.env.POF_E2E_ARTIFACTS_DIR,
+        'hub-ida-keymap',
+      );
+      error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
+      throw error;
+    } finally {
+      await keymapConfig.update('keymap', 'default', vscode.ConfigurationTarget.Global);
+      target?.close();
+    }
+  }));
+
   suite.addTest(new Mocha.Test('shows loading, empty, error and success xrefs states through the real UI', async () => {
     const [fixture] = readFixtureSpecs();
     assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
@@ -2388,7 +2454,7 @@ async function run() {
   }));
 
   if (['1', 'true', 'yes'].includes(String(process.env.POF_E2E_UI_ONLY || '').toLowerCase())) {
-    mocha.grep(/real webview controls|real confirmation UI|restores both caches through the real UI|binary analysis backend error|restores the selected binary and visible analysis|loading, empty, error and success xrefs states through the real UI/);
+    mocha.grep(/real webview controls|real confirmation UI|restores both caches through the real UI|binary analysis backend error|restores the selected binary and visible analysis|loading, empty, error and success xrefs states through the real UI|IDA keymap through physical webview keystrokes/);
   }
 
   return new Promise((resolve, reject) => {

@@ -71,4 +71,17 @@ describe('IDA keymap bridge', () => {
     expect(press(app, 'g').defaultPrevented).to.equal(false);
     expect(app.document.activeElement?.id).to.not.equal('goToAddrInput');
   });
+
+  it('reveals the annotation editor when rename or comment starts from decompile', () => {
+    const app = mount();
+    enable(app);
+    app.document.getElementById('staticDisasm').classList.remove('active');
+    app.document.getElementById('staticDecompile').classList.add('active');
+    press(app, ';');
+    expect(app.navigations[0]).to.deep.equal({
+      action: 'showGroup',
+      params: { group: 'code', tab: 'disasm' },
+    });
+    expect(app.document.activeElement.id).to.equal('annotationComment');
+  });
 });
