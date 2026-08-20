@@ -268,6 +268,30 @@ class TestBuildCfg(unittest.TestCase):
         block = next(b for b in cfg["blocks"] if b["addr"] == "0x1000")
         self.assertEqual(block["successors"], ["0x1008"])
 
+    def test_arm_mov_pc_lr_return_preserves_only_conditional_fallthrough(self):
+        unconditional = [
+            {"addr": "0x1000", "text": "mov r0, r1", "line": 1},
+            {"addr": "0x1004", "text": "mov pc, lr", "line": 2},
+            {"addr": "0x1008", "text": "mov r2, r3", "line": 3},
+        ]
+        conditional = [
+            {"addr": "0x2000", "text": "mov r0, r1", "line": 1},
+            {"addr": "0x2004", "text": "movne.w pc, lr", "line": 2},
+            {"addr": "0x2008", "text": "mov r2, r3", "line": 3},
+        ]
+
+        unconditional_cfg = build_cfg(unconditional, arch_hint="arm")
+        conditional_cfg = build_cfg(conditional, arch_hint="arm")
+
+        unconditional_block = next(
+            block for block in unconditional_cfg["blocks"] if block["addr"] == "0x1000"
+        )
+        conditional_block = next(
+            block for block in conditional_cfg["blocks"] if block["addr"] == "0x2000"
+        )
+        self.assertEqual(unconditional_block["successors"], [])
+        self.assertEqual(conditional_block["successors"], ["0x2008"])
+
 
 class TestBuildCfgForFunction(unittest.TestCase):
     """Tests pour build_cfg_for_function."""
