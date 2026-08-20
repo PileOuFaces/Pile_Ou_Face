@@ -110,6 +110,26 @@ class TestCanonicalImport(unittest.TestCase):
         with self.assertRaisesRegex(CanonicalImportError, "SHA-256"):
             import_canonical_document(self.binary, document, cache_path=self.cache)
 
+    def test_accepts_idapython_string_prototype_and_tracks_ida_source(self):
+        fixture = os.path.join(
+            os.path.dirname(__file__), "fixtures", "idapython_canonical_v1.json"
+        )
+        with open(fixture, encoding="utf-8") as stream:
+            document = json.load(stream)
+        document["binary_sha256"] = hashlib.sha256(
+            b"canonical import fixture"
+        ).hexdigest()
+        result = import_canonical_document(
+            self.binary,
+            document,
+            cache_path=self.cache,
+            workspace_root=self.storage,
+        )
+        self.assertEqual(result["types"]["imported"], 2)
+        with AnnotationStore(self.binary, cache_path=self.cache) as store:
+            rows = store.get("0x401000")
+        self.assertTrue(all(row["source"] == "ida" for row in rows))
+
 
 if __name__ == "__main__":
     unittest.main()
