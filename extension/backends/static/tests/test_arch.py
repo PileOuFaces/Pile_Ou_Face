@@ -144,6 +144,12 @@ class TestArchAdapters(unittest.TestCase):
         self.assertTrue(
             arch_module.ARM32_ADAPTER.is_return_instruction("mov", "pc, lr")
         )
+        self.assertTrue(
+            arch_module.ARM32_ADAPTER.is_return_instruction("ldr", "pc, [sp], #4")
+        )
+        self.assertFalse(
+            arch_module.ARM32_ADAPTER.is_return_instruction("ldr", "pc, [r3]")
+        )
         self.assertTrue(arch_module.MIPS_ADAPTER.is_return_instruction("jr", "$ra"))
         self.assertFalse(arch_module.MIPS_ADAPTER.is_return_instruction("jr", "$t9"))
         self.assertTrue(arch_module.SYSZ_ADAPTER.is_return_instruction("br", "%r14"))
@@ -174,6 +180,7 @@ class TestArchAdapters(unittest.TestCase):
             ("pop.w", "{r4, pc}"),
             ("ldmia.w", "sp!, {r4, pc}"),
             ("mov.w", "pc, lr"),
+            ("ldr.w", "pc, [sp], #4"),
         ):
             with self.subTest(mnemonic=mnemonic):
                 self.assertTrue(adapter.is_return_instruction(mnemonic, operands))
@@ -186,6 +193,7 @@ class TestArchAdapters(unittest.TestCase):
             ("popne.w", "{r4, pc}"),
             ("ldmiane", "sp!, {r4, pc}"),
             ("movne.w", "pc, lr"),
+            ("ldrne.w", "pc, [sp], #4"),
         ):
             with self.subTest(mnemonic=mnemonic):
                 self.assertFalse(adapter.is_return_instruction(mnemonic, operands))

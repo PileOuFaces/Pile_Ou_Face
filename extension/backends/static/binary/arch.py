@@ -353,6 +353,8 @@ class ArchAdapter:
                 return True
             if base == "mov" and ops in {"pc,lr", "r15,r14"}:
                 return True
+            if base == "ldr" and re.match(r"^(?:pc|r15),\[(?:sp|r13)(?:,|\])", ops):
+                return True
             if base == "pop" and "pc" in ops:
                 return True
             if base in {"ldm", "ldmia", "ldmfd"} and "pc" in ops:
@@ -374,6 +376,7 @@ class ArchAdapter:
         return bool(
             (base == "bx" and ops == "lr")
             or (base == "mov" and ops in {"pc,lr", "r15,r14"})
+            or (base == "ldr" and re.match(r"^(?:pc|r15),\[(?:sp|r13)(?:,|\])", ops))
             or (base == "pop" and "pc" in ops)
             or (base in {"ldm", "ldmia", "ldmfd"} and "pc" in ops)
         )
