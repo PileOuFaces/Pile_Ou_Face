@@ -79,7 +79,7 @@ def _gcc_compile(tmpdir: str, name: str, source: str, extra_flags: tuple = ()) -
     return binary
 
 
-def _config(**overrides) -> "TraceConfig":
+def _config(**overrides) -> TraceConfig:
     base = {
         "base": 0x400000,
         "stack_base": 0x7FFFFFFDE000,
@@ -109,18 +109,14 @@ def _config(**overrides) -> "TraceConfig":
 
 
 def _trace(binary_path: Path, **config_overrides) -> dict:
-    result = run_pipeline(
-        str(binary_path), None, _config(**config_overrides), None
-    )
+    result = run_pipeline(str(binary_path), None, _config(**config_overrides), None)
     assert result["meta"].get("error") is None, result["meta"].get("error")
     return result
 
 
 def _all_slots(result: dict):
     """Yield (step_key, snapshot, slot) for every slot at every step."""
-    snapshots_by_step = {
-        str(snap.get("step")): snap for snap in result["snapshots"]
-    }
+    snapshots_by_step = {str(snap.get("step")): snap for snap in result["snapshots"]}
     for step, analysis in result["analysisByStep"].items():
         snap = snapshots_by_step.get(step, {})
         for slot in (analysis.get("frame") or {}).get("slots", []):
@@ -128,7 +124,9 @@ def _all_slots(result: dict):
 
 
 def _slots_with_role(result: dict, role: str):
-    return [slot for _step, _snap, slot in _all_slots(result) if slot.get("role") == role]
+    return [
+        slot for _step, _snap, slot in _all_slots(result) if slot.get("role") == role
+    ]
 
 
 @unittest.skipIf(trace_binary is None, UNICORN_SKIP_REASON)
@@ -179,7 +177,8 @@ class TestPointerSlotFragmentation(unittest.TestCase):
         fragmented = [
             slot
             for slot in locals_
-            if slot.get("size") == 4 and slot.get("pointerKind") is None
+            if slot.get("size") == 4
+            and slot.get("pointerKind") is None
             and str(slot.get("valueDisplay") or "").startswith("0x")
         ]
         self.assertFalse(
