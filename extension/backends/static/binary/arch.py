@@ -112,6 +112,24 @@ ARM32_CONDITIONAL_BRANCHES = frozenset(
         "ble",
     }
 )
+ARM32_CONDITION_SUFFIXES = (
+    "eq",
+    "ne",
+    "cs",
+    "hs",
+    "cc",
+    "lo",
+    "mi",
+    "pl",
+    "vs",
+    "vc",
+    "hi",
+    "ls",
+    "ge",
+    "lt",
+    "gt",
+    "le",
+)
 
 X86_DATA_REF_MNEMONICS = frozenset(
     {
@@ -296,8 +314,24 @@ class ArchAdapter:
                 return name
         return None
 
+    def _arm32_base_mnemonic(self, mnemonic: str) -> str:
+        """Remove ARM condition/width suffixes when they decorate an opcode."""
+        normalized = str(mnemonic or "").strip().lower()
+        if self.family != "arm":
+            return normalized
+        if normalized.endswith((".w", ".n")):
+            normalized = normalized[:-2]
+        for suffix in ARM32_CONDITION_SUFFIXES:
+            if normalized.endswith(suffix) and len(normalized) > len(suffix):
+                return normalized[: -len(suffix)]
+        return normalized
+
     def is_call_mnemonic(self, mnemonic: str) -> bool:
-        return mnemonic in self.call_mnemonics
+        normalized = str(mnemonic or "").strip().lower()
+        return normalized in self.call_mnemonics or (
+            self.family == "arm"
+            and self._arm32_base_mnemonic(normalized) in self.call_mnemonics
+        )
 
     def is_return_mnemonic(self, mnemonic: str) -> bool:
         return mnemonic in self.return_mnemonics
@@ -323,6 +357,10 @@ class ArchAdapter:
     def is_conditional_branch_mnemonic(self, mnemonic: str) -> bool:
         if mnemonic in self.conditional_branch_mnemonics:
             return True
+        if self.family == "arm":
+            base = self._arm32_base_mnemonic(mnemonic)
+            if base in {"b", "bx"} and base != mnemonic:
+                return True
         return any(
             mnemonic.startswith(prefix) for prefix in self.conditional_branch_prefixes
         )
@@ -339,7 +377,11 @@ class ArchAdapter:
         return None
 
     def supports_data_ref_mnemonic(self, mnemonic: str) -> bool:
-        return mnemonic in self.data_ref_mnemonics
+        normalized = str(mnemonic or "").strip().lower()
+        return normalized in self.data_ref_mnemonics or (
+            self.family == "arm"
+            and self._arm32_base_mnemonic(normalized) in self.data_ref_mnemonics
+        )
 
     def support_for(self, feature: str) -> FeatureSupport:
         if self.support and feature in self.support:

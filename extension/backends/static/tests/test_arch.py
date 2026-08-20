@@ -146,6 +146,23 @@ class TestArchAdapters(unittest.TestCase):
         self.assertTrue(arch_module.SYSZ_ADAPTER.is_return_instruction("br", "%r14"))
         self.assertFalse(arch_module.SYSZ_ADAPTER.is_return_instruction("br", "%r1"))
 
+    def test_arm32_condition_and_width_suffixes_keep_their_semantics(self):
+        adapter = arch_module.ARM32_ADAPTER
+
+        for mnemonic in ("blne", "blxeq", "blne.w"):
+            with self.subTest(mnemonic=mnemonic):
+                self.assertTrue(adapter.is_call_mnemonic(mnemonic))
+                self.assertEqual(adapter.classify_code_ref_mnemonic(mnemonic), "call")
+
+        for mnemonic in ("bxeq", "bne.w", "ble"):
+            with self.subTest(mnemonic=mnemonic):
+                self.assertTrue(adapter.is_conditional_branch_mnemonic(mnemonic))
+                self.assertEqual(adapter.classify_code_ref_mnemonic(mnemonic), "jcc")
+
+        for mnemonic in ("ldrne", "streq", "ldrne.w"):
+            with self.subTest(mnemonic=mnemonic):
+                self.assertTrue(adapter.supports_data_ref_mnemonic(mnemonic))
+
     def test_extended_prologue_patterns_accept_hex_immediates(self):
         cases = [
             (arch_module.MIPS_ADAPTER, "27bdfff0 addiu sp, sp, -0x10", "addiu sp"),
