@@ -277,6 +277,56 @@ function registerStaticCommands(context, deps, providers) {
   });
   subs.push(sidebarRefresh);
 
+  const importFromGhidra = vscode.commands.registerCommand('pileOuFace.importFromGhidra', async () => {
+    const exportUris = await vscode.window.showOpenDialog({
+      title: 'Choisir l’export canonique Ghidra',
+      canSelectMany: false,
+      openLabel: 'Choisir l’export',
+      filters: { 'Export Pile ou Face': ['json'] },
+    });
+    const importPath = exportUris?.[0]?.fsPath || '';
+    if (!importPath) return;
+    const binaryUris = await vscode.window.showOpenDialog({
+      title: 'Choisir le binaire correspondant',
+      canSelectMany: false,
+      openLabel: 'Importer les données Ghidra',
+    });
+    const binaryPath = binaryUris?.[0]?.fsPath || '';
+    if (!binaryPath) return;
+    const extensionRoot = getExtensionPath() || root;
+    const scriptPath = path.join(extensionRoot, 'backends', 'static', 'annotations', 'canonical_import.py');
+    const args = [scriptPath, '--binary', binaryPath, '--input', importPath];
+    if (storageDir) args.push('--workspace-root', storageDir);
+    try {
+      const stdout = await new Promise((resolve, reject) => {
+        cp.execFile(pythonExe, args, {
+          encoding: 'utf8',
+          cwd: root || extensionRoot,
+          maxBuffer: 4 * 1024 * 1024,
+          timeout: 60000,
+          env: { ...process.env, PYTHONPATH: extensionRoot },
+        }, (err, out) => {
+          if (err) reject(Object.assign(err, { stdout: out }));
+          else resolve(out);
+        });
+      });
+      const result = JSON.parse(String(stdout).trim());
+      if (result.error) throw new Error(result.error);
+      if (refreshSidebar) refreshSidebar(binaryPath);
+      vscode.window.showInformationMessage(
+        `Import Ghidra terminé : ${result.imported} importé(s), ${result.skipped} ignoré(s), ${result.conflicts} conflit(s).`
+      );
+    } catch (err) {
+      let detail = err?.message || String(err);
+      try {
+        const failure = JSON.parse(String(err?.stdout || '').trim());
+        if (failure.error) detail = failure.error;
+      } catch (_) { /* conserver le diagnostic du processus */ }
+      vscode.window.showErrorMessage(`Import Ghidra échoué : ${detail}`);
+    }
+  });
+  subs.push(importFromGhidra);
+
   const goToSymbolInDisasm = vscode.commands.registerCommand('pileOuFace.goToSymbolInDisasm', async (addr, binaryPath) => {
     if (!addr || !root) return;
     const absPath = path.isAbsolute(binaryPath) ? binaryPath : path.join(root, binaryPath);

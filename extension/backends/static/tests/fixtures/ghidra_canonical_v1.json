@@ -1,0 +1,23 @@
+{
+  "format": "pile-ou-face.canonical-import/v1",
+  "source": { "tool": "ghidra", "program": "sample.bin" },
+  "binary_sha256": "__FIXTURE_SHA256__",
+  "functions": [
+    {
+      "addr": "0x401000",
+      "name": "main",
+      "comment": "entry",
+      "prototype": {
+        "fields": [
+          { "name": "return", "type": "int", "type_kind": "primitive", "pointer_level": 0 }
+        ]
+      }
+    }
+  ],
+  "comments": [{ "addr": "0x401010", "type": "plate", "text": "check" }],
+  "bookmarks": [{ "addr": "0x401020", "label": "interesting" }],
+  "types": [
+    { "name": "Mode", "kind": "enum", "values": [{ "name": "READY", "value": 1 }] },
+    { "name": "Unsupported", "kind": "dynamic" }
+  ]
+}

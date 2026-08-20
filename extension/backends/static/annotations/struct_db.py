@@ -186,6 +186,18 @@ class StructDb:
                 "definitions": definitions,
             }
 
+    def load_import_sources(self, binary: str) -> dict[str, str]:
+        """Return per-definition importer labels used for conflict arbitration."""
+        if not binary or not os.path.isfile(self.path):
+            return {}
+        with self._connect() as connection:
+            prefix = "import_source:"
+            rows = connection.execute(
+                "SELECT key, value FROM metadata WHERE binary = ? AND key LIKE ?",
+                (binary, f"{prefix}%"),
+            )
+            return {str(row["key"])[len(prefix) :]: str(row["value"]) for row in rows}
+
     def replace_definitions(
         self, binary: str, source: str, definitions: dict[str, dict[str, Any]]
     ) -> None:
@@ -197,6 +209,10 @@ class StructDb:
             raise ValueError(f"Trop de types: limite de {MAX_DEFINITIONS}.")
         with self._connect() as connection:
             connection.execute("DELETE FROM definitions WHERE binary = ?", (binary,))
+            connection.execute(
+                "DELETE FROM metadata WHERE binary = ? AND key LIKE 'import_source:%'",
+                (binary,),
+            )
             connection.execute(
                 "INSERT INTO metadata(binary, key, value) VALUES(?, 'source', ?) ON CONFLICT(binary, key) DO UPDATE SET value=excluded.value",
                 (binary, source),

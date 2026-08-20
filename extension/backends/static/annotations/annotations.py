@@ -80,6 +80,19 @@ class AnnotationStore:
         )
         logger.debug("Rename set: %s → %r", addr, name)
 
+    def import_annotation(self, addr: str, kind: str, value: str, source: str) -> None:
+        """Persist a validated annotation supplied by an external importer."""
+        if kind not in {
+            KIND_COMMENT,
+            KIND_RENAME,
+            KIND_BOOKMARK,
+            KIND_BOOKMARK_COLOR,
+        }:
+            raise ValueError(f"Unsupported imported annotation kind: {kind}")
+        if not source or source == "user":
+            raise ValueError("External annotation source is required")
+        self._cache.save_annotation(self._binary_path, addr, kind, value, source=source)
+
     def ai_comment(self, addr: str, text: str) -> bool:
         """Suggère un commentaire au nom de l'IA, sans écraser une note humaine.
 
