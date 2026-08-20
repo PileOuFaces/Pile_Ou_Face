@@ -80,6 +80,11 @@
         "category": "Pile ou Face"
       },
       {
+        "command": "pileOuFace.importFromGhidra",
+        "title": "Pile ou Face: Importer depuis Ghidra…",
+        "category": "Pile ou Face"
+      },
+      {
         "command": "pileOuFace.goToSymbolInDisasm",
         "title": "Aller au symbole"
       },
@@ -182,6 +187,10 @@
         {
           "command": "pileOuFace.exportDisasm",
           "when": "editorTextFocus"
+        },
+        {
+          "command": "pileOuFace.importFromGhidra",
+          "when": "true"
         },
         {
           "command": "pileOuFace.xrefsTo",
