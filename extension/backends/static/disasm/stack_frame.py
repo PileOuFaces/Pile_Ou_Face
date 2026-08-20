@@ -28,7 +28,7 @@ except ImportError:
     lief = None
 
 
-STACK_FRAME_CACHE_VERSION = 5
+STACK_FRAME_CACHE_VERSION = 6
 X86_STACK_RE = re.compile(
     r"\[(rbp|ebp|rsp|esp)(?:\s*([+-])\s*(0x[0-9a-fA-F]+|\d+))?\]",
     re.IGNORECASE,
@@ -240,7 +240,20 @@ def _parse_stack_access(op_str: str, arch_family: str) -> tuple[str, int, str] |
 
 
 def _size_from_instruction(ins, ptr_size: int) -> int:
-    """Déduit la taille mémoire manipulée."""
+    """Déduit la taille mémoire manipulée.
+
+    `lea` calcule une adresse sans jamais accéder à la mémoire: son
+    opérande `[base+-N]` ne porte donc aucun mot-clé de taille (qword/
+    dword/...) et ne doit jamais retomber sur le `ptr_size` par défaut
+    ci-dessous -- cela ferait croire qu'un accès pointer-sized a eu lieu
+    à cet offset. `lea` prouve seulement qu'une variable existe à cet
+    offset précis, jamais son étendue: on ne réclame donc que l'unité
+    minimale (1 octet), que `_merge_stack_entry` ne pourra jamais faire
+    gagner face à une taille réellement observée (dword/qword/...) pour
+    le même offset.
+    """
+    if ins.mnemonic.lower() == "lea":
+        return 1
     op_lower = ins.op_str.lower()
     if "xmmword" in op_lower:
         return 16
