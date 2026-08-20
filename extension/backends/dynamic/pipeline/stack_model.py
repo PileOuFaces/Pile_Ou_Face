@@ -43,6 +43,11 @@ HEX_RE = re.compile(r"^(?:0x)?[0-9a-fA-F]+$")
 SIGNED_HEX_RE = re.compile(r"^[+-]?0x[0-9a-fA-F]+$")
 SIGNED_DEC_RE = re.compile(r"^[+-]?\d+$")
 
+# System V x86-64 ABI-guaranteed red zone: 128 bytes below rsp that a leaf
+# function may use without adjusting rsp (no `sub rsp, N`). Not a heuristic
+# -- this is the exact ABI-defined bound.
+X86_64_RED_ZONE_SIZE = 128
+
 
 def _parse_int(value: Any) -> int | None:
     if value is None:
@@ -364,6 +369,29 @@ def _is_stack_alloc_instruction(instr_text: str) -> bool:
     operand = parts[1].strip() if len(parts) > 1 else ""
     register = operand.split(",", 1)[0].strip()
     return register in ("rsp", "esp")
+
+
+def _has_red_zone_write_evidence(snapshot: dict, bp: int | None) -> bool:
+    """True when this step's snapshot proves the callee is genuinely using
+    the red zone for its own frame: a memory write strictly below `bp`,
+    within the ABI-guaranteed bound.
+
+    Only called once `mov rbp, rsp` has already executed (frame_pointer_
+    ready), at which point `bp` is provably this invocation's own `rsp` --
+    nothing else can legitimately write to `[bp-k]` for `0 < k <=
+    X86_64_RED_ZONE_SIZE`, so unlike `sub rsp, N` (a *reservation*), this
+    is direct proof of actual *use*, not just a different way to spell the
+    same guarantee.
+    """
+    if bp is None:
+        return False
+    for access in _access_list(snapshot, "writes"):
+        addr = _parse_int(access.get("addr"))
+        if addr is None:
+            continue
+        if bp - X86_64_RED_ZONE_SIZE <= addr < bp:
+            return True
+    return False
 
 
 def _instruction_text(snapshot: dict) -> str:
@@ -1808,9 +1836,10 @@ def build_dynamic_analysis(
                 frame_allocated_by_function[function_key] = False
             elif _is_prologue_mov_bp_sp(instr_text):
                 frame_pointer_ready_by_function[function_key] = True
-            elif frame_pointer_ready_by_function.get(
-                function_key
-            ) and _is_stack_alloc_instruction(instr_text):
+            elif frame_pointer_ready_by_function.get(function_key) and (
+                _is_stack_alloc_instruction(instr_text)
+                or _has_red_zone_write_evidence(snapshot, frame_bp)
+            ):
                 frame_allocated_by_function[function_key] = True
         frame_allocated = (
             frame_allocated_by_function.get(function_key, True)

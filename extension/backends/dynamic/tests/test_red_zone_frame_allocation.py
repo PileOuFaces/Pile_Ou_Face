@@ -225,7 +225,9 @@ class TestRedZoneFrameAllocation(unittest.TestCase):
             for slot in locals_
             if slot.get("size") == 8 and slot.get("pointerKind") == "stack"
         ]
-        self.assertTrue(pointer_slots, f"p must still be classified correctly: {locals_}")
+        self.assertTrue(
+            pointer_slots, f"p must still be classified correctly: {locals_}"
+        )
 
     # ------------------------------------------------------------------
     # Test 4 -- canary/control-slot non-regression (real stack-protector corpus)
@@ -278,6 +280,7 @@ class TestRedZoneFrameAllocation(unittest.TestCase):
                     1,
                     f"step {step}: {role} appears {len(matching)} times: {slots}",
                 )
+
 
 if __name__ == "__main__":
     unittest.main()
