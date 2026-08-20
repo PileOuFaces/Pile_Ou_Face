@@ -338,6 +338,29 @@ class HubPage {
     return this.target.locator('#topBarBinaryMenu');
   }
 
+  async openTopBarBinaryMenu(timeout = DEFAULT_TIMEOUT_MS) {
+    const button = this.topBarBinaryButton();
+    const menu = this.topBarBinaryMenu();
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+      try {
+        await menu.waitFor({ state: 'visible', timeout: 1 });
+        return;
+      } catch {
+        // The menu is still closed.
+      }
+      await button.clickDom();
+      try {
+        await menu.waitFor({ state: 'visible', timeout: 750 });
+        return;
+      } catch {
+        // A freshly reopened webview can expose the button before its listener
+        // is mounted. Retry until the menu itself confirms the interaction.
+      }
+    }
+    await menu.waitFor({ state: 'visible', timeout: 1 });
+  }
+
   recentBinaryButton(binaryPath) {
     const requestedPath = String(binaryPath);
     const candidates = [...new Set([requestedPath, path.basename(requestedPath)])];

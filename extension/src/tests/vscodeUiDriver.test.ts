@@ -237,6 +237,29 @@ describe('VS Code UI E2E driver', () => {
     ]);
   });
 
+  it('retries the binary menu when the reopened webview drops the first click', async () => {
+    let clicks = 0;
+    const target = {
+      locator(selector: string) {
+        if (selector === '#topBarBinaryButton') {
+          return {
+            async clickDom() { clicks += 1; },
+          };
+        }
+        assert.equal(selector, '#topBarBinaryMenu');
+        return {
+          async waitFor() {
+            if (clicks < 2) throw new Error('menu is still closed');
+          },
+        };
+      },
+    };
+
+    await new HubPage(target).openTopBarBinaryMenu(1000);
+
+    assert.equal(clicks, 2);
+  });
+
   it('falls back to a DOM click when Electron ignores panel navigation coordinates', async () => {
     const calls: string[] = [];
     let panelWaits = 0;
