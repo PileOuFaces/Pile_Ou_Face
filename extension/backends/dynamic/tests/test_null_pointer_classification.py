@@ -110,7 +110,9 @@ def _trace(binary_path: Path, **config_overrides) -> dict:
     # never exercised "code" classification, so this was never needed
     # there; Test 8 in this file is the first to rely on it.
     output_path = str(binary_path) + ".output.json"
-    result = run_pipeline(str(binary_path), None, _config(**config_overrides), output_path)
+    result = run_pipeline(
+        str(binary_path), None, _config(**config_overrides), output_path
+    )
     assert result["meta"].get("error") is None, result["meta"].get("error")
     return result
 
@@ -159,7 +161,9 @@ class TestNullPointerClassification(unittest.TestCase):
             for slot in _slots_with_role(result, "local")
             if slot.get("size") == 8 and slot.get("pointerKind") == "stack"
         ]
-        self.assertTrue(stack_slots, "expected p to be proven 'stack' before reassignment")
+        self.assertTrue(
+            stack_slots, "expected p to be proven 'stack' before reassignment"
+        )
         proven_addr = stack_slots[0]["start"]
 
         null_slots_same_addr = [
