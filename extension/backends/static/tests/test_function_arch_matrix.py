@@ -21,6 +21,7 @@ from backends.static.binary.arch import (
 from backends.static.disasm.call_graph import build_call_graph
 from backends.static.disasm.cfg import build_cfg
 from backends.static.disasm.discover_functions import discover_functions
+from backends.static.disasm.xrefs import extract_xrefs
 from backends.static.tests.fixtures.raw_fixture import (
     write_raw_arm32_call_fixture,
     write_raw_arm64_call_fixture,
@@ -195,6 +196,41 @@ class TestFunctionArchSupportMatrix(unittest.TestCase):
         for feature in FUNCTION_FEATURES:
             self.assertEqual(support[feature]["level"], "unsupported")
             self.assertIn("WASM", support[feature]["note"])
+
+    def test_arm32_conditional_call_flows_through_discovery_cfg_and_call_graph(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sample = write_raw_arm32_call_fixture(tmp)
+            lines = [dict(line) for line in sample["lines"]]
+            call_line = next(
+                line for line in lines if line["addr"] == sample["call_site_addr"]
+            )
+            call_line["text"] = call_line["text"].replace("bl ", "blne ", 1)
+
+            discovered = discover_functions(lines, set())
+            discovered_addrs = {fn["addr"] for fn in discovered}
+            self.assertIn(sample["target_addr"], discovered_addrs)
+
+            cfg = build_cfg(lines, arch_hint="arm")
+            self.assertTrue(
+                any(
+                    edge.get("type") == "call"
+                    and edge.get("from") == sample["entry_addr"]
+                    and edge.get("to") == sample["target_addr"]
+                    for edge in cfg.get("edges", [])
+                )
+            )
+
+            call_graph = build_call_graph(cfg, discovered, lines=lines)
+            self.assertEqual(len(call_graph["edges"]), 1)
+            self.assertEqual(
+                call_graph["edges"][0]["to_name"],
+                f"sub_{str(sample['target_addr'])[2:]}",
+            )
+
+            refs = extract_xrefs(lines, sample["target_addr"], functions=discovered)
+            self.assertEqual(len(refs), 1)
+            self.assertEqual(refs[0]["type"], "call")
+            self.assertEqual(refs[0]["from_addr"], sample["call_site_addr"])
 
 
 if __name__ == "__main__":
