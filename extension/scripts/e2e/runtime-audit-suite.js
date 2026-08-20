@@ -1597,9 +1597,11 @@ async function run() {
       await hub.annotationsList().waitForText('e2e_binary_b', 30000);
 
       disasmResponses = countDisasmResponses();
+      const recentBinaryA = hub.recentBinaryButton(fixtureA.path);
+      await recentBinaryA.waitFor({ state: 'attached', timeout: 30000 });
       await hub.topBarBinaryButton().clickDom();
       await hub.topBarBinaryMenu().waitFor({ state: 'visible', timeout: 30000 });
-      await hub.recentBinaryButton(fixtureA.path).clickDom();
+      await recentBinaryA.clickDom();
       await hub.binaryPath().waitForValue(binaryAName, 30000);
       await waitForNextDisasm(disasmResponses);
       await hub.annotationsList().waitForText('e2e_binary_a', 30000);
@@ -1618,9 +1620,11 @@ async function run() {
       await hub.annotationsList().waitForText('e2e_binary_a', 30000);
 
       disasmResponses = countDisasmResponses();
+      const recentBinaryB = hub.recentBinaryButton(fixtureB.path);
+      await recentBinaryB.waitFor({ state: 'attached', timeout: 30000 });
       await hub.topBarBinaryButton().clickDom();
       await hub.topBarBinaryMenu().waitFor({ state: 'visible', timeout: 30000 });
-      await hub.recentBinaryButton(fixtureB.path).clickDom();
+      await recentBinaryB.clickDom();
       await hub.binaryPath().waitForValue(binaryBName, 30000);
       await waitForNextDisasm(disasmResponses);
       await hub.annotationsList().waitForText('e2e_binary_b', 30000);
