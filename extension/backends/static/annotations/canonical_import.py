@@ -22,10 +22,11 @@ from backends.static.annotations.structs import (
     _normalize_binary_key,
     _validate_definition,
     import_type_definitions,
+    parse_struct_definitions,
 )
 
 FORMAT = "pile-ou-face.canonical-import/v1"
-IMPORT_SOURCE = "ghidra"
+DEFAULT_IMPORT_SOURCE = "external"
 _TYPE_NAME = re.compile(r"^[A-Za-z_]\w*$")
 
 
@@ -93,7 +94,7 @@ def _collect_types(
     for item in raw_types:
         if not isinstance(item, dict):
             _count(report, "types", "skipped")
-            report["diagnostics"].append("Type Ghidra invalide ignoré")
+            report["diagnostics"].append("Type externe invalide ignoré")
             continue
         name = str((item or {}).get("name") or "")
         kind = str((item or {}).get("kind") or "")
@@ -106,7 +107,7 @@ def _collect_types(
         }:
             _count(report, "types", "skipped")
             report["diagnostics"].append(
-                f"Type Ghidra non supporté ignoré: {name or '<sans nom>'}"
+                f"Type externe non supporté ignoré: {name or '<sans nom>'}"
             )
             continue
         candidate = copy.deepcopy(dict(item))
@@ -114,20 +115,32 @@ def _collect_types(
             _validate_definition(name, candidate)
         except ValueError as exc:
             _count(report, "types", "skipped")
-            report["diagnostics"].append(f"Type Ghidra {name} ignoré: {exc}")
+            report["diagnostics"].append(f"Type externe {name} ignoré: {exc}")
             continue
         candidate["name"] = name
         definitions[name] = candidate
     for function in document.get("functions") or []:
         prototype = function.get("prototype")
         name = str(function.get("name") or "")
+        if isinstance(prototype, str) and _TYPE_NAME.fullmatch(name):
+            declaration = prototype.strip().rstrip(";") + ";"
+            try:
+                parsed = parse_struct_definitions(declaration)
+                candidate = parsed.get(name)
+            except ValueError as exc:
+                candidate = None
+                _count(report, "types", "skipped")
+                report["diagnostics"].append(f"Prototype externe {name} ignoré: {exc}")
+            if candidate:
+                definitions.setdefault(name, candidate)
+            continue
         if prototype and _TYPE_NAME.fullmatch(name) and isinstance(prototype, dict):
             candidate = {**copy.deepcopy(prototype), "name": name, "kind": "function"}
             try:
                 _validate_definition(name, candidate)
             except ValueError as exc:
                 _count(report, "types", "skipped")
-                report["diagnostics"].append(f"Prototype Ghidra {name} ignoré: {exc}")
+                report["diagnostics"].append(f"Prototype externe {name} ignoré: {exc}")
             else:
                 definitions.setdefault(name, candidate)
     return definitions
@@ -139,6 +152,13 @@ def _type_signature(definition: dict[str, Any]) -> dict[str, Any]:
     result.pop("name", None)
     result.pop("value_map", None)
     return result
+
+
+def _import_source(document: dict[str, Any]) -> str:
+    source = document.get("source") or {}
+    tool = str(source.get("tool") or DEFAULT_IMPORT_SOURCE).strip().lower()
+    normalized = re.sub(r"[^a-z0-9_.-]+", "-", tool).strip("-")
+    return normalized[:64] or DEFAULT_IMPORT_SOURCE
 
 
 def import_canonical_document(
@@ -159,6 +179,7 @@ def import_canonical_document(
         )
 
     report = _report()
+    import_source = _import_source(document)
     with AnnotationStore(binary_path, cache_path=cache_path) as store:
         existing = {(row["addr"], row["kind"]): row for row in store.list()}
         for addr, kind, value in _annotation_candidates(document):
@@ -166,18 +187,18 @@ def import_canonical_document(
             if current and current["value"] == value:
                 _count(report, "annotations", "skipped")
                 continue
-            if current and current.get("source") != IMPORT_SOURCE:
+            if current and current.get("source") != import_source:
                 _count(report, "annotations", "conflicts")
                 report["diagnostics"].append(
                     f"Annotation manuelle conservée: {addr} ({kind})"
                 )
                 continue
-            store.import_annotation(addr, kind, value, source=IMPORT_SOURCE)
+            store.import_annotation(addr, kind, value, source=import_source)
             existing[(addr, kind)] = {
                 "addr": addr,
                 "kind": kind,
                 "value": value,
-                "source": IMPORT_SOURCE,
+                "source": import_source,
             }
             _count(report, "annotations", "imported")
 
@@ -193,7 +214,7 @@ def import_canonical_document(
                 definition
             ):
                 _count(report, "types", "skipped")
-            elif name in current and sources.get(name) != IMPORT_SOURCE:
+            elif name in current and sources.get(name) != import_source:
                 _count(report, "types", "conflicts")
                 report["diagnostics"].append(f"Type manuel conservé: {name}")
             else:
@@ -201,12 +222,12 @@ def import_canonical_document(
         if accepted:
             try:
                 import_type_definitions(
-                    binary_path, accepted, IMPORT_SOURCE, workspace_root
+                    binary_path, accepted, import_source, workspace_root
                 )
             except ValueError as exc:
                 for _name in accepted:
                     _count(report, "types", "skipped")
-                report["diagnostics"].append(f"Types Ghidra ignorés: {exc}")
+                report["diagnostics"].append(f"Types externes ignorés: {exc}")
             else:
                 for _name in accepted:
                     _count(report, "types", "imported")

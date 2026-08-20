@@ -85,6 +85,11 @@
         "category": "Pile ou Face"
       },
       {
+        "command": "pileOuFace.importFromIda",
+        "title": "Pile ou Face: Importer depuis IDA/IDB…",
+        "category": "Pile ou Face"
+      },
+      {
         "command": "pileOuFace.goToSymbolInDisasm",
         "title": "Aller au symbole"
       },
@@ -190,6 +195,10 @@
         },
         {
           "command": "pileOuFace.importFromGhidra",
+          "when": "true"
+        },
+        {
+          "command": "pileOuFace.importFromIda",
           "when": "true"
         },
         {

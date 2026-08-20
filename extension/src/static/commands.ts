@@ -327,6 +327,59 @@ function registerStaticCommands(context, deps, providers) {
   });
   subs.push(importFromGhidra);
 
+  const importFromIda = vscode.commands.registerCommand('pileOuFace.importFromIda', async () => {
+    const sourceUris = await vscode.window.showOpenDialog({
+      title: 'Choisir un export IDAPython ou une base IDA',
+      canSelectMany: false,
+      openLabel: 'Choisir la source IDA',
+      filters: { 'Données IDA': ['json', 'idb', 'i64'] },
+    });
+    const sourcePath = sourceUris?.[0]?.fsPath || '';
+    if (!sourcePath) return;
+    const binaryUris = await vscode.window.showOpenDialog({
+      title: 'Choisir le binaire correspondant',
+      canSelectMany: false,
+      openLabel: 'Importer les données IDA',
+    });
+    const binaryPath = binaryUris?.[0]?.fsPath || '';
+    if (!binaryPath) return;
+    const extensionRoot = getExtensionPath() || root;
+    const directIdb = /\.(?:idb|i64)$/i.test(sourcePath);
+    const scriptName = directIdb ? 'idb_import.py' : 'canonical_import.py';
+    const scriptPath = path.join(extensionRoot, 'backends', 'static', 'annotations', scriptName);
+    const inputFlag = directIdb ? '--idb' : '--input';
+    const args = [scriptPath, '--binary', binaryPath, inputFlag, sourcePath];
+    if (storageDir) args.push('--workspace-root', storageDir);
+    try {
+      const stdout = await new Promise((resolve, reject) => {
+        cp.execFile(pythonExe, args, {
+          encoding: 'utf8',
+          cwd: root || extensionRoot,
+          maxBuffer: 4 * 1024 * 1024,
+          timeout: 60000,
+          env: { ...process.env, PYTHONPATH: extensionRoot },
+        }, (err, out) => {
+          if (err) reject(Object.assign(err, { stdout: out }));
+          else resolve(out);
+        });
+      });
+      const result = JSON.parse(String(stdout).trim());
+      if (result.error) throw new Error(result.error);
+      if (refreshSidebar) refreshSidebar(binaryPath);
+      vscode.window.showInformationMessage(
+        `Import IDA terminé : ${result.imported} importé(s), ${result.skipped} ignoré(s), ${result.conflicts} conflit(s).`
+      );
+    } catch (err) {
+      let detail = err?.message || String(err);
+      try {
+        const failure = JSON.parse(String(err?.stdout || '').trim());
+        if (failure.error) detail = failure.error;
+      } catch (_) { /* conserver le diagnostic du processus */ }
+      vscode.window.showErrorMessage(`Import IDA échoué : ${detail}`);
+    }
+  });
+  subs.push(importFromIda);
+
   const goToSymbolInDisasm = vscode.commands.registerCommand('pileOuFace.goToSymbolInDisasm', async (addr, binaryPath) => {
     if (!addr || !root) return;
     const absPath = path.isAbsolute(binaryPath) ? binaryPath : path.join(root, binaryPath);
