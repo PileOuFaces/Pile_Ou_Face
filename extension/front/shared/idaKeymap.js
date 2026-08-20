@@ -34,7 +34,7 @@
   function focusAnnotation(addr, fieldId) {
     if (!addr || typeof window.focusAnnotationEditor !== 'function') return false;
     if (!document.getElementById('staticDisasm')?.classList.contains('active')) {
-      window.PileOuFaceHostApi?.navigateTo?.('showGroup', { group: 'code', tab: 'disasm' });
+      window.PoF?.navigateTo?.('showGroup', { group: 'code', tab: 'disasm' });
     }
     window.focusAnnotationEditor(addr, null, { focus: fieldId === 'annotationComment' });
     const field = document.getElementById(fieldId);
@@ -56,8 +56,8 @@
     const addr = activeAddress();
     if (key === 'n') return focusAnnotation(addr, 'annotationName');
     if (key === ';') return focusAnnotation(addr, 'annotationComment');
-    if (key === 'x' && addr && window.PileOuFaceHostApi?.navigateTo) {
-      window.PileOuFaceHostApi.navigateTo('openXrefs', { addr, mode: 'to' });
+    if (key === 'x' && addr && window.PoF?.navigateTo) {
+      window.PoF.navigateTo('openXrefs', { addr, mode: 'to' });
       return true;
     }
     return false;
@@ -81,5 +81,10 @@
     }
   });
 
-  window.POFIdaKeymap = { activeAddress, isAnalysisViewActive, runAction };
+  window.POFIdaKeymap = {
+    activeAddress,
+    isAnalysisViewActive,
+    isEnabled: () => keymap === 'ida',
+    runAction,
+  };
 })();

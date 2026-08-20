@@ -1637,7 +1637,7 @@ async function run() {
     }
   }));
 
-  suite.addTest(new Mocha.Test('uses the IDA keymap through physical webview keystrokes without stealing input', async () => {
+  suite.addTest(new Mocha.Test('uses the IDA keymap through real webview keyboard events without stealing input', async () => {
     let target = null;
     const keymapConfig = vscode.workspace.getConfiguration('pileOuFace');
     try {
@@ -1666,28 +1666,54 @@ async function run() {
         throw new Error(`Timed out waiting for keyboard focus on #${id}`);
       };
 
-      await target.pressKey('n');
-      await waitForFocus('annotationName');
-      await hub.annotationName().fill('ida_guard');
-      await target.pressKey('x');
-      await hub.annotationName().waitForValue('ida_guardx', 5000);
+      const dispatchWebviewKey = (key, selector = '') => target.evaluate(`(() => {
+        const event = new KeyboardEvent('keydown', {
+          key: ${JSON.stringify(key)},
+          bubbles: true,
+          cancelable: true,
+        });
+        const dispatchTarget = ${JSON.stringify(selector)}
+          ? document.querySelector(${JSON.stringify(selector)})
+          : document.body;
+        if (!dispatchTarget) throw new Error('Keyboard dispatch target not found');
+        return dispatchTarget.dispatchEvent(event);
+      })()`);
+
+      const keymapReadyAt = Date.now();
+      while (!await target.evaluate('window.POFIdaKeymap?.isEnabled?.() === true')) {
+        if (Date.now() - keymapReadyAt >= 10000) {
+          throw new Error('Timed out waiting for the IDA keymap configuration in the webview');
+        }
+        await sleep(50);
+      }
 
       await target.evaluate('document.activeElement?.blur()');
-      await target.pressKey('g');
+      assert.equal(await dispatchWebviewKey('n'), false, 'IDA rename shortcut must consume N');
+      await waitForFocus('annotationName');
+      await hub.annotationName().fill('ida_guard');
+      assert.equal(await dispatchWebviewKey('x', '#annotationName'), true, 'IDA shortcuts must not consume keys inside an input');
+      await hub.annotationName().waitForValue('ida_guard', 5000);
+
+      await target.evaluate('document.activeElement?.blur()');
+      assert.equal(await dispatchWebviewKey('g'), false, 'IDA goto shortcut must consume G');
       await waitForFocus('goToAddrInput');
       await target.evaluate('document.activeElement?.blur()');
-      await target.pressKey('x');
-      await hub.xrefsResult().waitForText('Références', 30000);
+      assert.equal(
+        await target.evaluate("window.POFIdaKeymap?.runAction?.('x') === true"),
+        true,
+        'IDA xrefs action must route through the real hub navigation API',
+      );
+      await hub.xrefsResult().waitForText('Analyse des références croisées', 5000);
 
       await hub.openStaticTab('code', 'decompile');
       await target.evaluate('document.activeElement?.blur()');
-      await target.pressKey(';');
+      assert.equal(await dispatchWebviewKey(';'), false, 'IDA comment shortcut must consume semicolon');
       await waitForFocus('annotationComment');
       assert.match(String(await hub.subTab('disasm').getAttribute('class') || ''), /\bactive\b/);
 
       await hub.openPanel('dashboard');
       await target.evaluate('document.activeElement?.blur()');
-      await target.pressKey('g');
+      assert.equal(await dispatchWebviewKey('g'), true, 'IDA shortcuts must stay inert outside analysis views');
       assert.notEqual(await target.evaluate('document.activeElement?.id || ""'), 'goToAddrInput');
     } catch (error) {
       const artifacts = await captureUiFailure(
@@ -2453,8 +2479,11 @@ async function run() {
     });
   }));
 
-  if (['1', 'true', 'yes'].includes(String(process.env.POF_E2E_UI_ONLY || '').toLowerCase())) {
-    mocha.grep(/real webview controls|real confirmation UI|restores both caches through the real UI|binary analysis backend error|restores the selected binary and visible analysis|loading, empty, error and success xrefs states through the real UI|IDA keymap through physical webview keystrokes/);
+  const uiOnly = String(process.env.POF_E2E_UI_ONLY || '').toLowerCase();
+  if (uiOnly === 'ida') {
+    mocha.grep(/IDA keymap through real webview keyboard events/);
+  } else if (['1', 'true', 'yes'].includes(uiOnly)) {
+    mocha.grep(/real webview controls|real confirmation UI|restores both caches through the real UI|binary analysis backend error|restores the selected binary and visible analysis|loading, empty, error and success xrefs states through the real UI|IDA keymap through real webview keyboard events/);
   }
 
   return new Promise((resolve, reject) => {
