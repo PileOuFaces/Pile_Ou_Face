@@ -163,6 +163,31 @@ class TestArchAdapters(unittest.TestCase):
             with self.subTest(mnemonic=mnemonic):
                 self.assertTrue(adapter.supports_data_ref_mnemonic(mnemonic))
 
+    def test_arm32_return_suffixes_preserve_conditional_fallthrough(self):
+        adapter = arch_module.ARM32_ADAPTER
+
+        for mnemonic, operands in (
+            ("bx.w", "lr"),
+            ("pop.w", "{r4, pc}"),
+            ("ldmia.w", "sp!, {r4, pc}"),
+        ):
+            with self.subTest(mnemonic=mnemonic):
+                self.assertTrue(adapter.is_return_instruction(mnemonic, operands))
+                self.assertFalse(
+                    adapter.is_conditional_return_instruction(mnemonic, operands)
+                )
+
+        for mnemonic, operands in (
+            ("bxne", "lr"),
+            ("popne.w", "{r4, pc}"),
+            ("ldmiane", "sp!, {r4, pc}"),
+        ):
+            with self.subTest(mnemonic=mnemonic):
+                self.assertFalse(adapter.is_return_instruction(mnemonic, operands))
+                self.assertTrue(
+                    adapter.is_conditional_return_instruction(mnemonic, operands)
+                )
+
     def test_extended_prologue_patterns_accept_hex_immediates(self):
         cases = [
             (arch_module.MIPS_ADAPTER, "27bdfff0 addiu sp, sp, -0x10", "addiu sp"),
