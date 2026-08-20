@@ -1599,8 +1599,7 @@ async function run() {
       disasmResponses = countDisasmResponses();
       const recentBinaryA = hub.recentBinaryButton(fixtureA.path);
       await recentBinaryA.waitFor({ state: 'attached', timeout: 30000 });
-      await hub.topBarBinaryButton().clickDom();
-      await hub.topBarBinaryMenu().waitFor({ state: 'visible', timeout: 30000 });
+      await hub.openTopBarBinaryMenu(30000);
       await recentBinaryA.clickDom();
       await hub.binaryPath().waitForValue(binaryAName, 30000);
       await waitForNextDisasm(disasmResponses);
@@ -1622,8 +1621,7 @@ async function run() {
       disasmResponses = countDisasmResponses();
       const recentBinaryB = hub.recentBinaryButton(fixtureB.path);
       await recentBinaryB.waitFor({ state: 'attached', timeout: 30000 });
-      await hub.topBarBinaryButton().clickDom();
-      await hub.topBarBinaryMenu().waitFor({ state: 'visible', timeout: 30000 });
+      await hub.openTopBarBinaryMenu(30000);
       await recentBinaryB.clickDom();
       await hub.binaryPath().waitForValue(binaryBName, 30000);
       await waitForNextDisasm(disasmResponses);

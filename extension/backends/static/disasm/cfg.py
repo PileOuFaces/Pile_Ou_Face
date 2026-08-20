@@ -136,6 +136,8 @@ def _is_branch(
     )
     op_str = operands[1] if len(operands) == 2 else ""
     for adapter in adapters or tuple(iter_supported_adapters()):
+        if adapter.is_conditional_return_instruction(mnem, op_str):
+            return True, False, None
         if adapter.is_return_instruction(mnem, op_str):
             return True, False, None
         kind = adapter.classify_code_ref_mnemonic(mnem)
@@ -1210,6 +1212,9 @@ def build_cfg(
                 )
                 op_str = operands[1] if len(operands) == 2 else ""
                 for adapter in adapters:
+                    if adapter.is_conditional_return_instruction(mnem, op_str):
+                        branch_kind = "jcc"
+                        break
                     if adapter.is_return_instruction(mnem, op_str):
                         branch_kind = "ret"
                         break

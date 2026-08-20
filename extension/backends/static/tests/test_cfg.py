@@ -63,6 +63,14 @@ class TestCfgHelpers(unittest.TestCase):
                 self.assertFalse(is_call)
                 self.assertIsNone(target)
 
+    def test_arm_conditional_returns_are_branches_with_fallthrough(self):
+        for text in ("bxne lr", "popne.w {r4, pc}", "ldmiane sp!, {r4, pc}"):
+            with self.subTest(text=text):
+                is_branch, is_call, target = _is_branch(text)
+                self.assertTrue(is_branch)
+                self.assertFalse(is_call)
+                self.assertIsNone(target)
+
 
 class TestJumpTableDetection(unittest.TestCase):
     """Tests pour la détection de jump tables."""
@@ -249,6 +257,16 @@ class TestBuildCfg(unittest.TestCase):
         cfg = build_cfg(lines)
         block = next(b for b in cfg["blocks"] if b["addr"] == "0x1000")
         self.assertEqual(block["successors"], [])
+
+    def test_arm_conditional_pop_pc_keeps_fallthrough(self):
+        lines = [
+            {"addr": "0x1000", "text": "push {r4, lr}", "line": 1},
+            {"addr": "0x1004", "text": "popne.w {r4, pc}", "line": 2},
+            {"addr": "0x1008", "text": "mov r0, r0", "line": 3},
+        ]
+        cfg = build_cfg(lines, arch_hint="arm")
+        block = next(b for b in cfg["blocks"] if b["addr"] == "0x1000")
+        self.assertEqual(block["successors"], ["0x1008"])
 
 
 class TestBuildCfgForFunction(unittest.TestCase):

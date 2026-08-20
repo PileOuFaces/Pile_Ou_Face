@@ -314,17 +314,21 @@ class ArchAdapter:
                 return name
         return None
 
-    def _arm32_base_mnemonic(self, mnemonic: str) -> str:
-        """Remove ARM condition/width suffixes when they decorate an opcode."""
+    def _arm32_mnemonic_parts(self, mnemonic: str) -> tuple[str, bool]:
+        """Return an ARM opcode without width/condition suffixes and condition state."""
         normalized = str(mnemonic or "").strip().lower()
         if self.family != "arm":
-            return normalized
+            return normalized, False
         if normalized.endswith((".w", ".n")):
             normalized = normalized[:-2]
         for suffix in ARM32_CONDITION_SUFFIXES:
             if normalized.endswith(suffix) and len(normalized) > len(suffix):
-                return normalized[: -len(suffix)]
-        return normalized
+                return normalized[: -len(suffix)], True
+        return normalized, False
+
+    def _arm32_base_mnemonic(self, mnemonic: str) -> str:
+        """Remove ARM condition/width suffixes when they decorate an opcode."""
+        return self._arm32_mnemonic_parts(mnemonic)[0]
 
     def is_call_mnemonic(self, mnemonic: str) -> bool:
         normalized = str(mnemonic or "").strip().lower()
@@ -341,15 +345,35 @@ class ArchAdapter:
         ops = re.sub(r"\s+", "", str(operands or "").strip().lower())
         if self.is_return_mnemonic(mnem):
             return True
-        if self.family == "arm" and mnem == "bx" and ops == "lr":
-            return True
-        if self.family == "arm" and mnem == "pop" and "pc" in ops:
-            return True
-        if self.family == "arm" and mnem in {"ldm", "ldmia", "ldmfd"} and "pc" in ops:
-            return True
+        if self.family == "arm":
+            base, is_conditional = self._arm32_mnemonic_parts(mnem)
+            if is_conditional:
+                return False
+            if base == "bx" and ops == "lr":
+                return True
+            if base == "pop" and "pc" in ops:
+                return True
+            if base in {"ldm", "ldmia", "ldmfd"} and "pc" in ops:
+                return True
         if self.family == "sysz" and mnem == "br" and ops in {"r14", "%r14", "14"}:
             return True
         return bool(self.family == "mips" and mnem == "jr" and ops in {"ra", "$ra"})
+
+    def is_conditional_return_instruction(
+        self, mnemonic: str, operands: str = ""
+    ) -> bool:
+        """Whether an ARM instruction conditionally returns to its caller."""
+        if self.family != "arm":
+            return False
+        base, is_conditional = self._arm32_mnemonic_parts(mnemonic)
+        if not is_conditional:
+            return False
+        ops = re.sub(r"\s+", "", str(operands or "").strip().lower())
+        return bool(
+            (base == "bx" and ops == "lr")
+            or (base == "pop" and "pc" in ops)
+            or (base in {"ldm", "ldmia", "ldmfd"} and "pc" in ops)
+        )
 
     def is_unconditional_jump_mnemonic(self, mnemonic: str) -> bool:
         return mnemonic in self.unconditional_jump_mnemonics
