@@ -509,6 +509,18 @@ class StaticTraceResolver:
         self._conventions: dict[int, dict] = {}
         self._annotation_names: dict[int, str] | None = None
         self._annotation_comments: dict[int, str] | None = None
+        # Evidence-gated NULL classification (#299): remembers the last
+        # *proven* pointer kind ("stack"/"code") ever observed at a given
+        # (function invocation, address, size). A slot that later reads 0
+        # at that exact key may then be classified "null" -- never from
+        # value == 0 alone. Scoped per StaticTraceResolver instance (one
+        # per trace), same lifetime as the _stack_frames/_conventions
+        # caches above.
+        self._proven_pointer_memory: dict[tuple[str | None, int, int], str] = {}
+        arch_bits = _parse_int(meta.get("arch_bits"))
+        self.word_size = _parse_int(meta.get("word_size")) or (
+            8 if arch_bits == 64 else 4
+        )
         addresses = [_parse_int(line.get("addr")) for line in disasm_lines]
         valid = [addr for addr in addresses if addr is not None]
         self.code_min = min(valid) if valid else None
@@ -686,6 +698,32 @@ class StaticTraceResolver:
         if self.code_min is not None and self.code_max is not None:
             if self.code_min <= value <= self.code_max + 0x40:
                 return "code"
+        return None
+
+    def classify_pointer(
+        self, function_key: str | None, addr: int, size: int, value: int
+    ) -> str | None:
+        """Evidence-gated pointerKind, extending `pointer_kind()` with a
+        "null" verdict (#299).
+
+        `value == 0` is never sufficient on its own -- that would
+        misclassify any ordinary zero-valued integer of pointer width
+        (see the anti-`size == word_size` tests in
+        test_null_pointer_classification.py). "null" is only returned
+        when this exact (function invocation, address, size) was
+        *previously* proven "stack" or "code" by `pointer_kind()` earlier
+        in the same trace: real evidence of a NULL assignment, not a
+        guess. Direct `int *p = NULL;` initialization (never observed
+        holding a real address) has no such evidence and stays
+        unclassified -- a known, accepted false negative.
+        """
+        kind = self.pointer_kind(value)
+        if kind is not None:
+            self._proven_pointer_memory[(function_key, addr, size)] = kind
+            return kind
+        if value == 0 and size == self.word_size:
+            if self._proven_pointer_memory.get((function_key, addr, size)) is not None:
+                return "null"
         return None
 
 
@@ -1135,6 +1173,7 @@ def _slot_flags(
     writes: list[dict],
     reads: list[dict],
     buffer_region: dict | None,
+    function_key: str | None = None,
 ) -> tuple[list[str], bool, bool, bool, str | None]:
     recent_write = any(
         (addr := _parse_int(access.get("addr"))) is not None
@@ -1166,7 +1205,9 @@ def _slot_flags(
 
     pointer_kind = None
     if len(data) in (4, 8):
-        pointer_kind = resolver.pointer_kind(_little_int(data))
+        pointer_kind = resolver.classify_pointer(
+            function_key, start, len(data), _little_int(data)
+        )
         if pointer_kind is not None:
             flags.append("pointer_probable")
     if _is_ascii_candidate(data):
@@ -1319,6 +1360,12 @@ def _build_slots(
     bp_actual = regs_after.get(bp_name) if bp_name else None
     bp = frame_bp if frame_bp is not None else bp_actual
     func_addr = _parse_int(function_info.get("addr")) if function_info else None
+    # Same key the build_dynamic_analysis loop uses for its own per-invocation
+    # state (frame_allocated_by_function, stable_frame_bp_by_function) --
+    # reused here so evidence-gated NULL classification (#299) scopes its
+    # "proven pointer" memory to one function invocation, never leaking
+    # across two different functions that happen to reuse an address.
+    function_key = _function_cache_key(function_info, snapshot)
     frame = resolver.frame_for_function(func_addr)
     convention = resolver.convention_for_function(func_addr) or {}
     regions = _static_regions(
@@ -1455,6 +1502,7 @@ def _build_slots(
             writes,
             reads,
             buffer_region,
+            function_key,
         )
         value_int = _little_int(data) if len(data) <= 8 else None
         comment = resolver.comment_for(left)
