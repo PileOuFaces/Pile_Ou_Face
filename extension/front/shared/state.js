@@ -614,7 +614,7 @@ window.PoF = {
           if (contentEl) contentEl.textContent = 'Analyse des références croisées…';
           el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
-        window.vscode.postMessage({ type: 'hubLoadXrefs', addr, binaryPath: (typeof getStaticBinaryPath === 'function' ? getStaticBinaryPath() : '') || '', mode: p.mode || 'to' });
+        window.POFHubMessageBus?.postMessage?.({ type: 'hubLoadXrefs', addr, binaryPath: (typeof getStaticBinaryPath === 'function' ? getStaticBinaryPath() : '') || '', mode: p.mode || 'to' });
         break;
       }
       case 'openStringAt': {

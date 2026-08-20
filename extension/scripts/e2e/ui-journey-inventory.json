@@ -1,6 +1,6 @@
 {
   "issue": 247,
-  "updated": "2026-08-15",
+  "updated": "2026-08-20",
   "journeys": [
     { "id": "startup.empty", "status": "covered", "test": "guides the user from an empty workspace without enabling unavailable actions" },
     { "id": "analysis.load", "status": "covered", "test": "restores the selected binary and visible analysis after reopening the hub" },
@@ -10,6 +10,7 @@
     { "id": "navigation.xrefs", "status": "covered", "test": "shows loading, empty, error and success xrefs states through the real UI" },
     { "id": "navigation.calculator-export", "status": "covered", "test": "drives the hub through real webview controls" },
     { "id": "navigation.loading-empty-error", "status": "covered", "test": "shows loading, empty, error and success xrefs states through the real UI" },
+    { "id": "navigation.ida-keymap", "status": "covered", "test": "uses the IDA keymap through real webview keyboard events without stealing input" },
     { "id": "decompile.global-function", "status": "covered", "test": "accepts function and global decompile augmentation and restores both caches through the real UI" },
     { "id": "decompile.tool-error-retry", "status": "covered", "test": "accepts function and global decompile augmentation and restores both caches through the real UI" },
     { "id": "ai.providers", "status": "covered", "test": "configures cloud and Ollama providers through the real UI" },

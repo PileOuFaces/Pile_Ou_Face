@@ -1572,8 +1572,10 @@ async function run() {
       await waitForNextDisasm(disasmResponses);
       await hub.entryPointButton().clickDom();
       await hub.annotationAddress().waitForAttribute('data-addr', '0x', 30000);
-      await hub.annotationName().fill('e2e_binary_a');
       await hub.annotationComment().fill('Annotation isolée du premier binaire');
+      await hub.annotationName().fill('e2e_binary_a');
+      await hub.annotationComment().waitForValue('Annotation isolée du premier binaire', 30000);
+      await hub.annotationName().waitForValue('e2e_binary_a', 30000);
       await hub.annotationSubmitButton().clickDom();
       await hub.annotationsList().waitForText('e2e_binary_a', 30000);
 
@@ -1587,15 +1589,19 @@ async function run() {
       await hub.annotationsList().waitForText('Aucune annotation.', 30000);
       await hub.entryPointButton().clickDom();
       await hub.annotationAddress().waitForAttribute('data-addr', '0x', 30000);
-      await hub.annotationName().fill('e2e_binary_b');
       await hub.annotationComment().fill('Annotation isolée du second binaire');
+      await hub.annotationName().fill('e2e_binary_b');
+      await hub.annotationComment().waitForValue('Annotation isolée du second binaire', 30000);
+      await hub.annotationName().waitForValue('e2e_binary_b', 30000);
       await hub.annotationSubmitButton().clickDom();
       await hub.annotationsList().waitForText('e2e_binary_b', 30000);
 
       disasmResponses = countDisasmResponses();
+      const recentBinaryA = hub.recentBinaryButton(fixtureA.path);
+      await recentBinaryA.waitFor({ state: 'attached', timeout: 30000 });
       await hub.topBarBinaryButton().clickDom();
       await hub.topBarBinaryMenu().waitFor({ state: 'visible', timeout: 30000 });
-      await hub.recentBinaryButton(fixtureA.path).clickDom();
+      await recentBinaryA.clickDom();
       await hub.binaryPath().waitForValue(binaryAName, 30000);
       await waitForNextDisasm(disasmResponses);
       await hub.annotationsList().waitForText('e2e_binary_a', 30000);
@@ -1614,9 +1620,11 @@ async function run() {
       await hub.annotationsList().waitForText('e2e_binary_a', 30000);
 
       disasmResponses = countDisasmResponses();
+      const recentBinaryB = hub.recentBinaryButton(fixtureB.path);
+      await recentBinaryB.waitFor({ state: 'attached', timeout: 30000 });
       await hub.topBarBinaryButton().clickDom();
       await hub.topBarBinaryMenu().waitFor({ state: 'visible', timeout: 30000 });
-      await hub.recentBinaryButton(fixtureB.path).clickDom();
+      await recentBinaryB.clickDom();
       await hub.binaryPath().waitForValue(binaryBName, 30000);
       await waitForNextDisasm(disasmResponses);
       await hub.annotationsList().waitForText('e2e_binary_b', 30000);
@@ -1633,6 +1641,98 @@ async function run() {
       error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
       throw error;
     } finally {
+      target?.close();
+    }
+  }));
+
+  suite.addTest(new Mocha.Test('uses the IDA keymap through real webview keyboard events without stealing input', async () => {
+    let target = null;
+    const keymapConfig = vscode.workspace.getConfiguration('pileOuFace');
+    try {
+      const [fixture] = readFixtureSpecs();
+      assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
+      await keymapConfig.update('keymap', 'ida', vscode.ConfigurationTarget.Global);
+      await vscode.commands.executeCommand('pileOuFace.goToAddress');
+      target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+      const hub = new HubPage(target);
+      await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+        type: 'hubUseBinaryPath',
+        binaryPath: fixture.path,
+      });
+      await hub.binaryPath().waitForValue(path.basename(fixture.path), 30000);
+      await hub.openPanel('static');
+      await hub.openStaticTab('code', 'disasm');
+      await hub.entryPointButton().clickDom();
+      await hub.annotationAddress().waitForAttribute('data-addr', '0x', 30000);
+
+      const waitForFocus = async (id, timeoutMs = 5000) => {
+        const startedAt = Date.now();
+        while (Date.now() - startedAt < timeoutMs) {
+          if (await target.evaluate(`document.activeElement?.id === ${JSON.stringify(id)}`)) return;
+          await sleep(50);
+        }
+        throw new Error(`Timed out waiting for keyboard focus on #${id}`);
+      };
+
+      const dispatchWebviewKey = (key, selector = '') => target.evaluate(`(() => {
+        const event = new KeyboardEvent('keydown', {
+          key: ${JSON.stringify(key)},
+          bubbles: true,
+          cancelable: true,
+        });
+        const dispatchTarget = ${JSON.stringify(selector)}
+          ? document.querySelector(${JSON.stringify(selector)})
+          : document.body;
+        if (!dispatchTarget) throw new Error('Keyboard dispatch target not found');
+        return dispatchTarget.dispatchEvent(event);
+      })()`);
+
+      const keymapReadyAt = Date.now();
+      while (!await target.evaluate('window.POFIdaKeymap?.isEnabled?.() === true')) {
+        if (Date.now() - keymapReadyAt >= 10000) {
+          throw new Error('Timed out waiting for the IDA keymap configuration in the webview');
+        }
+        await sleep(50);
+      }
+
+      await target.evaluate('document.activeElement?.blur()');
+      assert.equal(await dispatchWebviewKey('n'), false, 'IDA rename shortcut must consume N');
+      await waitForFocus('annotationName');
+      await hub.annotationName().fill('ida_guard');
+      assert.equal(await dispatchWebviewKey('x', '#annotationName'), true, 'IDA shortcuts must not consume keys inside an input');
+      await hub.annotationName().waitForValue('ida_guard', 5000);
+
+      await target.evaluate('document.activeElement?.blur()');
+      assert.equal(await dispatchWebviewKey('g'), false, 'IDA goto shortcut must consume G');
+      await waitForFocus('goToAddrInput');
+      await target.evaluate('document.activeElement?.blur()');
+      assert.equal(
+        await target.evaluate("window.POFIdaKeymap?.runAction?.('x') === true"),
+        true,
+        'IDA xrefs action must route through the real hub navigation API',
+      );
+      await hub.xrefsResult().waitForText('Analyse des références croisées', 5000);
+
+      await hub.openStaticTab('code', 'decompile');
+      await target.evaluate('document.activeElement?.blur()');
+      assert.equal(await dispatchWebviewKey(';'), false, 'IDA comment shortcut must consume semicolon');
+      await waitForFocus('annotationComment');
+      assert.match(String(await hub.subTab('disasm').getAttribute('class') || ''), /\bactive\b/);
+
+      await hub.openPanel('dashboard');
+      await target.evaluate('document.activeElement?.blur()');
+      assert.equal(await dispatchWebviewKey('g'), true, 'IDA shortcuts must stay inert outside analysis views');
+      assert.notEqual(await target.evaluate('document.activeElement?.id || ""'), 'goToAddrInput');
+    } catch (error) {
+      const artifacts = await captureUiFailure(
+        target,
+        process.env.POF_E2E_ARTIFACTS_DIR,
+        'hub-ida-keymap',
+      );
+      error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
+      throw error;
+    } finally {
+      await keymapConfig.update('keymap', 'default', vscode.ConfigurationTarget.Global);
       target?.close();
     }
   }));
@@ -2387,8 +2487,13 @@ async function run() {
     });
   }));
 
-  if (['1', 'true', 'yes'].includes(String(process.env.POF_E2E_UI_ONLY || '').toLowerCase())) {
-    mocha.grep(/real webview controls|real confirmation UI|restores both caches through the real UI|binary analysis backend error|restores the selected binary and visible analysis|loading, empty, error and success xrefs states through the real UI/);
+  const uiOnly = String(process.env.POF_E2E_UI_ONLY || '').toLowerCase();
+  if (uiOnly === 'ida') {
+    mocha.grep(/IDA keymap through real webview keyboard events/);
+  } else if (uiOnly === 'annotations-isolation') {
+    mocha.grep(/isolates annotations when switching between recent binaries/);
+  } else if (['1', 'true', 'yes'].includes(uiOnly)) {
+    mocha.grep(/real webview controls|real confirmation UI|restores both caches through the real UI|binary analysis backend error|restores the selected binary and visible analysis|loading, empty, error and success xrefs states through the real UI|IDA keymap through real webview keyboard events/);
   }
 
   return new Promise((resolve, reject) => {

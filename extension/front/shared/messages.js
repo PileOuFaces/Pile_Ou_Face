@@ -111,6 +111,7 @@ function focusAnnotationEditor(addr, annotation = null, options = {}) {
   const nameEl = document.getElementById('annotationName');
   if (nameEl) nameEl.value = entry?.name || '';
 }
+window.focusAnnotationEditor = focusAnnotationEditor;
 
 function renderAnnotationsList(annotations = window._annotations || {}) {
   const listEl = document.getElementById('annotationsList');

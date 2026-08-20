@@ -21,7 +21,7 @@ function mount() {
   Object.assign(dom.window, {
     normalizeHexAddress: (value) => String(value || '').trim(),
     focusAnnotationEditor: (addr, _annotation, options) => focused.push({ addr, options }),
-    PileOuFaceHostApi: { navigateTo: (action, params) => navigations.push({ action, params }) },
+    PoF: { navigateTo: (action, params) => navigations.push({ action, params }) },
   });
   const sourcePath = path.resolve(__dirname, '../shared/idaKeymap.js');
   vm.runInContext(fs.readFileSync(sourcePath, 'utf8'), dom.getInternalVMContext(), { filename: sourcePath });
@@ -43,6 +43,7 @@ function press(app, key, target = app.document.body) {
 describe('IDA keymap bridge', () => {
   it('keeps the default keymap inert', () => {
     const app = mount();
+    expect(app.window.POFIdaKeymap?.isEnabled()).to.equal(false);
     expect(press(app, 'n').defaultPrevented).to.equal(false);
     expect(app.focused).to.deep.equal([]);
   });
@@ -50,6 +51,7 @@ describe('IDA keymap bridge', () => {
   it('maps rename, comment, xrefs and goto in analysis views', () => {
     const app = mount();
     enable(app);
+    expect(app.window.POFIdaKeymap?.isEnabled()).to.equal(true);
     expect(press(app, 'n').defaultPrevented).to.equal(true);
     expect(app.document.activeElement.id).to.equal('annotationName');
     press(app, ';');
@@ -70,5 +72,18 @@ describe('IDA keymap bridge', () => {
     app.document.getElementById('panel-static').classList.remove('active');
     expect(press(app, 'g').defaultPrevented).to.equal(false);
     expect(app.document.activeElement?.id).to.not.equal('goToAddrInput');
+  });
+
+  it('reveals the annotation editor when rename or comment starts from decompile', () => {
+    const app = mount();
+    enable(app);
+    app.document.getElementById('staticDisasm').classList.remove('active');
+    app.document.getElementById('staticDecompile').classList.add('active');
+    press(app, ';');
+    expect(app.navigations[0]).to.deep.equal({
+      action: 'showGroup',
+      params: { group: 'code', tab: 'disasm' },
+    });
+    expect(app.document.activeElement.id).to.equal('annotationComment');
   });
 });
