@@ -351,6 +351,8 @@ class ArchAdapter:
                 return False
             if base == "bx" and ops == "lr":
                 return True
+            if base == "mov" and ops in {"pc,lr", "r15,r14"}:
+                return True
             if base == "pop" and "pc" in ops:
                 return True
             if base in {"ldm", "ldmia", "ldmfd"} and "pc" in ops:
@@ -371,6 +373,7 @@ class ArchAdapter:
         ops = re.sub(r"\s+", "", str(operands or "").strip().lower())
         return bool(
             (base == "bx" and ops == "lr")
+            or (base == "mov" and ops in {"pc,lr", "r15,r14"})
             or (base == "pop" and "pc" in ops)
             or (base in {"ldm", "ldmia", "ldmfd"} and "pc" in ops)
         )
