@@ -1572,8 +1572,10 @@ async function run() {
       await waitForNextDisasm(disasmResponses);
       await hub.entryPointButton().clickDom();
       await hub.annotationAddress().waitForAttribute('data-addr', '0x', 30000);
-      await hub.annotationName().fill('e2e_binary_a');
       await hub.annotationComment().fill('Annotation isolée du premier binaire');
+      await hub.annotationName().fill('e2e_binary_a');
+      await hub.annotationComment().waitForValue('Annotation isolée du premier binaire', 30000);
+      await hub.annotationName().waitForValue('e2e_binary_a', 30000);
       await hub.annotationSubmitButton().clickDom();
       await hub.annotationsList().waitForText('e2e_binary_a', 30000);
 
@@ -1587,8 +1589,10 @@ async function run() {
       await hub.annotationsList().waitForText('Aucune annotation.', 30000);
       await hub.entryPointButton().clickDom();
       await hub.annotationAddress().waitForAttribute('data-addr', '0x', 30000);
-      await hub.annotationName().fill('e2e_binary_b');
       await hub.annotationComment().fill('Annotation isolée du second binaire');
+      await hub.annotationName().fill('e2e_binary_b');
+      await hub.annotationComment().waitForValue('Annotation isolée du second binaire', 30000);
+      await hub.annotationName().waitForValue('e2e_binary_b', 30000);
       await hub.annotationSubmitButton().clickDom();
       await hub.annotationsList().waitForText('e2e_binary_b', 30000);
 
@@ -2482,6 +2486,8 @@ async function run() {
   const uiOnly = String(process.env.POF_E2E_UI_ONLY || '').toLowerCase();
   if (uiOnly === 'ida') {
     mocha.grep(/IDA keymap through real webview keyboard events/);
+  } else if (uiOnly === 'annotations-isolation') {
+    mocha.grep(/isolates annotations when switching between recent binaries/);
   } else if (['1', 'true', 'yes'].includes(uiOnly)) {
     mocha.grep(/real webview controls|real confirmation UI|restores both caches through the real UI|binary analysis backend error|restores the selected binary and visible analysis|loading, empty, error and success xrefs states through the real UI|IDA keymap through real webview keyboard events/);
   }
