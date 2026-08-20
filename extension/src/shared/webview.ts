@@ -1069,6 +1069,7 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', global
   const sharedMessagesUri      = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'messages.js'));
   const sharedSettingsUri      = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'settings.js'));
   const sharedAnnotationsUri   = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'annotations.js'));
+  const sharedIdaKeymapUri     = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'idaKeymap.js'));
   const sharedAccountUri       = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'account.js'));
   // static modules
   const staticPayloadUri       = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'static', 'payload.js'));
@@ -1156,6 +1157,7 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', global
     .replace(/{{sharedMessagesUri}}/g, sharedMessagesUri.toString())
     .replace(/{{sharedSettingsUri}}/g, sharedSettingsUri.toString())
     .replace(/{{sharedAnnotationsUri}}/g, sharedAnnotationsUri.toString())
+    .replace(/{{sharedIdaKeymapUri}}/g, sharedIdaKeymapUri.toString())
     .replace(/{{sharedAccountUri}}/g, sharedAccountUri.toString())
     // static modules
     .replace(/{{staticPayloadUri}}/g, staticPayloadUri.toString())

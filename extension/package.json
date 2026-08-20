@@ -299,6 +299,19 @@
           "default": "warning",
           "description": "Niveau de log de l'extension et des backends Python qu'elle lance (propagé via BINHOST_LOG_LEVEL)."
         },
+        "pileOuFace.keymap": {
+          "type": "string",
+          "enum": [
+            "default",
+            "ida"
+          ],
+          "enumDescriptions": [
+            "Conserve les raccourcis clavier standards de Pile ou Face.",
+            "Active N (renommer), X (xrefs), ; (commenter) et G (aller à) dans les vues désassemblage et décompilation."
+          ],
+          "default": "default",
+          "description": "Disposition des raccourcis clavier dans les vues d'analyse statique."
+        },
         "pileOuFace.perfDiagnostics": {
           "type": "boolean",
           "default": false,

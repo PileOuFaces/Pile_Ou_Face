@@ -209,6 +209,24 @@ function createHub(config) {
       return false;
     }
   };
+  const idaKeymapEnabled = () => {
+    try {
+      return vscode.workspace.getConfiguration?.('pileOuFace')?.get?.('keymap', 'default') === 'ida';
+    } catch (_) {
+      return false;
+    }
+  };
+  const postKeymapConfig = () => {
+    if (hubPanelRef && !hubPanelRef.disposed) {
+      hubPanelRef.webview.postMessage({ type: 'hubKeymapConfig', keymap: idaKeymapEnabled() ? 'ida' : 'default' });
+    }
+  };
+
+  if (typeof vscode.workspace.onDidChangeConfiguration === 'function') {
+    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration('pileOuFace.keymap')) postKeymapConfig();
+    }));
+  }
 
   context.subscriptions.push(vscode.commands.registerCommand('pileOuFace.perfSnapshot', () => {
     if (!perfDiagnosticsEnabled()) {
@@ -406,6 +424,7 @@ function createHub(config) {
       });
       hubPanelRef.reveal(vscode.ViewColumn.Beside);
       hubPanelRef.webview.postMessage({ type: 'hubPerfDiagnosticsConfig', enabled: perfDiagnosticsEnabled() });
+      postKeymapConfig();
       hubPanelRef.webview.postMessage({ type: 'showPanel', panel: initialPanel, focusGoToAddr: options.focusGoToAddr });
       if (pendingAiPrompt) {
         hubPanelRef.webview.postMessage({ type: 'hubPrefillAiPrompt', prompt: pendingAiPrompt });
@@ -942,6 +961,7 @@ function createHub(config) {
       clearDynamicTraceHistory: traceHistoryHandlers.clearDynamicTraceHistory,
       hubReady: () => {
         panel.webview.postMessage({ type: 'hubPerfDiagnosticsConfig', enabled: perfDiagnosticsEnabled() });
+        postKeymapConfig();
         if (pendingAiPrompt) {
           panel.webview.postMessage({ type: 'hubPrefillAiPrompt', prompt: pendingAiPrompt });
           pendingAiPrompt = '';
