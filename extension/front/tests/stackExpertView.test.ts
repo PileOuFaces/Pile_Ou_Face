@@ -168,6 +168,13 @@ describe('stackExpertView — buildExpertRowItems', () => {
     expect(rows[1].badges.some((badge: string) => String(badge).startsWith('PTR:'))).to.equal(false);
   });
 
+  it('renders the global pointer classification', () => {
+    const rows = mod.buildExpertRowItems([
+      makeSlot({ valuePreview: '0x403020', pointerKind: 'global' })
+    ]);
+    expect(rows[0].badges).to.include('PTR:GLOBAL');
+  });
+
   it('resolves expert rendering explicitly — resolveStackPanelRenderMode', async () => {
     const vmPath = path.resolve(__dirname, '../dynamic/app/stackViewMode.js');
     const vmSource = fs.readFileSync(vmPath, 'utf8');
