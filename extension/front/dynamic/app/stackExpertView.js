@@ -286,7 +286,8 @@ function resolveExpertPointerBadge(slot, value) {
     stack: 'PTR:STACK',
     heap: 'PTR:HEAP',
     libc: 'PTR:LIBC',
-    null: 'PTR:NULL'
+    null: 'PTR:NULL',
+    global: 'PTR:GLOBAL'
   };
   if (!pointerMap[pointerKind]) return '';
   const rawValue = String(value || '').trim();
@@ -315,6 +316,7 @@ function normalizeExpertBadge(badge) {
   if (upper === 'HEAP' || upper === 'PTR_HEAP') return 'PTR:HEAP';
   if (upper === 'LIBC' || upper === 'PTR_LIBC') return 'PTR:LIBC';
   if (upper === 'NULL' || upper === 'PTR_NULL') return 'PTR:NULL';
+  if (upper === 'GLOBAL' || upper === 'PTR_GLOBAL') return 'PTR:GLOBAL';
   return upper;
 }
 

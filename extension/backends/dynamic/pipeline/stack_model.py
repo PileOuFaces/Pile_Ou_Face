@@ -15,6 +15,11 @@ from pathlib import Path
 from typing import Any
 
 try:
+    from backends.static.binary.sections import extract_sections
+except Exception:  # pragma: no cover - optional dependency path
+    extract_sections = None
+
+try:
     from backends.static.binary.symbols import extract_symbols
 except Exception:  # pragma: no cover - optional dependency path
     try:
@@ -497,6 +502,26 @@ class StaticTraceResolver:
         # any range lookup so that a rebased address like 0x401d4d is compared as
         # 0x1d4d against the ELF-relative symbol table.
         self.load_base = _parse_int(meta.get("base")) or 0
+        self.data_ranges: list[tuple[int, int]] = []
+        if extract_sections is not None:
+            try:
+                sections = extract_sections(binary_path)
+            except Exception:
+                sections = []
+            for section in sections if isinstance(sections, list) else []:
+                if not isinstance(section, dict):
+                    continue
+                name = str(section.get("name") or "").strip().lower()
+                section_type = str(section.get("type") or "").strip().upper()
+                if section_type not in {"DATA", "BSS"} and name not in {
+                    ".data",
+                    ".bss",
+                }:
+                    continue
+                start = _parse_int(section.get("vma"))
+                size = _parse_int(section.get("size"))
+                if start is not None and size is not None and size > 0:
+                    self.data_ranges.append((start, start + size))
 
     def _load_annotations(self) -> tuple[dict[int, str], dict[int, str]]:
         if self._annotation_names is not None and self._annotation_comments is not None:
@@ -658,6 +683,13 @@ class StaticTraceResolver:
         if self.code_min is not None and self.code_max is not None:
             if self.code_min <= value <= self.code_max + 0x40:
                 return "code"
+        # Section VMAs are ELF-relative for PIE binaries while traced pointer
+        # values are runtime addresses. Mirror resolve_function's load-base
+        # normalization, but reject unrebased values in a rebased trace.
+        if not self.load_base or value >= self.load_base:
+            normalized = value - self.load_base if self.load_base else value
+            if any(start <= normalized < end for start, end in self.data_ranges):
+                return "global"
         return None
 
 
