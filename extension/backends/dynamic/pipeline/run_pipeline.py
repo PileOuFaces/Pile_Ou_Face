@@ -364,9 +364,13 @@ def _guess_crash_slot(
             )
 
     saved_bp_slot = _analysis_slot(analysis, "saved_bp")
-    if saved_bp_slot is not None and (
-        instruction.startswith("leave")
-        or crash_type in {"unmapped_read", "unmapped_write"}
+    # A generic data read/write fault says nothing about the frame pointer.
+    # Only a failing epilogue with independent control-slot corruption
+    # evidence can attribute the crash to saved BP.
+    if (
+        saved_bp_slot is not None
+        and instruction.startswith("leave")
+        and _has_control_corruption_evidence(analysis, None)
     ):
         saved_bp_value = _parse_int(
             _slot_value_text(saved_bp_slot, analysis, "saved_bp")
@@ -478,13 +482,21 @@ def _build_crash_report(
                 _slot_value_text(ret_slot_data, analysis, "return_address")
             )
     code_ranges = _build_code_ranges(meta, disasm_lines or [])
-    classification = _classify_crash(
-        fault_addr=fault_address,
-        ret_target=ret_target,
-        ip_after=ip_after,
-        meta=meta,
-        code_ranges=code_ranges,
-    )
+    if crash_type in {
+        "unmapped_read",
+        "unmapped_write",
+    } and not instruction_text.lower().startswith(("ret", "jmp", "call", "leave")):
+        # A bad data pointer is a genuine runtime crash, but not evidence of
+        # stack/control-flow corruption.
+        classification = "runtime_crash"
+    else:
+        classification = _classify_crash(
+            fault_addr=fault_address,
+            ret_target=ret_target,
+            ip_after=ip_after,
+            meta=meta,
+            code_ranges=code_ranges,
+        )
     if classification == "fatal_crash" and not _has_control_corruption_evidence(
         analysis or {}, payload_offset
     ):
