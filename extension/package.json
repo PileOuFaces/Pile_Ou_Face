@@ -253,7 +253,7 @@
       "properties": {
         "pileOuFace.authServerUrl": {
           "type": "string",
-          "default": "https://auth.pileouface.io",
+          "default": "https://auth.pileouface.dev",
           "description": "URL du serveur d'authentification Pile Ou Face"
         },
         "pileOuFace.logLevel": {
