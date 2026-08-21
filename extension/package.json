@@ -253,7 +253,7 @@
       "properties": {
         "pileOuFace.authServerUrl": {
           "type": "string",
-          "default": "https://auth.pileouface.dev",
+          "default": "",
           "description": "URL du serveur d'authentification Pile Ou Face"
         },
         "pileOuFace.logLevel": {
@@ -271,6 +271,7 @@
     }
   },
   "scripts": {
+    "configure:official": "node scripts/write-product-config.mjs",
     "vscode:prepublish": "npm run package",
     "build": "npm run typecheck && node esbuild.js",
     "build:watch": "node esbuild.js --watch",
