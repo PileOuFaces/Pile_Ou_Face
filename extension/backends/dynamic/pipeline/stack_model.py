@@ -14,6 +14,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .pointer_relations import attach_active_frame_pointer_relations
+
 try:
     from backends.static.binary.sections import extract_sections
 except Exception:  # pragma: no cover - optional dependency path
@@ -1497,6 +1499,7 @@ def _build_slots(
         roles_by_addr[_hex(left) or ""] = role
 
     _assign_display_labels(slots)
+    attach_active_frame_pointer_relations(slots)
 
     viewport_points = []
     for point in (sp, bp, bp + word_size if bp is not None else None):
