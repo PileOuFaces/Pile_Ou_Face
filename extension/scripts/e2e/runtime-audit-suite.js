@@ -2354,6 +2354,18 @@ async function run() {
         await withGlobalMocks({
           fetch: async (url, options = {}) => {
             const value = String(url || '');
+            if (value.includes('/.well-known/pile-ou-face-auth/v1')) {
+              const origin = new URL(value).origin;
+              return jsonResponse({
+                protocol_version: '1',
+                deployment_id: 'e2e-runtime-audit',
+                issuer: origin,
+                audience: 'pile-ou-face-host',
+                lease_audience: 'pof-plugin-runtime',
+                jwks_uri: `${origin}/auth/jwks`,
+                capabilities: ['auth', 'online-standard-licensing'],
+              });
+            }
             if (value.includes('/auth/login')) {
               return jsonResponse({
                 access_token: 'e2e-access-token',
