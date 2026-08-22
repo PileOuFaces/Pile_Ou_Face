@@ -543,6 +543,7 @@ export function buildSemanticStackItems(analysis) {
     ascii: slot.ascii ?? '',
     valueHex: slot.valueHex ?? null,
     pointerKind: slot.pointerKind ?? '',
+    pointerRelation: slot.pointerRelation ?? null,
     activePointers: Array.isArray(slot.activePointers) ? slot.activePointers : []
   }));
 }
@@ -640,6 +641,7 @@ export function buildSimpleSourceItems(sorted, context) {
       displayValue: String(rawValue),
       rawValue: String(rawValue),
       valueHex: item.valueHex ?? null,
+      pointerRelation: item.pointerRelation ?? null,
       addressLabel: addr !== null ? toHex(addr) : '',
       offsetFromBp: Number.isFinite(Number(item.offsetFromBp))
         ? Number(item.offsetFromBp)

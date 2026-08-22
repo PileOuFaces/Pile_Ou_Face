@@ -105,6 +105,7 @@ export function buildRuntimeObservations(slots, bpAddress) {
         bytesHex: clean(slot?.bytesHex),
         ascii: clean(slot?.ascii),
         pointerKind: clean(slot?.pointerKind),
+        pointerRelation: slot?.pointerRelation ?? null,
         payloadRelated: Boolean(slot?.payloadRelated),
         activePointers: Array.isArray(slot?.activePointers) ? slot.activePointers.map((value) => clean(value)).filter(Boolean) : [],
         // Passthrough only, never derived/defaulted here -- lets
