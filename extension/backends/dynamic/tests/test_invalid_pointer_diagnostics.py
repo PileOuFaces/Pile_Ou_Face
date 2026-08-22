@@ -116,7 +116,9 @@ def _trace(binary_path: Path, **config_overrides) -> dict:
     # gap as #299's test harness -- needed here too since _classify_crash
     # and _is_code_address both consult code_ranges.
     output_path = str(binary_path) + ".output.json"
-    result = run_pipeline(str(binary_path), None, _config(**config_overrides), output_path)
+    result = run_pipeline(
+        str(binary_path), None, _config(**config_overrides), output_path
+    )
     return result
 
 
@@ -234,11 +236,17 @@ class TestInvalidPointerDiagnostics(unittest.TestCase):
         self.assertIsNone(crash.get("suspectOverwrittenSlot"))
         diagnostics = result.get("diagnostics") or []
         null_diag = next(
-            (diag for diag in diagnostics if diag["kind"] == "null_pointer_dereference"),
+            (
+                diag
+                for diag in diagnostics
+                if diag["kind"] == "null_pointer_dereference"
+            ),
             None,
         )
         self.assertIsNotNone(null_diag)
-        self.assertIn("criture", null_diag["message"])  # "Ecriture..." (accent-stripped)
+        self.assertIn(
+            "criture", null_diag["message"]
+        )  # "Ecriture..." (accent-stripped)
         self.assertNotIn("Lecture", null_diag["message"])
 
     # ------------------------------------------------------------------
@@ -382,9 +390,7 @@ class TestInvalidPointerDiagnostics(unittest.TestCase):
                 source,
                 extra_flags=("-fstack-protector-all", "-fno-omit-frame-pointer"),
             )
-            result = _trace(
-                binary, argv1="A" * 64, stop_symbol="done", max_steps=20000
-            )
+            result = _trace(binary, argv1="A" * 64, stop_symbol="done", max_steps=20000)
 
         crash = result.get("crash")
         self.assertIsNotNone(crash)

@@ -322,36 +322,38 @@ def _slot_value_text(slot: dict, analysis: dict, slot_kind: str) -> str | None:
 def _guess_crash_slot(
     crash: dict, analysis: dict, meta: dict, disasm_lines: list[dict]
 ) -> tuple[dict | None, str | None, int | None]:
+    """Attribute a crash to a control slot (return_address/saved_bp) only
+    when there is direct evidence tying THIS crash to THAT slot's value --
+    never from crash_type/instruction-mnemonic membership alone (#300).
+
+    `not _is_code_address(value, code_ranges)` is *never* usable as
+    evidence here: by construction, the value that just faulted an
+    unmapped_fetch is never a known code address (that is what "unmapped"
+    means), and a legitimate `rbp` is never a code address either
+    (corrupted or not) -- both checks are tautologically true and used to
+    make every unmapped_read/unmapped_write/unmapped_fetch match its
+    corresponding slot regardless of relevance. The only evidence kept:
+    the address the CPU actually faulted on (fetch target for
+    return_address, faultAddress for saved_bp) exactly equals what is
+    currently stored in that slot -- direct proof this crash's bad value
+    came from that slot, not a coincidence of crash_type.
+    """
     if not isinstance(crash, dict) or not isinstance(analysis, dict):
         return None, None, None
-    code_ranges = _build_code_ranges(meta, disasm_lines)
     registers = (
         crash.get("registers") if isinstance(crash.get("registers"), dict) else {}
     )
     arch_bits = 32 if int(meta.get("arch_bits") or 64) == 32 else 64
     ip_name = "eip" if arch_bits == 32 else "rip"
-    bp_name = "ebp" if arch_bits == 32 else "rbp"
     ip_value = _parse_int(
         crash.get(ip_name) or registers.get(ip_name) or crash.get("faultAddress")
     )
-    bp_value = _parse_int(crash.get(bp_name) or registers.get(bp_name))
-    crash_type = str(crash.get("type") or "").strip().lower()
-    instruction = str(crash.get("instructionText") or "").strip().lower()
+    fault_address = _parse_int(crash.get("faultAddress"))
 
     ret_slot = _analysis_slot(analysis, "return_address")
     if ret_slot is not None:
         ret_value = _parse_int(_slot_value_text(ret_slot, analysis, "return_address"))
-        if (
-            crash_type == "unmapped_fetch"
-            or instruction.startswith("ret")
-            or instruction.startswith("jmp")
-            or instruction.startswith("call")
-        ) and (
-            ret_value is None
-            or ip_value is None
-            or ret_value == ip_value
-            or not _is_code_address(ip_value, code_ranges)
-        ):
+        if ret_value is not None and ip_value is not None and ret_value == ip_value:
             bytes_hex = str(ret_slot.get("bytesHex") or "").strip()
             return (
                 {
@@ -364,18 +366,14 @@ def _guess_crash_slot(
             )
 
     saved_bp_slot = _analysis_slot(analysis, "saved_bp")
-    if saved_bp_slot is not None and (
-        instruction.startswith("leave")
-        or crash_type in {"unmapped_read", "unmapped_write"}
-    ):
+    if saved_bp_slot is not None:
         saved_bp_value = _parse_int(
             _slot_value_text(saved_bp_slot, analysis, "saved_bp")
         )
         if (
-            saved_bp_value is None
-            or bp_value is None
-            or saved_bp_value == bp_value
-            or not _is_code_address(bp_value, code_ranges)
+            saved_bp_value is not None
+            and fault_address is not None
+            and saved_bp_value == fault_address
         ):
             bytes_hex = str(saved_bp_slot.get("bytesHex") or "").strip()
             return (
@@ -494,14 +492,20 @@ def _build_crash_report(
             meta=meta,
             code_ranges=code_ranges,
         )
-    if classification == "fatal_crash" and not _has_control_corruption_evidence(
-        analysis or {}, payload_offset
+    if (
+        classification == "fatal_crash"
+        and crash_type == "unmapped_fetch"
+        and not _has_control_corruption_evidence(analysis or {}, payload_offset)
     ):
-        # No overflow reached a control slot, no write was flagged on one, and
-        # the faulting bytes don't match the configured payload: this isn't a
-        # vulnerability, it's execution running past a boundary the emulator
-        # doesn't model (classic hello-world/printf-only: main returns into
-        # un-emulated libc and Unicorn faults on the fetch).
+        # This downgrade only applies to unmapped_fetch (#300): that is the
+        # one crash_type with a genuine benign interpretation -- RIP ran
+        # past a boundary the emulator doesn't model (classic hello-world/
+        # printf-only: main returns into un-emulated libc and Unicorn
+        # faults on the fetch) rather than a real control-flow hijack.
+        # unmapped_read/unmapped_write have no such ambiguity: Unicorn
+        # faulted because the traced program's own logic dereferenced an
+        # address that genuinely isn't mapped -- always a real crash,
+        # regardless of whether it happens to also touch a control slot.
         classification = (
             "benign_termination"
             if instruction_text.lower().startswith("ret")
