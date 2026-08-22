@@ -280,6 +280,9 @@ function hasExpertUserSignal(slot, existingBadges) {
 
 function resolveExpertPointerBadge(slot, value) {
   const pointerKind = String(slot?.pointerKind || '').trim().toLowerCase();
+  const pointerSubKind = String(slot?.pointerSubKind || '').trim().toLowerCase();
+  if (pointerKind === 'code' && pointerSubKind === 'function') return 'PTR:FUNC';
+  if (pointerKind === 'code' && pointerSubKind === 'return_address') return 'RET:CODE';
   const pointerMap = {
     code: 'PTR:TEXT',
     text: 'PTR:TEXT',
@@ -313,6 +316,8 @@ function normalizeExpertBadge(badge) {
   if (upper === 'PAYLOAD') return 'USER';
   if (upper === 'STACK' || upper === 'PTR_STACK') return 'PTR:STACK';
   if (upper === 'TEXT' || upper === 'CODE' || upper === 'PTR_TEXT') return 'PTR:TEXT';
+  if (upper === 'FUNCTION' || upper === 'PTR_FUNC') return 'PTR:FUNC';
+  if (upper === 'RET_CODE') return 'RET:CODE';
   if (upper === 'HEAP' || upper === 'PTR_HEAP') return 'PTR:HEAP';
   if (upper === 'LIBC' || upper === 'PTR_LIBC') return 'PTR:LIBC';
   if (upper === 'NULL' || upper === 'PTR_NULL') return 'PTR:NULL';

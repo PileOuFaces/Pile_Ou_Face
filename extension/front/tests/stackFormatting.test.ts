@@ -72,6 +72,31 @@ describe('dynamic/stack stackFormatting — Evidence fields must survive, never 
     expect(result.evidenceClassification).to.equal('buffer_confirmed');
   });
 
+  it('propagates the backend function-pointer interpretation unchanged', () => {
+    const pointerTarget = {
+      name: 'hello',
+      address: '0x401176',
+      source: 'static_symbol',
+      confidence: 1
+    };
+    const [item] = mod.buildSemanticStackItems({
+      frame: { slots: [{
+        start: '0x7fffffffdff0',
+        size: 8,
+        role: 'local',
+        valueHex: '0x401176',
+        pointerKind: 'code',
+        pointerSubKind: 'function',
+        pointerTarget
+      }] }
+    });
+    const [result] = mod.buildSimpleSourceItems([item], minimalContext());
+
+    expect(result.pointerKind).to.equal('code');
+    expect(result.pointerSubKind).to.equal('function');
+    expect(result.pointerTarget).to.deep.equal(pointerTarget);
+  });
+
   it('legacy items without any Evidence fields still work (no crash, fields stay undefined)', () => {
     const legacyItem = {
       addr: null,
