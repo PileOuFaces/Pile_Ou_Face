@@ -505,12 +505,9 @@ jobs:
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: PileOuFaces/Pile_ou_Face_auth
-          # `develops` est la branche de dev active de ce repo (voir CLAUDE.md
-          # racine du workspace) — `main` (défaut du checkout sans `ref:`) est
-          # la branche production, mise à jour seulement lors d'une release.
-          # Sans ce `ref:`, ce job teste une version de l'auth potentiellement
-          # bien en retard sur ce qui est réellement mergé.
-          ref: develops
+          # XSYNC-AUTH-001: repasser à `develops` après le merge de l'Auth #49.
+          # Cette PR Host consomme le contrat discovery introduit par cette PR.
+          ref: feature/48-auth-discovery-v1
           token: ${{ secrets.CROSS_REPO_READONLY_PAT }}
           path: pof-auth-sibling
 
@@ -557,6 +554,12 @@ jobs:
         env:
           AUTH_REPO_PATH: ${{ github.workspace }}/pof-auth-sibling
           PLUGINS_REPO_PATH: ${{ github.workspace }}/pof-plugins-sibling
+          AUTH_PUBLIC_URL: http://127.0.0.1:8791
+          AUTH_ISSUER: http://127.0.0.1:8791
+          AUTH_AUDIENCE: pile-ou-face-host
+          PLUGIN_LEASE_AUDIENCE: pof-plugin-runtime
+          DEPLOYMENT_ID: ci-tripartite-auth
+          AUTH_CAPABILITIES: auth,online-standard-licensing
         run: npm run test:e2e:auth-licensing
 
   # ══════════════════════════════════════════════════════════════
