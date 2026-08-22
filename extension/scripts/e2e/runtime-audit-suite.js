@@ -70,8 +70,9 @@ async function waitForAuditEvents(userDataDir, predicate, timeoutMs = 15000) {
     if (predicate(allEvents, lastFiles.join(','))) return { filePath: lastFiles.join(','), events: allEvents };
     await sleep(250);
   }
-  const names = lastEvents.map((event) => `${event.kind}:${event.name}`).join(', ');
-  throw new Error(`Timed out waiting for runtime audit events. files=${lastFiles.join(', ') || '<none>'} events=${names || '<none>'}`);
+  const recentEvents = lastEvents.slice(-30);
+  const names = recentEvents.map((event) => `${event.kind}:${event.name}`).join(', ');
+  throw new Error(`Timed out waiting for runtime audit events. files=${lastFiles.join(', ') || '<none>'} eventCount=${lastEvents.length} recentEvents=${names || '<none>'}`);
 }
 
 function hasEvent(events, kind, name) {
@@ -2484,12 +2485,13 @@ async function run() {
                 auditDelta: summarizeAuditDelta(auditEventsBefore, readCurrentAuditEvents(userDataDir)),
               });
             } catch (error) {
+              const detail = error && error.message ? error.message : String(error);
               stopPerf({
                 ok: false,
-                error: String(error && error.message ? error.message : error),
+                error: detail,
                 auditDelta: summarizeAuditDelta(auditEventsBefore, readCurrentAuditEvents(userDataDir)),
               });
-              throw error;
+              throw new Error(`Backend hub handler ${message.type} failed: ${detail}`, { cause: error });
             }
           }
         }));
