@@ -305,6 +305,9 @@ describe('VS Code UI E2E driver', () => {
     const calls: string[] = [];
     let modeAttempts = 0;
     const hub = new HubPage({
+      async evaluate() {
+        calls.push('reset-settings-ready');
+      },
       locator(selector: string) {
         assert.equal(selector, 'html');
         return {
@@ -315,6 +318,9 @@ describe('VS Code UI E2E driver', () => {
       },
     });
     hub.openPanel = async () => { calls.push('open-options'); };
+    hub.panelNav = () => ({
+      async clickDom() { calls.push('request-settings'); },
+    });
     hub.interfaceModeButton = () => ({
       async clickDom() { calls.push('click-simple'); },
       async waitForAttribute() {
@@ -329,8 +335,8 @@ describe('VS Code UI E2E driver', () => {
 
     assert.deepEqual(calls, [
       'ready:data-hub-settings-ready:true',
-      'open-options', 'click-simple', 'wait-simple',
-      'open-options', 'click-simple', 'wait-simple', 'wait-simple',
+      'open-options', 'reset-settings-ready', 'request-settings', 'ready:data-hub-settings-ready:true', 'click-simple', 'wait-simple',
+      'open-options', 'reset-settings-ready', 'request-settings', 'ready:data-hub-settings-ready:true', 'click-simple', 'wait-simple', 'wait-simple',
     ]);
   });
 

@@ -70,8 +70,9 @@ async function waitForAuditEvents(userDataDir, predicate, timeoutMs = 15000) {
     if (predicate(allEvents, lastFiles.join(','))) return { filePath: lastFiles.join(','), events: allEvents };
     await sleep(250);
   }
-  const names = lastEvents.map((event) => `${event.kind}:${event.name}`).join(', ');
-  throw new Error(`Timed out waiting for runtime audit events. files=${lastFiles.join(', ') || '<none>'} events=${names || '<none>'}`);
+  const recentEvents = lastEvents.slice(-30);
+  const names = recentEvents.map((event) => `${event.kind}:${event.name}`).join(', ');
+  throw new Error(`Timed out waiting for runtime audit events. files=${lastFiles.join(', ') || '<none>'} eventCount=${lastEvents.length} recentEvents=${names || '<none>'}`);
 }
 
 function hasEvent(events, kind, name) {
@@ -2300,7 +2301,10 @@ async function run() {
       { type: 'hubOllamaPrompt', requestId: 'e2e-ollama-prompt', model: 'e2e-ollama-model', prompt: 'hello' },
       { type: 'hubOpenPluginDirectory', scope: 'workspace' },
       { type: 'hubResetSettings' },
-      { type: 'hubSaveSettings', settings: { interfaceMode: 'advanced', lang: 'fr' } },
+      {
+        type: 'hubSaveSettings',
+        settings: { interfaceMode: 'advanced', lang: 'fr', authServerUrl: 'http://127.0.0.1:8791' },
+      },
       { type: 'pof.auth.login', email: 'e2e@example.invalid', password: 'e2e-password' },
       { type: 'pof.auth.logout' },
       { type: 'requestDynamicTraceHistory' },
@@ -2354,6 +2358,18 @@ async function run() {
         await withGlobalMocks({
           fetch: async (url, options = {}) => {
             const value = String(url || '');
+            if (value.includes('/.well-known/pile-ou-face-auth/v1')) {
+              const origin = new URL(value).origin;
+              return jsonResponse({
+                protocol_version: '1',
+                deployment_id: 'e2e-runtime-audit',
+                issuer: origin,
+                audience: 'pile-ou-face-host',
+                lease_audience: 'pof-plugin-runtime',
+                jwks_uri: `${origin}/auth/jwks`,
+                capabilities: ['auth', 'online-standard-licensing'],
+              });
+            }
             if (value.includes('/auth/login')) {
               return jsonResponse({
                 access_token: 'e2e-access-token',
@@ -2472,12 +2488,13 @@ async function run() {
                 auditDelta: summarizeAuditDelta(auditEventsBefore, readCurrentAuditEvents(userDataDir)),
               });
             } catch (error) {
+              const detail = error && error.message ? error.message : String(error);
               stopPerf({
                 ok: false,
-                error: String(error && error.message ? error.message : error),
+                error: detail,
                 auditDelta: summarizeAuditDelta(auditEventsBefore, readCurrentAuditEvents(userDataDir)),
               });
-              throw error;
+              throw new Error(`Backend hub handler ${message.type} failed: ${detail}`, { cause: error });
             }
           }
         }));

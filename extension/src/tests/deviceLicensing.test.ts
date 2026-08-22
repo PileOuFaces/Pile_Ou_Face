@@ -7,9 +7,16 @@ const {
   getJwtSubject,
   signEnrollmentChallenge,
   unwrapDek,
-  verifyLeaseJwt,
+  verifyLeaseJwt: verifyLeaseJwtRaw,
   LeaseVerificationError,
 } = require("../shared/deviceLicensing");
+
+const TEST_ISSUER = "https://auth.test";
+const TEST_AUDIENCE = "pof-plugin-runtime";
+const TEST_DEPLOYMENT_ID = "test-deployment";
+function verifyLeaseJwt(...args) {
+  return verifyLeaseJwtRaw(...args, TEST_ISSUER, TEST_AUDIENCE, TEST_DEPLOYMENT_ID);
+}
 
 function b64url(buf) {
   return buf
@@ -46,8 +53,9 @@ describe("deviceLicensing", () => {
     const now = Math.floor(Date.now() / 1000);
     return {
       protocol_version: 1,
-      iss: "pof-auth",
-      aud: "pof-plugin-runtime",
+      iss: TEST_ISSUER,
+      aud: TEST_AUDIENCE,
+      deployment_id: TEST_DEPLOYMENT_ID,
       jti: "123e4567-e89b-42d3-a456-426614174000",
       sub: SUBJECT,
       org_id: null,
@@ -197,6 +205,7 @@ describe("deviceLicensing", () => {
       ["protocol version", { protocol_version: 0 }, /protocol_version/],
       ["issuer", { iss: "attacker" }, /issuer/],
       ["audience", { aud: "other-runtime" }, /audience/],
+      ["deployment", { deployment_id: "other-deployment" }, /deployment_id/],
       ["jti", { jti: "not-a-uuid" }, /jti/],
       ["subject", { sub: "other-user" }, /subject/],
       ["organization", { org_id: 42 }, /org_id/],

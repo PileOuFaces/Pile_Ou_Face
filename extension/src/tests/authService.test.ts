@@ -39,6 +39,15 @@ describe("auth service loopback fallback", () => {
   it("retries loopback auth on ::1 when localhost resolves to the wrong server", async () => {
     const { AuthService } = proxyquire("../shared/authService", {
       vscode: {},
+      "./authDiscovery": {
+        discoverAuthServer: async (origin) => ({
+          origin,
+          issuer: origin,
+          lease_audience: "pof-plugin-runtime",
+          deployment_id: "loopback-test",
+          jwks_uri: `${origin}/auth/jwks`,
+        }),
+      },
     });
     AuthService._instance = null;
 
@@ -113,6 +122,13 @@ function makeAuthService({
   };
 
   const svc = mod.AuthService.getInstance(secrets, "http://localhost:8000", { pluginSearchDirs });
+  svc._serverIdentity = {
+    origin: "http://localhost:8000",
+    issuer: "http://localhost:8000",
+    lease_audience: "pof-plugin-runtime",
+    deployment_id: "unit-test-deployment",
+    jwks_uri: "http://localhost:8000/auth/jwks",
+  };
 
   // Stub _postJson pour contrôler la réponse réseau
   if (refreshThrows) {
@@ -400,8 +416,9 @@ describe("AuthService._syncLicenseLeases()", () => {
         const lease = signLease(
           {
             protocol_version: 1,
-            iss: "pof-auth",
+            iss: "http://localhost:8000",
             aud: "pof-plugin-runtime",
+            deployment_id: "unit-test-deployment",
             jti: "123e4567-e89b-42d3-a456-426614174000",
             sub: "user-test",
             org_id: null,

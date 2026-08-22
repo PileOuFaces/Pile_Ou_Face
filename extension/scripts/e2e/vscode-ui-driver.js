@@ -588,9 +588,17 @@ class HubPage {
     const input = this.interfaceModeInput();
     await this.target.locator('html').waitForAttribute('data-hub-settings-ready', 'true', DEFAULT_TIMEOUT_MS);
     const deadline = Date.now() + DEFAULT_TIMEOUT_MS;
+    let lastError = null;
     while (Date.now() < deadline) {
       try {
         await this.openPanel('options');
+        // The panel may already be active, in which case openPanel can observe
+        // the old active state before its physical click reaches the listener.
+        // Force one DOM navigation after consuming the previous response so a
+        // fresh hubSettings response is guaranteed before changing the mode.
+        await this.target.evaluate(`document.documentElement.dataset.hubSettingsReady = 'false'`);
+        await this.panelNav('options').clickDom();
+        await this.target.locator('html').waitForAttribute('data-hub-settings-ready', 'true', DEFAULT_TIMEOUT_MS);
         // The options panel can still move while late hub settings are applied.
         // A DOM click targets the idempotent mode button without relying on stale
         // screen coordinates from the CDP layout snapshot.
@@ -608,11 +616,18 @@ class HubPage {
           button.waitForAttribute('aria-pressed', 'true', 1),
         ]);
         return;
-      } catch {
+      } catch (error) {
+        lastError = error;
         // Retry if late hub initialization restored the previous panel/settings.
       }
     }
-    await input.waitForValue(mode, 1);
+    const [actualMode, pressed] = await Promise.all([
+      input.inputValue(),
+      button.getAttribute('aria-pressed'),
+    ]);
+    throw new Error(
+      `Unable to select interface mode ${JSON.stringify(mode)}; value=${JSON.stringify(actualMode)} aria-pressed=${JSON.stringify(pressed)} lastError=${JSON.stringify(lastError?.message || String(lastError || 'unknown'))}`,
+    );
   }
 
   interfaceModeInput() {

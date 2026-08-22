@@ -11,6 +11,7 @@ const vscode = require('vscode');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { discoverAuthServer } = require('./authDiscovery');
 const {
   generateDeviceKeypair,
   generateDeviceId,
@@ -107,6 +108,7 @@ class AuthService {
     let lastError = null;
     for (const baseUrl of attempts) {
       try {
+        await this._ensureServerIdentity(baseUrl);
         const data = await this._postJson(baseUrl, '/auth/login', { email, password });
         this.serverUrl = baseUrl;
         await this._store(data.access_token, data.refresh_token, email);
@@ -186,6 +188,7 @@ class AuthService {
     const refreshToken = await this.secrets.get(KEY_REFRESH_TOKEN);
     if (!refreshToken) { return false; }
     try {
+      await this._ensureServerIdentity(this.serverUrl);
       const data = await this._postJson(this.serverUrl, '/auth/refresh', { refresh_token: refreshToken });
       // Le serveur peut faire tourner le refresh token (rotation + détection de
       // réutilisation, cf. Pile_ou_Face_auth#9) — toujours stocker celui renvoyé
@@ -302,6 +305,9 @@ class AuthService {
             expectedReleaseId,
             expectedDigest,
             expectedSubject,
+            this._serverIdentity.issuer,
+            this._serverIdentity.lease_audience,
+            this._serverIdentity.deployment_id,
           );
           if (entry.release_id !== expectedReleaseId) {
             throw new Error('lease response release_id mismatch');
@@ -361,11 +367,21 @@ class AuthService {
     if (this._jwksCache && Date.now() - this._jwksCache.fetchedAt < cacheTtlMs) {
       return this._jwksCache.jwks;
     }
-    const res = await fetch(`${String(this.serverUrl || '').replace(/\/+$/, '')}/auth/jwks`);
+    await this._ensureServerIdentity(this.serverUrl);
+    const res = await fetch(this._serverIdentity.jwks_uri);
     if (!res.ok) throw new Error(`jwks fetch failed: ${res.status}`);
     const jwks = await res.json();
     this._jwksCache = { jwks, fetchedAt: Date.now() };
     return jwks;
+  }
+
+  async _ensureServerIdentity(serverUrl) {
+    const normalized = String(serverUrl || '').replace(/\/+$/, '');
+    if (this._serverIdentity?.origin === normalized) return this._serverIdentity;
+    this._serverIdentity = await discoverAuthServer(normalized);
+    this.serverUrl = this._serverIdentity.origin;
+    this._jwksCache = null;
+    return this._serverIdentity;
   }
 
   async _postJsonAuthenticated(baseUrl, path, accessToken, payload) {

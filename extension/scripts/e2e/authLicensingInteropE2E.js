@@ -379,7 +379,18 @@ async function main() {
     for (const [binding, device, plugin, release, digest, subject] of rejectedBindings) {
       let rejected = false;
       try {
-        verifyLeaseJwt(firstLeaseEntry.lease, jwks, device, plugin, release, digest, subject);
+        verifyLeaseJwt(
+          firstLeaseEntry.lease,
+          jwks,
+          device,
+          plugin,
+          release,
+          digest,
+          subject,
+          BASE_URL,
+          'pof-plugin-runtime',
+          env.DEPLOYMENT_ID,
+        );
       } catch {
         rejected = true;
       }
