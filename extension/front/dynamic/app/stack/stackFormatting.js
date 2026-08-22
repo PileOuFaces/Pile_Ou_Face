@@ -543,6 +543,8 @@ export function buildSemanticStackItems(analysis) {
     ascii: slot.ascii ?? '',
     valueHex: slot.valueHex ?? null,
     pointerKind: slot.pointerKind ?? '',
+    pointerSubKind: slot.pointerSubKind ?? '',
+    pointerTarget: slot.pointerTarget ?? null,
     pointerRelation: slot.pointerRelation ?? null,
     activePointers: Array.isArray(slot.activePointers) ? slot.activePointers : []
   }));
@@ -666,6 +668,8 @@ export function buildSimpleSourceItems(sorted, context) {
       isAtSp: !options.abstractMode && addr !== null && rsp !== null && addr === rsp,
       isAtBp: !options.abstractMode && addr !== null && rbp !== null && addr === rbp,
       pointerKind: item.pointerKind ?? '',
+      pointerSubKind: item.pointerSubKind ?? '',
+      pointerTarget: item.pointerTarget ?? null,
       bytesHex: item.bytesHex ?? '',
       ascii: item.ascii ?? '',
       source: item.source ?? '',

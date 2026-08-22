@@ -14,6 +14,7 @@ if str(ROOT) not in sys.path:
 
 from backends.dynamic.pipeline.stack_model import (
     StaticTraceResolver,
+    _code_pointer_interpretation,
     _guess_buffer_region,
     _overflow_summary,
     build_dynamic_analysis,
@@ -695,6 +696,28 @@ class TestResolveFunction(unittest.TestCase):
         result = resolver.resolve_function(0x401C00)
         self.assertIsNotNone(result)
         self.assertEqual(result["name"], "challenge")
+
+    def test_function_entry_resolution_rejects_interior_code_address(self):
+        resolver = self._make_resolver(self.META_PIE)
+
+        self.assertEqual(resolver.resolve_function_entry(0x401D4D)["name"], "main")
+        self.assertIsNone(resolver.resolve_function_entry(0x401D4E))
+
+    def test_code_pointer_interpretation_distinguishes_function_and_return(self):
+        resolver = self._make_resolver(self.META_PIE)
+
+        function_kind, target = _code_pointer_interpretation(
+            "local", 0x401AAE, "code", resolver
+        )
+        return_kind, return_target = _code_pointer_interpretation(
+            "return_address", 0x401D60, "code", resolver
+        )
+
+        self.assertEqual(function_kind, "function")
+        self.assertEqual(target["name"], "win")
+        self.assertEqual(target["source"], "static_symbol")
+        self.assertEqual(return_kind, "return_address")
+        self.assertIsNone(return_target)
 
     def test_fini_with_no_end_does_not_swallow_main(self):
         """_fini (end=None) must never be returned for addresses in main."""
