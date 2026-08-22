@@ -666,6 +666,95 @@ describe('hub runTrace isolation', () => {
     expect(writtenTrace.meta.input.previewHex).to.equal('41424344');
   });
 
+  it('routes generated payload bytes through every forced injection target', async () => {
+    existsSyncStub.withArgs('/repo/examples/rootme1.elf').returns(true);
+
+    sinon.stub(cp, 'execFile').callsFake((_cmd, args, _opts, callback) => {
+      const script = String(args?.[0] || '');
+      if (script.includes('headers')) {
+        callback(null, JSON.stringify({ format: 'ELF', bits: 64, type: 'EXEC' }));
+        return;
+      }
+      if (script.includes('symbols')) {
+        callback(null, JSON.stringify([{ name: 'main' }]));
+        return;
+      }
+      callback(null, '{}');
+    });
+
+    const capturedRuns = [];
+    runCommand.callsFake(async (_command, args) => {
+      capturedRuns.push(args);
+      outputPaths.add(args[args.indexOf('--output') + 1]);
+    });
+    readTraceJson.callsFake((targetPath) => ({
+      snapshots: [{ step: 1, func: 'main' }],
+      risks: [],
+      meta: { output_path: targetPath }
+    }));
+
+    const openHub = createHub({
+      context: {
+        extensionUri: {},
+        subscriptions: [],
+        workspaceState: { get: () => ({}), update: async () => {} },
+        globalState: { get: () => ({}), update: async () => {} }
+      },
+      logChannel: { appendLine: () => {}, append: () => {} },
+      getTempDir: () => '/tmp/pof',
+      ensureTempDir: () => '/tmp/pof',
+      runCommand,
+      detectPythonExecutable: () => '/usr/bin/python3',
+      ensureStaticAsm,
+      readTraceJson,
+      writeTraceJson,
+      setViewMode: () => {},
+      payloadToHex: () => '',
+      parseStdinExpression: () => '',
+      check32BitToolchain: () => ({ ok: true }),
+      openVisualizerWebview
+    });
+
+    openHub();
+
+    for (const targetMode of ['argv1', 'both']) {
+      await onMessage({
+        type: 'runTrace',
+        config: {
+          traceMode: 'dynamic',
+          useExistingBinary: true,
+          binaryPath: 'examples/rootme1.elf',
+          payloadExpr: '\\x41\\x01\\x42\\xff',
+          payloadTargetMode: targetMode,
+          injectPayload: true,
+          input: {
+            mode: 'payload_builder',
+            targetMode,
+            payloadBytesHex: '410142ff',
+            sourceFields: { input: 'binary fixture' },
+            generatedSnippet: 'payload = b"A\\x01B\\xff"',
+            size: 4,
+            previewHex: '410142ff',
+            previewAscii: 'A.B.',
+            warnings: []
+          }
+        }
+      });
+    }
+
+    const argvOnly = capturedRuns[0];
+    expect(argvOnly).to.include('--argv1-hex');
+    expect(argvOnly[argvOnly.indexOf('--argv1-hex') + 1]).to.equal('410142ff');
+    expect(argvOnly).to.not.include('--stdin-hex');
+
+    const both = capturedRuns[1];
+    expect(both[both.indexOf('--argv1-hex') + 1]).to.equal('410142ff');
+    expect(both[both.indexOf('--stdin-hex') + 1]).to.equal('410142ff');
+
+    const writtenTargets = writeTraceJson.getCalls().map((call) => call.args[1].meta.payload_target);
+    expect([...new Set(writtenTargets)]).to.deep.equal(['argv1', 'both']);
+  });
+
   it('accepts payload_builder mode and keeps builder metadata', async () => {
     existsSyncStub.withArgs('/repo/examples/rootme1.elf').returns(true);
 
