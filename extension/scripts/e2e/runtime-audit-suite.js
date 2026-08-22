@@ -2301,7 +2301,10 @@ async function run() {
       { type: 'hubOllamaPrompt', requestId: 'e2e-ollama-prompt', model: 'e2e-ollama-model', prompt: 'hello' },
       { type: 'hubOpenPluginDirectory', scope: 'workspace' },
       { type: 'hubResetSettings' },
-      { type: 'hubSaveSettings', settings: { interfaceMode: 'advanced', lang: 'fr' } },
+      {
+        type: 'hubSaveSettings',
+        settings: { interfaceMode: 'advanced', lang: 'fr', authServerUrl: 'http://127.0.0.1:8791' },
+      },
       { type: 'pof.auth.login', email: 'e2e@example.invalid', password: 'e2e-password' },
       { type: 'pof.auth.logout' },
       { type: 'requestDynamicTraceHistory' },

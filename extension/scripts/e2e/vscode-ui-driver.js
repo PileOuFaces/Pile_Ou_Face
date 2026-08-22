@@ -591,10 +591,13 @@ class HubPage {
     let lastError = null;
     while (Date.now() < deadline) {
       try {
-        // Opening the options panel requests settings again. Mark the current
-        // response as consumed so the click cannot race with that refresh.
-        await this.target.evaluate(`document.documentElement.dataset.hubSettingsReady = 'false'`);
         await this.openPanel('options');
+        // The panel may already be active, in which case openPanel can observe
+        // the old active state before its physical click reaches the listener.
+        // Force one DOM navigation after consuming the previous response so a
+        // fresh hubSettings response is guaranteed before changing the mode.
+        await this.target.evaluate(`document.documentElement.dataset.hubSettingsReady = 'false'`);
+        await this.panelNav('options').clickDom();
         await this.target.locator('html').waitForAttribute('data-hub-settings-ready', 'true', DEFAULT_TIMEOUT_MS);
         // The options panel can still move while late hub settings are applied.
         // A DOM click targets the idempotent mode button without relying on stale
