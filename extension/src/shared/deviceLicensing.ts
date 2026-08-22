@@ -14,8 +14,6 @@
 const crypto = require('crypto');
 
 const LEASE_PROTOCOL_VERSION = 1;
-const LEASE_ISSUER = 'pof-auth';
-const LEASE_AUDIENCE = 'pof-plugin-runtime';
 const LEASE_TTL_SECONDS = 8 * 60 * 60;
 
 function generateDeviceKeypair() {
@@ -104,6 +102,9 @@ function verifyLeaseJwt(
   expectedReleaseId,
   expectedCiphertextSha256,
   expectedSubject,
+  expectedIssuer,
+  expectedAudience,
+  expectedDeploymentId,
 ) {
   if (!String(expectedReleaseId || '').trim()) {
     throw new LeaseVerificationError('expected release_id is required');
@@ -146,11 +147,15 @@ function verifyLeaseJwt(
   if (payload.protocol_version !== LEASE_PROTOCOL_VERSION) {
     throw new LeaseVerificationError('lease protocol_version mismatch');
   }
-  if (payload.iss !== LEASE_ISSUER) {
+  if (typeof expectedIssuer !== 'string' || !expectedIssuer || payload.iss !== expectedIssuer) {
     throw new LeaseVerificationError('lease issuer mismatch');
   }
-  if (payload.aud !== LEASE_AUDIENCE) {
+  if (typeof expectedAudience !== 'string' || !expectedAudience || payload.aud !== expectedAudience) {
     throw new LeaseVerificationError('lease audience mismatch');
+  }
+  if (typeof expectedDeploymentId !== 'string' || !expectedDeploymentId
+      || payload.deployment_id !== expectedDeploymentId) {
+    throw new LeaseVerificationError('lease deployment_id mismatch');
   }
   if (typeof payload.jti !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(payload.jti)) {
     throw new LeaseVerificationError('invalid lease jti');
