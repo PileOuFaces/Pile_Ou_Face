@@ -14,6 +14,7 @@ function createTraceHistory({
   payloadTargetLabel,
   normalizePayloadTargetMode,
   openVisualizerWebview,
+  toWebviewPath,
   vscode,
   fs,
   path,
@@ -152,6 +153,30 @@ function createTraceHistory({
     });
   };
 
+  const postDynamicTraceReady = (trace, { binaryPath = '', tracePath = '' } = {}) => {
+    panel.webview.postMessage({
+      type: 'dynamicTraceReady',
+      binaryPath,
+      traceRunId: (trace?.meta?.trace_run_id !== undefined && trace?.meta?.trace_run_id !== null)
+        ? String(trace.meta.trace_run_id) : null,
+      snapshots: Array.isArray(trace?.snapshots) ? trace.snapshots : [],
+      meta: trace?.meta && typeof trace.meta === 'object' ? trace.meta : {},
+      crash: trace?.crash && typeof trace.crash === 'object' ? trace.crash : null,
+      diagnostics: Array.isArray(trace?.diagnostics) ? trace.diagnostics : [],
+      risks: Array.isArray(trace?.risks) ? trace.risks : [],
+      analysisByStep: trace?.analysisByStep && typeof trace.analysisByStep === 'object' ? trace.analysisByStep : {},
+      enrichment: trace?.enrichment && typeof trace.enrichment === 'object' ? trace.enrichment : {},
+      tracePath,
+    });
+  };
+
+  const toDynamicTraceBinaryWebviewPath = (rawBinaryPath) => {
+    const raw = String(rawBinaryPath || '').trim();
+    if (!raw) return '';
+    const absolute = path.isAbsolute(raw) ? raw : path.join(root, raw);
+    return toWebviewPath(absolute);
+  };
+
   const notifyDynamicTraceCleared = (tracePath = '', reason = 'cleared') => {
     panel.webview.postMessage({
       type: 'dynamicTraceCleared',
@@ -204,6 +229,7 @@ function createTraceHistory({
     buildTraceRunArtifacts,
     buildDynamicTraceHistoryItems,
     postDynamicTraceHistory,
+    postDynamicTraceReady,
     deleteDynamicTraceArtifacts,
     // Message handlers (for dispatcher map)
     requestDynamicTraceHistory: async (_msg) => {
@@ -223,7 +249,17 @@ function createTraceHistory({
       });
       _activeDynamicTracePath = requestedTracePath;
       writeTraceJson(requestedTracePath, trace);
-      openVisualizerWebview(trace);
+      if (trace?.meta?.view_mode === 'static') {
+        openVisualizerWebview(trace);
+      } else {
+        const binaryPath = toDynamicTraceBinaryWebviewPath(trace?.meta?.binary);
+        await panel.webview.postMessage({
+          type: 'hubSetBinaryPath',
+          binaryPath,
+          binaryMeta: trace?.meta?.binary_metadata || null,
+        });
+        postDynamicTraceReady(trace, { binaryPath, tracePath: requestedTracePath });
+      }
       postDynamicTraceHistory();
     },
     deleteDynamicTraceHistory: async (message) => {

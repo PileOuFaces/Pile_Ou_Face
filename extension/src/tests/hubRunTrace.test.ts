@@ -1073,4 +1073,106 @@ describe('hub runTrace isolation', () => {
     expect(unlinkSyncStub.calledWithExactly('/tmp/pof/output.run-2-b.disasm.asm')).to.equal(true);
     expect(unlinkSyncStub.neverCalledWith('/tmp/pof/output.json')).to.equal(true);
   });
+
+  it('opens a historical dynamic trace in the embedded Hub Runtime', async () => {
+    openVisualizerWebview = sinon.spy();
+    const tracePath = '/tmp/pof/output.run-1-a.json';
+    outputPaths.add(tracePath);
+    readTraceJson.withArgs(tracePath).returns({
+      snapshots: [{ step: 1, func: 'main' }],
+      risks: [],
+      meta: {
+        view_mode: 'dynamic',
+        trace_run_id: 1,
+        binary: '/repo/examples/demo.elf',
+        binary_metadata: { format: 'ELF' }
+      }
+    });
+
+    const openHub = createHub({
+      context: {
+        extensionUri: {},
+        subscriptions: [],
+        workspaceState: { get: () => ({}), update: async () => {} },
+        globalState: { get: () => ({}), update: async () => {} }
+      },
+      storageDir: '/tmp/pof',
+      logChannel: { appendLine: () => {}, append: () => {} },
+      getTempDir: () => '/tmp/pof',
+      ensureTempDir: () => '/tmp/pof',
+      runCommand,
+      detectPythonExecutable: () => '/usr/bin/python3',
+      ensureStaticAsm,
+      readTraceJson,
+      writeTraceJson,
+      setViewMode: () => {},
+      payloadToHex: () => '',
+      parseStdinExpression: () => '',
+      check32BitToolchain: () => ({ ok: true }),
+      openVisualizerWebview
+    });
+
+    openHub();
+    await onMessage({ type: 'openDynamicTraceHistory', tracePath });
+
+    expect(openVisualizerWebview.notCalled).to.equal(true);
+    const messages = panel.webview.postMessage.getCalls().map((call) => call.args[0]);
+    const setBinaryIndex = messages.findIndex((message) => message?.type === 'hubSetBinaryPath');
+    const readyIndex = messages.findIndex((message) => message?.type === 'dynamicTraceReady');
+    expect(setBinaryIndex).to.be.greaterThan(-1);
+    expect(readyIndex).to.be.greaterThan(setBinaryIndex);
+    expect(messages[setBinaryIndex]).to.deep.include({
+      binaryPath: 'examples/demo.elf',
+      binaryMeta: { format: 'ELF' }
+    });
+    expect(messages[readyIndex]).to.deep.include({
+      binaryPath: 'examples/demo.elf',
+      tracePath,
+      traceRunId: '1'
+    });
+  });
+
+  it('keeps historical static traces in the standalone visualizer', async () => {
+    openVisualizerWebview = sinon.spy();
+    const tracePath = '/tmp/pof/output.run-2-b.json';
+    const trace = {
+      snapshots: [{ step: 1, func: 'main' }],
+      risks: [],
+      meta: { view_mode: 'static', trace_run_id: 2, binary: '/repo/examples/demo.elf' }
+    };
+    outputPaths.add(tracePath);
+    readTraceJson.withArgs(tracePath).returns(trace);
+
+    const openHub = createHub({
+      context: {
+        extensionUri: {},
+        subscriptions: [],
+        workspaceState: { get: () => ({}), update: async () => {} },
+        globalState: { get: () => ({}), update: async () => {} }
+      },
+      storageDir: '/tmp/pof',
+      logChannel: { appendLine: () => {}, append: () => {} },
+      getTempDir: () => '/tmp/pof',
+      ensureTempDir: () => '/tmp/pof',
+      runCommand,
+      detectPythonExecutable: () => '/usr/bin/python3',
+      ensureStaticAsm,
+      readTraceJson,
+      writeTraceJson,
+      setViewMode: () => {},
+      payloadToHex: () => '',
+      parseStdinExpression: () => '',
+      check32BitToolchain: () => ({ ok: true }),
+      openVisualizerWebview
+    });
+
+    openHub();
+    await onMessage({ type: 'openDynamicTraceHistory', tracePath });
+
+    expect(openVisualizerWebview.calledOnceWithExactly(trace)).to.equal(true);
+    const readyMessages = panel.webview.postMessage.getCalls()
+      .map((call) => call.args[0])
+      .filter((message) => message?.type === 'dynamicTraceReady');
+    expect(readyMessages).to.have.length(0);
+  });
 });
