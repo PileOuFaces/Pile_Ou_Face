@@ -40,14 +40,21 @@ function createTraceHistory({
     return match ? Number(match[1]) : null;
   };
 
+  const isTraceHistoryFileName = (fileName) => /^output\.run-\d+-.*\.json(?:\.gz)?$/.test(String(fileName || ''));
+
+  const deriveTraceDisasmPath = (tracePath) => {
+    const normalized = String(tracePath || '');
+    if (normalized.endsWith('.json.gz')) return `${normalized.slice(0, -8)}.disasm.asm`;
+    if (normalized.endsWith('.json')) return `${normalized.slice(0, -5)}.disasm.asm`;
+    return '';
+  };
+
   const ensureTraceDisasmPath = (trace, jsonPath) => {
     if (!trace || typeof trace !== 'object') return trace;
     trace.meta = trace.meta && typeof trace.meta === 'object' ? trace.meta : {};
     if (trace.meta.disasm_path) return trace;
-    if (String(jsonPath || '').endsWith('.json')) {
-      const candidate = String(jsonPath).slice(0, -5) + '.disasm.asm';
-      if (fs.existsSync(candidate)) trace.meta.disasm_path = candidate;
-    }
+    const candidate = deriveTraceDisasmPath(jsonPath);
+    if (candidate && fs.existsSync(candidate)) trace.meta.disasm_path = candidate;
     return trace;
   };
 
@@ -92,7 +99,7 @@ function createTraceHistory({
     if (!tempDir || !fs.existsSync(tempDir)) return [];
     const activePath = normalizeHistoryPath(_activeDynamicTracePath);
     const candidates = fs.readdirSync(tempDir)
-      .filter((name) => /^output\.run-\d+-.*\.json$/.test(name));
+      .filter(isTraceHistoryFileName);
 
     return candidates.map((name) => {
       const absolutePath = path.join(tempDir, name);
@@ -198,14 +205,14 @@ function createTraceHistory({
     return Boolean(
       normalized &&
       normalized.startsWith(tempDir + path.sep) &&
-      /^output\.run-\d+-.*\.json$/.test(fileName)
+      isTraceHistoryFileName(fileName)
     );
   };
 
   const deleteDynamicTraceArtifacts = (tracePath) => {
     if (!isManagedDynamicTracePath(tracePath)) return false;
     const jsonPath = normalizeHistoryPath(tracePath);
-    const disasmPath = jsonPath.endsWith('.json') ? `${jsonPath.slice(0, -5)}.disasm.asm` : '';
+    const disasmPath = deriveTraceDisasmPath(jsonPath);
     let removed = false;
     [jsonPath, disasmPath].filter(Boolean).forEach((candidate) => {
       if (fs.existsSync(candidate)) {

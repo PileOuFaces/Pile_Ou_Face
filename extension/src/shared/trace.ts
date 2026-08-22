@@ -7,6 +7,7 @@
 const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
+const zlib = require('zlib');
 const { getTempDir, resolveProjectRoot } = require('./utils');
 
 function parseNumericStep(value, fallback = null) {
@@ -336,8 +337,8 @@ function normalizeTraceData(data, jsonPath = '') {
   trace.diagnostics = Array.isArray(trace.diagnostics) ? trace.diagnostics : [];
   trace.crash = trace.crash && typeof trace.crash === 'object' ? trace.crash : null;
 
-  if (!trace.meta.disasm_path && jsonPath && jsonPath.endsWith('.json')) {
-    const candidate = jsonPath.slice(0, -5) + '.disasm.asm';
+  if (!trace.meta.disasm_path && jsonPath && /\.json(?:\.gz)?$/i.test(jsonPath)) {
+    const candidate = jsonPath.replace(/\.json(?:\.gz)?$/i, '.disasm.asm');
     if (fs.existsSync(candidate)) trace.meta.disasm_path = candidate;
   }
 
@@ -386,13 +387,21 @@ function loadTraceFromWorkspace() {
 }
 
 function readTraceJson(jsonPath) {
-  const raw = fs.readFileSync(jsonPath, 'utf8');
+  const contents = fs.readFileSync(jsonPath);
+  const raw = String(jsonPath).toLowerCase().endsWith('.gz')
+    ? zlib.gunzipSync(contents).toString('utf8')
+    : contents.toString('utf8');
   const data = JSON.parse(raw);
   return normalizeTraceData(data, jsonPath);
 }
 
 function writeTraceJson(jsonPath, trace) {
-  fs.writeFileSync(jsonPath, JSON.stringify(trace, null, 2), 'utf8');
+  const serialized = JSON.stringify(trace, null, 2);
+  if (String(jsonPath).toLowerCase().endsWith('.gz')) {
+    fs.writeFileSync(jsonPath, zlib.gzipSync(serialized));
+    return;
+  }
+  fs.writeFileSync(jsonPath, serialized, 'utf8');
 }
 
 function setViewMode(trace, mode) {

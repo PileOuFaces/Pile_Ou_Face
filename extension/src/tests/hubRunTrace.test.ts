@@ -1007,7 +1007,7 @@ describe('hub runTrace isolation', () => {
     expect(writtenTrace.meta.input.file.guestPath).to.equal('/tmp/pof-input.txt');
   });
 
-  it('lists and deletes historical trace artifacts without touching output.json', async () => {
+  it('lists and deletes plain or compressed historical trace artifacts without touching output.json', async () => {
     const openHub = createHub({
       context: {
         extensionUri: {},
@@ -1035,10 +1035,13 @@ describe('hub runTrace isolation', () => {
     outputPaths.add('/tmp/pof/output.run-1-a.disasm.asm');
     outputPaths.add('/tmp/pof/output.run-2-b.json');
     outputPaths.add('/tmp/pof/output.run-2-b.disasm.asm');
+    outputPaths.add('/tmp/pof/output.run-3-c.json.gz');
+    outputPaths.add('/tmp/pof/output.run-3-c.disasm.asm');
     outputPaths.add('/tmp/pof/output.json');
     readdirSyncStub.returns([
       'output.run-1-a.json',
       'output.run-2-b.json',
+      'output.run-3-c.json.gz',
       'output.json'
     ]);
     statSyncStub.callsFake((targetPath) => ({
@@ -1049,7 +1052,7 @@ describe('hub runTrace isolation', () => {
       risks: [],
       meta: {
         output_path: targetPath,
-        trace_run_id: targetPath.includes('run-2-') ? 2 : 1,
+        trace_run_id: targetPath.includes('run-3-') ? 3 : (targetPath.includes('run-2-') ? 2 : 1),
         binary: '/repo/examples/stack3_strcpy..elf',
         argv1: targetPath.includes('run-2-') ? 'BBBB' : 'AAAA',
         start_symbol: 'main'
@@ -1065,18 +1068,18 @@ describe('hub runTrace isolation', () => {
       .find((message) => message?.type === 'dynamicTraceHistory');
 
     expect(historyMessage).to.not.equal(undefined);
-    expect(historyMessage.items.map((item) => item.runId)).to.deep.equal([2, 1]);
+    expect(historyMessage.items.map((item) => item.runId)).to.deep.equal([3, 2, 1]);
 
-    await onMessage({ type: 'deleteDynamicTraceHistory', tracePath: '/tmp/pof/output.run-2-b.json' });
+    await onMessage({ type: 'deleteDynamicTraceHistory', tracePath: '/tmp/pof/output.run-3-c.json.gz' });
 
-    expect(unlinkSyncStub.calledWithExactly('/tmp/pof/output.run-2-b.json')).to.equal(true);
-    expect(unlinkSyncStub.calledWithExactly('/tmp/pof/output.run-2-b.disasm.asm')).to.equal(true);
+    expect(unlinkSyncStub.calledWithExactly('/tmp/pof/output.run-3-c.json.gz')).to.equal(true);
+    expect(unlinkSyncStub.calledWithExactly('/tmp/pof/output.run-3-c.disasm.asm')).to.equal(true);
     expect(unlinkSyncStub.neverCalledWith('/tmp/pof/output.json')).to.equal(true);
   });
 
   it('opens a historical dynamic trace in the embedded Hub Runtime', async () => {
     openVisualizerWebview = sinon.spy();
-    const tracePath = '/tmp/pof/output.run-1-a.json';
+    const tracePath = '/tmp/pof/output.run-1-a.json.gz';
     outputPaths.add(tracePath);
     readTraceJson.withArgs(tracePath).returns({
       snapshots: [{ step: 1, func: 'main' }],
