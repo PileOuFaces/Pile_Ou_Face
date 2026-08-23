@@ -28,7 +28,7 @@ except ImportError:
     lief = None
 
 
-STACK_FRAME_CACHE_VERSION = 8
+STACK_FRAME_CACHE_VERSION = 9
 X86_STACK_RE = re.compile(
     r"\[(rbp|ebp|rsp|esp)(?:\s*([+-])\s*(0x[0-9a-fA-F]+|\d+))?\]",
     re.IGNORECASE,
@@ -500,14 +500,24 @@ def _update_stack_adjust(
 
     if arch_family == "arm":
         mnem = _arm32_widthless_mnemonic(mnem)
-        if mnem == "push":
+        if mnem in {"push", "vpush"}:
             reg_count = _register_list_count(op_str)
             if reg_count:
-                return stack_adjust + (reg_count * ptr_size)
-        if mnem == "pop":
+                register_size = ptr_size
+                if mnem == "vpush":
+                    register_size = 16 if re.search(r"\bq\d+\b", op_str) else 8
+                    if re.search(r"\bs\d+\b", op_str):
+                        register_size = 4
+                return stack_adjust + (reg_count * register_size)
+        if mnem in {"pop", "vpop"}:
             reg_count = _register_list_count(op_str)
             if reg_count:
-                return max(0, stack_adjust - (reg_count * ptr_size))
+                register_size = ptr_size
+                if mnem == "vpop":
+                    register_size = 16 if re.search(r"\bq\d+\b", op_str) else 8
+                    if re.search(r"\bs\d+\b", op_str):
+                        register_size = 4
+                return max(0, stack_adjust - (reg_count * register_size))
         if mnem in {"stmdb", "stmfd"} and op_str.startswith("sp!"):
             reg_count = _register_list_count(op_str)
             if reg_count:
