@@ -1069,6 +1069,27 @@ class TestStackFrame(unittest.TestCase):
             0,
         )
 
+    def test_arm32_vfp_stack_saves_use_register_width(self):
+        cases = [
+            ("{d8-d15}", 64),
+            ("{s16-s31}", 64),
+        ]
+
+        for registers, expected in cases:
+            with self.subTest(registers=registers):
+                save = SimpleNamespace(mnemonic="vpush", op_str=registers)
+                restore = SimpleNamespace(mnemonic="vpop", op_str=registers)
+
+                adjusted = stack_frame_module._update_stack_adjust(0, save, "arm", 4)
+
+                self.assertEqual(adjusted, expected)
+                self.assertEqual(
+                    stack_frame_module._update_stack_adjust(
+                        adjusted, restore, "arm", 4
+                    ),
+                    0,
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
