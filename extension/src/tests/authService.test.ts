@@ -588,3 +588,79 @@ describe("AuthService.getContentKeys() — signed lease validity", () => {
     expect(store["pof.auth.leaseExpiresAt"]).to.equal(undefined);
   });
 });
+
+describe("AuthService SecretStorage server isolation", () => {
+  function createSecrets(initial = {}) {
+    const store = { ...initial };
+    return {
+      store,
+      secrets: {
+        async get(key) { return store[key]; },
+        async store(key, value) { store[key] = value; },
+        async delete(key) { delete store[key]; },
+      },
+    };
+  }
+
+  function isolatedService(secrets, origin = "https://auth-a.example") {
+    const { AuthService } = proxyquire("../shared/authService", {
+      vscode: {},
+      "./authDiscovery": {
+        discoverAuthServer: async (serverOrigin) => ({
+          origin: serverOrigin,
+          issuer: serverOrigin,
+          lease_audience: "pof-plugin-runtime",
+          deployment_id: serverOrigin.includes("auth-a") ? "deployment-a" : "deployment-b",
+          jwks_uri: `${serverOrigin}/auth/jwks`,
+        }),
+      },
+    });
+    AuthService._instance = null;
+    return new AuthService(secrets, origin, { deploymentProfile: "OSS_DEVELOPMENT" });
+  }
+
+  it("purges unbound legacy secrets after the server identity is verified", async () => {
+    const { secrets, store } = createSecrets({
+      "pof.auth.accessToken": "legacy-token",
+      "pof.auth.refreshToken": "legacy-refresh",
+    });
+    const svc = isolatedService(secrets);
+
+    await svc._ensureServerIdentity("https://auth-a.example");
+
+    const binding = JSON.parse(store["pof.auth.serverBinding.v1"]);
+    expect(binding).to.include({
+      profile: "OSS_DEVELOPMENT",
+      deploymentId: "deployment-a",
+      origin: "https://auth-a.example",
+    });
+    expect(store["pof.auth.accessToken"]).to.equal(undefined);
+    expect(store[`${binding.namespace}.accessToken`]).to.equal(undefined);
+    expect(await svc.isAuthenticated()).to.equal(false);
+  });
+
+  it("purges the old namespace when the verified server identity changes", async () => {
+    const { secrets, store } = createSecrets();
+    const svc = isolatedService(secrets);
+    await svc._ensureServerIdentity("https://auth-a.example");
+    await svc.secrets.store("pof.auth.accessToken", "server-a-token");
+    await svc.secrets.store("pof.auth.devicePrivateKey", "server-a-private-key");
+    const oldBinding = JSON.parse(store["pof.auth.serverBinding.v1"]);
+
+    svc.serverUrl = "https://auth-b.example";
+    await svc._ensureServerIdentity("https://auth-b.example");
+
+    const nextBinding = JSON.parse(store["pof.auth.serverBinding.v1"]);
+    expect(nextBinding.deploymentId).to.equal("deployment-b");
+    expect(nextBinding.namespace).to.not.equal(oldBinding.namespace);
+    expect(store[`${oldBinding.namespace}.accessToken`]).to.equal(undefined);
+    expect(store[`${oldBinding.namespace}.devicePrivateKey`]).to.equal(undefined);
+    expect(await svc.isAuthenticated()).to.equal(false);
+  });
+
+  afterEach(() => {
+    sinon.restore();
+    const mod = require("../shared/authService");
+    mod.AuthService._instance = null;
+  });
+});

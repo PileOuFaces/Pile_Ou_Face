@@ -155,6 +155,7 @@ function activate(context) {
       .catch((err) => logWarning(`[Auth] suppression de l'ancienne URL échouée: ${err.message || err}`));
   }
   const _authService = AuthService.getInstance(context.secrets, authServerUrl, {
+    deploymentProfile: productConfig.deploymentProfile,
     pluginSearchDirs: [storageDir, globalDir]
       .filter(Boolean)
       .map((dir) => path.join(dir, 'plugins')),

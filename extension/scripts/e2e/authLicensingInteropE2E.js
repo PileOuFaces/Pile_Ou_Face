@@ -311,7 +311,11 @@ async function main() {
     ));
     AuthService._instance = null;
     const secrets = makeInMemorySecrets();
-    const svc = AuthService.getInstance(secrets, BASE_URL, { pluginSearchDirs: [tmpPluginRoot] });
+    const authServiceOptions = {
+      deploymentProfile: 'OSS_DEVELOPMENT',
+      pluginSearchDirs: [tmpPluginRoot],
+    };
+    const svc = AuthService.getInstance(secrets, BASE_URL, authServiceOptions);
 
     console.log('[authLicensingInteropE2E] logging in against the real auth server');
     await svc.login(email, password);
@@ -320,9 +324,9 @@ async function main() {
     assert(keys[pluginId] === contentKeyB64, `unwrapped DEK should match the seeded content_key (got ${keys[pluginId]})`);
     console.log('[authLicensingInteropE2E] PASS: real enroll + lease + RSA-OAEP unwrap + JWT verification round-trip matches');
 
-    const initialRefreshToken = await secrets.get('pof.auth.refreshToken');
+    const initialRefreshToken = await svc.secrets.get('pof.auth.refreshToken');
     const refreshed = await svc.refresh();
-    const rotatedRefreshToken = await secrets.get('pof.auth.refreshToken');
+    const rotatedRefreshToken = await svc.secrets.get('pof.auth.refreshToken');
     const renewedKeys = await svc.getContentKeys();
     assert(refreshed === true, 'real refresh must succeed');
     assert(rotatedRefreshToken && rotatedRefreshToken !== initialRefreshToken, 'refresh token must rotate');
@@ -332,18 +336,18 @@ async function main() {
     // Une même licence utilisateur peut autoriser plusieurs installations, mais
     // chacune doit recevoir un DEK enveloppé pour sa propre paire RSA.
     const secondSecrets = makeInMemorySecrets();
-    const secondSvc = new AuthService(secondSecrets, BASE_URL, { pluginSearchDirs: [tmpPluginRoot] });
+    const secondSvc = new AuthService(secondSecrets, BASE_URL, authServiceOptions);
     await secondSvc.login(email, password);
-    const firstDeviceId = await secrets.get('pof.auth.deviceId');
-    const secondDeviceId = await secondSecrets.get('pof.auth.deviceId');
-    const firstPrivateKey = await secrets.get('pof.auth.devicePrivateKey');
-    const secondPrivateKey = await secondSecrets.get('pof.auth.devicePrivateKey');
+    const firstDeviceId = await svc.secrets.get('pof.auth.deviceId');
+    const secondDeviceId = await secondSvc.secrets.get('pof.auth.deviceId');
+    const firstPrivateKey = await svc.secrets.get('pof.auth.devicePrivateKey');
+    const secondPrivateKey = await secondSvc.secrets.get('pof.auth.devicePrivateKey');
     assert(firstDeviceId !== secondDeviceId, 'two installations must use distinct device ids');
     assert(firstPrivateKey !== secondPrivateKey, 'two installations must use distinct private keys');
     assert((await secondSvc.getContentKeys())[pluginId] === contentKeyB64, 'second installation must obtain its own usable DEK');
 
-    const firstAccessToken = await secrets.get('pof.auth.accessToken');
-    const secondAccessToken = await secondSecrets.get('pof.auth.accessToken');
+    const firstAccessToken = await svc.secrets.get('pof.auth.accessToken');
+    const secondAccessToken = await secondSvc.secrets.get('pof.auth.accessToken');
     const firstLease = await svc._postJsonAuthenticated(BASE_URL, '/plugins/lease', firstAccessToken, {
       device_id: firstDeviceId,
       releases: { [pluginId]: releaseId },
@@ -404,11 +408,11 @@ async function main() {
     const otherPassword = 'e2e-other-tenant-password-123';
     await adminPost('/admin/users', { email: otherEmail, password: otherPassword });
     const otherSecrets = makeInMemorySecrets();
-    const otherSvc = new AuthService(otherSecrets, BASE_URL, { pluginSearchDirs: [tmpPluginRoot] });
+    const otherSvc = new AuthService(otherSecrets, BASE_URL, authServiceOptions);
     await otherSvc.login(otherEmail, otherPassword);
     assert(Object.keys(await otherSvc.getContentKeys()).length === 0, 'tenant without subscription must receive no plugin DEK');
-    const otherAccessToken = await otherSecrets.get('pof.auth.accessToken');
-    const firstPublicKey = await secrets.get('pof.auth.devicePublicKey');
+    const otherAccessToken = await otherSvc.secrets.get('pof.auth.accessToken');
+    const firstPublicKey = await svc.secrets.get('pof.auth.devicePublicKey');
     const hijackChallenge = await otherSvc._postJsonAuthenticated(
       BASE_URL, '/plugins/enroll/challenge', otherAccessToken,
       { device_id: firstDeviceId, public_key: firstPublicKey },
@@ -513,11 +517,11 @@ async function main() {
     assert((await svc.getContentKeys())[pluginId] === contentKeyV2, 'restored release must return only its v2 DEK');
     console.log('[authLicensingInteropE2E] PASS: release withdrawal clears the host cache at lease renewal');
 
-    const realExpiresAt = await secrets.get('pof.auth.leaseExpiresAt');
-    await secrets.store('pof.auth.leaseExpiresAt', String(Date.now() - 1));
+    const realExpiresAt = await svc.secrets.get('pof.auth.leaseExpiresAt');
+    await svc.secrets.store('pof.auth.leaseExpiresAt', String(Date.now() - 1));
     const keysAfterExpiration = await svc.getContentKeys();
     assert(Object.keys(keysAfterExpiration).length === 0, 'content_keys must be refused immediately after lease expiration');
-    await secrets.store('pof.auth.leaseExpiresAt', realExpiresAt);
+    await svc.secrets.store('pof.auth.leaseExpiresAt', realExpiresAt);
     console.log('[authLicensingInteropE2E] PASS: expired lease refuses cached content_keys without offline grace');
 
     // La révocation doit couper l'émission de nouveaux leases — vérifie que le
@@ -525,7 +529,7 @@ async function main() {
     // pas seulement le chemin nominal ci-dessus.
     const deviceId = firstDeviceId;
     await adminPost(`/admin/installations/${deviceId}/revoke`, {});
-    const accessToken = await secrets.get('pof.auth.accessToken');
+    const accessToken = await svc.secrets.get('pof.auth.accessToken');
     let leaseRejected = false;
     try {
       await svc._postJsonAuthenticated(BASE_URL, '/plugins/lease', accessToken, {
