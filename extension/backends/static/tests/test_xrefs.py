@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from backends.static.binary.arch import ARM32_ADAPTER
 from backends.static.disasm.xrefs import (
     _classify_data_ref,
     _describe_source_context,
@@ -77,6 +78,51 @@ class TestExtractXrefs(unittest.TestCase):
         self.assertEqual(len(refs), 1)
         self.assertEqual(refs[0]["type"], "lea")
         self.assertEqual(refs[0]["from_addr"], "0x401010")
+
+    def test_arm32_literal_load_uses_pipelined_pc_instead_of_absolute_offset(self):
+        lines = [
+            {
+                "addr": "0x1000",
+                "text": "ldr r0, [pc, #0x10]",
+                "operands": "r0, [pc, #0x10]",
+                "bytes": "10 00 9f e5",
+                "line": 1,
+            }
+        ]
+        info = mock.Mock(
+            key="arm32", raw_name="arm", machine="arm", adapter=ARM32_ADAPTER
+        )
+        with mock.patch(
+            "backends.static.disasm.xrefs.detect_binary_arch_from_path",
+            return_value=info,
+        ):
+            xref_map = build_xref_map(lines, binary_path="/fake/arm.bin")
+
+        self.assertIn("0x1018", xref_map)
+        self.assertNotIn("0x10", xref_map)
+
+    def test_thumb_literal_load_aligns_pipelined_pc(self):
+        lines = [
+            {
+                "addr": "0x1002",
+                "text": "ldr r0, [pc, #0x10]",
+                "operands": "r0, [pc, #0x10]",
+                "bytes": "04 48",
+                "line": 1,
+            }
+        ]
+        info = mock.Mock(
+            key="arm32", raw_name="thumb", machine="thumb", adapter=ARM32_ADAPTER
+        )
+        with mock.patch(
+            "backends.static.disasm.xrefs.detect_binary_arch_from_path",
+            return_value=info,
+        ):
+            targets = extract_xrefs_from_addr(
+                lines, "0x1002", binary_path="/fake/thumb.bin"
+            )
+
+        self.assertEqual(targets, ["0x1014"])
 
     def test_data_ref_store(self):
         """mov [addr], src doit être classifié store."""
