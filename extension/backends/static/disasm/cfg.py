@@ -183,6 +183,9 @@ def _is_jump_table(text: str) -> bool:
     # ARM64/MIPS/RISC-V/PPC: branchement via registre / compteur
     elif mnem in {"br", "bctr", "bcctr", "tbb", "tbh"}:
         return True
+    elif mnem == "bx":
+        jump_reg = _extract_register_jump_target(text)
+        return jump_reg not in {None, "lr", "r14"}
     elif mnem == "jr":
         jump_reg = _extract_register_jump_target(text)
         return jump_reg not in {None, "ra", "lr"}
@@ -278,7 +281,7 @@ def _binary_is_64bit(binary) -> bool:
 
 def _extract_register_jump_target(text: str) -> str | None:
     mnem = _get_mnemonic(text)
-    if mnem not in {"jmp", "br", "jr", "jalr", "bctr", "bcctr"}:
+    if mnem not in {"jmp", "br", "bx", "jr", "jalr", "bctr", "bcctr"}:
         return None
     if "[" in text:
         return None
