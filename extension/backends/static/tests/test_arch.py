@@ -211,6 +211,23 @@ class TestArchAdapters(unittest.TestCase):
             with self.subTest(adapter=adapter.key):
                 self.assertEqual(adapter.matches_prologue(text), expected)
 
+    def test_arm32_adapter_recognizes_full_descending_and_single_lr_saves(self):
+        cases = (
+            ("stmfd sp!, {r4, r5, lr}", "stmfd sp"),
+            ("str lr, [sp, #-4]!", "str lr preindex"),
+            ("str.w r14, [r13, #-0x4]!", "str lr preindex"),
+        )
+
+        for text, expected in cases:
+            with self.subTest(text=text):
+                self.assertEqual(
+                    arch_module.ARM32_ADAPTER.matches_prologue(text), expected
+                )
+
+        self.assertIsNone(
+            arch_module.ARM32_ADAPTER.matches_prologue("str r4, [sp, #-4]!")
+        )
+
     def test_feature_support_matrix_exposes_levels(self):
         matrix = arch_module.get_feature_support_matrix()
         self.assertEqual(matrix["x86"]["cfg"]["level"], "full")

@@ -476,6 +476,43 @@ class TestDiscoverFunctions(unittest.TestCase):
         self.assertIsNotNone(target)
         self.assertEqual(target["reason"], "call_target")
 
+    def test_arm32_full_descending_and_single_lr_save_start_functions(self):
+        for prologue, reason in (
+            ("stmfd sp!, {r4, lr}", "stmfd sp"),
+            ("str lr, [sp, #-4]!", "str lr preindex"),
+        ):
+            with self.subTest(prologue=prologue):
+                lines = [
+                    {
+                        "addr": "0x710000",
+                        "text": prologue,
+                        "mnemonic": prologue.split()[0],
+                        "line": 1,
+                    },
+                    {
+                        "addr": "0x710004",
+                        "text": "mov r0, r1",
+                        "mnemonic": "mov",
+                        "line": 2,
+                    },
+                    {
+                        "addr": "0x710008",
+                        "text": "bx lr",
+                        "mnemonic": "bx",
+                        "operands": "lr",
+                        "line": 3,
+                    },
+                ]
+
+                result = discover_functions(lines, set())
+                entry = next(
+                    (item for item in result if item["addr"] == "0x710000"), None
+                )
+
+                self.assertIsNotNone(entry)
+                self.assertEqual(entry["reason"], reason)
+                self.assertEqual(entry["kind"], "function")
+
 
 class TestDiscoveryMetrics(unittest.TestCase):
     def test_precision_metrics_report_false_positives_and_overlaps(self):
