@@ -532,7 +532,7 @@ ARM32_ADAPTER = ArchAdapter(
     family="arm",
     display_name="ARM",
     call_mnemonics=frozenset({"bl", "blx"}),
-    unconditional_jump_mnemonics=frozenset({"b", "bx"}),
+    unconditional_jump_mnemonics=frozenset({"b", "bx", "tbb", "tbh"}),
     conditional_branch_mnemonics=ARM32_CONDITIONAL_BRANCHES,
     return_mnemonics=frozenset(),
     prologue_patterns=ARM32_PROLOGUE_PATTERNS,
@@ -547,7 +547,7 @@ ARM32_ADAPTER = ArchAdapter(
             "partial", "BL targets, push-lr prologues and LR returns"
         ),
         "cfg": FeatureSupport(
-            "partial", "Direct branches/calls and LR return patterns"
+            "partial", "Direct branches/calls, Thumb table branches and LR returns"
         ),
         "xrefs": FeatureSupport("partial", "Code refs and common LDR/STR data refs"),
         "call_graph": FeatureSupport("partial", "Direct BL/BLX calls"),
