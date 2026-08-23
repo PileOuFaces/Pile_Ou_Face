@@ -70,7 +70,16 @@ describe('plugin runtime online key transport — MODE selection', () => {
       '../shared/sharedHandlers': { normalizeRawArchName: (v) => v },
       '../shared/authService': {
         AuthService: {
-          getInstance: sinon.stub().returns({ getContentKeys, refreshKeysIfStale }),
+          getInstance: sinon.stub().returns({
+            getContentKeys,
+            refreshKeysIfStale,
+            getDeploymentStatus: () => ({
+              profile: 'OSS_DEVELOPMENT',
+              origin: 'http://localhost:8000',
+              deploymentId: 'oss-development',
+              verified: true,
+            }),
+          }),
         },
       },
       '../shared/authConfig': {
@@ -279,5 +288,9 @@ describe('plugin runtime online key transport — MODE selection', () => {
     const accountMsg = postedMessages.find((m) => m.type === 'accountState');
     expect(accountMsg).to.exist;
     expect(accountMsg.loggedIn).to.equal(false);
+    expect(accountMsg.deployment).to.deep.include({
+      profile: 'OSS_DEVELOPMENT',
+      deploymentId: 'oss-development',
+    });
   });
 });

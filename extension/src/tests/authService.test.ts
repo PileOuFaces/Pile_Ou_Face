@@ -639,6 +639,32 @@ describe("AuthService SecretStorage server isolation", () => {
     expect(await svc.isAuthenticated()).to.equal(false);
   });
 
+  it("reports the configured deployment before discovery", () => {
+    const { secrets } = createSecrets();
+    const svc = isolatedService(secrets, "https://auth-a.example/");
+
+    expect(svc.getDeploymentStatus("configured-deployment")).to.deep.equal({
+      profile: "OSS_DEVELOPMENT",
+      origin: "https://auth-a.example",
+      deploymentId: "configured-deployment",
+      verified: false,
+    });
+  });
+
+  it("reports the verified server identity after discovery", async () => {
+    const { secrets } = createSecrets();
+    const svc = isolatedService(secrets);
+
+    await svc._ensureServerIdentity("https://auth-a.example");
+
+    expect(svc.getDeploymentStatus("configured-deployment")).to.deep.equal({
+      profile: "OSS_DEVELOPMENT",
+      origin: "https://auth-a.example",
+      deploymentId: "deployment-a",
+      verified: true,
+    });
+  });
+
   it("purges the old namespace when the verified server identity changes", async () => {
     const { secrets, store } = createSecrets();
     const svc = isolatedService(secrets);

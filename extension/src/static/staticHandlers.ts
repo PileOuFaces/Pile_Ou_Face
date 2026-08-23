@@ -19,6 +19,7 @@ const { detectPythonExecutable, buildRuntimeEnv, resolveDockerExecutable, logDeb
 const { emptyPluginUiState, summarizePluginRuntimeState } = require('./pluginState');
 const { AuthService } = require('../shared/authService');
 const { resolveAuthServerUrl } = require('../shared/authConfig');
+const { getProductConfig } = require('../shared/productConfig');
 const {
   clearAiProcess,
   registerAiProcess,
@@ -419,6 +420,7 @@ async function _postDecompilerImageUpdateStatus(panel, result, options = {}) {
 
 function staticHandlers(config) {
   const { root, panel, context, logChannel, storageDir, globalDir } = config;
+  const productConfig = getProductConfig();
   const extensionPath = context?.extensionPath || root;
   // Same source of truth as telemetryEvents.ts (extensionVersion): drives the
   // plugin host min/max_version compatibility check in backends/plugins/registry.py.
@@ -586,9 +588,7 @@ function staticHandlers(config) {
         getAuthServerUrl(),
       );
       const { revoked } = await authSvc.refreshKeysIfStale(24 * 3600_000);
-      if (revoked) {
-        panel.webview.postMessage({ type: 'accountState', loggedIn: false });
-      }
+      if (revoked) panel.webview.postMessage(await buildAccountStatePayload({ loggedIn: false }));
       const keys = await authSvc.getContentKeys();
       const entries = Object.entries(keys);
       if (entries.length > 0) {
@@ -611,8 +611,16 @@ function staticHandlers(config) {
     return { env: base, stdin: encodePluginRuntimeStdin(contentKeys) };
   };
 
-  const buildAccountStatePayload = async ({ email = '', fallbackError = '' } = {}) => {
+  const buildAccountStatePayload = async ({ loggedIn = true, email = '', fallbackError = '' } = {}) => {
     const authSvc = AuthService.getInstance(context.secrets, getAuthServerUrl());
+    const deployment = authSvc.getDeploymentStatus(productConfig.deploymentId);
+    const basePayload = {
+      type: 'accountState',
+      loggedIn,
+      deployment,
+      error: fallbackError || '',
+    };
+    if (!loggedIn) return basePayload;
     const resolvedEmail = email || await authSvc.getEmail();
     const keys = await authSvc.getContentKeys();
     const profile = await authSvc.getProfile();
@@ -620,11 +628,9 @@ function staticHandlers(config) {
       ? profile.active_plugin_ids.map((entry) => String(entry || '').trim()).filter(Boolean)
       : Object.keys(keys);
     return {
-      type: 'accountState',
-      loggedIn: true,
+      ...basePayload,
       email: resolvedEmail,
       plugins: activePlugins,
-      error: fallbackError || '',
     };
   };
 
@@ -2459,11 +2465,7 @@ function staticHandlers(config) {
     'pof.auth.getState': async (_message) => {
       const authSvc = AuthService.getInstance(context.secrets, getAuthServerUrl());
       const loggedIn = await authSvc.isAuthenticated();
-      if (loggedIn) {
-        panel.webview.postMessage(await buildAccountStatePayload());
-      } else {
-        panel.webview.postMessage({ type: 'accountState', loggedIn: false });
-      }
+      panel.webview.postMessage(await buildAccountStatePayload({ loggedIn }));
     },
     'pof.auth.login': async (message) => {
       const authSvc = AuthService.getInstance(
@@ -2489,11 +2491,10 @@ function staticHandlers(config) {
         if (logChannel?.appendLine) {
           logChannel.appendLine(`[auth] Login failed email="${email}" passwordLength=${passwordLength} url=${getAuthServerUrl()} detail=${detail}`);
         }
-        panel.webview.postMessage({
-          type: 'accountState',
+        panel.webview.postMessage(await buildAccountStatePayload({
           loggedIn: false,
-          error: `${detail} (${getAuthServerUrl()}) [email=${email || 'empty'}, passwordLength=${passwordLength}]`,
-        });
+          fallbackError: `${detail} (${getAuthServerUrl()}) [email=${email || 'empty'}, passwordLength=${passwordLength}]`,
+        }));
       }
     },
     'pof.auth.logout': async (_message) => {
@@ -2502,7 +2503,7 @@ function staticHandlers(config) {
         getAuthServerUrl(),
       );
       await authSvc.logout();
-      panel.webview.postMessage({ type: 'accountState', loggedIn: false });
+      panel.webview.postMessage(await buildAccountStatePayload({ loggedIn: false }));
       await handlers.hubLoadPluginState();
     },
   };
