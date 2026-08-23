@@ -28,7 +28,7 @@ except ImportError:
     lief = None
 
 
-STACK_FRAME_CACHE_VERSION = 9
+STACK_FRAME_CACHE_VERSION = 10
 X86_STACK_RE = re.compile(
     r"\[(rbp|ebp|rsp|esp)(?:\s*([+-])\s*(0x[0-9a-fA-F]+|\d+))?\]",
     re.IGNORECASE,
@@ -528,11 +528,11 @@ def _update_stack_adjust(
             reg_count = _register_list_count(op_str)
             if reg_count:
                 return max(0, stack_adjust - (reg_count * ptr_size))
-        if mnem == "sub" and op_str.startswith("sp, sp"):
+        if mnem == "sub" and op_str.startswith("sp,"):
             imm = _parse_int(op_str.split(",")[-1].strip().lstrip("#"))
             if imm:
                 return stack_adjust + imm
-        if mnem == "add" and op_str.startswith("sp, sp"):
+        if mnem == "add" and op_str.startswith("sp,"):
             imm = _parse_int(op_str.split(",")[-1].strip().lstrip("#"))
             if imm:
                 return max(0, stack_adjust - imm)
