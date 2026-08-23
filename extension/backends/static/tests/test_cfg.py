@@ -71,6 +71,39 @@ class TestCfgHelpers(unittest.TestCase):
                 self.assertFalse(is_call)
                 self.assertIsNone(target)
 
+    def test_thumb_compare_and_branch_keeps_target_and_fallthrough(self):
+        for mnemonic in ("cbz", "cbnz"):
+            with self.subTest(mnemonic=mnemonic):
+                lines = [
+                    {"addr": "0x1000", "text": f"{mnemonic} r0, 0x1008", "line": 1},
+                    {"addr": "0x1002", "text": "movs r1, #1", "line": 2},
+                    {"addr": "0x1004", "text": "b 0x100c", "line": 3},
+                    {"addr": "0x1008", "text": "movs r1, #0", "line": 4},
+                    {"addr": "0x100a", "text": "bx lr", "line": 5},
+                    {"addr": "0x100c", "text": "bx lr", "line": 6},
+                ]
+
+                cfg = build_cfg(lines, arch_hint="thumb")
+                block = next(item for item in cfg["blocks"] if item["addr"] == "0x1000")
+
+                self.assertEqual(block["successors"], ["0x1008", "0x1002"])
+                self.assertTrue(
+                    any(
+                        edge["from"] == "0x1000"
+                        and edge["to"] == "0x1008"
+                        and edge["type"] == "jmp"
+                        for edge in cfg["edges"]
+                    )
+                )
+                self.assertTrue(
+                    any(
+                        edge["from"] == "0x1000"
+                        and edge["to"] == "0x1002"
+                        and edge["type"] == "fallthrough"
+                        for edge in cfg["edges"]
+                    )
+                )
+
 
 class TestJumpTableDetection(unittest.TestCase):
     """Tests pour la détection de jump tables."""
