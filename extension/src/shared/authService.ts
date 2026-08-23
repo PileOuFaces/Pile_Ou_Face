@@ -30,6 +30,18 @@ const KEY_DEVICE_ID          = 'pof.auth.deviceId';
 const KEY_DEVICE_PRIVATE_KEY = 'pof.auth.devicePrivateKey';
 const KEY_DEVICE_PUBLIC_KEY  = 'pof.auth.devicePublicKey';
 const KEY_LEASE_EXPIRES_AT   = 'pof.auth.leaseExpiresAt';
+const KEY_SERVER_BINDING      = 'pof.auth.serverBinding.v1';
+const SECRET_KEYS = Object.freeze([
+  KEY_ACCESS_TOKEN,
+  KEY_REFRESH_TOKEN,
+  KEY_CONTENT_KEYS,
+  KEY_EMAIL,
+  KEY_KEYS_VALIDATED_AT,
+  KEY_DEVICE_ID,
+  KEY_DEVICE_PRIVATE_KEY,
+  KEY_DEVICE_PUBLIC_KEY,
+  KEY_LEASE_EXPIRES_AT,
+]);
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 
 function discoverInstalledPluginReleases(searchDirs = []) {
@@ -83,8 +95,16 @@ function discoverInstalledPluginArtifacts(searchDirs = []) {
 
 class AuthService {
   constructor(secrets, serverUrl, options = {}) {
-    this.secrets = secrets;
+    this._rawSecrets = secrets;
     this.serverUrl = serverUrl;
+    this.deploymentProfile = String(options.deploymentProfile || '').trim();
+    this._secretIsolationEnabled = Boolean(this.deploymentProfile);
+    this._secretNamespace = '';
+    this.secrets = this._secretIsolationEnabled ? {
+      get: async (key) => this._rawSecrets.get(await this._resolveSecretKey(key)),
+      store: async (key, value) => this._rawSecrets.store(await this._resolveSecretKey(key), value),
+      delete: async (key) => this._rawSecrets.delete(await this._resolveSecretKey(key)),
+    } : secrets;
     this._refreshTimer = null;
     this.pluginSearchDirs = Array.isArray(options.pluginSearchDirs)
       ? options.pluginSearchDirs
@@ -96,6 +116,9 @@ class AuthService {
       AuthService._instance = new AuthService(secrets, serverUrl, options);
     } else if (serverUrl && serverUrl !== AuthService._instance.serverUrl) {
       AuthService._instance.serverUrl = serverUrl;
+      AuthService._instance._serverIdentity = null;
+      AuthService._instance._jwksCache = null;
+      AuthService._instance._secretNamespace = '';
     }
     if (Array.isArray(options.pluginSearchDirs)) {
       AuthService._instance.pluginSearchDirs = options.pluginSearchDirs;
@@ -185,6 +208,10 @@ class AuthService {
   }
 
   async refresh() {
+    if (this._secretIsolationEnabled) {
+      try { await this._ensureServerIdentity(this.serverUrl); }
+      catch { return false; }
+    }
     const refreshToken = await this.secrets.get(KEY_REFRESH_TOKEN);
     if (!refreshToken) { return false; }
     try {
@@ -377,11 +404,84 @@ class AuthService {
 
   async _ensureServerIdentity(serverUrl) {
     const normalized = String(serverUrl || '').replace(/\/+$/, '');
-    if (this._serverIdentity?.origin === normalized) return this._serverIdentity;
+    if (this._serverIdentity?.origin === normalized) {
+      if (this._secretIsolationEnabled && !this._secretNamespace) {
+        await this._bindSecretNamespace(this._serverIdentity);
+      }
+      return this._serverIdentity;
+    }
     this._serverIdentity = await discoverAuthServer(normalized);
     this.serverUrl = this._serverIdentity.origin;
     this._jwksCache = null;
+    if (this._secretIsolationEnabled) await this._bindSecretNamespace(this._serverIdentity);
     return this._serverIdentity;
+  }
+
+  _namespaceFor(identity) {
+    const fingerprint = [
+      this.deploymentProfile,
+      String(identity?.deployment_id || '').trim(),
+      String(identity?.origin || '').replace(/\/+$/, ''),
+    ].join('\n');
+    return `pof.auth.ns.${crypto.createHash('sha256').update(fingerprint).digest('hex').slice(0, 24)}`;
+  }
+
+  async _readServerBinding() {
+    try {
+      const raw = await this._rawSecrets.get(KEY_SERVER_BINDING);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async _resolveSecretKey(key) {
+    if (!SECRET_KEYS.includes(key)) return key;
+    if (!this._secretNamespace) {
+      const binding = await this._readServerBinding();
+      const origin = String(this.serverUrl || '').replace(/\/+$/, '');
+      if (binding?.profile === this.deploymentProfile && binding?.origin === origin) {
+        this._secretNamespace = String(binding.namespace || '');
+      } else if (binding?.namespace) {
+        await this._deleteNamespace(binding.namespace);
+        await this._rawSecrets.delete(KEY_SERVER_BINDING);
+      }
+    }
+    const namespace = this._secretNamespace || this._namespaceFor({
+      deployment_id: 'unverified',
+      origin: String(this.serverUrl || '').replace(/\/+$/, ''),
+    });
+    return `${namespace}.${key.slice('pof.auth.'.length)}`;
+  }
+
+  async _deleteNamespace(namespace) {
+    if (!namespace) return;
+    await Promise.all(SECRET_KEYS.map((key) => (
+      this._rawSecrets.delete(`${namespace}.${key.slice('pof.auth.'.length)}`)
+    )));
+  }
+
+  async _bindSecretNamespace(identity) {
+    const namespace = this._namespaceFor(identity);
+    const binding = await this._readServerBinding();
+    if (binding?.namespace && binding.namespace !== namespace) {
+      await this._deleteNamespace(binding.namespace);
+    }
+    this._secretNamespace = namespace;
+    if (!binding) {
+      for (const key of SECRET_KEYS) {
+        // Les anciens secrets globaux ne prouvent pas à quelle autorité ils
+        // appartenaient. Les rattacher au premier serveur découvert créerait
+        // un risque de rejeu cross-déploiement : migration = déconnexion.
+        await this._rawSecrets.delete(key);
+      }
+    }
+    await this._rawSecrets.store(KEY_SERVER_BINDING, JSON.stringify({
+      profile: this.deploymentProfile,
+      deploymentId: identity.deployment_id,
+      origin: identity.origin,
+      namespace,
+    }));
   }
 
   async _postJsonAuthenticated(baseUrl, path, accessToken, payload) {
@@ -467,6 +567,7 @@ AuthService._instance = null;
 
 module.exports = {
   AuthService,
+  KEY_SERVER_BINDING,
   discoverInstalledPluginReleases,
   discoverInstalledPluginArtifacts,
 };
