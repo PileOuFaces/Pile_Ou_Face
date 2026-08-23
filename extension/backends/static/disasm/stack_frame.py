@@ -28,7 +28,7 @@ except ImportError:
     lief = None
 
 
-STACK_FRAME_CACHE_VERSION = 7
+STACK_FRAME_CACHE_VERSION = 8
 X86_STACK_RE = re.compile(
     r"\[(rbp|ebp|rsp|esp)(?:\s*([+-])\s*(0x[0-9a-fA-F]+|\d+))?\]",
     re.IGNORECASE,
@@ -172,6 +172,13 @@ def _canonical_frame_base(base_reg: str) -> str:
         return "sp"
     if normalized in {"r15", "a10"}:
         return "sp"
+    return normalized
+
+
+def _arm32_widthless_mnemonic(mnemonic: str) -> str:
+    normalized = str(mnemonic or "").strip().lower()
+    if normalized.endswith((".w", ".n")):
+        return normalized[:-2]
     return normalized
 
 
@@ -319,6 +326,7 @@ def _extract_frame_pointer_anchor(
         return None
 
     if arch_family == "arm":
+        mnem = _arm32_widthless_mnemonic(mnem)
         match = re.fullmatch(r"(r7|r11|fp)\s*,\s*sp", op_str)
         if mnem == "mov" and match:
             return (_canonical_frame_base(match.group(1)), stack_adjust)
@@ -491,6 +499,7 @@ def _update_stack_adjust(
         return updated
 
     if arch_family == "arm":
+        mnem = _arm32_widthless_mnemonic(mnem)
         if mnem == "push":
             reg_count = _register_list_count(op_str)
             if reg_count:
@@ -499,11 +508,11 @@ def _update_stack_adjust(
             reg_count = _register_list_count(op_str)
             if reg_count:
                 return max(0, stack_adjust - (reg_count * ptr_size))
-        if mnem == "stmdb" and op_str.startswith("sp!"):
+        if mnem in {"stmdb", "stmfd"} and op_str.startswith("sp!"):
             reg_count = _register_list_count(op_str)
             if reg_count:
                 return stack_adjust + (reg_count * ptr_size)
-        if mnem in {"ldmia", "ldm"} and (
+        if mnem in {"ldmia", "ldm", "ldmfd"} and (
             op_str.startswith("sp!") or op_str.startswith("sp,")
         ):
             reg_count = _register_list_count(op_str)
