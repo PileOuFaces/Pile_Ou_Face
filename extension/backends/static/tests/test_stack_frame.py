@@ -1090,6 +1090,18 @@ class TestStackFrame(unittest.TestCase):
                     0,
                 )
 
+    def test_thumb_compact_sp_adjustments_are_tracked(self):
+        allocate = SimpleNamespace(mnemonic="sub", op_str="sp, #0x10")
+        release = SimpleNamespace(mnemonic="add", op_str="sp, #0x10")
+
+        adjusted = stack_frame_module._update_stack_adjust(8, allocate, "arm", 4)
+
+        self.assertEqual(adjusted, 24)
+        self.assertEqual(
+            stack_frame_module._update_stack_adjust(adjusted, release, "arm", 4),
+            8,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
