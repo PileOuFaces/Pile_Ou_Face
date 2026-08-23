@@ -12,13 +12,41 @@
 
 const fs = require('fs');
 const path = require('path');
-const { getProductConfig } = require('./productConfig');
+const { DEPLOYMENT_PROFILES, getProductConfig, validateProductConfig } = require('./productConfig');
 
 const DEFAULT_LOCAL_AUTH_URL = 'http://localhost:8000';
 
 function normalizeAuthUrl(value = '') {
   const normalized = String(value || '').trim();
   return normalized || '';
+}
+
+function isLoopbackUrl(value) {
+  try {
+    const hostname = new URL(value).hostname.toLowerCase();
+    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+  } catch (_) {
+    return false;
+  }
+}
+
+function requireSecureAuthUrl(value) {
+  const url = normalizeAuthUrl(value);
+  if (!url) return '';
+  const parsed = new URL(url);
+  if (parsed.protocol !== 'https:' && !isLoopbackUrl(url)) {
+    throw new Error('Auth server URL must use HTTPS outside loopback');
+  }
+  return url.replace(/\/$/, '');
+}
+
+function planLegacyAuthUrlMigration({ deploymentProfile, legacyUrl = '', configuredUrl = '' } = {}) {
+  const legacy = normalizeAuthUrl(legacyUrl);
+  if (!legacy) return { removeLegacy: false, configuredUrl: normalizeAuthUrl(configuredUrl) };
+  if (deploymentProfile === DEPLOYMENT_PROFILES.OSS_DEVELOPMENT && !normalizeAuthUrl(configuredUrl)) {
+    return { removeLegacy: true, configuredUrl: requireSecureAuthUrl(legacy) };
+  }
+  return { removeLegacy: true, configuredUrl: normalizeAuthUrl(configuredUrl) };
 }
 
 function hasLocalAuthWorkspace(projectRoot, existsSync = fs.existsSync) {
@@ -45,13 +73,23 @@ function resolveAuthServerUrl({
   projectRoot = '',
   existsSync = fs.existsSync,
   defaultRemoteAuthUrl = undefined,
+  productConfig = undefined,
 } = {}) {
-  const remoteDefault = normalizeAuthUrl(
-    defaultRemoteAuthUrl !== undefined ? defaultRemoteAuthUrl : getProductConfig().authProviderUrl,
-  );
-  const saved = normalizeAuthUrl(savedAuthServerUrl);
-  const configured = normalizeAuthUrl(configuredAuthServerUrl);
+  const product = validateProductConfig(productConfig || {
+    ...getProductConfig(),
+    ...(defaultRemoteAuthUrl !== undefined ? { authProviderUrl: defaultRemoteAuthUrl } : {}),
+  });
+  const profile = product.deploymentProfile;
+  const remoteDefault = requireSecureAuthUrl(product.authProviderUrl);
+  const saved = requireSecureAuthUrl(savedAuthServerUrl);
+  const configured = requireSecureAuthUrl(configuredAuthServerUrl);
   const localWorkspaceDetected = hasLocalAuthWorkspace(projectRoot, existsSync);
+
+  if (profile === DEPLOYMENT_PROFILES.AIRGAP_ENTERPRISE) return '';
+  if (profile === DEPLOYMENT_PROFILES.OFFICIAL_SAAS
+    || profile === DEPLOYMENT_PROFILES.MANAGED_ON_PREM) {
+    return remoteDefault;
+  }
 
   // Migration : une valeur sauvegardee egale au defaut distant configure est
   // reroutee vers localhost en dev local. Ne se declenche jamais si le defaut
@@ -67,5 +105,8 @@ function resolveAuthServerUrl({
 module.exports = {
   DEFAULT_LOCAL_AUTH_URL,
   hasLocalAuthWorkspace,
+  isLoopbackUrl,
+  planLegacyAuthUrlMigration,
+  requireSecureAuthUrl,
   resolveAuthServerUrl,
 };

@@ -45,6 +45,10 @@ jobs:
         run: npm ci
         working-directory: extension
 
+      - name: Pin official SaaS deployment profile
+        run: npm run profile:prepare:official
+        working-directory: extension
+
       - name: Publish to VS Code Marketplace
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
@@ -84,6 +88,10 @@ jobs:
       - name: Install dependencies
         working-directory: extension
         run: npm ci
+
+      - name: Pin official SaaS deployment profile
+        working-directory: extension
+        run: npm run profile:prepare:official
 
       - name: Read extension metadata
         id: meta

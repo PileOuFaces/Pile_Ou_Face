@@ -32,6 +32,7 @@ const {
   ensureStorageDir,
   getGlobalStorageDir,
   logError,
+  logWarning,
 } = require('./shared/utils');
 const { readTraceJson, writeTraceJson, setViewMode, loadTraceFromWorkspace } = require('./shared/trace');
 const { payloadToHex, parseStdinExpression } = require('./shared/payload');
@@ -40,7 +41,7 @@ const { registerSharedCommands } = require('./shared/commands');
 const { registerStaticCommands } = require('./static/commands');
 const { registerDecompilerCommands } = require('./static/decompilerCommands');
 const { AuthService } = require('./shared/authService');
-const { resolveAuthServerUrl } = require('./shared/authConfig');
+const { planLegacyAuthUrlMigration, resolveAuthServerUrl } = require('./shared/authConfig');
 const { getProductConfig } = require('./shared/productConfig');
 const { configureRuntimeAudit, recordRuntimeEvent, resetRuntimeAudit } = require('./shared/runtimeAudit');
 const { createTelemetryService } = require('./shared/telemetry/telemetry');
@@ -130,11 +131,29 @@ function activate(context) {
   // checkDecompilerDeps supprimé : l'install est proposé à la demande via le dropdown
 
   const authConfig = vscode.workspace.getConfiguration('pileOuFace').inspect('authServerUrl');
-  const authServerUrl = resolveAuthServerUrl({
-    savedAuthServerUrl: context.globalState.get('pof-settings', {}).authServerUrl || '',
-    configuredAuthServerUrl: authConfig?.workspaceFolderValue || authConfig?.workspaceValue || authConfig?.globalValue || '',
-    projectRoot: folders?.[0]?.uri?.fsPath || '',
+  const authSavedSettings = context.globalState.get('pof-settings', {});
+  const configuredAuthServerUrl = authConfig?.workspaceFolderValue || authConfig?.workspaceValue || authConfig?.globalValue || '';
+  const legacyAuthMigration = planLegacyAuthUrlMigration({
+    deploymentProfile: productConfig.deploymentProfile,
+    legacyUrl: authSavedSettings.authServerUrl || '',
+    configuredUrl: configuredAuthServerUrl,
   });
+  const authServerUrl = resolveAuthServerUrl({
+    savedAuthServerUrl: authSavedSettings.authServerUrl || '',
+    configuredAuthServerUrl,
+    projectRoot: folders?.[0]?.uri?.fsPath || '',
+    productConfig,
+  });
+  if (legacyAuthMigration.removeLegacy) {
+    const { authServerUrl: _removedLegacyAuthUrl, ...migratedSettings } = authSavedSettings;
+    if (!configuredAuthServerUrl && legacyAuthMigration.configuredUrl) {
+      vscode.workspace.getConfiguration('pileOuFace')
+        .update('authServerUrl', legacyAuthMigration.configuredUrl, vscode.ConfigurationTarget.Global)
+        .catch((err) => logWarning(`[Auth] migration du réglage URL échouée: ${err.message || err}`));
+    }
+    context.globalState.update('pof-settings', migratedSettings)
+      .catch((err) => logWarning(`[Auth] suppression de l'ancienne URL échouée: ${err.message || err}`));
+  }
   const _authService = AuthService.getInstance(context.secrets, authServerUrl, {
     pluginSearchDirs: [storageDir, globalDir]
       .filter(Boolean)

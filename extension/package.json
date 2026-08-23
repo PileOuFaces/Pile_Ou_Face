@@ -285,8 +285,8 @@
       "properties": {
         "pileOuFace.authServerUrl": {
           "type": "string",
-          "default": "https://auth.pileouface.io",
-          "description": "URL du serveur d'authentification Pile Ou Face"
+          "default": "",
+          "description": "URL du serveur d'authentification (profil OSS/developpement uniquement)"
         },
         "pileOuFace.logLevel": {
           "type": "string",
@@ -381,6 +381,8 @@
     "build": "npm run typecheck && node esbuild.js",
     "build:watch": "node esbuild.js --watch",
     "package": "npm run typecheck && node esbuild.js --production",
+    "profile:check:official": "node scripts/prepare-deployment-profile.js OFFICIAL_SAAS --check",
+    "profile:prepare:official": "node scripts/prepare-deployment-profile.js OFFICIAL_SAAS",
     "test:bundle": "npm run package && tsx scripts/smoke-bundle.ts",
     "test:e2e:audit": "node scripts/e2e/run-runtime-audit.js",
     "test:e2e:audit:coverage": "node scripts/e2e/runtime-audit-feature-coverage.js",
