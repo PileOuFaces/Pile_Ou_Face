@@ -4,8 +4,10 @@ const fs = require("fs");
 const path = require("path");
 
 const {
+  DEPLOYMENT_PROFILES,
   NEUTRAL_CONFIG,
   loadProductConfig,
+  validateProductConfig,
 } = require("../shared/productConfig");
 
 function mkTmpRoot() {
@@ -55,6 +57,8 @@ describe("product config layer", () => {
       fs.writeFileSync(
         path.join(root, "product.json"),
         JSON.stringify({
+          deploymentProfile: DEPLOYMENT_PROFILES.OFFICIAL_SAAS,
+          deploymentId: "official-saas",
           authProviderUrl: "https://auth.official.example",
           collabProviderUrl: "https://collab.official.example",
           telemetryProviderUrl: "https://telemetry.official.example",
@@ -67,5 +71,21 @@ describe("product config layer", () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("rejects unknown profiles and invalid managed artifacts", () => {
+    expect(() => validateProductConfig({ deploymentProfile: "UNKNOWN" })).to.throw("Unknown");
+    expect(() => validateProductConfig({
+      ...NEUTRAL_CONFIG,
+      deploymentProfile: DEPLOYMENT_PROFILES.MANAGED_ON_PREM,
+    })).to.throw("requires authProviderUrl and deploymentId");
+  });
+
+  it("rejects an online endpoint in an air-gapped artifact", () => {
+    expect(() => validateProductConfig({
+      ...NEUTRAL_CONFIG,
+      deploymentProfile: DEPLOYMENT_PROFILES.AIRGAP_ENTERPRISE,
+      authProviderUrl: "https://auth.example.com",
+    })).to.throw("must not define");
   });
 });
