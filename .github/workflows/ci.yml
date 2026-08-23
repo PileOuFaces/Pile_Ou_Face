@@ -505,9 +505,7 @@ jobs:
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: PileOuFaces/Pile_ou_Face_auth
-          # XSYNC-AUTH-001: repasser à `develops` après le merge de l'Auth #49.
-          # Cette PR Host consomme le contrat discovery introduit par cette PR.
-          ref: feature/48-auth-discovery-v1
+          ref: develops
           token: ${{ secrets.CROSS_REPO_READONLY_PAT }}
           path: pof-auth-sibling
 
