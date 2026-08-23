@@ -1102,6 +1102,27 @@ class TestStackFrame(unittest.TestCase):
             8,
         )
 
+    def test_arm32_indexed_stack_saves_are_tracked(self):
+        cases = [
+            ("str", "lr, [sp, #-4]!", "ldr", "lr, [sp], #4", 4),
+            ("strd.w", "r4, r5, [r13, #-8]!", "ldrd.w", "r4, r5, [r13], #8", 8),
+        ]
+
+        for save_mnemonic, save_ops, restore_mnemonic, restore_ops, expected in cases:
+            with self.subTest(save=save_mnemonic):
+                save = SimpleNamespace(mnemonic=save_mnemonic, op_str=save_ops)
+                restore = SimpleNamespace(mnemonic=restore_mnemonic, op_str=restore_ops)
+
+                adjusted = stack_frame_module._update_stack_adjust(0, save, "arm", 4)
+
+                self.assertEqual(adjusted, expected)
+                self.assertEqual(
+                    stack_frame_module._update_stack_adjust(
+                        adjusted, restore, "arm", 4
+                    ),
+                    0,
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
