@@ -130,6 +130,11 @@ class TestJumpTableDetection(unittest.TestCase):
         self.assertTrue(_is_jump_table("tbb\t[pc, r0]"))
         self.assertTrue(_is_jump_table("tbh\t[pc, r1, lsl #1]"))
 
+    def test_is_jump_table_arm32_bx_register_but_not_return(self):
+        self.assertTrue(_is_jump_table("bx\tr3"))
+        self.assertFalse(_is_jump_table("bx\tlr"))
+        self.assertFalse(_is_jump_table("bx\tr14"))
+
     def test_is_jump_table_multi_arch_register_indirect(self):
         """Détecte aussi les patterns registre exotiques hors x86/ARM64."""
         self.assertTrue(_is_jump_table("03e00008 jr t9"))
@@ -822,6 +827,37 @@ class TestJumpTableIntegration(unittest.TestCase):
         self.assertEqual(mock_read.call_args.kwargs.get("entry_size"), 8)
         jt_edges = [e for e in result["edges"] if e["type"] == "jumptable"]
         self.assertEqual([e["case_label"] for e in jt_edges], [0, 1])
+
+    def test_build_cfg_arm32_bx_switch_pattern_uses_absolute_jump_table(self):
+        """Détecte un switch ARM32 via adr + ldr indexé + bx registre."""
+        lines = [
+            {"addr": "0x401000", "text": "cmp r0, #0x1"},
+            {"addr": "0x401004", "text": "adr r2, 0x403000"},
+            {"addr": "0x401008", "text": "ldr r3, [r2, r0, lsl #2]"},
+            {"addr": "0x40100c", "text": "bx r3"},
+        ]
+        fake_binary = MagicMock(name="binary")
+        with (
+            patch("backends.static.disasm.cfg.lief") as mock_lief,
+            patch(
+                "backends.static.disasm.cfg._read_jump_table_entries",
+                return_value=["0x401100", "0x401180"],
+            ) as mock_read,
+        ):
+            mock_lief.parse.return_value = fake_binary
+            result = build_cfg(
+                lines,
+                binary_path="/fake/binary",
+                arch_hint="arm",
+            )
+
+        block = result["blocks"][0]
+        self.assertTrue(block.get("is_switch"))
+        self.assertEqual(block.get("successors"), ["0x401100", "0x401180"])
+        mock_read.assert_called_once()
+        self.assertEqual(mock_read.call_args.args[:2], ("/fake/binary", 0x403000))
+        self.assertEqual(mock_read.call_args.kwargs.get("entry_mode"), "absolute")
+        self.assertEqual(mock_read.call_args.kwargs.get("entry_size"), 4)
 
     def test_build_cfg_arm64_relative_switch_pattern_uses_relative_jump_table(self):
         """Détecte un switch ARM64 relatif via ldrsw + add + br."""
