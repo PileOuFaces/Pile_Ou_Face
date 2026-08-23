@@ -181,7 +181,7 @@ def _is_jump_table(text: str) -> bool:
             return True
 
     # ARM64/MIPS/RISC-V/PPC: branchement via registre / compteur
-    elif mnem in {"br", "bctr", "bcctr"}:
+    elif mnem in {"br", "bctr", "bcctr", "tbb", "tbh"}:
         return True
     elif mnem == "jr":
         jump_reg = _extract_register_jump_target(text)
@@ -794,6 +794,51 @@ def _read_bytes_at(binary, vaddr: int, size: int) -> bytes:
     return b""
 
 
+def _resolve_thumb_table_branch(
+    block_lines: list[dict],
+    parsed_binary,
+    detected_arch_info,
+) -> list[str]:
+    """Résout les cibles relatives d'un switch Thumb ``TBB``/``TBH``.
+
+    Le PC architectural pointe quatre octets après l'instruction et est aligné
+    sur quatre octets. Chaque entrée encode ensuite la moitié du déplacement
+    jusqu'à la cible.
+    """
+    if parsed_binary is None or not block_lines:
+        return []
+
+    branch = block_lines[-1]
+    mnemonic = _get_mnemonic(str(branch.get("text", "") or ""))
+    if mnemonic not in {"tbb", "tbh"}:
+        return []
+
+    branch_addr = _parse_int_literal(branch.get("addr"))
+    max_entries = _detect_switch_max_case(block_lines)
+    if branch_addr is None or max_entries is None or max_entries <= 0:
+        return []
+
+    entry_size = 1 if mnemonic == "tbb" else 2
+    table_addr = (branch_addr + 4) & ~3
+    raw = _read_bytes_at(parsed_binary, table_addr, max_entries * entry_size)
+    if len(raw) < max_entries * entry_size:
+        return []
+
+    endian = str(getattr(detected_arch_info, "endian", "little") or "little").lower()
+    byteorder = "big" if endian.startswith("big") else "little"
+    targets: list[str] = []
+    for index in range(max_entries):
+        start = index * entry_size
+        displacement = int.from_bytes(raw[start : start + entry_size], byteorder)
+        target_int = table_addr + (displacement * 2)
+        if not _is_valid_code_addr(target_int, parsed_binary):
+            continue
+        target = _normalize_addr(hex(target_int))
+        if target not in targets:
+            targets.append(target)
+    return targets
+
+
 def _section_is_exec(sec, binary) -> bool:
     """Verifie si une section est executable.
 
@@ -1103,8 +1148,17 @@ def build_cfg(
                 # Jump table : détecter et extraire les cibles
                 _switch_entries: list[str] = []
                 if _is_jump_table(text):
+                    if _get_mnemonic(text) in {"tbb", "tbh"}:
+                        _switch_entries = _resolve_thumb_table_branch(
+                            block_lines,
+                            _parsed_binary,
+                            detected_arch_info,
+                        )
+                        for entry in _switch_entries:
+                            if entry not in successors:
+                                successors.append(entry)
                     table_base = _extract_jump_table_base(text)
-                    if table_base:
+                    if table_base and not _switch_entries:
                         # Convertir en adresse absolue si c'est un offset RIP-relative
                         # (heuristique simple : si < 0x10000, c'est probablement un offset)
                         base_int = int(table_base, 16)
@@ -1156,7 +1210,10 @@ def build_cfg(
                             for entry in _switch_entries:
                                 if entry not in successors:
                                     successors.append(entry)
-                    if not _switch_entries:
+                    if not _switch_entries and _get_mnemonic(text) not in {
+                        "tbb",
+                        "tbh",
+                    }:
                         _switch_entries, _ = _resolve_register_jump_table(
                             block_lines,
                             binary_path=binary_path,

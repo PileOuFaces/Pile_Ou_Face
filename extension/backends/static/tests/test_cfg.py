@@ -21,6 +21,7 @@ from backends.static.disasm.cfg import (
     _is_valid_code_addr,
     _read_jump_table_entries,
     _resolve_rip_relative_table,
+    _resolve_thumb_table_branch,
     _section_is_exec,
     build_cfg,
     build_cfg_for_function,
@@ -125,6 +126,10 @@ class TestJumpTableDetection(unittest.TestCase):
         self.assertTrue(_is_jump_table("br\tx8"))
         self.assertTrue(_is_jump_table("br\tx10"))
 
+    def test_is_jump_table_thumb_table_branch(self):
+        self.assertTrue(_is_jump_table("tbb\t[pc, r0]"))
+        self.assertTrue(_is_jump_table("tbh\t[pc, r1, lsl #1]"))
+
     def test_is_jump_table_multi_arch_register_indirect(self):
         """Détecte aussi les patterns registre exotiques hors x86/ARM64."""
         self.assertTrue(_is_jump_table("03e00008 jr t9"))
@@ -152,8 +157,62 @@ class TestJumpTableDetection(unittest.TestCase):
         addr = _extract_jump_table_base("br\tx8")
         self.assertIsNone(addr)
 
+    def test_resolve_thumb_tbb_entries_from_aligned_architectural_pc(self):
+        lines = [
+            {"addr": "0x1000", "text": "cmp r0, #2"},
+            {"addr": "0x1002", "text": "tbb [pc, r0]"},
+        ]
+        with (
+            patch(
+                "backends.static.disasm.cfg._read_bytes_at",
+                return_value=b"\x05\x09\x0d",
+            ) as read,
+            patch("backends.static.disasm.cfg._is_valid_code_addr", return_value=True),
+        ):
+            entries = _resolve_thumb_table_branch(
+                lines, MagicMock(), MagicMock(endian="little")
+            )
+
+        read.assert_called_once_with(unittest.mock.ANY, 0x1004, 3)
+        self.assertEqual(entries, ["0x100e", "0x1016", "0x101e"])
+
+    def test_resolve_thumb_tbh_uses_halfword_entries(self):
+        lines = [
+            {"addr": "0x2000", "text": "cmp r1, #1"},
+            {"addr": "0x2002", "text": "tbh [pc, r1, lsl #1]"},
+        ]
+        with (
+            patch(
+                "backends.static.disasm.cfg._read_bytes_at",
+                return_value=b"\x08\x00\x10\x00",
+            ),
+            patch("backends.static.disasm.cfg._is_valid_code_addr", return_value=True),
+        ):
+            entries = _resolve_thumb_table_branch(
+                lines, MagicMock(), MagicMock(endian="little")
+            )
+
+        self.assertEqual(entries, ["0x2014", "0x2024"])
+
 
 class TestBuildCfg(unittest.TestCase):
+    def test_thumb_table_branch_terminates_block_without_false_fallthrough(self):
+        lines = [
+            {"addr": "0x1000", "text": "cmp r0, #1", "line": 1},
+            {"addr": "0x1002", "text": "tbb [pc, r0]", "line": 2},
+            {"addr": "0x1006", "text": "mov r1, r2", "line": 3},
+        ]
+        with patch(
+            "backends.static.disasm.cfg._resolve_thumb_table_branch",
+            return_value=["0x1010", "0x1020"],
+        ):
+            cfg = build_cfg(lines, binary_path="/fake/thumb", arch_hint="thumb")
+
+        entry = next(block for block in cfg["blocks"] if block["addr"] == "0x1000")
+        self.assertTrue(entry["is_switch"])
+        self.assertEqual(entry["successors"], ["0x1010", "0x1020"])
+        self.assertNotIn("0x1006", entry["successors"])
+
     def test_empty_returns_empty(self):
         cfg = build_cfg([])
         self.assertEqual(cfg["blocks"], [])
