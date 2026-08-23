@@ -851,7 +851,7 @@ class TestStackFrame(unittest.TestCase):
             )
         )
 
-    def test_thumb_r7_frame_pointer_tracks_locals_and_args(self):
+    def test_thumb_wide_r7_frame_pointer_tracks_locals_and_args(self):
         class FakeInstr:
             def __init__(self, mnemonic, op_str):
                 self.mnemonic = mnemonic
@@ -866,9 +866,9 @@ class TestStackFrame(unittest.TestCase):
                 return iter(self._instrs)
 
         instrs = [
-            FakeInstr("push", "{r7, lr}"),
-            FakeInstr("sub", "sp, sp, #0x10"),
-            FakeInstr("add", "r7, sp, #0"),
+            FakeInstr("push.w", "{r7, lr}"),
+            FakeInstr("sub.w", "sp, sp, #0x10"),
+            FakeInstr("add.w", "r7, sp, #0"),
             FakeInstr("str", "r0, [r7, #0x4]"),
             FakeInstr("ldr", "r1, [r7, #0x18]"),
             FakeInstr("bx", "lr"),
@@ -1056,6 +1056,18 @@ class TestStackFrame(unittest.TestCase):
                     stack_frame_module._update_stack_adjust(0, ins, family, ptr_size),
                     expected,
                 )
+
+    def test_arm32_wide_stack_aliases_are_tracked(self):
+        save = SimpleNamespace(mnemonic="stmfd.w", op_str="sp!, {r7, lr}")
+        restore = SimpleNamespace(mnemonic="ldmfd.w", op_str="sp!, {r7, pc}")
+
+        adjusted = stack_frame_module._update_stack_adjust(0, save, "arm", 4)
+
+        self.assertEqual(adjusted, 8)
+        self.assertEqual(
+            stack_frame_module._update_stack_adjust(adjusted, restore, "arm", 4),
+            0,
+        )
 
 
 if __name__ == "__main__":
