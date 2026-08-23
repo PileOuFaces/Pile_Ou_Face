@@ -123,6 +123,21 @@ def _get_mnemonic(text: str) -> str:
     return parts[0].lower() if parts else ""
 
 
+def _is_arm32_pc_indexed_load(text: str) -> bool:
+    """Return whether *text* is an ARM32 absolute jump-table dispatch."""
+    if _get_mnemonic(text) != "ldr":
+        return False
+    match = re.search(
+        r"\bldr\b\s+(?:pc|r15)\s*,\s*\[([^\]]+)\]",
+        str(text or ""),
+        re.IGNORECASE,
+    )
+    if not match:
+        return False
+    expr = match.group(1).replace(" ", "").lower()
+    return expr.count(",") >= 2 and "lsl#2" in expr
+
+
 def _is_branch(
     text: str,
     adapters: tuple[ArchAdapter, ...] | None = None,
@@ -130,6 +145,9 @@ def _is_branch(
     """(is_branch, is_call, target_addr).
     Supporte x86/x64 (call, jmp, ret) et ARM64 (bl, blr, b, br, ret).
     """
+    if _is_arm32_pc_indexed_load(text):
+        return True, False, None
+
     mnem = _get_mnemonic(text)
     operands = re.split(
         rf"\b{re.escape(mnem)}\b", str(text or ""), maxsplit=1, flags=re.IGNORECASE
@@ -162,6 +180,9 @@ def _is_jump_table(text: str) -> bool:
     """
     text_lower = text.lower()
     mnem = _get_mnemonic(text)
+
+    if _is_arm32_pc_indexed_load(text):
+        return True
 
     if mnem == "jmp":
         # Détection de sauts indirects: présence de crochets [...] = accès mémoire
@@ -579,7 +600,9 @@ def _resolve_register_jump_table(
     if not binary_path or parsed_binary is None or not block_lines:
         return [], None
 
-    jump_reg = _extract_register_jump_target(block_lines[-1].get("text", ""))
+    final_text = str(block_lines[-1].get("text", "") or "")
+    direct_arm32_load = _is_arm32_pc_indexed_load(final_text)
+    jump_reg = "pc" if direct_arm32_load else _extract_register_jump_target(final_text)
     if not jump_reg:
         return [], None
 
@@ -595,7 +618,9 @@ def _resolve_register_jump_table(
             return [], None
 
     relative_base_reg = None
-    load_search_end = len(block_lines) - 2
+    load_search_end = (
+        len(block_lines) - 1 if direct_arm32_load else len(block_lines) - 2
+    )
     for idx in range(len(block_lines) - 2, -1, -1):
         text = str(block_lines[idx].get("text", "") or "")
         add_mnem = _get_mnemonic(text)
