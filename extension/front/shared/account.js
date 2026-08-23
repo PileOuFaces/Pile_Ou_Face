@@ -70,7 +70,7 @@ document.addEventListener('keydown', function (e) {
 });
 
 window.addEventListener('message', function (event) {
-  const msg = /** @type {{ type: string, loggedIn?: boolean, email?: string, plugins?: string[], error?: string }} */ (event.data);
+  const msg = /** @type {{ type: string, loggedIn?: boolean, email?: string, plugins?: string[], error?: string, deployment?: { profile?: string, origin?: string, deploymentId?: string, verified?: boolean } }} */ (event.data);
   if (msg.type === 'accountState') {
     _renderAccountState(msg);
     POFHubMessageBus.postMessage({ type: 'hubLoadPluginState' });
@@ -90,6 +90,14 @@ function _renderAccountState(state) {
       errEl.textContent = state.error || '';
       errEl.style.display = state.error ? '' : 'none';
     }
+
+    const deployment = state.deployment || {};
+    const profileEl = root.querySelector('[data-pof-deployment-profile]');
+    const originEl = root.querySelector('[data-pof-deployment-origin]');
+    const deploymentIdEl = root.querySelector('[data-pof-deployment-id]');
+    if (profileEl) { profileEl.textContent = deployment.profile || 'Non configuré'; }
+    if (originEl) { originEl.textContent = deployment.origin || 'Hors ligne'; }
+    if (deploymentIdEl) { deploymentIdEl.textContent = deployment.deploymentId || 'Non configuré'; }
 
     if (loggedIn) {
       const emailEl = root.querySelector('[data-pof-account-email]');

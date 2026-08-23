@@ -1676,10 +1676,31 @@ button.plugin-badge {
   min-height: 34px;
 }
 
+.pof-deployment-status {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.pof-deployment-status div { min-width: 0; }
+.pof-deployment-status dt { color: var(--text-muted); font-size: 11px; }
+.pof-deployment-status dd {
+  margin: 4px 0 0;
+  color: var(--text-active);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 720px) {
   .pof-server-row {
     grid-template-columns: 1fr;
   }
+
+  .pof-deployment-status { grid-template-columns: 1fr; }
 }
 
 /* Gate (logged-out) */

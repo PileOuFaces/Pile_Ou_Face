@@ -125,6 +125,70 @@ jobs:
             extension/.pile-ou-face/test-artifacts/coverage-summary.md
           if-no-files-found: warn
 
+  # Chaque profil est préparé, vérifié et empaqueté dans un VSIX distinct.
+  # La matrice empêche qu'un profil commercial, OSS ou hors-ligne ne dérive
+  # silencieusement de son identité et de sa politique d'endpoint.
+  deployment-profile-artifacts:
+    name: Deployment artifact / ${{ matrix.profile }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: OFFICIAL_SAAS
+            artifact: official-saas
+            deployment_id: official-saas
+            auth_url: https://auth.pileouface.dev
+          - profile: MANAGED_ON_PREM
+            artifact: managed-on-prem
+            deployment_id: ci-managed-on-prem
+            auth_url: https://auth.on-prem.example
+          - profile: OSS_DEVELOPMENT
+            artifact: oss-development
+            deployment_id: oss-development
+            auth_url: ''
+          - profile: AIRGAP_ENTERPRISE
+            artifact: airgap-enterprise
+            deployment_id: ci-airgap-enterprise
+            auth_url: ''
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22.x'
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./extension
+        run: npm ci
+
+      - name: Prepare and verify deployment profile
+        working-directory: ./extension
+        env:
+          POF_DEPLOYMENT_ID: ${{ matrix.deployment_id }}
+          POF_AUTH_PROVIDER_URL: ${{ matrix.auth_url }}
+        run: |
+          node scripts/prepare-deployment-profile.js "${{ matrix.profile }}"
+          npm run profile:verify -- "${{ matrix.profile }}"
+
+      - name: Package isolated VSIX
+        working-directory: ./extension
+        run: npx vsce package --out "pile-ou-face-${{ matrix.artifact }}.vsix"
+
+      - name: Upload deployment artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pile-ou-face-${{ matrix.artifact }}-${{ github.sha }}
+          path: extension/pile-ou-face-${{ matrix.artifact }}.vsix
+          if-no-files-found: error
+          retention-days: 7
+
   # ══════════════════════════════════════════════════════════════
   # 🪟 Auth Licensing Windows Unit Tests — PRs uniquement, filtré par chemin
   # DoD XSYNC-LIC-001 (Pile_Ou_Face#70) exige une couverture Windows pour

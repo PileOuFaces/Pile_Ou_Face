@@ -126,6 +126,17 @@ class AuthService {
     return AuthService._instance;
   }
 
+  getDeploymentStatus(configuredDeploymentId = '') {
+    return {
+      profile: this.deploymentProfile,
+      origin: String(this._serverIdentity?.origin || this.serverUrl || '').replace(/\/+$/, ''),
+      deploymentId: String(
+        this._serverIdentity?.deployment_id || configuredDeploymentId || '',
+      ).trim(),
+      verified: Boolean(this._serverIdentity),
+    };
+  }
+
   async login(email, password) {
     const attempts = this._getCandidateServerUrls();
     let lastError = null;
