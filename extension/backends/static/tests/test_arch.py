@@ -163,7 +163,7 @@ class TestArchAdapters(unittest.TestCase):
                 self.assertTrue(adapter.is_call_mnemonic(mnemonic))
                 self.assertEqual(adapter.classify_code_ref_mnemonic(mnemonic), "call")
 
-        for mnemonic in ("bxeq", "bne.w", "ble"):
+        for mnemonic in ("bxeq", "bne.w", "ble", "cbz", "cbnz"):
             with self.subTest(mnemonic=mnemonic):
                 self.assertTrue(adapter.is_conditional_branch_mnemonic(mnemonic))
                 self.assertEqual(adapter.classify_code_ref_mnemonic(mnemonic), "jcc")

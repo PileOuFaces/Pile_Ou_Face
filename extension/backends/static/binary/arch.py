@@ -96,6 +96,8 @@ ARM64_CONDITIONAL_BRANCHES = frozenset({"cbz", "cbnz", "tbz", "tbnz"})
 ARM64_CONDITIONAL_PREFIXES = ("b.",)
 ARM32_CONDITIONAL_BRANCHES = frozenset(
     {
+        "cbz",
+        "cbnz",
         "beq",
         "bne",
         "bcs",
