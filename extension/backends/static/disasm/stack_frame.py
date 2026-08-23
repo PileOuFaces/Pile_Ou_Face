@@ -28,7 +28,7 @@ except ImportError:
     lief = None
 
 
-STACK_FRAME_CACHE_VERSION = 10
+STACK_FRAME_CACHE_VERSION = 11
 X86_STACK_RE = re.compile(
     r"\[(rbp|ebp|rsp|esp)(?:\s*([+-])\s*(0x[0-9a-fA-F]+|\d+))?\]",
     re.IGNORECASE,
@@ -500,6 +500,7 @@ def _update_stack_adjust(
 
     if arch_family == "arm":
         mnem = _arm32_widthless_mnemonic(mnem)
+        stack_op_str = re.sub(r"\br13\b", "sp", op_str)
         if mnem in {"push", "vpush"}:
             reg_count = _register_list_count(op_str)
             if reg_count:
@@ -528,6 +529,14 @@ def _update_stack_adjust(
             reg_count = _register_list_count(op_str)
             if reg_count:
                 return max(0, stack_adjust - (reg_count * ptr_size))
+        if mnem in {"str", "strd"}:
+            delta = _preindexed_sp_delta(stack_op_str)
+            if delta:
+                return stack_adjust + delta
+        if mnem in {"ldr", "ldrd"}:
+            delta = _postindexed_sp_delta(stack_op_str)
+            if delta:
+                return max(0, stack_adjust - delta)
         if mnem == "sub" and op_str.startswith("sp,"):
             imm = _parse_int(op_str.split(",")[-1].strip().lstrip("#"))
             if imm:
