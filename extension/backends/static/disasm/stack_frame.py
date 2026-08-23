@@ -28,7 +28,7 @@ except ImportError:
     lief = None
 
 
-STACK_FRAME_CACHE_VERSION = 6
+STACK_FRAME_CACHE_VERSION = 7
 X86_STACK_RE = re.compile(
     r"\[(rbp|ebp|rsp|esp)(?:\s*([+-])\s*(0x[0-9a-fA-F]+|\d+))?\]",
     re.IGNORECASE,
@@ -38,7 +38,7 @@ ARM64_STACK_RE = re.compile(
     re.IGNORECASE,
 )
 ARM32_STACK_RE = re.compile(
-    r"\[(r11|fp|sp)(?:\s*,\s*#?(-?0x[0-9a-fA-F]+|-?\d+))?\]",
+    r"\[(r7|r11|fp|sp)(?:\s*,\s*#?(-?0x[0-9a-fA-F]+|-?\d+))?\]",
     re.IGNORECASE,
 )
 OFFSET_BASE_STACK_RE = re.compile(
@@ -183,7 +183,7 @@ def _stack_arg_start_offset(
         if abi_name == "win64":
             return 0x30
         return ptr_size * 2
-    if arch_family == "arm" and base in {"r11", "fp"}:
+    if arch_family == "arm" and base in {"r7", "r11", "fp"}:
         return ptr_size * 2
     if arch_family == "arm64" and base == "x29":
         return 0x10
@@ -319,13 +319,20 @@ def _extract_frame_pointer_anchor(
         return None
 
     if arch_family == "arm":
-        if mnem == "mov" and re.fullmatch(r"(r11|fp)\s*,\s*sp", op_str):
-            return ("r11", stack_adjust)
+        match = re.fullmatch(r"(r7|r11|fp)\s*,\s*sp", op_str)
+        if mnem == "mov" and match:
+            return (_canonical_frame_base(match.group(1)), stack_adjust)
         if mnem == "add":
-            match = re.fullmatch(r"(r11|fp)\s*,\s*sp\s*,\s*#?(0x[0-9a-f]+|\d+)", op_str)
+            match = re.fullmatch(
+                r"(r7|r11|fp)\s*,\s*sp\s*,\s*#?(0x[0-9a-f]+|\d+)",
+                op_str,
+            )
             if match:
                 imm = _parse_int(match.group(2)) or 0
-                return ("r11", max(0, stack_adjust - imm))
+                return (
+                    _canonical_frame_base(match.group(1)),
+                    max(0, stack_adjust - imm),
+                )
         return None
 
     return None
@@ -620,11 +627,13 @@ def _classify_stack_access(
         canonical_base,
         _stack_arg_start_offset(canonical_base, arch_family, ptr_size, abi_name),
     )
-    if base_reg in {"rbp", "ebp", "x29", "r11", "fp"}:
+    if canonical_base in {"rbp", "ebp", "x29", "r7", "r11"}:
         if raw_offset < 0:
             return ("var", raw_offset, location)
         if raw_offset >= arg_start:
             return ("arg", raw_offset, location)
+        if canonical_base == "r7" and canonical_base in frame_arg_starts:
+            return ("var", raw_offset - arg_start, location)
         return None
 
     if base_reg in {"rsp", "esp", "sp"}:

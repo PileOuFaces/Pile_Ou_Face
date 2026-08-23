@@ -851,6 +851,66 @@ class TestStackFrame(unittest.TestCase):
             )
         )
 
+    def test_thumb_r7_frame_pointer_tracks_locals_and_args(self):
+        class FakeInstr:
+            def __init__(self, mnemonic, op_str):
+                self.mnemonic = mnemonic
+                self.op_str = op_str
+
+        class FakeDisasm:
+            def __init__(self, instrs):
+                self.detail = False
+                self._instrs = instrs
+
+            def disasm(self, _code, _base):
+                return iter(self._instrs)
+
+        instrs = [
+            FakeInstr("push", "{r7, lr}"),
+            FakeInstr("sub", "sp, sp, #0x10"),
+            FakeInstr("add", "r7, sp, #0"),
+            FakeInstr("str", "r0, [r7, #0x4]"),
+            FakeInstr("ldr", "r1, [r7, #0x18]"),
+            FakeInstr("bx", "lr"),
+        ]
+
+        with (
+            mock.patch.object(
+                stack_frame_module, "_get_arch_mode", return_value=(1, 1)
+            ),
+            mock.patch.object(
+                stack_frame_module, "_detect_abi", return_value=("arm", 4, "aapcs32")
+            ),
+            mock.patch.object(
+                stack_frame_module,
+                "_get_code_bytes",
+                return_value=(b"\x90" * 24, 0x600200),
+            ),
+            mock.patch.object(
+                stack_frame_module,
+                "lief",
+                mock.Mock(parse=mock.Mock(return_value=object())),
+            ),
+            mock.patch.object(
+                stack_frame_module,
+                "capstone",
+                mock.Mock(Cs=mock.Mock(return_value=FakeDisasm(instrs))),
+            ),
+        ):
+            data = stack_frame_module.analyse_stack_frame(self.binary, 0x600200)
+
+        self.assertEqual(data["frame_size"], 24)
+        self.assertTrue(
+            any(
+                v["location"] == "[r7+0x4]" and v["offset"] == -20 for v in data["vars"]
+            )
+        )
+        self.assertTrue(
+            any(
+                a["location"] == "[r7+0x18]" and a["offset"] == 24 for a in data["args"]
+            )
+        )
+
     def test_arm64_frame_pointer_anchor_tracks_saved_area_size(self):
         class FakeInstr:
             def __init__(self, mnemonic, op_str):
