@@ -150,6 +150,16 @@ class TestArchAdapters(unittest.TestCase):
         self.assertFalse(
             arch_module.ARM32_ADAPTER.is_return_instruction("ldr", "pc, [r3]")
         )
+        self.assertTrue(
+            arch_module.ARM32_ADAPTER.is_return_instruction("movs", "pc, lr")
+        )
+        self.assertTrue(
+            arch_module.ARM32_ADAPTER.is_return_instruction("subs", "pc, lr, #4")
+        )
+        self.assertTrue(arch_module.ARM32_ADAPTER.is_return_instruction("rfeia", "sp!"))
+        self.assertFalse(
+            arch_module.ARM32_ADAPTER.is_return_instruction("subs", "r0, lr, #4")
+        )
         self.assertTrue(arch_module.MIPS_ADAPTER.is_return_instruction("jr", "$ra"))
         self.assertFalse(arch_module.MIPS_ADAPTER.is_return_instruction("jr", "$t9"))
         self.assertTrue(arch_module.SYSZ_ADAPTER.is_return_instruction("br", "%r14"))
