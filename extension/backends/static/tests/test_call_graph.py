@@ -141,6 +141,65 @@ class TestBuildCallGraphFallback(unittest.TestCase):
         binary.get_content_from_virtual_address.assert_not_called()
         self.assertEqual(result["edges"], [])
 
+    def test_arm32_literal_bx_call_resolves_legacy_manual_link_sequence(self):
+        lines = [
+            {"addr": "0x1000", "text": "ldr r3, [pc, #0x8]"},
+            {"addr": "0x1004", "text": "mov lr, pc"},
+            {"addr": "0x1008", "text": "bx r3"},
+            {"addr": "0x100c", "text": "bx lr"},
+        ]
+        binary = MagicMock()
+        binary.get_content_from_virtual_address.return_value = bytes.fromhex("01200000")
+
+        with (
+            patch(
+                "backends.static.disasm.call_graph.resolve_plt_symbols", return_value={}
+            ),
+            patch("backends.static.disasm.call_graph._lief.parse", return_value=binary),
+            patch(
+                "backends.static.disasm.call_graph.detect_binary_arch_from_path",
+                return_value=get_raw_arch_info("arm"),
+            ),
+            patch(
+                "backends.static.disasm.call_graph._is_valid_code_addr",
+                return_value=True,
+            ),
+        ):
+            result = build_call_graph(
+                _make_cfg([]), symbols=[], lines=lines, binary_path="/fake/arm.elf"
+            )
+
+        binary.get_content_from_virtual_address.assert_called_once_with(0x1010, 4)
+        self.assertEqual(
+            [(edge["from"], edge["to"]) for edge in result["edges"]],
+            [("0x1008", "0x2000")],
+        )
+
+    def test_arm32_literal_bx_branch_without_manual_link_is_not_a_call(self):
+        lines = [
+            {"addr": "0x1000", "text": "ldr r3, [pc, #0x8]"},
+            {"addr": "0x1004", "text": "nop"},
+            {"addr": "0x1008", "text": "bx r3"},
+        ]
+        binary = MagicMock()
+
+        with (
+            patch(
+                "backends.static.disasm.call_graph.resolve_plt_symbols", return_value={}
+            ),
+            patch("backends.static.disasm.call_graph._lief.parse", return_value=binary),
+            patch(
+                "backends.static.disasm.call_graph.detect_binary_arch_from_path",
+                return_value=get_raw_arch_info("arm"),
+            ),
+        ):
+            result = build_call_graph(
+                _make_cfg([]), symbols=[], lines=lines, binary_path="/fake/arm.elf"
+            )
+
+        binary.get_content_from_virtual_address.assert_not_called()
+        self.assertEqual(result["edges"], [])
+
     def test_lines_without_cfg_build_direct_call_edges(self):
         lines = [
             {"addr": "0x1000", "text": "push rbp"},

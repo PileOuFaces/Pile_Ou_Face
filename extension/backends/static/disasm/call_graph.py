@@ -31,16 +31,19 @@ except ImportError:
     _lief = None
 
 
-def _resolve_arm32_literal_blx_call(
+def _resolve_arm32_literal_register_call(
     lines: list[dict], call_index: int, binary, arch_info
 ) -> str | None:
-    """Resolve ``ldr reg, [pc, #imm]`` followed by ``blx reg``."""
+    """Resolve literal-loaded ``blx reg`` and legacy ``mov lr, pc; bx reg`` calls."""
     if binary is None or arch_info is None or arch_info.key != "arm32":
         return None
 
     call_text = str(lines[call_index].get("text", "") or "")
     call_mnemonic = _get_mnemonic(call_text)
-    if arch_info.adapter._arm32_base_mnemonic(call_mnemonic) != "blx":
+    call_base, call_is_conditional = arch_info.adapter._arm32_mnemonic_parts(
+        call_mnemonic
+    )
+    if call_base not in {"blx", "bx"}:
         return None
     call_operands = re.split(
         rf"\b{re.escape(call_mnemonic)}\b",
@@ -56,6 +59,29 @@ def _resolve_arm32_literal_blx_call(
     if not register_match:
         return None
     call_register = register_match.group(1).lower()
+
+    if call_base == "bx":
+        if call_is_conditional or call_index == 0:
+            return None
+        link_text = str(lines[call_index - 1].get("text", "") or "")
+        link_mnemonic = _get_mnemonic(link_text)
+        link_base, link_is_conditional = arch_info.adapter._arm32_mnemonic_parts(
+            link_mnemonic
+        )
+        if link_is_conditional or link_base != "mov":
+            return None
+        link_operands = re.split(
+            rf"\b{re.escape(link_mnemonic)}\b",
+            link_text,
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )
+        if len(link_operands) != 2 or not re.fullmatch(
+            r"\s*(?:lr|r14)\s*,\s*(?:pc|r15)\s*",
+            link_operands[1],
+            re.IGNORECASE,
+        ):
+            return None
 
     for load_index in range(call_index - 1, max(-1, call_index - 9), -1):
         load_line = lines[load_index]
@@ -297,7 +323,7 @@ def build_call_graph(
     seen_calls = set(call_edges)
     if lines and parsed_binary is not None:
         for line_index, line in enumerate(lines):
-            target = _resolve_arm32_literal_blx_call(
+            target = _resolve_arm32_literal_register_call(
                 lines, line_index, parsed_binary, detected_arch_info
             )
             source = str(line.get("addr", "") or "")
