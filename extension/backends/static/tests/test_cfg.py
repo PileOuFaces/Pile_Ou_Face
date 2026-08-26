@@ -48,6 +48,10 @@ class TestCfgHelpers(unittest.TestCase):
         self.assertTrue(_is_jump_table("ldr r15, [r2, r0, lsl #2]"))
         self.assertFalse(_is_jump_table("ldr pc, [sp], #4"))
         self.assertFalse(_is_jump_table("ldr r3, [r2, r0, lsl #2]"))
+        self.assertEqual(
+            _is_branch("ldrne.w pc, [r2, r0, lsl #2]"), (True, False, None)
+        )
+        self.assertTrue(_is_jump_table("ldrne.w pc, [r2, r0, lsl #2]"))
 
     def test_extract_jump_target_ignores_leading_instruction_bytes(self):
         self.assertEqual(_extract_jump_target("0c200008 jal 0x800020"), "0x800020")
@@ -892,6 +896,38 @@ class TestJumpTableIntegration(unittest.TestCase):
         self.assertEqual(mock_read.call_args.args[:2], ("/fake/binary", 0x403000))
         self.assertEqual(mock_read.call_args.kwargs.get("entry_mode"), "absolute")
         self.assertEqual(mock_read.call_args.kwargs.get("entry_size"), 4)
+
+    def test_build_cfg_conditional_arm32_ldr_pc_switch_keeps_fallthrough(self):
+        lines = [
+            {"addr": "0x401000", "text": "cmp r0, #0x1"},
+            {"addr": "0x401004", "text": "adr r2, 0x403000"},
+            {"addr": "0x401008", "text": "ldrne.w pc, [r2, r0, lsl #2]"},
+            {"addr": "0x40100c", "text": "mov r4, r4"},
+        ]
+        fake_binary = MagicMock(name="binary")
+        with (
+            patch("backends.static.disasm.cfg.lief") as mock_lief,
+            patch(
+                "backends.static.disasm.cfg._read_jump_table_entries",
+                return_value=["0x401100", "0x401180"],
+            ),
+        ):
+            mock_lief.parse.return_value = fake_binary
+            result = build_cfg(lines, binary_path="/fake/binary", arch_hint="arm")
+
+        switch_block = result["blocks"][0]
+        self.assertTrue(switch_block.get("is_switch"))
+        self.assertEqual(
+            switch_block.get("successors"),
+            ["0x401100", "0x401180", "0x40100c"],
+        )
+        self.assertEqual(
+            switch_block.get("switch_cases"),
+            [
+                {"case": 0, "target": "0x401100"},
+                {"case": 1, "target": "0x401180"},
+            ],
+        )
 
     def test_build_cfg_arm64_relative_switch_pattern_uses_relative_jump_table(self):
         """Détecte un switch ARM64 relatif via ldrsw + add + br."""
