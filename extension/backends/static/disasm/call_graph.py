@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 
 from backends.shared.log import configure_logging, get_logger
@@ -18,6 +19,7 @@ from backends.static.disasm.cfg import (
     _extract_jump_target,
     _extract_symbol_from_operand,
     _get_mnemonic,
+    _is_valid_code_addr,
     build_cfg,
 )
 
@@ -27,6 +29,74 @@ try:
     import lief as _lief
 except ImportError:
     _lief = None
+
+
+def _resolve_arm32_literal_blx_call(
+    lines: list[dict], call_index: int, binary, arch_info
+) -> str | None:
+    """Resolve ``ldr reg, [pc, #imm]`` followed by ``blx reg``."""
+    if binary is None or arch_info is None or arch_info.key != "arm32":
+        return None
+
+    call_text = str(lines[call_index].get("text", "") or "")
+    call_mnemonic = _get_mnemonic(call_text)
+    if arch_info.adapter._arm32_base_mnemonic(call_mnemonic) != "blx":
+        return None
+    call_operands = re.split(
+        rf"\b{re.escape(call_mnemonic)}\b",
+        call_text,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )
+    if len(call_operands) != 2:
+        return None
+    register_match = re.fullmatch(
+        r"\s*(r(?:1[0-2]|\d)|ip)\s*", call_operands[1], re.IGNORECASE
+    )
+    if not register_match:
+        return None
+    call_register = register_match.group(1).lower()
+
+    for load_index in range(call_index - 1, max(-1, call_index - 9), -1):
+        load_line = lines[load_index]
+        load_text = str(load_line.get("text", "") or "")
+        load_mnemonic = _get_mnemonic(load_text)
+        if arch_info.adapter._arm32_base_mnemonic(load_mnemonic) != "ldr":
+            if re.search(rf"\b{re.escape(call_register)}\b", load_text, re.I):
+                return None
+            if arch_info.adapter.classify_code_ref_mnemonic(load_mnemonic):
+                return None
+            if arch_info.adapter.is_return_instruction(load_mnemonic):
+                return None
+            continue
+        load_match = re.search(
+            rf"\b{re.escape(load_mnemonic)}\b\s+{re.escape(call_register)}\s*,"
+            r"\s*\[(?:pc|r15)(?:\s*,\s*#?\s*([-+]?(?:0x[0-9a-f]+|\d+)))?\]",
+            load_text,
+            re.IGNORECASE,
+        )
+        if not load_match:
+            continue
+        try:
+            load_addr = addr_to_int(str(load_line.get("addr", "") or ""))
+            offset = int(load_match.group(1) or "0", 0)
+        except (TypeError, ValueError):
+            return None
+        is_thumb = arch_info.raw_name == "thumb" or arch_info.machine == "thumb"
+        pc_base = (load_addr + 4) & ~3 if is_thumb else load_addr + 8
+        try:
+            raw_pointer = bytes(
+                binary.get_content_from_virtual_address(pc_base + offset, 4)
+            )
+        except Exception:
+            return None
+        if len(raw_pointer) != 4:
+            return None
+        target = int.from_bytes(raw_pointer, byteorder=arch_info.endian) & ~1
+        if target and _is_valid_code_addr(target, binary):
+            return hex(target)
+        return None
+    return None
 
 
 def resolve_plt_symbols(binary_path: str) -> dict[str, str]:
@@ -206,14 +276,39 @@ def build_call_graph(
         if detected_arch_info is not None
         else tuple(iter_supported_adapters())
     )
+    parsed_binary = None
+    if (
+        _lief is not None
+        and binary_path
+        and detected_arch_info is not None
+        and detected_arch_info.key == "arm32"
+    ):
+        try:
+            parsed_binary = _lief.parse(binary_path)
+        except Exception:
+            parsed_binary = None
 
     def _is_call_text(text: str) -> bool:
         mnem = _get_mnemonic(str(text or ""))
         return any(adapter.is_call_mnemonic(mnem) for adapter in call_adapters)
 
     call_edges = [(e["from"], e["to"]) for e in edges if e.get("type") == "call"]
-    if not call_edges and lines:
-        seen_direct_calls: set[tuple[str, str]] = set()
+    had_cfg_call_edges = bool(call_edges)
+    seen_calls = set(call_edges)
+    if lines and parsed_binary is not None:
+        for line_index, line in enumerate(lines):
+            target = _resolve_arm32_literal_blx_call(
+                lines, line_index, parsed_binary, detected_arch_info
+            )
+            source = str(line.get("addr", "") or "")
+            if not target or not source:
+                continue
+            source = source if source.startswith("0x") else f"0x{source}"
+            edge_key = (source, target)
+            if edge_key not in seen_calls:
+                seen_calls.add(edge_key)
+                call_edges.append(edge_key)
+    if not had_cfg_call_edges and lines:
         for line in lines:
             text = str(line.get("text", "") or "")
             if not _is_call_text(text):
@@ -226,9 +321,9 @@ def build_call_graph(
                 continue
             source = source if source.startswith("0x") else f"0x{source}"
             edge_key = (source, target)
-            if edge_key in seen_direct_calls:
+            if edge_key in seen_calls:
                 continue
-            seen_direct_calls.add(edge_key)
+            seen_calls.add(edge_key)
             call_edges.append(edge_key)
 
     def get_call_instr_addr(block_addr: str) -> str | None:
