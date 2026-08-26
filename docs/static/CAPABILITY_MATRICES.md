@@ -94,6 +94,12 @@ registres VFP d'arguments en hard-float. Les formats sans metadonnee equivalente
 et les variantes de plateforme ne sont pas encore distingues au niveau de
 chaque fonction.
 
+Pour ARM64, le format permet de distinguer AAPCS64 ELF, Apple Darwin PCS et
+Windows ARM64. Les registres d'arguments entiers x0-x7 et flottants/vectoriels
+v0-v7 sont exposes. Le niveau reste `partial` car les particularites des appels
+variadiques et les conventions propres a certaines fonctions ne sont pas
+reconstruites instruction par instruction.
+
 ## Matrice des onglets raw
 
 Source de verite :
