@@ -135,8 +135,12 @@ class TestArchAdapters(unittest.TestCase):
 
     def test_extended_adapters_recognize_operand_based_returns(self):
         self.assertTrue(arch_module.ARM32_ADAPTER.is_return_instruction("bx", "lr"))
+        self.assertTrue(arch_module.ARM32_ADAPTER.is_return_instruction("bx", "r14"))
         self.assertTrue(
             arch_module.ARM32_ADAPTER.is_return_instruction("pop", "{r4, pc}")
+        )
+        self.assertTrue(
+            arch_module.ARM32_ADAPTER.is_return_instruction("pop", "{r4, r15}")
         )
         self.assertTrue(
             arch_module.ARM32_ADAPTER.is_return_instruction("ldmia", "sp!, {r4, pc}")
@@ -191,6 +195,9 @@ class TestArchAdapters(unittest.TestCase):
             ("ldmia.w", "sp!, {r4, pc}"),
             ("mov.w", "pc, lr"),
             ("ldr.w", "pc, [sp], #4"),
+            ("bx.w", "r14"),
+            ("pop.w", "{r4, r15}"),
+            ("ldmia.w", "r13!, {r4, r15}"),
         ):
             with self.subTest(mnemonic=mnemonic):
                 self.assertTrue(adapter.is_return_instruction(mnemonic, operands))
@@ -204,6 +211,9 @@ class TestArchAdapters(unittest.TestCase):
             ("ldmiane", "sp!, {r4, pc}"),
             ("movne.w", "pc, lr"),
             ("ldrne.w", "pc, [sp], #4"),
+            ("bxne", "r14"),
+            ("popne.w", "{r4, r15}"),
+            ("ldmiane", "r13!, {r4, r15}"),
         ):
             with self.subTest(mnemonic=mnemonic):
                 self.assertFalse(adapter.is_return_instruction(mnemonic, operands))
