@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from backends.shared.log import configure_logging, get_logger
 from backends.shared.utils import normalize_addr as _normalize_addr
 from backends.static.binary.arch import (
+    ARM32_CONDITION_SUFFIXES,
     ArchAdapter,
     detect_binary_arch_from_path,
     get_feature_support,
@@ -125,10 +126,17 @@ def _get_mnemonic(text: str) -> str:
 
 def _is_arm32_pc_indexed_load(text: str) -> bool:
     """Return whether *text* is an ARM32 absolute jump-table dispatch."""
-    if _get_mnemonic(text) != "ldr":
+    mnemonic = _get_mnemonic(text)
+    widthless = mnemonic.removesuffix(".w").removesuffix(".n")
+    base = widthless
+    for suffix in ARM32_CONDITION_SUFFIXES:
+        if widthless.endswith(suffix):
+            base = widthless[: -len(suffix)]
+            break
+    if base != "ldr":
         return False
     match = re.search(
-        r"\bldr\b\s+(?:pc|r15)\s*,\s*\[([^\]]+)\]",
+        rf"\b{re.escape(mnemonic)}\b\s+(?:pc|r15)\s*,\s*\[([^\]]+)\]",
         str(text or ""),
         re.IGNORECASE,
     )
@@ -136,6 +144,13 @@ def _is_arm32_pc_indexed_load(text: str) -> bool:
         return False
     expr = match.group(1).replace(" ", "").lower()
     return expr.count(",") >= 2 and "lsl#2" in expr
+
+
+def _is_conditional_arm32_pc_indexed_load(text: str) -> bool:
+    if not _is_arm32_pc_indexed_load(text):
+        return False
+    mnemonic = _get_mnemonic(text).removesuffix(".w").removesuffix(".n")
+    return any(mnemonic == f"ldr{suffix}" for suffix in ARM32_CONDITION_SUFFIXES)
 
 
 def _is_branch(
@@ -659,6 +674,11 @@ def _resolve_register_jump_table(
     base_reg = None
     for idx in range(load_search_end, -1, -1):
         text = str(block_lines[idx].get("text", "") or "")
+        if direct_arm32_load and idx == len(block_lines) - 1:
+            mnemonic = _get_mnemonic(text)
+            text = re.sub(
+                rf"\b{re.escape(mnemonic)}\b", "ldr", text, count=1, flags=re.I
+            )
         match = re.search(
             r"\b(?:movsxd|mov)\b\s+([a-z0-9$]+)\s*,\s*(?:[a-z]+\s+ptr\s+)?\[(.+)\]",
             text,
@@ -1307,7 +1327,9 @@ def build_cfg(
                     if branch_kind:
                         break
                 if _block_switch_entries:
-                    branch_kind = "jmp"
+                    branch_kind = (
+                        "jcc" if _is_conditional_arm32_pc_indexed_load(text) else "jmp"
+                    )
                 if branch_kind not in {"jmp", "ret"} and i + 1 < len(lines):
                     next_a = _normalize_addr(lines[i + 1]["addr"])
                     if next_a not in successors:
