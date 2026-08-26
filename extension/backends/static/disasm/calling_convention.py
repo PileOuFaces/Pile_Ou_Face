@@ -211,13 +211,19 @@ def _analyze_function(binary, cs, arch_info: ArchInfo, addr: int) -> dict:
             "source": source,
         }
 
-    code = _get_function_bytes(binary, addr)
+    analysis_addr = (
+        addr & ~1
+        if arch_info.key == "arm32"
+        and (arch_info.raw_name == "thumb" or arch_info.machine == "thumb")
+        else addr
+    )
+    code = _get_function_bytes(binary, analysis_addr)
     if not code or len(code) == 0:
         return result(*_classify_arch_convention(arch_info, None))
 
     try:
         cs.detail = True
-        insns = list(cs.disasm(code, addr))
+        insns = list(cs.disasm(code, analysis_addr))
     except Exception:
         return result(*_classify_arch_convention(arch_info, None))
 
