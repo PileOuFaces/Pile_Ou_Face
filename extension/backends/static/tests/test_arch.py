@@ -234,6 +234,9 @@ class TestArchAdapters(unittest.TestCase):
     def test_arm32_adapter_recognizes_full_descending_and_single_lr_saves(self):
         cases = (
             ("stmfd sp!, {r4, r5, lr}", "stmfd sp"),
+            ("stmfd.w r13!, {r4, r5, r14}", "stmfd sp"),
+            ("stmdb r13!, {r4, r14}", "stmdb sp"),
+            ("push.w {r4, r14}", "push lr"),
             ("str lr, [sp, #-4]!", "str lr preindex"),
             ("str.w r14, [r13, #-0x4]!", "str lr preindex"),
         )

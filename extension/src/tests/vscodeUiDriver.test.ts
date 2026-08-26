@@ -385,6 +385,7 @@ describe('VS Code UI E2E driver', () => {
     assert.equal(await locator.waitForAttribute('class', 'active', 50), 'btn active');
     await locator.waitForEnabled(50);
     await locator.fill('nouvelle valeur');
+    await locator.fillAndWait('true', 500);
     await locator.click();
     await locator.clickDom();
 
@@ -394,6 +395,27 @@ describe('VS Code UI E2E driver', () => {
     assert.ok(scrollIndex >= 0, 'the target is scrolled into view');
     assert.ok(coordinatesIndex > scrollIndex, 'click coordinates use the updated layout');
     assert.ok(evaluations.some((expression) => expression.includes('el.click()')));
+  });
+
+  it('retries filling an input replaced by an asynchronous render', async () => {
+    let value = '';
+    let fillAttempts = 0;
+    const target = {
+      async evaluate(expression: string) {
+        if (expression.includes('getComputedStyle')) return true;
+        if (expression.includes("String(el.value)")) return value;
+        if (expression.includes("el.dispatchEvent(new Event('input'")) {
+          fillAttempts += 1;
+          value = fillAttempts === 1 ? '' : 'stable value';
+          return true;
+        }
+        return true;
+      },
+    };
+    const locator = new CdpLocator(target, '#rerendered-input');
+
+    assert.equal(await locator.fillAndWait('stable value', 1000), 'stable value');
+    assert.equal(fillAttempts, 2);
   });
 
   it('reports disabled controls and inactive UI states', async () => {

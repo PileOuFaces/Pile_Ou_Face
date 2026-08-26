@@ -1580,10 +1580,8 @@ async function run() {
       await waitForNextDisasm(disasmResponses);
       await hub.entryPointButton().clickDom();
       await hub.annotationAddress().waitForAttribute('data-addr', '0x', 30000);
-      await hub.annotationComment().fill('Annotation isolée du premier binaire');
-      await hub.annotationName().fill('e2e_binary_a');
-      await hub.annotationComment().waitForValue('Annotation isolée du premier binaire', 30000);
-      await hub.annotationName().waitForValue('e2e_binary_a', 30000);
+      await hub.annotationComment().fillAndWait('Annotation isolée du premier binaire', 30000);
+      await hub.annotationName().fillAndWait('e2e_binary_a', 30000);
       await hub.annotationSubmitButton().clickDom();
       await hub.annotationsList().waitForText('e2e_binary_a', 30000);
 
@@ -1597,10 +1595,8 @@ async function run() {
       await hub.annotationsList().waitForText('Aucune annotation.', 30000);
       await hub.entryPointButton().clickDom();
       await hub.annotationAddress().waitForAttribute('data-addr', '0x', 30000);
-      await hub.annotationComment().fill('Annotation isolée du second binaire');
-      await hub.annotationName().fill('e2e_binary_b');
-      await hub.annotationComment().waitForValue('Annotation isolée du second binaire', 30000);
-      await hub.annotationName().waitForValue('e2e_binary_b', 30000);
+      await hub.annotationComment().fillAndWait('Annotation isolée du second binaire', 30000);
+      await hub.annotationName().fillAndWait('e2e_binary_b', 30000);
       await hub.annotationSubmitButton().clickDom();
       await hub.annotationsList().waitForText('e2e_binary_b', 30000);
 

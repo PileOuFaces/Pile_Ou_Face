@@ -197,6 +197,23 @@ class CdpLocator {
     if (!filled) throw new Error(`Element cannot be filled: ${this.selector}`);
   }
 
+  async fillAndWait(value, timeout = DEFAULT_TIMEOUT_MS) {
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+      await this.fill(value);
+      let stable = true;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        if (!String(await this.inputValue() || '').includes(value)) {
+          stable = false;
+          break;
+        }
+      }
+      if (stable) return value;
+    }
+    throw new Error(`Timed out filling ${this.selector} with ${JSON.stringify(value)}`);
+  }
+
   async click() {
     await this.waitFor({ state: 'visible' });
     const scrolled = await this.target.evaluate(this.expression(`
