@@ -479,6 +479,8 @@ class TestDiscoverFunctions(unittest.TestCase):
     def test_arm32_full_descending_and_single_lr_save_start_functions(self):
         for prologue, reason in (
             ("stmfd sp!, {r4, lr}", "stmfd sp"),
+            ("stmdb.w r13!, {r4, r14}", "stmdb sp"),
+            ("push.w {r4, r14}", "push lr"),
             ("str lr, [sp, #-4]!", "str lr preindex"),
         ):
             with self.subTest(prologue=prologue):

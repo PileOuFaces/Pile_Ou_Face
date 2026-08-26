@@ -42,9 +42,9 @@ ARM64_PROLOGUE_PATTERNS: tuple[tuple[str, str], ...] = (
 )
 
 ARM32_PROLOGUE_PATTERNS: tuple[tuple[str, str], ...] = (
-    (r"\bpush\s+\{[^}]*lr[^}]*\}", "push lr"),
-    (r"\bstmdb\s+sp!", "stmdb sp"),
-    (r"\bstmfd\s+sp!", "stmfd sp"),
+    (r"\bpush(?:\.[wn])?\s+\{[^}]*(?:lr|r14)[^}]*\}", "push lr"),
+    (r"\bstmdb(?:\.[wn])?\s+(?:sp|r13)!", "stmdb sp"),
+    (r"\bstmfd(?:\.[wn])?\s+(?:sp|r13)!", "stmfd sp"),
     (
         r"\bstr(?:\.w)?\s+(?:lr|r14)\s*,\s*\[(?:sp|r13)\s*,\s*#?-(?:0x[0-9a-fA-F]+|\d+)\]!",
         "str lr preindex",
