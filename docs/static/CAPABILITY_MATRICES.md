@@ -71,6 +71,27 @@ Ce test relie la matrice aux fixtures raw Capstone et verifie que :
 - le CFG contient l'edge d'appel direct attendu ;
 - le call graph contient l'edge de fonction attendu.
 
+### Garantie ARM32 / Thumb
+
+Les niveaux `full` de l'adaptateur `arm32` couvrent les chemins de production
+ARM et Thumb pour :
+
+- la decouverte par symboles, cibles d'appel et prologues usuels AAPCS ;
+- le CFG des branches, appels, retours, veneers et jump tables usuelles ;
+- les xrefs de code et les references de donnees PC-relatives ;
+- le call graph direct et les appels indirects usuels via literal pool ;
+- les stack frames basees sur SP, r7, r11/fp et les sauvegardes de registres.
+
+Les fixtures `arm32`, `thumb` et `thumb_partial` executent la vraie pipeline
+Functions. Les tests specialises couvrent en plus les formes conditionnelles,
+les alias r13/r14/r15, l'interworking, les tables TBB/TBH et les epilogues
+d'exception. `full` designe cette famille de chemins publics testes ; il ne
+pretend pas reconstruire statiquement toute cible indirecte arbitraire.
+
+La detection de convention d'appel reste `partial` : elle identifie AAPCS32 et
+ses registres d'arguments, mais ne distingue pas encore les variantes de
+plateforme et d'ABI flottante au niveau de chaque fonction.
+
 ## Matrice des onglets raw
 
 Source de verite :

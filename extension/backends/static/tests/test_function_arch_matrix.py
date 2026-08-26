@@ -71,6 +71,13 @@ RAW_FUNCTION_FIXTURES: tuple[tuple[str, RawFixtureWriter], ...] = (
 
 FUNCTION_FEATURES = ("discover_functions", "cfg", "call_graph")
 SEMANTIC_LEVELS = {"partial", "full"}
+ARM32_FULL_FEATURES = (
+    "discover_functions",
+    "cfg",
+    "xrefs",
+    "call_graph",
+    "stack_frame",
+)
 CFG_CALLGRAPH_COVERAGE_DEBT_ISSUE = 82
 
 # These adapters expose semantic CFG/Call Graph support in the public matrix, but
@@ -81,6 +88,19 @@ CFG_CALLGRAPH_UNFIXTURED_ADAPTERS: set[str] = set()
 
 @unittest.skipUnless(_CAPSTONE_AVAILABLE, "capstone not installed")
 class TestFunctionArchSupportMatrix(unittest.TestCase):
+    def test_arm32_full_claim_keeps_arm_and_thumb_pipeline_fixtures(self):
+        matrix = get_feature_support_matrix()
+        support = matrix["arm32"]
+
+        for feature in ARM32_FULL_FEATURES:
+            with self.subTest(feature=feature):
+                self.assertEqual(support[feature]["level"], "full")
+                self.assertTrue(support[feature]["note"])
+        self.assertEqual(support["calling_convention"]["level"], "partial")
+
+        fixture_labels = {label for label, _writer in RAW_FUNCTION_FIXTURES}
+        self.assertTrue({"arm32", "thumb", "thumb_partial"} <= fixture_labels)
+
     def _fixture_adapter_keys(self) -> set[str]:
         adapter_keys: set[str] = set()
         for _label, writer in RAW_FUNCTION_FIXTURES:
