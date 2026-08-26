@@ -144,6 +144,35 @@ class TestCallingConvention(unittest.TestCase):
         self.assertIsNone(result["convention"])
         self.assertEqual(result["source"], "heuristic")
 
+    def test_thumb_tagged_function_address_is_normalized_for_disassembly(self):
+        info = get_raw_arch_info("thumb")
+        self.assertIsNotNone(info)
+
+        class Binary:
+            calls = []
+
+            def get_content_from_virtual_address(self, addr, size):
+                self.calls.append((addr, size))
+                return b"\x00\xbf\x70\x47"
+
+        class Disassembler:
+            detail = False
+            calls = []
+
+            def disasm(self, code, addr):
+                self.calls.append((code, addr))
+                return [object()]
+
+        binary = Binary()
+        disassembler = Disassembler()
+        result = _analyze_function(binary, disassembler, info, 0x1001)
+
+        self.assertEqual(binary.calls, [(0x1000, 128)])
+        self.assertEqual(disassembler.calls, [(b"\x00\xbf\x70\x47", 0x1000)])
+        self.assertTrue(disassembler.detail)
+        self.assertEqual(result["convention"], "AAPCS32")
+        self.assertEqual(result["source"], "abi")
+
 
 if __name__ == "__main__":
     unittest.main()
