@@ -573,7 +573,9 @@ ARM32_ADAPTER = ArchAdapter(
         "stack_frame": FeatureSupport(
             "full", "AAPCS SP/FP tracking, saved registers and arguments"
         ),
-        "calling_convention": FeatureSupport("partial", "AAPCS32 identification"),
+        "calling_convention": FeatureSupport(
+            "partial", "AAPCS32 soft/hard-float from ELF flags"
+        ),
     },
 )
 
