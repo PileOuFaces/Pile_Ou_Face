@@ -153,6 +153,34 @@ def _is_conditional_arm32_pc_indexed_load(text: str) -> bool:
     return any(mnemonic == f"ldr{suffix}" for suffix in ARM32_CONDITION_SUFFIXES)
 
 
+def _is_arm32_add_pc_switch(text: str) -> bool:
+    """Return whether *text* dispatches through an inline ARM32 branch table."""
+    mnemonic = _get_mnemonic(text)
+    widthless = mnemonic.removesuffix(".w").removesuffix(".n")
+    base = widthless
+    for suffix in ARM32_CONDITION_SUFFIXES:
+        if widthless.endswith(suffix):
+            base = widthless[: -len(suffix)]
+            break
+    if base != "add":
+        return False
+    return bool(
+        re.search(
+            rf"\b{re.escape(mnemonic)}\b\s+(?:pc|r15)\s*,\s*(?:pc|r15)\s*,"
+            r"\s*(?:r\d+|ip|lr)\s*,\s*lsl\s+#?2\b",
+            str(text or ""),
+            re.IGNORECASE,
+        )
+    )
+
+
+def _is_conditional_arm32_add_pc_switch(text: str) -> bool:
+    if not _is_arm32_add_pc_switch(text):
+        return False
+    mnemonic = _get_mnemonic(text).removesuffix(".w").removesuffix(".n")
+    return any(mnemonic == f"add{suffix}" for suffix in ARM32_CONDITION_SUFFIXES)
+
+
 def _is_branch(
     text: str,
     adapters: tuple[ArchAdapter, ...] | None = None,
@@ -160,7 +188,7 @@ def _is_branch(
     """(is_branch, is_call, target_addr).
     Supporte x86/x64 (call, jmp, ret) et ARM64 (bl, blr, b, br, ret).
     """
-    if _is_arm32_pc_indexed_load(text):
+    if _is_arm32_pc_indexed_load(text) or _is_arm32_add_pc_switch(text):
         return True, False, None
 
     mnem = _get_mnemonic(text)
@@ -196,7 +224,7 @@ def _is_jump_table(text: str) -> bool:
     text_lower = text.lower()
     mnem = _get_mnemonic(text)
 
-    if _is_arm32_pc_indexed_load(text):
+    if _is_arm32_pc_indexed_load(text) or _is_arm32_add_pc_switch(text):
         return True
 
     if mnem == "jmp":
@@ -255,6 +283,21 @@ def _detect_switch_max_case(block_lines: list[dict]) -> int | None:
         if mnem in RET_MNEMONICS or mnem in ARM64_RET_MNEMONICS:
             break
     return None
+
+
+def _resolve_arm32_add_pc_switch(block_lines: list[dict]) -> list[str]:
+    """Resolve inline ARM32 ``add pc, pc, index, lsl #2`` branch entries."""
+    if not block_lines or not _is_arm32_add_pc_switch(block_lines[-1].get("text", "")):
+        return []
+    branch_addr = _parse_int_literal(str(block_lines[-1].get("addr", "")))
+    entry_count = _detect_switch_max_case(block_lines)
+    if branch_addr is None or entry_count is None:
+        return []
+    architectural_pc = branch_addr + 8
+    return [
+        _normalize_addr(hex(architectural_pc + case_idx * 4))
+        for case_idx in range(entry_count)
+    ]
 
 
 def _append_incoming_switch_case(
@@ -1196,7 +1239,12 @@ def build_cfg(
                 # Jump table : détecter et extraire les cibles
                 _switch_entries: list[str] = []
                 if _is_jump_table(text):
-                    if _get_mnemonic(text) in {"tbb", "tbh"}:
+                    if _is_arm32_add_pc_switch(text):
+                        _switch_entries = _resolve_arm32_add_pc_switch(block_lines)
+                        for entry in _switch_entries:
+                            if entry not in successors:
+                                successors.append(entry)
+                    elif _get_mnemonic(text) in {"tbb", "tbh"}:
                         _switch_entries = _resolve_thumb_table_branch(
                             block_lines,
                             _parsed_binary,
@@ -1328,7 +1376,10 @@ def build_cfg(
                         break
                 if _block_switch_entries:
                     branch_kind = (
-                        "jcc" if _is_conditional_arm32_pc_indexed_load(text) else "jmp"
+                        "jcc"
+                        if _is_conditional_arm32_pc_indexed_load(text)
+                        or _is_conditional_arm32_add_pc_switch(text)
+                        else "jmp"
                     )
                 if branch_kind not in {"jmp", "ret"} and i + 1 < len(lines):
                     next_a = _normalize_addr(lines[i + 1]["addr"])

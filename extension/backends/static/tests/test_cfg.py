@@ -20,6 +20,7 @@ from backends.static.disasm.cfg import (
     _is_jump_table,
     _is_valid_code_addr,
     _read_jump_table_entries,
+    _resolve_arm32_add_pc_switch,
     _resolve_rip_relative_table,
     _resolve_thumb_table_branch,
     _section_is_exec,
@@ -52,6 +53,11 @@ class TestCfgHelpers(unittest.TestCase):
             _is_branch("ldrne.w pc, [r2, r0, lsl #2]"), (True, False, None)
         )
         self.assertTrue(_is_jump_table("ldrne.w pc, [r2, r0, lsl #2]"))
+
+    def test_arm32_add_pc_switch_is_branch_and_jump_table(self):
+        self.assertEqual(_is_branch("addls pc, pc, r0, lsl #2"), (True, False, None))
+        self.assertTrue(_is_jump_table("addls pc, pc, r0, lsl #2"))
+        self.assertFalse(_is_jump_table("add r3, pc, r0, lsl #2"))
 
     def test_extract_jump_target_ignores_leading_instruction_bytes(self):
         self.assertEqual(_extract_jump_target("0c200008 jal 0x800020"), "0x800020")
@@ -144,6 +150,17 @@ class TestJumpTableDetection(unittest.TestCase):
         self.assertTrue(_is_jump_table("bx\tr3"))
         self.assertFalse(_is_jump_table("bx\tlr"))
         self.assertFalse(_is_jump_table("bx\tr14"))
+
+    def test_resolve_arm32_add_pc_switch_uses_architectural_pc(self):
+        lines = [
+            {"addr": "0x401000", "text": "cmp r0, #0x2"},
+            {"addr": "0x401004", "text": "addls pc, pc, r0, lsl #2"},
+        ]
+
+        self.assertEqual(
+            _resolve_arm32_add_pc_switch(lines),
+            ["0x40100c", "0x401010", "0x401014"],
+        )
 
     def test_is_jump_table_multi_arch_register_indirect(self):
         """Détecte aussi les patterns registre exotiques hors x86/ARM64."""
@@ -926,6 +943,33 @@ class TestJumpTableIntegration(unittest.TestCase):
             [
                 {"case": 0, "target": "0x401100"},
                 {"case": 1, "target": "0x401180"},
+            ],
+        )
+
+    def test_build_cfg_conditional_arm32_add_pc_switch_keeps_default_path(self):
+        lines = [
+            {"addr": "0x401000", "text": "cmp r0, #0x2"},
+            {"addr": "0x401004", "text": "addls pc, pc, r0, lsl #2"},
+            {"addr": "0x401008", "text": "b 0x401100"},
+            {"addr": "0x40100c", "text": "b 0x401200"},
+            {"addr": "0x401010", "text": "b 0x401300"},
+            {"addr": "0x401014", "text": "b 0x401400"},
+        ]
+
+        result = build_cfg(lines, arch_hint="arm")
+
+        switch_block = result["blocks"][0]
+        self.assertTrue(switch_block.get("is_switch"))
+        self.assertEqual(
+            switch_block.get("successors"),
+            ["0x40100c", "0x401010", "0x401014", "0x401008"],
+        )
+        self.assertEqual(
+            switch_block.get("switch_cases"),
+            [
+                {"case": 0, "target": "0x40100c"},
+                {"case": 1, "target": "0x401010"},
+                {"case": 2, "target": "0x401014"},
             ],
         )
 
