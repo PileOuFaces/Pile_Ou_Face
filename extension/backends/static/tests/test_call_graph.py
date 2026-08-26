@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import sys
 import unittest
+from unittest.mock import MagicMock, patch
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 if ROOT not in sys.path:
@@ -13,6 +14,7 @@ if ROOT not in sys.path:
 
 BINARY = os.path.join(ROOT, "examples", "demo_analysis.elf")
 
+from backends.static.binary.arch import get_raw_arch_info
 from backends.static.disasm.call_graph import build_call_graph, resolve_plt_symbols
 
 # ── resolve_plt_symbols ──────────────────────────────────────────────────────
@@ -80,6 +82,65 @@ def test_build_call_graph_symbols_become_nodes():
 
 
 class TestBuildCallGraphFallback(unittest.TestCase):
+    def test_arm32_literal_blx_call_resolves_thumb_tagged_target_pointer(self):
+        lines = [
+            {"addr": "0x1000", "text": "ldr r3, [pc, #0x8]"},
+            {"addr": "0x1004", "text": "blx r3"},
+            {"addr": "0x1008", "text": "bl 0x3000"},
+            {"addr": "0x100c", "text": "bx lr"},
+        ]
+        binary = MagicMock()
+        binary.get_content_from_virtual_address.return_value = bytes.fromhex("01200000")
+
+        with (
+            patch(
+                "backends.static.disasm.call_graph.resolve_plt_symbols", return_value={}
+            ),
+            patch("backends.static.disasm.call_graph._lief.parse", return_value=binary),
+            patch(
+                "backends.static.disasm.call_graph.detect_binary_arch_from_path",
+                return_value=get_raw_arch_info("arm"),
+            ),
+            patch(
+                "backends.static.disasm.call_graph._is_valid_code_addr",
+                return_value=True,
+            ),
+        ):
+            result = build_call_graph(
+                _make_cfg([]), symbols=[], lines=lines, binary_path="/fake/arm.elf"
+            )
+
+        binary.get_content_from_virtual_address.assert_called_once_with(0x1010, 4)
+        self.assertEqual(
+            {(edge["from"], edge["to"]) for edge in result["edges"]},
+            {("0x1004", "0x2000"), ("0x1008", "0x3000")},
+        )
+
+    def test_arm32_literal_blx_call_rejects_overwritten_register(self):
+        lines = [
+            {"addr": "0x1000", "text": "ldr r3, [pc, #0x8]"},
+            {"addr": "0x1004", "text": "mov r3, r0"},
+            {"addr": "0x1008", "text": "blx r3"},
+        ]
+        binary = MagicMock()
+
+        with (
+            patch(
+                "backends.static.disasm.call_graph.resolve_plt_symbols", return_value={}
+            ),
+            patch("backends.static.disasm.call_graph._lief.parse", return_value=binary),
+            patch(
+                "backends.static.disasm.call_graph.detect_binary_arch_from_path",
+                return_value=get_raw_arch_info("arm"),
+            ),
+        ):
+            result = build_call_graph(
+                _make_cfg([]), symbols=[], lines=lines, binary_path="/fake/arm.elf"
+            )
+
+        binary.get_content_from_virtual_address.assert_not_called()
+        self.assertEqual(result["edges"], [])
+
     def test_lines_without_cfg_build_direct_call_edges(self):
         lines = [
             {"addr": "0x1000", "text": "push rbp"},
