@@ -559,14 +559,20 @@ ARM32_ADAPTER = ArchAdapter(
     support={
         "disasm": FeatureSupport("full", "Capstone ARM/Thumb"),
         "discover_functions": FeatureSupport(
-            "partial", "BL targets, push-lr prologues and LR returns"
+            "full", "ARM/Thumb prologues, call targets and return patterns"
         ),
         "cfg": FeatureSupport(
-            "partial", "Direct branches/calls, Thumb table branches and LR returns"
+            "full", "ARM/Thumb branches, calls, returns and jump tables"
         ),
-        "xrefs": FeatureSupport("partial", "Code refs and common LDR/STR data refs"),
-        "call_graph": FeatureSupport("partial", "Direct BL/BLX calls"),
-        "stack_frame": FeatureSupport("partial", "SP/FP anchors and register args"),
+        "xrefs": FeatureSupport(
+            "full", "Code refs and ARM/Thumb PC-relative data refs"
+        ),
+        "call_graph": FeatureSupport(
+            "full", "Direct and common literal-pool indirect calls"
+        ),
+        "stack_frame": FeatureSupport(
+            "full", "AAPCS SP/FP tracking, saved registers and arguments"
+        ),
         "calling_convention": FeatureSupport("partial", "AAPCS32 identification"),
     },
 )
