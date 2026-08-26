@@ -88,9 +88,11 @@ les alias r13/r14/r15, l'interworking, les tables TBB/TBH et les epilogues
 d'exception. `full` designe cette famille de chemins publics testes ; il ne
 pretend pas reconstruire statiquement toute cible indirecte arbitraire.
 
-La detection de convention d'appel reste `partial` : elle identifie AAPCS32 et
-ses registres d'arguments, mais ne distingue pas encore les variantes de
-plateforme et d'ABI flottante au niveau de chaque fonction.
+La detection de convention d'appel reste `partial` : elle distingue AAPCS32
+soft-float et hard-float pour les ELF qui portent les flags ABI, et expose les
+registres VFP d'arguments en hard-float. Les formats sans metadonnee equivalente
+et les variantes de plateforme ne sont pas encore distingues au niveau de
+chaque fonction.
 
 ## Matrice des onglets raw
 

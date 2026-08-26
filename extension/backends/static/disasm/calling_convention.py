@@ -109,9 +109,39 @@ def _analyze_arm64(insns: list) -> tuple[str, float]:
     return "AAPCS64", 0.6
 
 
-def _analyze_arm32(insns: list) -> tuple[str, float]:
+_EF_ARM_ABI_FLOAT_SOFT = 0x200
+_EF_ARM_ABI_FLOAT_HARD = 0x400
+_AAPCS32_VFP_ARG_REGISTERS = tuple(f"s{index}" for index in range(16))
+
+
+def _arm32_float_abi(binary) -> str | None:
+    """Return the ARM ELF float ABI encoded in ``e_flags``, if known."""
+    try:
+        raw_flags = binary.header.processor_flag
+        if isinstance(raw_flags, (list, tuple, set, frozenset)):
+            flags = 0
+            for flag in raw_flags:
+                flags |= int(flag)
+        else:
+            flags = int(raw_flags)
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+    soft = bool(flags & _EF_ARM_ABI_FLOAT_SOFT)
+    hard = bool(flags & _EF_ARM_ABI_FLOAT_HARD)
+    if soft == hard:
+        return None
+    return "hard" if hard else "soft"
+
+
+def _analyze_arm32(insns: list, binary=None) -> tuple[str, float]:
     del insns
-    return "AAPCS32", 0.55
+    float_abi = _arm32_float_abi(binary)
+    if float_abi == "hard":
+        return "AAPCS32 hard-float", 0.85
+    if float_abi == "soft":
+        return "AAPCS32 soft-float", 0.85
+    return "AAPCS32 (float ABI unknown)", 0.55
 
 
 _ABI_CONVENTION_NAMES = {
@@ -159,6 +189,7 @@ def _known_abi_convention(arch_info: ArchInfo) -> tuple[str | None, float]:
 def _classify_arch_convention(
     arch_info: ArchInfo,
     insns: list | None = None,
+    binary=None,
 ) -> tuple[str | None, float, str]:
     """Return convention/confidence/source for one function.
 
@@ -176,7 +207,7 @@ def _classify_arch_convention(
         convention, confidence = _analyze_arm64(insns or [])
         return convention, confidence, "abi"
     if arch_info.key == "arm32":
-        convention, confidence = _analyze_arm32(insns or [])
+        convention, confidence = _analyze_arm32(insns or [], binary)
         return convention, confidence, "abi"
     if arch_info.key in {"x86_64", "x86_32"}:
         return None, 0.0, "heuristic"
@@ -204,10 +235,16 @@ def _analyze_function(binary, cs, arch_info: ArchInfo, addr: int) -> dict:
     """Analyse une fonction à l'adresse donnée et retourne {convention, confidence}."""
 
     def result(convention: str | None, confidence: float, source: str) -> dict:
+        float_arg_registers = (
+            list(_AAPCS32_VFP_ARG_REGISTERS)
+            if arch_info.key == "arm32" and _arm32_float_abi(binary) == "hard"
+            else []
+        )
         return {
             "convention": convention,
             "confidence": round(confidence, 4),
             "arg_registers": list(arch_info.arg_registers),
+            "float_arg_registers": float_arg_registers,
             "source": source,
         }
 
@@ -219,18 +256,18 @@ def _analyze_function(binary, cs, arch_info: ArchInfo, addr: int) -> dict:
     )
     code = _get_function_bytes(binary, analysis_addr)
     if not code or len(code) == 0:
-        return result(*_classify_arch_convention(arch_info, None))
+        return result(*_classify_arch_convention(arch_info, None, binary))
 
     try:
         cs.detail = True
         insns = list(cs.disasm(code, analysis_addr))
     except Exception:
-        return result(*_classify_arch_convention(arch_info, None))
+        return result(*_classify_arch_convention(arch_info, None, binary))
 
     if not insns:
-        return result(*_classify_arch_convention(arch_info, None))
+        return result(*_classify_arch_convention(arch_info, None, binary))
 
-    return result(*_classify_arch_convention(arch_info, insns))
+    return result(*_classify_arch_convention(arch_info, insns, binary))
 
 
 def _collect_function_addrs(binary) -> list[int]:
