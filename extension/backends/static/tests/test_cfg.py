@@ -95,6 +95,18 @@ class TestCfgHelpers(unittest.TestCase):
         block = next(item for item in cfg["blocks"] if item["addr"] == "0x1000")
         self.assertEqual(block["successors"], [])
 
+    def test_arm32_register_alias_return_has_no_fallthrough(self):
+        lines = [
+            {"addr": "0x1000", "text": "mov r0, #0", "line": 1},
+            {"addr": "0x1004", "text": "pop.w {r4, r15}", "line": 2},
+            {"addr": "0x1008", "text": "mov r1, #1", "line": 3},
+        ]
+
+        cfg = build_cfg(lines, arch_hint="arm")
+
+        block = next(item for item in cfg["blocks"] if item["addr"] == "0x1000")
+        self.assertEqual(block["successors"], [])
+
     def test_arm_conditional_returns_are_branches_with_fallthrough(self):
         for text in ("bxne lr", "popne.w {r4, pc}", "ldmiane sp!, {r4, pc}"):
             with self.subTest(text=text):

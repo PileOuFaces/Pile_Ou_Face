@@ -350,6 +350,7 @@ class ArchAdapter:
     def is_return_instruction(self, mnemonic: str, operands: str = "") -> bool:
         mnem = str(mnemonic or "").strip().lower()
         ops = re.sub(r"\s+", "", str(operands or "").strip().lower())
+        registers = set(re.findall(r"[a-z][a-z0-9]*", ops))
         if self.is_return_mnemonic(mnem):
             return True
         if self.family == "arm":
@@ -364,15 +365,17 @@ class ArchAdapter:
                 return False
             if base in {"rfe", "rfeia", "rfeib", "rfeda", "rfedb"}:
                 return True
-            if base == "bx" and ops == "lr":
+            if base == "bx" and ops in {"lr", "r14"}:
                 return True
             if base == "mov" and ops in {"pc,lr", "r15,r14"}:
                 return True
             if base == "ldr" and re.match(r"^(?:pc|r15),\[(?:sp|r13)(?:,|\])", ops):
                 return True
-            if base == "pop" and "pc" in ops:
+            if base == "pop" and registers.intersection({"pc", "r15"}):
                 return True
-            if base in {"ldm", "ldmia", "ldmfd"} and "pc" in ops:
+            if base in {"ldm", "ldmia", "ldmfd"} and registers.intersection(
+                {"pc", "r15"}
+            ):
                 return True
         if self.family == "sysz" and mnem == "br" and ops in {"r14", "%r14", "14"}:
             return True
@@ -388,12 +391,16 @@ class ArchAdapter:
         if not is_conditional:
             return False
         ops = re.sub(r"\s+", "", str(operands or "").strip().lower())
+        registers = set(re.findall(r"[a-z][a-z0-9]*", ops))
         return bool(
-            (base == "bx" and ops == "lr")
+            (base == "bx" and ops in {"lr", "r14"})
             or (base == "mov" and ops in {"pc,lr", "r15,r14"})
             or (base == "ldr" and re.match(r"^(?:pc|r15),\[(?:sp|r13)(?:,|\])", ops))
-            or (base == "pop" and "pc" in ops)
-            or (base in {"ldm", "ldmia", "ldmfd"} and "pc" in ops)
+            or (base == "pop" and registers.intersection({"pc", "r15"}))
+            or (
+                base in {"ldm", "ldmia", "ldmfd"}
+                and registers.intersection({"pc", "r15"})
+            )
         )
 
     def is_unconditional_jump_mnemonic(self, mnemonic: str) -> bool:
