@@ -19,8 +19,10 @@ from backends.static.disasm.cfg import (
     _is_branch,
     _is_jump_table,
     _is_valid_code_addr,
+    _match_arm32_literal_pc_load,
     _read_jump_table_entries,
     _resolve_arm32_add_pc_switch,
+    _resolve_arm32_literal_pc_load,
     _resolve_rip_relative_table,
     _resolve_thumb_table_branch,
     _section_is_exec,
@@ -58,6 +60,90 @@ class TestCfgHelpers(unittest.TestCase):
         self.assertEqual(_is_branch("addls pc, pc, r0, lsl #2"), (True, False, None))
         self.assertTrue(_is_jump_table("addls pc, pc, r0, lsl #2"))
         self.assertFalse(_is_jump_table("add r3, pc, r0, lsl #2"))
+
+    def test_arm32_literal_pc_load_is_branch_but_normal_loads_are_not(self):
+        for text, expected in (
+            ("ldr pc, [pc, #0x10]", (0x10, False)),
+            ("ldr.w r15, [r15, #4]", (4, False)),
+            ("ldrne.n pc, [pc, #-4]", (-4, True)),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(_match_arm32_literal_pc_load(text), expected)
+                self.assertEqual(_is_branch(text), (True, False, None))
+        for text in (
+            "ldr r3, [pc, #4]",
+            "ldr pc, [sp, #4]",
+            "ldr pc, [pc, r0, lsl #2]",
+            "ldr pc, [pc], #4",
+        ):
+            with self.subTest(text=text):
+                self.assertIsNone(_match_arm32_literal_pc_load(text))
+
+    def test_arm32_literal_pc_load_resolves_arm_and_thumb_pc_bases(self):
+        from backends.static.binary.arch import get_raw_arch_info
+
+        binary = MagicMock()
+        binary.get_content_from_virtual_address.return_value = (0x2001).to_bytes(
+            4, "little"
+        )
+        with patch("backends.static.disasm.cfg._is_valid_code_addr", return_value=True):
+            self.assertEqual(
+                _resolve_arm32_literal_pc_load(
+                    {"addr": "0x1000", "text": "ldr pc, [pc, #8]"},
+                    binary,
+                    get_raw_arch_info("arm"),
+                ),
+                "0x2000",
+            )
+            binary.get_content_from_virtual_address.assert_called_with(0x1010, 4)
+            self.assertEqual(
+                _resolve_arm32_literal_pc_load(
+                    {"addr": "0x1002", "text": "ldr.w r15, [r15, #4]"},
+                    binary,
+                    get_raw_arch_info("thumb"),
+                ),
+                "0x2000",
+            )
+            binary.get_content_from_virtual_address.assert_called_with(0x1008, 4)
+
+    @patch("backends.static.disasm.cfg._resolve_arm32_literal_pc_load")
+    def test_arm32_literal_pc_load_cfg_has_target_and_conditional_fallthrough(
+        self, resolve_literal
+    ):
+        resolve_literal.return_value = "0x2000"
+        lines = [
+            {"addr": "0x1000", "text": "ldrne.w pc, [pc, #4]", "line": 1},
+            {"addr": "0x1004", "text": "bx lr", "line": 2},
+            {"addr": "0x2000", "text": "bx lr", "line": 3},
+        ]
+
+        cfg = build_cfg(lines, binary_path="/fake/arm", arch_hint="arm")
+
+        block = next(item for item in cfg["blocks"] if item["addr"] == "0x1000")
+        self.assertEqual(block["successors"], ["0x2000", "0x1004"])
+        edge_types = {
+            (edge["to"], edge["type"])
+            for edge in cfg["edges"]
+            if edge["from"] == "0x1000"
+        }
+        self.assertEqual(
+            edge_types,
+            {("0x2000", "jmp"), ("0x1004", "fallthrough")},
+        )
+
+        resolve_literal.return_value = None
+        unconditional = build_cfg(
+            [
+                {"addr": "0x3000", "text": "ldr pc, [pc, #4]", "line": 1},
+                {"addr": "0x3004", "text": "mov r0, #0", "line": 2},
+            ],
+            binary_path="/fake/arm",
+            arch_hint="arm",
+        )
+        veneer = next(
+            item for item in unconditional["blocks"] if item["addr"] == "0x3000"
+        )
+        self.assertEqual(veneer["successors"], [])
 
     def test_extract_jump_target_ignores_leading_instruction_bytes(self):
         self.assertEqual(_extract_jump_target("0c200008 jal 0x800020"), "0x800020")
