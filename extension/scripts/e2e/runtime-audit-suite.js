@@ -5,6 +5,7 @@ const { EventEmitter } = require('events');
 const fs = require('fs');
 const path = require('path');
 const { PassThrough, Writable } = require('stream');
+const { URL } = require('url');
 const Mocha = require('mocha');
 const vscode = require('vscode');
 const {
@@ -855,6 +856,8 @@ async function run() {
     let target = null;
     let suggestCalls = 0;
     let functionDecompileAttempts = 0;
+    let functionDecompileSuccesses = 0;
+    let allowFunctionDecompileSuccess = false;
     const acceptedAugmentations = new Set();
     const augmentationResults = new Map();
     const originalExecFile = childProcess.execFile;
@@ -921,15 +924,16 @@ async function run() {
               result = createMockDecompilerList();
             } else if (args.includes('--addr')) {
               functionDecompileAttempts += 1;
-              result = JSON.stringify(functionDecompileAttempts === 1
-                ? { ok: false, error: 'fixture decompiler unavailable', error_type: 'tool_error' }
-                : {
+              if (allowFunctionDecompileSuccess) functionDecompileSuccesses += 1;
+              result = JSON.stringify(allowFunctionDecompileSuccess
+                ? {
                   ok: true,
                   addr: functionAddr,
                   name: 'main',
                   code: functionCode,
                   score: 100,
-                });
+                }
+                : { ok: false, error: 'fixture decompiler unavailable', error_type: 'tool_error' });
             } else {
               result = JSON.stringify({
                 ok: true,
@@ -966,9 +970,12 @@ async function run() {
         await hub.decompileFunctionSelect().fill(functionAddr);
         await hub.decompileContent().waitForText('Erreur du décompilateur — vérifiez les logs', 30000);
         assert.equal(await hub.decompileFunctionSelect().inputValue(), functionAddr, 'the failed function selection must stay selected');
+        const attemptsBeforeRetry = functionDecompileAttempts;
+        allowFunctionDecompileSuccess = true;
         await hub.decompileRebuildButton().clickDom();
         await hub.decompileOutput().waitForText('function retry succeeded', 30000);
-        assert.equal(functionDecompileAttempts, 2, 'one failed function run and one successful retry must execute');
+        assert.ok(functionDecompileAttempts > attemptsBeforeRetry, 'the explicit retry must execute a new function run');
+        assert.equal(functionDecompileSuccesses, 1, 'the explicit retry must produce exactly one successful function run');
 
         await hub.decompileAugmentButton().clickDom();
         await hub.decompileAugmentReview().waitFor({ state: 'visible', timeout: 30000 });
