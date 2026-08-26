@@ -72,6 +72,9 @@ class TestCfgHelpers(unittest.TestCase):
             "03e00008 jr ra",
             "e12fff1e bx lr",
             "pop {r4, pc}",
+            "movs pc, lr",
+            "subs pc, lr, #4",
+            "rfeia sp!",
         ]
         for text in cases:
             with self.subTest(text=text):
@@ -79,6 +82,18 @@ class TestCfgHelpers(unittest.TestCase):
                 self.assertTrue(is_branch)
                 self.assertFalse(is_call)
                 self.assertIsNone(target)
+
+    def test_arm32_exception_return_has_no_fallthrough(self):
+        lines = [
+            {"addr": "0x1000", "text": "mov r0, #0", "line": 1},
+            {"addr": "0x1004", "text": "subs pc, lr, #4", "line": 2},
+            {"addr": "0x1008", "text": "mov r1, #1", "line": 3},
+        ]
+
+        cfg = build_cfg(lines, arch_hint="arm")
+
+        block = next(item for item in cfg["blocks"] if item["addr"] == "0x1000")
+        self.assertEqual(block["successors"], [])
 
     def test_arm_conditional_returns_are_branches_with_fallthrough(self):
         for text in ("bxne lr", "popne.w {r4, pc}", "ldmiane sp!, {r4, pc}"):

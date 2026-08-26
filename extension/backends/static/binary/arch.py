@@ -353,9 +353,17 @@ class ArchAdapter:
         if self.is_return_mnemonic(mnem):
             return True
         if self.family == "arm":
+            if mnem == "movs" and ops in {"pc,lr", "r15,r14"}:
+                return True
+            if mnem == "subs" and re.match(
+                r"^(?:pc|r15),(?:lr|r14),#?(?:0x[0-9a-f]+|\d+)$", ops
+            ):
+                return True
             base, is_conditional = self._arm32_mnemonic_parts(mnem)
             if is_conditional:
                 return False
+            if base in {"rfe", "rfeia", "rfeib", "rfeda", "rfedb"}:
+                return True
             if base == "bx" and ops == "lr":
                 return True
             if base == "mov" and ops in {"pc,lr", "r15,r14"}:
