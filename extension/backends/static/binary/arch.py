@@ -379,6 +379,13 @@ class ArchAdapter:
                 return True
         if self.family == "sysz" and mnem == "br" and ops in {"r14", "%r14", "14"}:
             return True
+        if self.family == "riscv":
+            if mnem == "jr" and ops in {"ra", "x1"}:
+                return True
+            if mnem == "jalr" and re.fullmatch(
+                r"(?:zero|x0),(?:ra|x1)(?:,(?:0|0x0))?", ops
+            ):
+                return True
         return bool(self.family == "mips" and mnem == "jr" and ops in {"ra", "$ra"})
 
     def is_conditional_return_instruction(
@@ -427,6 +434,26 @@ class ArchAdapter:
         if self.is_conditional_branch_mnemonic(mnemonic):
             return "jcc"
         return None
+
+    def classify_code_ref_instruction(
+        self, mnemonic: str, operands: str = ""
+    ) -> str | None:
+        """Classify a control transfer, including operand-dependent ISA aliases."""
+        mnem = str(mnemonic or "").strip().lower()
+        if self.is_return_instruction(mnem, operands):
+            return "ret"
+        if self.family != "riscv" or mnem not in {"jal", "jalr"}:
+            return self.classify_code_ref_mnemonic(mnem)
+
+        fields = [
+            field.strip().lower()
+            for field in str(operands or "").split(",")
+            if field.strip()
+        ]
+        if not fields:
+            return self.classify_code_ref_mnemonic(mnem)
+        destination = fields[0] if len(fields) > 1 else "ra"
+        return "jmp" if destination in {"zero", "x0"} else "call"
 
     def supports_data_ref_mnemonic(self, mnemonic: str) -> bool:
         normalized = str(mnemonic or "").strip().lower()

@@ -316,7 +316,17 @@ def build_call_graph(
 
     def _is_call_text(text: str) -> bool:
         mnem = _get_mnemonic(str(text or ""))
-        return any(adapter.is_call_mnemonic(mnem) for adapter in call_adapters)
+        operands = re.split(
+            rf"\b{re.escape(mnem)}\b",
+            str(text or ""),
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )
+        op_str = operands[1] if len(operands) == 2 else ""
+        return any(
+            adapter.classify_code_ref_instruction(mnem, op_str) == "call"
+            for adapter in call_adapters
+        )
 
     call_edges = [(e["from"], e["to"]) for e in edges if e.get("type") == "call"]
     had_cfg_call_edges = bool(call_edges)
