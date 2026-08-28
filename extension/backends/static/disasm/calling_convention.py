@@ -105,8 +105,19 @@ def _analyze_x86(insns: list, bits: int = 64) -> tuple[str | None, float]:
             return "__cdecl", 0.5
 
 
-def _analyze_arm64(insns: list) -> tuple[str, float]:
-    return "AAPCS64", 0.6
+_AAPCS64_FLOAT_ARG_REGISTERS = tuple(f"v{index}" for index in range(8))
+
+
+def _analyze_arm64(insns: list, arch_info: ArchInfo) -> tuple[str, float]:
+    """Identify the platform variant of the AArch64 procedure-call standard."""
+    del insns
+    if arch_info.format_kind == "macho":
+        return "Apple ARM64 (Darwin PCS)", 0.8
+    if arch_info.format_kind == "pe":
+        return "Windows ARM64", 0.8
+    if arch_info.format_kind == "elf":
+        return "AAPCS64", 0.8
+    return "AAPCS64 (platform unknown)", 0.55
 
 
 _EF_ARM_ABI_FLOAT_SOFT = 0x200
@@ -204,7 +215,7 @@ def _classify_arch_convention(
         convention, confidence = _analyze_x86(insns, bits=32)
         return convention, confidence, "heuristic"
     if arch_info.key == "arm64":
-        convention, confidence = _analyze_arm64(insns or [])
+        convention, confidence = _analyze_arm64(insns or [], arch_info)
         return convention, confidence, "abi"
     if arch_info.key == "arm32":
         convention, confidence = _analyze_arm32(insns or [], binary)
@@ -235,11 +246,12 @@ def _analyze_function(binary, cs, arch_info: ArchInfo, addr: int) -> dict:
     """Analyse une fonction à l'adresse donnée et retourne {convention, confidence}."""
 
     def result(convention: str | None, confidence: float, source: str) -> dict:
-        float_arg_registers = (
-            list(_AAPCS32_VFP_ARG_REGISTERS)
-            if arch_info.key == "arm32" and _arm32_float_abi(binary) == "hard"
-            else []
-        )
+        if arch_info.key == "arm64":
+            float_arg_registers = list(_AAPCS64_FLOAT_ARG_REGISTERS)
+        elif arch_info.key == "arm32" and _arm32_float_abi(binary) == "hard":
+            float_arg_registers = list(_AAPCS32_VFP_ARG_REGISTERS)
+        else:
+            float_arg_registers = []
         return {
             "convention": convention,
             "confidence": round(confidence, 4),

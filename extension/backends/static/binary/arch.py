@@ -538,7 +538,9 @@ ARM64_ADAPTER = ArchAdapter(
         "xrefs": FeatureSupport("full", "Code refs and ADR/ADRP/LDR/STR data refs"),
         "call_graph": FeatureSupport("full", "Direct BL calls and Mach-O stubs"),
         "stack_frame": FeatureSupport("full", "x29/sp tracking and register args"),
-        "calling_convention": FeatureSupport("partial", "AAPCS64 identification"),
+        "calling_convention": FeatureSupport(
+            "partial", "AAPCS64, Apple Darwin PCS and Windows ARM64 identification"
+        ),
     },
 )
 

@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "../../.."))
@@ -11,6 +12,7 @@ sys.path.insert(0, ROOT)
 from backends.static.binary.arch import get_raw_arch_info
 from backends.static.disasm.calling_convention import (
     _AAPCS32_VFP_ARG_REGISTERS,
+    _AAPCS64_FLOAT_ARG_REGISTERS,
     _analyze_function,
     _arm32_float_abi,
     _known_abi_convention,
@@ -50,6 +52,33 @@ import unittest
 
 
 class TestCallingConvention(unittest.TestCase):
+    @unittest.skipUnless(_CAPSTONE_AVAILABLE, "capstone not installed")
+    def test_arm64_convention_distinguishes_platform_abis(self):
+        info = get_raw_arch_info("arm64")
+        self.assertIsNotNone(info)
+
+        class Binary:
+            def get_content_from_virtual_address(self, addr, size):
+                return None
+
+        expected = {
+            "elf": "AAPCS64",
+            "macho": "Apple ARM64 (Darwin PCS)",
+            "pe": "Windows ARM64",
+            "raw": "AAPCS64 (platform unknown)",
+        }
+        for format_kind, convention in expected.items():
+            with self.subTest(format_kind=format_kind):
+                result = _analyze_function(
+                    Binary(), object(), replace(info, format_kind=format_kind), 0x1000
+                )
+                self.assertEqual(result["convention"], convention)
+                self.assertEqual(
+                    result["float_arg_registers"],
+                    list(_AAPCS64_FLOAT_ARG_REGISTERS),
+                )
+                self.assertEqual(result["arg_registers"], list(info.arg_registers))
+
     def test_arm32_float_abi_reads_elf_processor_flags(self):
         class Header:
             processor_flag = 0
