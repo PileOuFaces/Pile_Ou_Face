@@ -113,6 +113,12 @@ destination : `ra` produit un appel, `zero`/`x0` un saut, et le retour canonique
 `jalr zero, ra, 0` termine le bloc. Le support reste `partial` pour les cibles
 indirectes qui ne peuvent pas etre resolues statiquement.
 
+Pour PowerPC, les branches indirectes via LR et CTR respectent le bit de lien :
+les alias Capstone termines par `lrl`/`ctrl` sont des appels, ceux termines par
+`lr` des retours, et ceux termines par `ctr` des sauts. Les variantes
+conditionnelles et leurs suffixes de prediction `+`/`-` conservent leur
+fallthrough.
+
 ## Matrice des onglets raw
 
 Source de verite :

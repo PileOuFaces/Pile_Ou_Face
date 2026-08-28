@@ -297,6 +297,14 @@ class TestJumpTableDetection(unittest.TestCase):
         self.assertEqual(_is_branch("jalr $zero, $t9", adapters), (True, False, None))
         self.assertEqual(_is_branch("jalr $zero, $ra", adapters), (True, False, None))
 
+    def test_ppc_control_register_branches_preserve_link_semantics(self):
+        adapters = (arch_module.PPC_ADAPTER,)
+        self.assertEqual(_is_branch("blrl", adapters), (True, True, None))
+        self.assertEqual(_is_branch("beqlrl+", adapters), (True, True, None))
+        self.assertEqual(_is_branch("bnectrl-", adapters), (True, True, None))
+        self.assertEqual(_is_branch("beqctr+", adapters), (True, False, None))
+        self.assertEqual(_is_branch("beqlr+", adapters), (True, False, None))
+
     def test_is_jump_table_not_detected_for_normal_branch(self):
         """Ne détecte pas les branches normales."""
         self.assertFalse(_is_jump_table("b\t0x1000004e8"))
