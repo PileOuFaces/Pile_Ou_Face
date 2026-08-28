@@ -291,6 +291,12 @@ class TestJumpTableDetection(unittest.TestCase):
         )
         self.assertEqual(_is_branch("jalr zero, ra, 0", adapters), (True, False, None))
 
+    def test_mips_jalr_link_register_controls_transfer_kind(self):
+        adapters = (arch_module.MIPS_ADAPTER,)
+        self.assertEqual(_is_branch("jalr $ra, $t9", adapters), (True, True, None))
+        self.assertEqual(_is_branch("jalr $zero, $t9", adapters), (True, False, None))
+        self.assertEqual(_is_branch("jalr $zero, $ra", adapters), (True, False, None))
+
     def test_is_jump_table_not_detected_for_normal_branch(self):
         """Ne détecte pas les branches normales."""
         self.assertFalse(_is_jump_table("b\t0x1000004e8"))

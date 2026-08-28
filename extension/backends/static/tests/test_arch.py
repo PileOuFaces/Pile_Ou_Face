@@ -195,6 +195,22 @@ class TestArchAdapters(unittest.TestCase):
         )
         self.assertTrue(adapter.is_return_instruction("jr", "ra"))
 
+    def test_mips_adapter_classifies_jalr_link_register_operands(self):
+        adapter = arch_module.MIPS_ADAPTER
+        self.assertEqual(adapter.classify_code_ref_instruction("jalr", "$t9"), "call")
+        self.assertEqual(
+            adapter.classify_code_ref_instruction("jalr", "$ra, $t9"), "call"
+        )
+        self.assertEqual(
+            adapter.classify_code_ref_instruction("jalr", "$zero, $t9"), "jmp"
+        )
+        self.assertEqual(
+            adapter.classify_code_ref_instruction("jalr", "$0, $t9"), "jmp"
+        )
+        self.assertEqual(
+            adapter.classify_code_ref_instruction("jalr", "$zero, $ra"), "ret"
+        )
+
     def test_arm32_condition_and_width_suffixes_keep_their_semantics(self):
         adapter = arch_module.ARM32_ADAPTER
 
