@@ -386,6 +386,13 @@ class ArchAdapter:
                 r"(?:zero|x0),(?:ra|x1)(?:,(?:0|0x0))?", ops
             ):
                 return True
+        if self.family == "mips" and mnem == "jalr":
+            fields = [field.strip("$") for field in ops.split(",") if field]
+            return bool(
+                len(fields) >= 2
+                and fields[0] in {"zero", "0", "r0"}
+                and fields[1] in {"ra", "31", "r31"}
+            )
         return bool(self.family == "mips" and mnem == "jr" and ops in {"ra", "$ra"})
 
     def is_conditional_return_instruction(
@@ -442,6 +449,14 @@ class ArchAdapter:
         mnem = str(mnemonic or "").strip().lower()
         if self.is_return_instruction(mnem, operands):
             return "ret"
+        if self.family == "mips" and mnem == "jalr":
+            fields = [
+                field.strip().lower().lstrip("$")
+                for field in str(operands or "").split(",")
+                if field.strip()
+            ]
+            destination = fields[0] if len(fields) > 1 else "ra"
+            return "jmp" if destination in {"zero", "0", "r0"} else "call"
         if self.family != "riscv" or mnem not in {"jal", "jalr"}:
             return self.classify_code_ref_mnemonic(mnem)
 

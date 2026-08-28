@@ -102,6 +102,9 @@ reconstruites instruction par instruction.
 
 Pour MIPS classique, le CFG conserve l'instruction de delay slot dans le bloc
 du branchement ou de l'appel et place le fallthrough apres cette instruction.
+La classification de `jalr` tient compte du registre de lien : `$ra` produit
+un appel, `$zero`/`$0` un saut, et `jalr $zero, $ra` termine le bloc comme un
+retour.
 Le support reste `partial` tant que les variantes compactes MIPS32r6 et les
 semantiques annulees des branches likely ne sont pas modelisees explicitement.
 
