@@ -438,12 +438,16 @@ class TestBuildCfg(unittest.TestCase):
         lines = [
             {"addr": "0x800000", "text": "27bdfff0 addiu sp, sp, -0x10", "line": 1},
             {"addr": "0x800004", "text": "0c200008 jal 0x800020", "line": 2},
-            {"addr": "0x800008", "text": "11000003 beq t0, zero, 0x800018", "line": 3},
-            {"addr": "0x80000c", "text": "08000008 j 0x800020", "line": 4},
-            {"addr": "0x800018", "text": "00000000 nop", "line": 5},
-            {"addr": "0x800020", "text": "03e00008 jr ra", "line": 6},
+            {"addr": "0x800008", "text": "00000000 nop", "line": 3},
+            {"addr": "0x80000c", "text": "11000003 beq t0, zero, 0x800030", "line": 4},
+            {"addr": "0x800010", "text": "25080001 addiu t0, t0, 1", "line": 5},
+            {"addr": "0x800014", "text": "08000008 j 0x800020", "line": 6},
+            {"addr": "0x800018", "text": "00000000 nop", "line": 7},
+            {"addr": "0x800020", "text": "03e00008 jr ra", "line": 8},
+            {"addr": "0x800024", "text": "00000000 nop", "line": 9},
+            {"addr": "0x800030", "text": "00000000 nop", "line": 10},
         ]
-        cfg = build_cfg(lines)
+        cfg = build_cfg(lines, arch_hint="mips")
         self.assertTrue(
             any(
                 edge["type"] == "call" and edge["to"] == "0x800020"
@@ -452,11 +456,34 @@ class TestBuildCfg(unittest.TestCase):
         )
         self.assertTrue(
             any(
-                edge["type"] == "jmp" and edge["to"] == "0x800018"
+                edge["type"] == "jmp" and edge["to"] == "0x800030"
                 for edge in cfg["edges"]
             )
         )
         self.assertFalse(any(edge["to"] == "0x03e00008" for edge in cfg["edges"]))
+        call_block = next(
+            block for block in cfg["blocks"] if block["addr"] == "0x800000"
+        )
+        self.assertEqual(
+            [line["addr"] for line in call_block["lines"]],
+            ["0x800000", "0x800004", "0x800008"],
+        )
+        branch_block = next(
+            block for block in cfg["blocks"] if block["addr"] == "0x80000c"
+        )
+        self.assertEqual(
+            [line["addr"] for line in branch_block["lines"]],
+            ["0x80000c", "0x800010"],
+        )
+        self.assertEqual(branch_block["successors"], ["0x800030", "0x800014"])
+        return_block = next(
+            block for block in cfg["blocks"] if block["addr"] == "0x800020"
+        )
+        self.assertEqual(
+            [line["addr"] for line in return_block["lines"]],
+            ["0x800020", "0x800024"],
+        )
+        self.assertEqual(return_block["successors"], [])
         self.assertIn(cfg["support_level"], {"full", "partial"})
 
     def test_systemz_call_branch_and_return_mnemonics(self):
