@@ -133,6 +133,21 @@ class TestArchAdapters(unittest.TestCase):
             arch_module.SYSZ_ADAPTER.classify_code_ref_mnemonic("j"), "jmp"
         )
 
+    def test_ppc_adapter_classifies_indirect_link_branch_aliases(self):
+        adapter = arch_module.PPC_ADAPTER
+        for mnemonic in ("blrl", "beqlrl+", "bctrl", "bnectrl-"):
+            with self.subTest(mnemonic=mnemonic):
+                self.assertEqual(
+                    adapter.classify_code_ref_instruction(mnemonic), "call"
+                )
+        self.assertEqual(adapter.classify_code_ref_instruction("bctr"), "jmp")
+        self.assertEqual(adapter.classify_code_ref_instruction("beqctr+"), "jcc")
+        self.assertEqual(adapter.classify_code_ref_instruction("blr"), "ret")
+        self.assertEqual(adapter.classify_code_ref_instruction("beqlr+"), "ret")
+        self.assertTrue(adapter.is_conditional_return_instruction("beqlr+"))
+        self.assertTrue(adapter.is_conditional_return_instruction("bdnzlr"))
+        self.assertFalse(adapter.is_conditional_return_instruction("blr"))
+
     def test_extended_adapters_recognize_operand_based_returns(self):
         self.assertTrue(arch_module.ARM32_ADAPTER.is_return_instruction("bx", "lr"))
         self.assertTrue(arch_module.ARM32_ADAPTER.is_return_instruction("bx", "r14"))

@@ -339,9 +339,18 @@ class ArchAdapter:
 
     def is_call_mnemonic(self, mnemonic: str) -> bool:
         normalized = str(mnemonic or "").strip().lower()
-        return normalized in self.call_mnemonics or (
-            self.family == "arm"
-            and self._arm32_base_mnemonic(normalized) in self.call_mnemonics
+        ppc_mnemonic = normalized.rstrip("+-")
+        return (
+            normalized in self.call_mnemonics
+            or (
+                self.family == "arm"
+                and self._arm32_base_mnemonic(normalized) in self.call_mnemonics
+            )
+            or (
+                self.family == "ppc"
+                and ppc_mnemonic.startswith("b")
+                and ppc_mnemonic.endswith(("lrl", "ctrl"))
+            )
         )
 
     def is_return_mnemonic(self, mnemonic: str) -> bool:
@@ -352,6 +361,14 @@ class ArchAdapter:
         ops = re.sub(r"\s+", "", str(operands or "").strip().lower())
         registers = set(re.findall(r"[a-z][a-z0-9]*", ops))
         if self.is_return_mnemonic(mnem):
+            return True
+        ppc_mnemonic = mnem.rstrip("+-")
+        if (
+            self.family == "ppc"
+            and ppc_mnemonic.startswith("b")
+            and ppc_mnemonic.endswith("lr")
+            and not ppc_mnemonic.endswith("lrl")
+        ):
             return True
         if self.family == "arm":
             if mnem == "movs" and ops in {"pc,lr", "r15,r14"}:
@@ -398,7 +415,15 @@ class ArchAdapter:
     def is_conditional_return_instruction(
         self, mnemonic: str, operands: str = ""
     ) -> bool:
-        """Whether an ARM instruction conditionally returns to its caller."""
+        """Whether an instruction conditionally returns to its caller."""
+        if self.family == "ppc":
+            normalized = str(mnemonic or "").strip().lower().rstrip("+-")
+            return bool(
+                normalized.startswith("b")
+                and normalized.endswith("lr")
+                and not normalized.endswith("lrl")
+                and normalized != "blr"
+            )
         if self.family != "arm":
             return False
         base, is_conditional = self._arm32_mnemonic_parts(mnemonic)
@@ -423,6 +448,21 @@ class ArchAdapter:
     def is_conditional_branch_mnemonic(self, mnemonic: str) -> bool:
         if mnemonic in self.conditional_branch_mnemonics:
             return True
+        if self.family == "ppc":
+            normalized = str(mnemonic or "").strip().lower().rstrip("+-")
+            if normalized.startswith("b") and (
+                (
+                    normalized.endswith("lr")
+                    and not normalized.endswith("lrl")
+                    and normalized != "blr"
+                )
+                or (
+                    normalized.endswith("ctr")
+                    and not normalized.endswith("ctrl")
+                    and normalized != "bctr"
+                )
+            ):
+                return True
         if self.family == "arm":
             base = self._arm32_base_mnemonic(mnemonic)
             if base in {"b", "bx"} and base != mnemonic:
