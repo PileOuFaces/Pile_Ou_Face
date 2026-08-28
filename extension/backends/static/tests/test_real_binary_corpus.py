@@ -9,6 +9,7 @@ import tempfile
 import unittest
 import warnings
 from pathlib import Path
+from unittest.mock import patch
 
 from backends.static.disasm.cfg import build_cfg, build_cfg_for_function
 from backends.static.disasm.disasm import disassemble_with_capstone
@@ -78,6 +79,21 @@ def _named_cfg_call_edges(
         if source and target:
             named_edges.add((source, target))
     return named_edges
+
+
+class TestRealBinaryCorpusMatrix(unittest.TestCase):
+    @patch(
+        "backends.static.tests.fixtures.real_binary_corpus.shutil.which",
+        side_effect=lambda name: f"/tools/{name}",
+    )
+    @patch.dict(os.environ, {"POF_CORPUS_SKIP_COMPILERS": ""})
+    def test_default_matrix_covers_v1_architectures(self, _which):
+        arches = {spec.arch for spec in default_corpus_specs()}
+
+        self.assertTrue(
+            {"native", "arm64", "mips32", "ppc32", "riscv64"}.issubset(arches),
+            arches,
+        )
 
 
 @unittest.skipUnless(_lief_and_capstone_available(), "lief et capstone requis")

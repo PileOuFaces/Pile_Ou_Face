@@ -132,9 +132,10 @@ plugin-aware registry rather than mixing them into this public host matrix.
 ## Large compiled corpus
 
 The `Large Real Corpus Loadtest` workflow runs every Monday and can also be
-started manually. It compiles the shared real-analysis corpus for x86_64 and
-ARM64, adds a deterministic ELF data section until the file reaches about
-100 MiB, then runs each architecture in its own guarded job. Generated
+started manually. It compiles the shared real-analysis corpus for x86_64,
+ARM64, MIPS32, PowerPC 32 and RISC-V64, adds a deterministic ELF data section
+until the file reaches about 100 MiB, then runs each architecture in its own
+guarded job. Generated
 binaries are never committed. Each job enforces the 1.5 GiB process-tree
 limit, the 60 second per-scenario cap, and the absolute `large` budgets.
 

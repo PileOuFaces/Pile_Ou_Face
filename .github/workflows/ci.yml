@@ -299,10 +299,10 @@ jobs:
             -q
 
   # ══════════════════════════════════════════════════════════════
-  # 🧬 Corpus réel ARM64 — PRs uniquement, ubuntu seulement
+  # 🧬 Corpus réel multi-architecture — PRs uniquement, ubuntu seulement
   # ══════════════════════════════════════════════════════════════
   real-corpus-arm64:
-    name: Real Corpus ARM64
+    name: Real Corpus Multi-Arch
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -327,20 +327,26 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Install ARM64 corpus toolchain
+      - name: Install multi-architecture corpus toolchains
         if: steps.filter.outputs.relevant == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             build-essential \
             gcc-aarch64-linux-gnu \
-            binutils-aarch64-linux-gnu
+            binutils-aarch64-linux-gnu \
+            gcc-mips-linux-gnu \
+            binutils-mips-linux-gnu \
+            gcc-powerpc-linux-gnu \
+            binutils-powerpc-linux-gnu \
+            gcc-riscv64-linux-gnu \
+            binutils-riscv64-linux-gnu
 
       - name: Install Python dependencies
         if: steps.filter.outputs.relevant == 'true'
         run: pip install -r extension/backends/requirements-ci.txt
 
-      - name: Run real binary corpus with ARM64
+      - name: Run real binary corpus across architectures
         if: steps.filter.outputs.relevant == 'true'
         working-directory: ./extension
         env:
