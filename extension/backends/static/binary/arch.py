@@ -772,8 +772,8 @@ RISCV_ADAPTER = ArchAdapter(
     key="riscv",
     family="riscv",
     display_name="RISC-V",
-    call_mnemonics=frozenset({"call", "jal", "jalr"}),
-    unconditional_jump_mnemonics=frozenset({"j", "jr", "tail"}),
+    call_mnemonics=frozenset({"call", "c.jal", "jal", "jalr"}),
+    unconditional_jump_mnemonics=frozenset({"c.j", "c.jr", "j", "jr", "tail"}),
     conditional_branch_mnemonics=frozenset(
         {
             "beq",
@@ -792,9 +792,11 @@ RISCV_ADAPTER = ArchAdapter(
             "bltz",
             "bne",
             "bnez",
+            "c.beqz",
+            "c.bnez",
         }
     ),
-    return_mnemonics=frozenset({"ret", "mret", "sret", "uret"}),
+    return_mnemonics=frozenset({"c.jr", "ret", "mret", "sret", "uret"}),
     prologue_patterns=(
         (rf"\baddi(?:w)?\s+sp\s*,\s*sp\s*,\s*{_SIGNED_IMMEDIATE_RE}\b", "addi sp"),
     ),
@@ -1106,6 +1108,14 @@ def _cs_mode(name: str | None = None) -> int | None:
     if not name:
         return getattr(capstone, "CS_MODE_LITTLE_ENDIAN", 0)
     return getattr(capstone, f"CS_MODE_{name}", None)
+
+
+def _cs_modes(*names: str) -> int | None:
+    """Combine Capstone mode flags, or fail when one is unavailable."""
+    modes = [_cs_mode(name) for name in names]
+    if any(mode is None for mode in modes):
+        return None
+    return sum(mode or 0 for mode in modes)
 
 
 def _normalize_endian(endian: str | None) -> str:
@@ -1439,7 +1449,7 @@ def get_raw_arch_info(raw_arch: str, endian: str | None = None) -> ArchInfo | No
         "bpf": ("BPF", _cs_mode("BPF_EXTENDED"), 64, 8, "BPF", "BPF", False, "generic"),
         "riscv32": (
             "RISCV",
-            _cs_mode("RISCV32"),
+            _cs_modes("RISCV32", "RISCVC"),
             32,
             4,
             "RISC-V32",
@@ -1449,7 +1459,7 @@ def get_raw_arch_info(raw_arch: str, endian: str | None = None) -> ArchInfo | No
         ),
         "riscv64": (
             "RISCV",
-            _cs_mode("RISCV64"),
+            _cs_modes("RISCV64", "RISCVC"),
             64,
             8,
             "RISC-V64",
@@ -1604,6 +1614,13 @@ def _elf_class_bits(binary) -> int | None:
     return None
 
 
+def _elf_endian(binary) -> str:
+    header = getattr(binary, "header", None)
+    identity_data = getattr(header, "identity_data", None)
+    text = getattr(identity_data, "name", str(identity_data or "")).upper()
+    return "big" if "MSB" in text or "BIG" in text else "little"
+
+
 def detect_binary_arch(binary) -> ArchInfo | None:
     """Resolution d'un objet binaire LIEF en ArchInfo."""
     if not lief:
@@ -1686,6 +1703,7 @@ def detect_binary_arch(binary) -> ArchInfo | None:
         fallback = _detect_arch_from_machine_name(
             machine_name,
             format_kind="elf",
+            endian=_elf_endian(binary),
             bits=_elf_class_bits(binary),
         )
         if fallback is not None:

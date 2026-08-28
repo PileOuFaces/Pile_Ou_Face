@@ -18,6 +18,7 @@ from backends.shared.exceptions import BinaryNotFoundError
 from backends.static.disasm.disasm import (
     _augment_context_with_discovered_functions,
     _iter_windowed_instructions,
+    _normalize_capstone_operands,
     _write_disasm_outputs,
     disassemble,
     disassemble_with_capstone,
@@ -43,6 +44,19 @@ def _db_lines(out_map):
 
 class TestDisassembleWithCapstone(unittest.TestCase):
     """Tests de disassemble_with_capstone."""
+
+    @unittest.skipUnless(_LIEF_AVAILABLE, "lief/capstone not installed")
+    def test_riscv_negative_hex_target_is_normalized_to_virtual_address(self):
+        instruction = mock.Mock(
+            address=0x104D8,
+            mnemonic="jal",
+            op_str="-0x18",
+        )
+
+        self.assertEqual(
+            _normalize_capstone_operands(_capstone.CS_ARCH_RISCV, instruction),
+            "0x104c0",
+        )
 
     def test_nonexistent_binary_raises(self):
         """Binaire inexistant lève BinaryNotFoundError."""

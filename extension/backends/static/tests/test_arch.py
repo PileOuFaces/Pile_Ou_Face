@@ -63,6 +63,15 @@ class TestRawArchInfo(unittest.TestCase):
         self.assertEqual(info.endian, "little")
 
     @unittest.skipUnless(_CAPSTONE_AVAILABLE, "capstone not installed")
+    def test_raw_riscv_enables_compressed_instructions(self):
+        info = arch_module.get_raw_arch_info("riscv64")
+        self.assertIsNotNone(info)
+        self.assertEqual(
+            info.capstone_mode & _capstone.CS_MODE_RISCVC,
+            _capstone.CS_MODE_RISCVC,
+        )
+
+    @unittest.skipUnless(_CAPSTONE_AVAILABLE, "capstone not installed")
     def test_raw_capstone_architecture_aliases(self):
         cases = {
             "mips64": ("mips64", 8),
@@ -288,6 +297,18 @@ class TestArchAdapters(unittest.TestCase):
             with self.subTest(adapter=adapter.key):
                 self.assertEqual(adapter.matches_prologue(text), expected)
 
+    def test_riscv_adapter_classifies_compressed_control_flow(self):
+        adapter = arch_module.RISCV_ADAPTER
+
+        self.assertEqual(
+            adapter.classify_code_ref_instruction("c.jal", "0x100"), "call"
+        )
+        self.assertEqual(adapter.classify_code_ref_instruction("c.j", "0x100"), "jmp")
+        self.assertEqual(
+            adapter.classify_code_ref_instruction("c.beqz", "a0, 0x100"), "jcc"
+        )
+        self.assertTrue(adapter.is_return_instruction("c.jr", "ra"))
+
     def test_arm32_adapter_recognizes_full_descending_and_single_lr_saves(self):
         cases = (
             ("stmfd sp!, {r4, r5, lr}", "stmfd sp"),
@@ -338,10 +359,13 @@ class TestDetectBinaryArch(unittest.TestCase):
             CS_ARCH_ARM=2,
             CS_ARCH_ARM64=3,
             CS_ARCH_BPF=4,
+            CS_ARCH_MIPS=5,
             CS_MODE_32=32,
             CS_MODE_64=64,
             CS_MODE_ARM=128,
             CS_MODE_BPF_EXTENDED=256,
+            CS_MODE_MIPS32=512,
+            CS_MODE_BIG_ENDIAN=1024,
             CS_MODE_LITTLE_ENDIAN=0,
         )
 
@@ -359,6 +383,7 @@ class TestDetectBinaryArch(unittest.TestCase):
                     AARCH64="ELF_AARCH64",
                     ARM="ELF_ARM",
                     BPF="ELF_BPF",
+                    MIPS="ELF_MIPS",
                 ),
             ),
             PE=types.SimpleNamespace(
@@ -427,6 +452,30 @@ class TestDetectBinaryArch(unittest.TestCase):
         self.assertEqual(info.key, "bpf")
         self.assertEqual(info.raw_name, "BPF")
         self.assertEqual(info.format_kind, "elf")
+
+    def test_detect_binary_arch_elf_fallback_preserves_big_endian(self):
+        fake_lief = self._fake_lief()
+        fake_capstone = self._fake_capstone()
+        binary = fake_lief.ELF.Binary()
+        binary.header = types.SimpleNamespace(
+            machine_type=fake_lief.ELF.ARCH.MIPS,
+            identity_class=types.SimpleNamespace(name="CLASS32"),
+            identity_data=types.SimpleNamespace(name="MSB"),
+        )
+
+        with (
+            mock.patch.object(arch_module, "lief", fake_lief),
+            mock.patch.object(arch_module, "capstone", fake_capstone),
+        ):
+            info = arch_module.detect_binary_arch(binary)
+
+        self.assertIsNotNone(info)
+        self.assertEqual(info.key, "mips32")
+        self.assertEqual(info.endian, "big")
+        self.assertEqual(
+            info.capstone_mode & fake_capstone.CS_MODE_BIG_ENDIAN,
+            fake_capstone.CS_MODE_BIG_ENDIAN,
+        )
 
 
 if __name__ == "__main__":
