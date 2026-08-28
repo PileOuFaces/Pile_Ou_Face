@@ -169,6 +169,32 @@ class TestArchAdapters(unittest.TestCase):
         self.assertTrue(arch_module.SYSZ_ADAPTER.is_return_instruction("br", "%r14"))
         self.assertFalse(arch_module.SYSZ_ADAPTER.is_return_instruction("br", "%r1"))
 
+    def test_riscv_adapter_classifies_link_register_operands(self):
+        adapter = arch_module.RISCV_ADAPTER
+        self.assertEqual(
+            adapter.classify_code_ref_instruction("jal", "ra, 0x1020"), "call"
+        )
+        self.assertEqual(adapter.classify_code_ref_instruction("jal", "0x1020"), "call")
+        self.assertEqual(
+            adapter.classify_code_ref_instruction("jal", "zero, 0x1020"), "jmp"
+        )
+        self.assertEqual(
+            adapter.classify_code_ref_instruction("jal", "x0, 0x1020"), "jmp"
+        )
+        self.assertEqual(
+            adapter.classify_code_ref_instruction("jalr", "ra, t0, 0"), "call"
+        )
+        self.assertEqual(
+            adapter.classify_code_ref_instruction("jalr", "zero, t0, 0"), "jmp"
+        )
+        self.assertEqual(
+            adapter.classify_code_ref_instruction("jalr", "zero, ra, 0"), "ret"
+        )
+        self.assertEqual(
+            adapter.classify_code_ref_instruction("jalr", "x0, x1, 0x0"), "ret"
+        )
+        self.assertTrue(adapter.is_return_instruction("jr", "ra"))
+
     def test_arm32_condition_and_width_suffixes_keep_their_semantics(self):
         adapter = arch_module.ARM32_ADAPTER
 

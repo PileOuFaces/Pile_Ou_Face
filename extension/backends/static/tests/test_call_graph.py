@@ -240,6 +240,36 @@ class TestBuildCallGraphFallback(unittest.TestCase):
         self.assertEqual(edge["from_name"], "main")
         self.assertEqual(edge["to_name"], "callee")
 
+    def test_lines_fallback_ignores_riscv_jal_zero_jump(self):
+        lines = [
+            {"addr": "0x1000", "text": "jal zero, 0x1020"},
+            {"addr": "0x1004", "text": "jal ra, 0x1030"},
+        ]
+        with (
+            patch(
+                "backends.static.disasm.call_graph.detect_binary_arch_from_path",
+                return_value=get_raw_arch_info("riscv64"),
+            ),
+            patch(
+                "backends.static.disasm.call_graph.resolve_plt_symbols",
+                return_value={},
+            ),
+        ):
+            result = build_call_graph(
+                _make_cfg([]),
+                symbols=[
+                    {"addr": "0x1000", "name": "main"},
+                    {"addr": "0x1020", "name": "tail_target"},
+                    {"addr": "0x1030", "name": "callee"},
+                ],
+                lines=lines,
+                binary_path="/fake/riscv.bin",
+            )
+
+        self.assertEqual(len(result["edges"]), 1)
+        self.assertEqual(result["edges"][0]["from"], "0x1004")
+        self.assertEqual(result["edges"][0]["to"], "0x1030")
+
     def test_lines_fallback_handles_systemz_direct_call(self):
         lines = [
             {"addr": "0x1000", "text": "stmg %r14, %r15, 112(%r15)"},

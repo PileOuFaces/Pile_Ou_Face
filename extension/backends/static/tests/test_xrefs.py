@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from backends.static.binary import arch as arch_module
 from backends.static.binary.arch import ARM32_ADAPTER
 from backends.static.disasm.xrefs import (
     _classify_data_ref,
@@ -181,6 +182,20 @@ class TestExtractXrefs(unittest.TestCase):
         branch_refs = extract_xrefs(lines, "0x800018")
         self.assertEqual(call_refs[0]["type"], "call")
         self.assertEqual(branch_refs[0]["type"], "jcc")
+
+    def test_riscv_zero_destination_is_jump_not_call(self):
+        lines = [
+            {"addr": "0x1000", "text": "jal zero, 0x1020", "line": 1},
+            {"addr": "0x1004", "text": "jal ra, 0x1030", "line": 2},
+        ]
+        with mock.patch(
+            "backends.static.disasm.xrefs._candidate_adapters",
+            return_value=(arch_module.RISCV_ADAPTER,),
+        ):
+            jump_refs = extract_xrefs(lines, "0x1020")
+            call_refs = extract_xrefs(lines, "0x1030")
+        self.assertEqual(jump_refs[0]["type"], "jmp")
+        self.assertEqual(call_refs[0]["type"], "call")
 
 
 class TestStoreDetection(unittest.TestCase):

@@ -40,10 +40,10 @@ def _arm32_mode_for_binary(binary_path: str | None) -> str | None:
 
 
 def _classify_code_ref_mnemonic(
-    mnem: str, adapters: tuple[ArchAdapter, ...]
+    mnem: str, adapters: tuple[ArchAdapter, ...], operands: str = ""
 ) -> str | None:
     for adapter in adapters:
-        kind = adapter.classify_code_ref_mnemonic(mnem)
+        kind = adapter.classify_code_ref_instruction(mnem, operands)
         if kind:
             return kind
     return None
@@ -624,9 +624,13 @@ def extract_xrefs(
         addr = _normalize_addr(line.get("addr", ""))
         text = line.get("text", "")
         mnem = _get_mnemonic(text)
+        operands = re.split(
+            rf"\b{re.escape(mnem)}\b", text, maxsplit=1, flags=re.IGNORECASE
+        )
+        op_str = operands[1] if len(operands) == 2 else ""
 
         # Code refs (jmp, call)
-        ref_kind = _classify_code_ref_mnemonic(mnem, adapters)
+        ref_kind = _classify_code_ref_mnemonic(mnem, adapters, op_str)
         if ref_kind in {"jmp", "jcc", "call"}:
             t = _extract_jump_target(text)
             if t and t == target:
@@ -684,10 +688,14 @@ def build_xref_map(
         addr = _normalize_addr(line.get("addr", ""))
         text = line.get("text", "")
         mnem = _get_mnemonic(text)
+        operands = re.split(
+            rf"\b{re.escape(mnem)}\b", text, maxsplit=1, flags=re.IGNORECASE
+        )
+        op_str = operands[1] if len(operands) == 2 else ""
         line_num = line.get("line")
 
         # Code refs
-        ref_kind = _classify_code_ref_mnemonic(mnem, adapters)
+        ref_kind = _classify_code_ref_mnemonic(mnem, adapters, op_str)
         if ref_kind in {"jmp", "jcc", "call"}:
             t = _extract_jump_target(text)
             if t:
@@ -737,8 +745,15 @@ def extract_xrefs_from_addr(
         if _normalize_addr(line.get("addr", "")) == from_a:
             text = line.get("text", "")
             mnem = _get_mnemonic(text)
+            operands = re.split(
+                rf"\b{re.escape(mnem)}\b",
+                text,
+                maxsplit=1,
+                flags=re.IGNORECASE,
+            )
+            op_str = operands[1] if len(operands) == 2 else ""
             # Code target (jmp/call)
-            if _classify_code_ref_mnemonic(mnem, adapters) in {
+            if _classify_code_ref_mnemonic(mnem, adapters, op_str) in {
                 "jmp",
                 "jcc",
                 "call",

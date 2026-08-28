@@ -258,7 +258,7 @@ def _is_branch(
             return True, False, None
         if adapter.is_return_instruction(mnem, op_str):
             return True, False, None
-        kind = adapter.classify_code_ref_mnemonic(mnem)
+        kind = adapter.classify_code_ref_instruction(mnem, op_str)
         if kind == "ret":
             return True, False, None
         if kind == "call":
@@ -1449,7 +1449,7 @@ def build_cfg(
                     if adapter.is_return_instruction(mnem, op_str):
                         branch_kind = "ret"
                         break
-                    branch_kind = adapter.classify_code_ref_mnemonic(mnem)
+                    branch_kind = adapter.classify_code_ref_instruction(mnem, op_str)
                     if branch_kind:
                         break
                 literal_pc_load = _match_arm32_literal_pc_load(text)

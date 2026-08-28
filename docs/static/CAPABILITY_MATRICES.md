@@ -105,6 +105,11 @@ du branchement ou de l'appel et place le fallthrough apres cette instruction.
 Le support reste `partial` tant que les variantes compactes MIPS32r6 et les
 semantiques annulees des branches likely ne sont pas modelisees explicitement.
 
+Pour RISC-V, la classification de `jal` et `jalr` tient compte du registre de
+destination : `ra` produit un appel, `zero`/`x0` un saut, et le retour canonique
+`jalr zero, ra, 0` termine le bloc. Le support reste `partial` pour les cibles
+indirectes qui ne peuvent pas etre resolues statiquement.
+
 ## Matrice des onglets raw
 
 Source de verite :

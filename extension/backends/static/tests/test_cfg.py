@@ -11,6 +11,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backends.shared.utils import normalize_addr as _normalize_addr
+from backends.static.binary import arch as arch_module
 from backends.static.disasm.cfg import (
     _detect_switch_max_case,
     _extract_jump_table_base,
@@ -281,6 +282,14 @@ class TestJumpTableDetection(unittest.TestCase):
         self.assertFalse(_is_jump_table("03e00008 jr ra"))
         self.assertTrue(_is_jump_table("jalr zero, t0, 0"))
         self.assertTrue(_is_jump_table("bctr"))
+
+    def test_riscv_link_register_controls_transfer_kind(self):
+        adapters = (arch_module.RISCV_ADAPTER,)
+        self.assertEqual(_is_branch("jal ra, 0x1020", adapters), (True, True, "0x1020"))
+        self.assertEqual(
+            _is_branch("jal zero, 0x1030", adapters), (True, False, "0x1030")
+        )
+        self.assertEqual(_is_branch("jalr zero, ra, 0", adapters), (True, False, None))
 
     def test_is_jump_table_not_detected_for_normal_branch(self):
         """Ne détecte pas les branches normales."""

@@ -10,9 +10,11 @@ ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from backends.static.binary.arch import RISCV_ADAPTER
 from backends.static.disasm.discover_functions import (
     _addr_to_int,
     _estimate_function_bounds,
+    _is_call_instruction,
     _matches_prologue,
     _normalize_addr,
     discover_functions,
@@ -31,6 +33,11 @@ class TestHelpers(unittest.TestCase):
     def test_addr_to_int(self):
         self.assertEqual(_addr_to_int("0x401000"), 0x401000)
         self.assertEqual(_addr_to_int("401000"), 0x401000)
+
+    def test_riscv_jal_zero_is_not_a_call_seed(self):
+        adapters = (RISCV_ADAPTER,)
+        self.assertFalse(_is_call_instruction("jal", "zero, 0x402000", adapters))
+        self.assertTrue(_is_call_instruction("jal", "ra, 0x402000", adapters))
 
 
 class TestMatchesPrologue(unittest.TestCase):
