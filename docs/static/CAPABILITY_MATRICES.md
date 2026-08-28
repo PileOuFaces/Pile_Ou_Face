@@ -100,6 +100,11 @@ v0-v7 sont exposes. Le niveau reste `partial` car les particularites des appels
 variadiques et les conventions propres a certaines fonctions ne sont pas
 reconstruites instruction par instruction.
 
+Pour MIPS classique, le CFG conserve l'instruction de delay slot dans le bloc
+du branchement ou de l'appel et place le fallthrough apres cette instruction.
+Le support reste `partial` tant que les variantes compactes MIPS32r6 et les
+semantiques annulees des branches likely ne sont pas modelisees explicitement.
+
 ## Matrice des onglets raw
 
 Source de verite :

@@ -270,6 +270,18 @@ def _is_branch(
     return False, False, None
 
 
+def _has_mips_delay_slot(text: str, detected_arch_info) -> bool:
+    """Return whether a classic MIPS control transfer executes the next insn."""
+    family = (getattr(detected_arch_info, "family", None) or "").lower()
+    if family != "mips":
+        return False
+    mnem = _get_mnemonic(text)
+    if mnem == "eret":
+        return False
+    adapter = getattr(detected_arch_info, "adapter", None)
+    return bool(adapter and adapter.classify_code_ref_mnemonic(mnem) is not None)
+
+
 def _is_jump_table(text: str) -> bool:
     """Détecte si l'instruction est un saut indirect via jump table.
 
@@ -1262,9 +1274,11 @@ def build_cfg(
 
     for i, line in enumerate(lines):
         addr = _normalize_addr(line["addr"])
-        is_br, _, _ = _is_branch(line.get("text", ""), adapters=adapters)
-        if is_br and i + 1 < len(lines):
-            next_addr = _normalize_addr(lines[i + 1]["addr"])
+        text = line.get("text", "")
+        is_br, _, _ = _is_branch(text, adapters=adapters)
+        next_index = i + (2 if _has_mips_delay_slot(text, detected_arch_info) else 1)
+        if is_br and next_index < len(lines):
+            next_addr = _normalize_addr(lines[next_index]["addr"])
             block_starts.add(next_addr)
 
     # Construire les blocs
@@ -1296,6 +1310,7 @@ def build_cfg(
                 ln, _parsed_binary, detected_arch_info
             )
             if is_br:
+                has_delay_slot = _has_mips_delay_slot(text, detected_arch_info)
                 if target:
                     successors.append(target)
 
@@ -1447,11 +1462,16 @@ def build_cfg(
                         or _is_conditional_arm32_add_pc_switch(text)
                         else "jmp"
                     )
-                if branch_kind not in {"jmp", "ret"} and i + 1 < len(lines):
-                    next_a = _normalize_addr(lines[i + 1]["addr"])
+                fallthrough_index = i + (2 if has_delay_slot else 1)
+                if branch_kind not in {"jmp", "ret"} and fallthrough_index < len(lines):
+                    next_a = _normalize_addr(lines[fallthrough_index]["addr"])
                     if next_a not in successors:
                         successors.append(next_a)
-                i += 1
+                if has_delay_slot and i + 1 < len(lines):
+                    block_lines.append(lines[i + 1])
+                    i += 2
+                else:
+                    i += 1
                 break
             i += 1
         # Ne pas re-incrémenter ici : la boucle interne a déjà positionné i
