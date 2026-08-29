@@ -169,6 +169,10 @@ _RISCV_PC_RELATIVE_MNEMONICS = {
     "bltz",
     "bne",
     "bnez",
+    "c.beqz",
+    "c.bnez",
+    "c.j",
+    "c.jal",
     "j",
     "jal",
     "tail",
@@ -180,7 +184,8 @@ def _parse_capstone_immediate(value: str) -> int | None:
     if not text:
         return None
     try:
-        return int(text, 16) if text.startswith("0x") else int(text)
+        unsigned = text.removeprefix("+").removeprefix("-")
+        return int(text, 16) if unsigned.startswith("0x") else int(text)
     except ValueError:
         return None
 

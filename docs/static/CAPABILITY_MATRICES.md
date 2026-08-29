@@ -65,6 +65,13 @@ est :
 
 - `extension/backends/static/tests/test_function_arch_matrix.py`
 
+Le corpus ELF compilé bloquant couvre également `x86_64`, `arm64`, `mips32`,
+`ppc32` et `riscv64` dans
+`extension/backends/static/tests/test_real_binary_corpus.py`. Il mesure la
+découverte, les arêtes CFG/appels nommées et les stack frames sur le code
+réellement produit par les toolchains GNU. La campagne RAM planifiée réutilise
+les cinq architectures avec une fixture d'environ 100 Mio.
+
 Ce test relie la matrice aux fixtures raw Capstone et verifie que :
 
 - la decouverte de fonctions retrouve la fonction d'entree et la cible ;

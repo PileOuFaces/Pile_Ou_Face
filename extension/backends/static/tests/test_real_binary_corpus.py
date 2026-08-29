@@ -9,7 +9,9 @@ import tempfile
 import unittest
 import warnings
 from pathlib import Path
+from unittest.mock import patch
 
+from backends.static.binary.symbols import extract_symbols
 from backends.static.disasm.cfg import build_cfg, build_cfg_for_function
 from backends.static.disasm.disasm import disassemble_with_capstone
 from backends.static.disasm.discover_functions import (
@@ -80,6 +82,21 @@ def _named_cfg_call_edges(
     return named_edges
 
 
+class TestRealBinaryCorpusMatrix(unittest.TestCase):
+    @patch(
+        "backends.static.tests.fixtures.real_binary_corpus.shutil.which",
+        side_effect=lambda name: f"/tools/{name}",
+    )
+    @patch.dict(os.environ, {"POF_CORPUS_SKIP_COMPILERS": ""})
+    def test_default_matrix_covers_v1_architectures(self, _which):
+        arches = {spec.arch for spec in default_corpus_specs()}
+
+        self.assertTrue(
+            {"native", "arm64", "mips32", "ppc32", "riscv64"}.issubset(arches),
+            arches,
+        )
+
+
 @unittest.skipUnless(_lief_and_capstone_available(), "lief et capstone requis")
 class TestRealBinaryCorpus(unittest.TestCase):
     @classmethod
@@ -100,13 +117,34 @@ class TestRealBinaryCorpus(unittest.TestCase):
         if not self.corpus:
             self.skipTest("aucun compilateur de corpus réel disponible")
 
+    @staticmethod
+    def _known_non_fixture_symbols(item: CorpusBinary) -> set[str]:
+        if item.spec.stripped:
+            return set()
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=r".*is not a valid TYPE.*",
+                category=RuntimeWarning,
+            )
+            symbol_addrs = {
+                str(symbol.get("addr") or "")
+                for symbol in extract_symbols(str(item.binary_path))
+                if symbol.get("addr") and symbol.get("addr") != "0x0"
+            }
+        return symbol_addrs - set(item.expected_functions.values())
+
     def _collect_case_metrics(self, item: CorpusBinary) -> dict:
         lines = disassemble_with_capstone(str(item.binary_path))
         expected = set(item.expected_functions.values())
         discovered = discover_functions(
             lines or [], set(), binary_path=str(item.binary_path)
         )
-        discovery = evaluate_function_discovery(discovered, expected)
+        discovery = evaluate_function_discovery(
+            discovered,
+            expected,
+            known_addrs=self._known_non_fixture_symbols(item),
+        )
 
         with warnings.catch_warnings():
             warnings.filterwarnings(
@@ -184,7 +222,11 @@ class TestRealBinaryCorpus(unittest.TestCase):
                 discovered = discover_functions(
                     lines or [], set(), binary_path=str(item.binary_path)
                 )
-                metrics = evaluate_function_discovery(discovered, expected)
+                metrics = evaluate_function_discovery(
+                    discovered,
+                    expected,
+                    known_addrs=self._known_non_fixture_symbols(item),
+                )
 
                 min_recall = (
                     0.6 if item.spec.stripped or item.spec.opt != "-O0" else 0.8

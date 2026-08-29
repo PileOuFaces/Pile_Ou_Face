@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: [x86_64, arm64]
+        arch: [x86_64, arm64, mips32, ppc32, riscv64]
 
     steps:
       - name: Checkout
@@ -31,7 +31,12 @@ jobs:
       - name: Install native and cross toolchains
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential binutils gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+          sudo apt-get install -y \
+            build-essential binutils \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            gcc-mips-linux-gnu binutils-mips-linux-gnu \
+            gcc-powerpc-linux-gnu binutils-powerpc-linux-gnu \
+            gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu
           pip install -r extension/backends/requirements-ci.txt
 
       - name: Build 100 MiB compiled corpus
