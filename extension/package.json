@@ -377,6 +377,7 @@
     }
   },
   "scripts": {
+    "configure:official": "node scripts/write-product-config.mjs",
     "vscode:prepublish": "npm run package",
     "build": "npm run typecheck && node esbuild.js",
     "build:watch": "node esbuild.js --watch",

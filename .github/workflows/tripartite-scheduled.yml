@@ -1,0 +1,97 @@
+name: Scheduled Tripartite E2E
+
+on:
+  schedule:
+    # GitHub schedules run from the default branch (main), but every checkout
+    # below deliberately targets the active integration branch (develops).
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scheduled-tripartite-e2e
+  cancel-in-progress: true
+
+jobs:
+  tripartite-e2e:
+    name: Host develops + Auth develops + Plugins develops
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Host develops
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: develops
+
+      - name: Require cross-repo checkout capability
+        env:
+          CROSS_REPO_READONLY_PAT: ${{ secrets.CROSS_REPO_READONLY_PAT }}
+        run: |
+          if [ -z "$CROSS_REPO_READONLY_PAT" ]; then
+            echo "::error::CROSS_REPO_READONLY_PAT is missing; the mandatory tripartite check cannot run."
+            exit 1
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22.x'
+          cache: 'npm'
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+
+      - name: Checkout Auth develops
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: PileOuFaces/Pile_ou_Face_auth
+          ref: develops
+          token: ${{ secrets.CROSS_REPO_READONLY_PAT }}
+          path: pof-auth-sibling
+
+      - name: Checkout Plugins develops
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: PileOuFaces/Pile_ou_Face_plugins
+          ref: develops
+          token: ${{ secrets.CROSS_REPO_READONLY_PAT }}
+          path: pof-plugins-sibling
+
+      - name: Cache pip downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/pip
+          # Auth owns its dependency graph. Hash its lockfile so dependency
+          # updates invalidate this cross-repo cache automatically.
+          key: scheduled-tripartite-pip-${{ runner.os }}-${{ hashFiles('pof-auth-sibling/requirements.lock') }}
+          restore-keys: |
+            scheduled-tripartite-pip-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: |
+          python3 -m venv pof-auth-sibling/.venv
+          # Keep the scheduled job aligned with Auth develops. A duplicated
+          # package list drifted and omitted prometheus-client, preventing the
+          # real server from starting while the E2E only reported a timeout.
+          pof-auth-sibling/.venv/bin/pip install \
+            --require-hashes \
+            --requirement pof-auth-sibling/requirements.lock
+          pof-auth-sibling/.venv/bin/pip install -e './pof-plugins-sibling[dev]'
+          cd pof-plugins-sibling
+          npm ci
+          npm run build:webviews
+          cd ../extension
+          npm ci
+
+      - name: Run real Host-Auth-Plugins E2E
+        working-directory: ./extension
+        env:
+          AUTH_REPO_PATH: ${{ github.workspace }}/pof-auth-sibling
+          PLUGINS_REPO_PATH: ${{ github.workspace }}/pof-plugins-sibling
+        run: npm run test:e2e:auth-licensing

@@ -8,6 +8,7 @@ on:
       - 'tooling/loadtest/**'
       - '.github/workflows/ci.yml'
       - '.github/workflows/publish.yml'
+      - '.github/workflows/tripartite-scheduled.yml'
 
 permissions:
   contents: read

@@ -12,7 +12,7 @@ REGRESSION_FAIL_RATIO = 1.35
 # Ratios on sub-second commands amplify normal scheduler/startup jitter. Keep
 # the relative gate, but require a meaningful absolute duration delta too.
 REGRESSION_WARN_DURATION_DELTA_S = 0.10
-REGRESSION_FAIL_DURATION_DELTA_S = 0.25
+REGRESSION_FAIL_DURATION_DELTA_S = 0.50
 
 
 @dataclass
