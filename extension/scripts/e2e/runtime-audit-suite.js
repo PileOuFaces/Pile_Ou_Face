@@ -615,6 +615,8 @@ async function run() {
         await vscode.commands.executeCommand('pileOuFace.goToAddress');
         target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
         const hub = new HubPage(target);
+        const locale = await target.evaluate('document.documentElement.lang');
+        const english = String(locale || '').toLowerCase() !== 'fr';
 
         await hub.openPanel('options');
         await target.locator('html').waitForAttribute('data-hub-ai-providers-ready', 'true', 30000);
@@ -627,7 +629,7 @@ async function run() {
         await hub.aiProviderKey('openai').fill('e2e-cloud-key');
         await hub.aiProviderModel('openai').fill('gpt-e2e-mini');
         await hub.aiProviderSaveButton('openai').click();
-        await hub.aiProviderStatus('openai').waitForText('Prêt', 30000);
+        await hub.aiProviderStatus('openai').waitForText(english ? 'Ready' : 'Prêt', 30000);
         assert.equal(openAiKey, 'e2e-cloud-key', 'the API key entered through the UI must reach stdin');
         assert.equal(openAiModel, 'gpt-e2e-mini', 'the cloud model selected through the UI must be persisted');
 
