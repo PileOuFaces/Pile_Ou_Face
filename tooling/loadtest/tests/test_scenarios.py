@@ -108,6 +108,12 @@ class TestScenarioRegistry(unittest.TestCase):
                         f"{scenario.name} doit écrire dans out_dir ({out_dir}), a produit {output_value}",
                     )
 
+    def test_strings_scenario_bounds_results(self):
+        scenario = next(item for item in SCENARIOS if item.name == "strings")
+        args = scenario.build_args(Path("target.bin"), Path("out"))
+        max_results_index = args.index("--max-results")
+        self.assertEqual(args[max_results_index + 1], "5000")
+
 
 if __name__ == "__main__":
     unittest.main()
