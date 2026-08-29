@@ -1636,46 +1636,6 @@ button.plugin-badge {
   overflow: hidden;
 }
 
-/* Server URL row */
-.pof-server-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(200px, 0.9fr);
-  gap: 14px;
-  align-items: center;
-  padding: 14px 18px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-.pof-server-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-
-.pof-server-label {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-active);
-}
-
-.pof-server-hint {
-  margin: 0;
-  font-size: 11px;
-  color: var(--text-muted);
-  line-height: 1.5;
-}
-
-.pof-server-hint code {
-  color: var(--accent-blue-soft);
-  font-family: var(--font-mono);
-}
-
-.pof-server-input {
-  width: 100%;
-  min-height: 34px;
-}
-
 .pof-deployment-status {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1696,10 +1656,6 @@ button.plugin-badge {
 }
 
 @media (max-width: 720px) {
-  .pof-server-row {
-    grid-template-columns: 1fr;
-  }
-
   .pof-deployment-status { grid-template-columns: 1fr; }
 }
 
