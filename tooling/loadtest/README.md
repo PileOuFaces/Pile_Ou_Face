@@ -75,7 +75,7 @@ Default budgets:
 | `large` (~200 MB) | 768 MB | 1 GB | 10 s | 30 s |
 
 Scenario-specific calibration: `entropy` uses 4 s / 8 s warning/failure limits
-on `medium`, and 45 s / 55 s on `large`. Its full byte-by-byte scan measured
+on `medium`, and 45 s / 60 s on `large`. Its full byte-by-byte scan measured
 5.85 s for the medium fixture and about 35 s for the compiled 100 MiB corpus on
 GitHub-hosted Linux runners. Other scenarios keep the stricter generic limits.
 

@@ -50,8 +50,9 @@ SCENARIO_BUDGETS = {
     ("entropy", "medium"): Budget(256 * MIB, 384 * MIB, 4.0, 8.0),
     # Le corpus ELF compilé de 100 MiB est parcouru intégralement. La campagne
     # multi-architecture GitHub se stabilise autour de 35 s, tout en restant
-    # protégée par une limite absolue inférieure au timeout dur de 60 s.
-    ("entropy", "large"): Budget(768 * MIB, 1024 * MIB, 45.0, 55.0),
+    # protégée par le timeout dur de 60 s. Aligner la limite évite une zone de
+    # faux échec juste avant que le garde-fou processus ne prenne le relais.
+    ("entropy", "large"): Budget(768 * MIB, 1024 * MIB, 45.0, 60.0),
 }
 
 

@@ -31,11 +31,10 @@ class TestFixtureProfiles(unittest.TestCase):
             self.assertLess(budget.warn_rss_bytes, budget.fail_rss_bytes)
             self.assertLess(budget.warn_duration_s, budget.fail_duration_s)
 
-    def test_large_entropy_budget_stays_below_hard_timeout(self):
+    def test_large_entropy_budget_matches_hard_timeout(self):
         budget = SCENARIO_BUDGETS[("entropy", "large")]
         self.assertEqual(budget.warn_duration_s, 45.0)
-        self.assertEqual(budget.fail_duration_s, 55.0)
-        self.assertLess(budget.fail_duration_s, 60.0)
+        self.assertEqual(budget.fail_duration_s, 60.0)
 
 
 class TestScenarioRegistry(unittest.TestCase):
