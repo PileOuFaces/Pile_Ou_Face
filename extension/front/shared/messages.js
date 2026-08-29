@@ -2326,6 +2326,11 @@ window.addEventListener('message', (event) => {
     }
     return;
   }
+  if (msg.type === 'hubNaturalLanguageSearchDone') {
+    if (isStaleStaticBinaryResponse(msg, 'static-functions')) return;
+    renderNaturalLanguageFunctionSearch(msg);
+    return;
+  }
   if (msg.type === 'hubDecompilerList') {
     const newResult = msg.result || {};
     if (window._decompilerImageUpdates) {

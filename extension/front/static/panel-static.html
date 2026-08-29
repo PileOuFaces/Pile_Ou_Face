@@ -346,6 +346,19 @@
                 </select>
               </div>
             </div>
+            <section class="functions-nl-search modern-card" aria-labelledby="functionsNlSearchTitle">
+              <div>
+                <p class="static-kicker">Recherche IA</p>
+                <h4 id="functionsNlSearchTitle">Chercher en langage naturel</h4>
+              </div>
+              <div class="functions-nl-search-form">
+                <input id="functionsNlSearchInput" class="input-inner" type="text" maxlength="500"
+                       placeholder="Ex. Où le binaire lit-il sa configuration ?" spellcheck="true" />
+                <button id="btnFunctionsNlSearch" type="button" class="btn btn-primary">Rechercher</button>
+              </div>
+              <p id="functionsNlSearchStatus" class="hint">Les preuves de l’index local sont classées par le provider IA configuré.</p>
+              <div id="functionsNlSearchResults" class="functions-radar-list" hidden></div>
+            </section>
             <div id="functionsRadar" class="functions-radar modern-card">
               <p class="hint">Le radar de priorisation apparaîtra après chargement du binaire.</p>
             </div>

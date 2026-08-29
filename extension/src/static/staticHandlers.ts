@@ -2360,6 +2360,70 @@ function staticHandlers(config) {
         });
       }
     },
+    hubNaturalLanguageSearch: async (message = {}) => {
+      const binaryPath = String(message.binaryPath || '').trim();
+      const backendBinaryPath = path.isAbsolute(binaryPath) ? binaryPath : path.join(root, binaryPath);
+      const query = String(message.query || '').trim();
+      const pythonEnv = buildPythonEnv();
+      const { provider, model } = resolveAutoTriageProviderModel(message, pythonEnv);
+      const respond = (ok, payload) => panel.webview.postMessage({
+        type: 'hubNaturalLanguageSearchDone', binaryPath, query, ok,
+        ...(ok ? { result: payload } : { error: String(payload || 'Recherche impossible.') }),
+      });
+      if (!binaryPath || !fs.existsSync(backendBinaryPath)) {
+        respond(false, 'Binaire introuvable.');
+        return;
+      }
+      if (!query || query.length > 500) {
+        respond(false, 'Saisissez une question de 1 à 500 caractères.');
+        return;
+      }
+      let consented = false;
+      try {
+        const { stdout } = await runPython(['backends/mcp/ai_consent.py', '--provider', provider, '--check']);
+        consented = JSON.parse(stdout).consented === true;
+      } catch (err) {
+        if (typeof err?.stdout === 'string' && err.stdout.trim()) {
+          try { consented = JSON.parse(err.stdout).consented === true; } catch (_) { consented = false; }
+        } else {
+          respond(false, `Vérification du consentement impossible : ${err.message || err}`);
+          return;
+        }
+      }
+      if (!consented) {
+        const choice = await vscode.window.showWarningMessage(
+          `La question et les preuves d’analyse seront envoyées à "${provider}" pour classer les fonctions. Continuer ?`,
+          { modal: true },
+          'Autoriser',
+        );
+        if (choice !== 'Autoriser') {
+          respond(false, 'Recherche annulée : consentement refusé.');
+          return;
+        }
+        try {
+          await runPython(['backends/mcp/ai_consent.py', '--provider', provider, '--grant']);
+        } catch (err) {
+          respond(false, `Impossible d’enregistrer le consentement : ${err.message || err}`);
+          return;
+        }
+      }
+      try {
+        const args = [
+          'backends/mcp/natural_language_search.py',
+          '--binary', backendBinaryPath,
+          '--query', query,
+          '--provider', provider,
+          '--limit', '8',
+        ];
+        if (model) args.push('--model', model);
+        const { stdout } = await runPython(args, { timeout: 120000 });
+        const result = JSON.parse(stdout);
+        if (!result.ok) throw new Error(result.error || 'Réponse de recherche invalide.');
+        respond(true, result);
+      } catch (err) {
+        respond(false, err.message || err);
+      }
+    },
     hubLoadPeResources: async (message) => {
       const { binaryPath } = message;
       try {

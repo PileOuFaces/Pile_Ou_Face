@@ -1559,6 +1559,15 @@ function resetGraphDerivedState() {
   if (functionsCount) functionsCount.textContent = '';
   const functionsSearch = document.getElementById('functionsSearch');
   if (functionsSearch) functionsSearch.value = '';
+  const functionsNlSearchInput = document.getElementById('functionsNlSearchInput');
+  if (functionsNlSearchInput) functionsNlSearchInput.value = '';
+  const functionsNlSearchStatus = document.getElementById('functionsNlSearchStatus');
+  if (functionsNlSearchStatus) functionsNlSearchStatus.textContent = 'Les preuves de l’index local sont classées par le provider IA configuré.';
+  const functionsNlSearchResults = document.getElementById('functionsNlSearchResults');
+  if (functionsNlSearchResults) {
+    functionsNlSearchResults.innerHTML = '';
+    functionsNlSearchResults.hidden = true;
+  }
   const functionsFilterPills = document.getElementById('functionsFilterPills');
   if (functionsFilterPills) {
     functionsFilterPills.querySelectorAll('[data-functions-filter]').forEach((button) => {

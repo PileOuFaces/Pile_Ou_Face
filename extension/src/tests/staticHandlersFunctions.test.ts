@@ -1,5 +1,6 @@
 const { expect } = require("chai");
 const proxyquire = require("proxyquire").noCallThru();
+const sinon = require("sinon");
 
 describe("staticHandlers functions radar", () => {
   it("loads symbols, calling conventions and radar together", async () => {
@@ -120,6 +121,90 @@ describe("staticHandlers functions radar", () => {
     expect(radarDiagnostic.ok).to.equal(false);
     expect(radarDiagnostic.code).to.equal(1);
     expect(radarDiagnostic.stderrTail).to.include("Cannot open cache database");
+  });
+});
+
+describe("staticHandlers natural-language function search", () => {
+  afterEach(() => sinon.restore());
+
+  function makeHandlers(execFile, posted, warningChoice = "Autoriser") {
+    const staticHandlers = proxyquire("../static/staticHandlers", {
+      vscode: {
+        workspace: { getConfiguration: () => ({ get: () => undefined }) },
+        window: { showWarningMessage: async () => warningChoice },
+      },
+      fs: { existsSync: () => true },
+      child_process: { execFile },
+      "../shared/utils": {
+        detectPythonExecutable: () => "/usr/bin/python3",
+        buildRuntimeEnv: () => ({}),
+      },
+      "../shared/sharedHandlers": { normalizeRawArchName: (value) => value },
+      "./pluginState": {
+        emptyPluginUiState: () => ({}),
+        summarizePluginRuntimeState: (value) => value,
+      },
+    });
+    return staticHandlers({
+      root: "/repo",
+      panel: { webview: { postMessage: (message) => posted.push(message) } },
+      context: { globalState: { get: () => ({}) } },
+    });
+  }
+
+  it("checks consent then returns grounded function results", async () => {
+    const calls = [];
+    const execFile = sinon.stub().callsFake((_python, args, _opts, callback) => {
+      calls.push(args);
+      if (args[0].endsWith("ai_consent.py")) {
+        callback(null, JSON.stringify({ consented: true }), "");
+        return;
+      }
+      callback(null, JSON.stringify({
+        ok: true,
+        candidate_count: 12,
+        results: [{ addr: "0x401000", name: "read_config", score: 93 }],
+      }), "");
+    });
+    const posted = [];
+    const handlers = makeHandlers(execFile, posted);
+
+    await handlers.hubNaturalLanguageSearch({
+      binaryPath: "/tmp/demo.bin",
+      query: "où est lue la configuration ?",
+    });
+
+    expect(calls[0]).to.include("--check");
+    expect(calls[1][0]).to.match(/natural_language_search\.py$/);
+    expect(calls[1]).to.include.members(["--query", "où est lue la configuration ?"]);
+    expect(posted.at(-1)).to.deep.include({
+      type: "hubNaturalLanguageSearchDone",
+      binaryPath: "/tmp/demo.bin",
+      ok: true,
+    });
+    expect(posted.at(-1).result.results[0].addr).to.equal("0x401000");
+  });
+
+  it("does not contact the search provider when consent is refused", async () => {
+    const calls = [];
+    const execFile = sinon.stub().callsFake((_python, args, _opts, callback) => {
+      calls.push(args);
+      callback(null, JSON.stringify({ consented: false }), "");
+    });
+    const posted = [];
+    const handlers = makeHandlers(execFile, posted, null);
+
+    await handlers.hubNaturalLanguageSearch({
+      binaryPath: "/tmp/demo.bin",
+      query: "crypto",
+    });
+
+    expect(calls).to.have.length(1);
+    expect(posted.at(-1)).to.deep.include({
+      type: "hubNaturalLanguageSearchDone",
+      ok: false,
+      error: "Recherche annulée : consentement refusé.",
+    });
   });
 });
 
