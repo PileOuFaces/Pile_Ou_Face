@@ -324,6 +324,28 @@ describe('loaders — hubLoadStrings', () => {
     expect(args).to.not.include('--section');
   });
 
+  it('bounds cached string extraction to 5000 results', async () => {
+    const { panel } = makePanel();
+    const { logChannel } = makeLogChannel();
+    const runPythonJsonViaFile = sinon.stub().resolves([]);
+    const readCache = sinon.stub().returns(null);
+
+    const loaders = createLoaders({
+      panel, analysisCtx: makeAnalysisCtx(), root: '/root', storageDir: '/storage',
+      runPythonJson: sinon.stub(), runPythonJsonViaFile,
+      logChannel, fs: {}, path: require('path'),
+      readCache, writeCache: sinon.stub(),
+      getStringsScript: () => '/scripts/strings.py', getSectionsScript: () => '', getXrefsScript: () => '',
+    });
+
+    await loaders.hubLoadStrings({ binaryPath: '/repo/demo.bin', minLen: '4', encoding: 'utf-8' });
+
+    const args = runPythonJsonViaFile.firstCall.args[1];
+    const maxResultsIdx = args.indexOf('--max-results');
+    expect(args[maxResultsIdx + 1]).to.equal('5000');
+    expect(readCache.firstCall.args[3]).to.include({ maxResults: 5000 });
+  });
+
   it('always extracts with BASE_MIN_LEN=4 regardless of requested minLen', async () => {
     const { panel } = makePanel();
     const { logChannel } = makeLogChannel();

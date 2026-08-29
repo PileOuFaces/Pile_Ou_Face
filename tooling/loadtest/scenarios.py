@@ -55,7 +55,14 @@ def _disasm_args(binary_path: Path, out_dir: Path) -> list[str]:
 
 
 def _strings_args(binary_path: Path, out_dir: Path) -> list[str]:
-    return ["--binary", str(binary_path), "--output", str(out_dir / "strings.json")]
+    return [
+        "--binary",
+        str(binary_path),
+        "--output",
+        str(out_dir / "strings.json"),
+        "--max-results",
+        "5000",
+    ]
 
 
 def _symbols_args(binary_path: Path, out_dir: Path) -> list[str]:
