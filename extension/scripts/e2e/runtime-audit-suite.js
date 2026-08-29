@@ -826,6 +826,7 @@ async function run() {
         await hub.autoTriageCancelButton().click();
         await hub.autoTriageState().waitForText('À reprendre', 30000);
         await hub.autoTriageResultTitle().waitForText('Analyse interrompue — reprise disponible', 30000);
+        await hub.autoTriageCancelButton().waitFor({ state: 'hidden', timeout: 30000 });
         assert.equal(await hub.autoTriageButton().isEnabled(), true, 'resume must be available after cancellation');
 
         await hub.autoTriageButton().click();

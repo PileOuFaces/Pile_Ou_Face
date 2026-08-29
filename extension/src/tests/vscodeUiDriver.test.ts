@@ -337,7 +337,7 @@ describe('VS Code UI E2E driver', () => {
         };
       },
     });
-    hub.openPanel = async () => { calls.push('open-options'); };
+    hub.openPanel = async (panelId: string) => { calls.push(`open-${panelId}`); };
     hub.interfaceModeButton = () => ({
       async waitFor({ state, timeout }: { state: string; timeout: number }) {
         calls.push(`button:${state}:${timeout}`);
@@ -355,8 +355,8 @@ describe('VS Code UI E2E driver', () => {
 
     assert.deepEqual(calls, [
       'ready:data-hub-settings-ready:true',
-      'open-options', 'button:visible:1000', 'click-simple', 'wait-simple',
-      'open-options', 'button:visible:1000', 'click-simple', 'wait-simple', 'wait-simple',
+      'open-dashboard', 'open-options', 'button:visible:1000', 'click-simple', 'wait-simple',
+      'open-dashboard', 'open-options', 'button:visible:1000', 'click-simple', 'wait-simple', 'wait-simple',
     ]);
   });
 
