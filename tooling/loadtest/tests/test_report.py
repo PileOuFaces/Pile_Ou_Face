@@ -135,12 +135,21 @@ class TestEvaluateResult(unittest.TestCase):
 
     def test_meaningful_duration_regression_still_blocks(self):
         evaluation = evaluate_result(
-            make_result(elapsed_s=0.8),
+            make_result(elapsed_s=0.91),
             BUDGETS["medium"],
             baseline=Baseline(100 * MIB, 0.39),
         )
         self.assertEqual(evaluation.status, "regression_limit")
         self.assertEqual(evaluation.reasons, ("duration_regression_fail",))
+
+    def test_short_command_runner_jitter_does_not_block(self):
+        evaluation = evaluate_result(
+            make_result(elapsed_s=1.17),
+            BUDGETS["medium"],
+            baseline=Baseline(100 * MIB, 0.81),
+        )
+        self.assertEqual(evaluation.status, "warning")
+        self.assertEqual(evaluation.reasons, ("duration_regression_warn",))
 
     def test_exact_baseline_limits_are_allowed(self):
         evaluation = evaluate_result(

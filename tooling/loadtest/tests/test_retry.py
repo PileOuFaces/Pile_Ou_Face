@@ -29,7 +29,7 @@ class TestTargetedRetry(unittest.TestCase):
     def test_retries_baseline_failure_and_uses_median(self):
         measure = Mock(side_effect=[result(1.0), result(1.1)])
         final, retries = _confirm_baseline_regression(
-            result(1.4), measure, BUDGET, BASELINE, None
+            result(1.6), measure, BUDGET, BASELINE, None
         )
         self.assertEqual(final.elapsed_s, 1.1)
         self.assertEqual(retries, 2)
