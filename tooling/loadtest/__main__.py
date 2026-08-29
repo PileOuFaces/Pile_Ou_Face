@@ -48,6 +48,10 @@ SCENARIO_BUDGETS = {
     # Le scan entropie parcourt chaque octet : sur les runners GitHub Linux,
     # sa variance est supérieure aux autres scénarios medium (mesuré à 5,85 s).
     ("entropy", "medium"): Budget(256 * MIB, 384 * MIB, 4.0, 8.0),
+    # Le corpus ELF compilé de 100 MiB est parcouru intégralement. La campagne
+    # multi-architecture GitHub se stabilise autour de 35 s, tout en restant
+    # protégée par une limite absolue inférieure au timeout dur de 60 s.
+    ("entropy", "large"): Budget(768 * MIB, 1024 * MIB, 45.0, 55.0),
 }
 
 

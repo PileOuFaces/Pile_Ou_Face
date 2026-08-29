@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from loadtest.__main__ import DEFAULT_BUDGETS
+from loadtest.__main__ import DEFAULT_BUDGETS, SCENARIO_BUDGETS
 from loadtest.scenarios import FIXTURE_PROFILES, SCENARIOS
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
@@ -30,6 +30,12 @@ class TestFixtureProfiles(unittest.TestCase):
         for budget in DEFAULT_BUDGETS.values():
             self.assertLess(budget.warn_rss_bytes, budget.fail_rss_bytes)
             self.assertLess(budget.warn_duration_s, budget.fail_duration_s)
+
+    def test_large_entropy_budget_stays_below_hard_timeout(self):
+        budget = SCENARIO_BUDGETS[("entropy", "large")]
+        self.assertEqual(budget.warn_duration_s, 45.0)
+        self.assertEqual(budget.fail_duration_s, 55.0)
+        self.assertLess(budget.fail_duration_s, 60.0)
 
 
 class TestScenarioRegistry(unittest.TestCase):

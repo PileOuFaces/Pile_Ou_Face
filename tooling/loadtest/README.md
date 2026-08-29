@@ -74,10 +74,10 @@ Default budgets:
 | `medium` (~20 MB) | 256 MB | 384 MB | 2 s | 5 s |
 | `large` (~200 MB) | 768 MB | 1 GB | 10 s | 30 s |
 
-Scenario-specific calibration: `entropy` on the `medium` profile uses a 4 s
-duration warning and an 8 s failure limit. Its full byte-by-byte scan measured
-5.85 s on the GitHub-hosted Linux runner; the other medium scenarios keep the
-stricter generic 2 s / 5 s limits.
+Scenario-specific calibration: `entropy` uses 4 s / 8 s warning/failure limits
+on `medium`, and 45 s / 55 s on `large`. Its full byte-by-byte scan measured
+5.85 s for the medium fixture and about 35 s for the compiled 100 MiB corpus on
+GitHub-hosted Linux runners. Other scenarios keep the stricter generic limits.
 
 Promote a baseline only from at least three complete reports produced by the
 same machine architecture and Python minor version:
