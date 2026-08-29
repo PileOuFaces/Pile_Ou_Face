@@ -622,6 +622,24 @@ Pieges frequents :
 
 ## IA
 
+### Recherche de fonctions en langage naturel
+
+A quoi ca sert :
+
+- Poser une question comme « ou le binaire lit-il sa configuration ? » ou « quelle fonction dechiffre le payload ? » et obtenir des fonctions/adresses classees avec une justification.
+
+Comment l'utiliser :
+
+- Charger le binaire puis ouvrir **Statique > Fonctions**.
+- Saisir la question dans **Chercher en langage naturel**, lancer la recherche puis utiliser **Ouvrir** pour naviguer vers le desassemblage.
+- Le host construit localement un contexte borne a 200 fonctions depuis le radar (noms, appels, chaines, imports, annotations et tags). Le provider configure ne peut retourner que des adresses presentes dans ce contexte ; toute adresse inventee est rejetee.
+- Le premier appel demande un consentement explicite pour le provider actif. La question et les preuves compactes affichees dans l'index peuvent alors etre transmises au provider.
+
+Comment interpreter :
+
+- Le score classe les candidats ; la justification et les preuves locales restent a verifier dans le desassemblage.
+- Une absence de resultat signifie qu'aucune fonction indexee n'a ete retenue, pas que le comportement recherche est impossible.
+
 ### Auto-triage IA
 
 A quoi ca sert :

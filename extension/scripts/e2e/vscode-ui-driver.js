@@ -524,6 +524,22 @@ class HubPage {
     return this.target.locator('#disasmSummaryBinary');
   }
 
+  naturalLanguageSearchInput() {
+    return this.target.locator('#functionsNlSearchInput');
+  }
+
+  naturalLanguageSearchButton() {
+    return this.target.locator('#btnFunctionsNlSearch');
+  }
+
+  naturalLanguageSearchStatus() {
+    return this.target.locator('#functionsNlSearchStatus');
+  }
+
+  naturalLanguageSearchResults() {
+    return this.target.locator('#functionsNlSearchResults');
+  }
+
   decompileAugmentButton() {
     return this.target.locator('#btnAugmentDecompile');
   }

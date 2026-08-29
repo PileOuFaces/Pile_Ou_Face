@@ -18,6 +18,64 @@ document.getElementById('btnRefreshFiles')?.addEventListener('click', () => {
   vscode.postMessage({ type: 'listGeneratedFiles' });
 });
 
+function runNaturalLanguageFunctionSearch() {
+  const input = document.getElementById('functionsNlSearchInput');
+  const button = document.getElementById('btnFunctionsNlSearch');
+  const status = document.getElementById('functionsNlSearchStatus');
+  const query = String(input?.value || '').trim();
+  if (!query) {
+    if (status) status.textContent = 'Saisissez une question avant de lancer la recherche.';
+    input?.focus();
+    return;
+  }
+  if (button) button.disabled = true;
+  if (status) status.textContent = 'Classement des fonctions en cours…';
+  vscode.postMessage({ type: 'hubNaturalLanguageSearch', binaryPath: getStaticBinaryPath(), query });
+}
+
+document.getElementById('btnFunctionsNlSearch')?.addEventListener('click', runNaturalLanguageFunctionSearch);
+document.getElementById('functionsNlSearchInput')?.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') runNaturalLanguageFunctionSearch();
+});
+
+function renderNaturalLanguageFunctionSearch(message = {}) {
+  const button = document.getElementById('btnFunctionsNlSearch');
+  const status = document.getElementById('functionsNlSearchStatus');
+  const container = document.getElementById('functionsNlSearchResults');
+  if (button) button.disabled = false;
+  if (!container) return;
+  if (!message.ok) {
+    if (status) status.textContent = String(message.error || 'Recherche impossible.');
+    container.hidden = true;
+    container.innerHTML = '';
+    return;
+  }
+  const results = Array.isArray(message.result?.results) ? message.result.results : [];
+  if (status) status.textContent = results.length
+    ? `${results.length} fonction(s) pertinente(s) parmi ${Number(message.result?.candidate_count || 0)} candidates.`
+    : 'Aucune fonction pertinente trouvée.';
+  container.hidden = !results.length;
+  container.innerHTML = results.map((item) => `
+    <article class="functions-nl-search-result">
+      <div class="functions-nl-search-result-head">
+        <strong>${escapeHtml(String(item.name || item.addr || 'Fonction'))}</strong>
+        <code>${escapeHtml(String(item.addr || ''))}</code>
+        <span class="functions-score">${escapeHtml(String(item.score || 0))}</span>
+        <button type="button" class="btn btn-xs btn-secondary functions-nl-open"
+                data-addr="${escapeHtml(String(item.addr || ''))}"
+                data-name="${escapeHtml(String(item.name || ''))}">Ouvrir</button>
+      </div>
+      <p>${escapeHtml(String(item.reason || ''))}</p>
+    </article>
+  `).join('');
+  container.querySelectorAll('.functions-nl-open').forEach((element) => {
+    element.addEventListener('click', () => {
+      const addr = element.dataset.addr || '';
+      if (addr) openFunctionInView(addr, element.dataset.name || '', 'disasm');
+    });
+  });
+}
+
 document.getElementById('btnPurgeStale')?.addEventListener('click', () => {
   vscode.postMessage({ type: 'purgeStaleCache' });
 });

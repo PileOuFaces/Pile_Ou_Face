@@ -158,6 +158,29 @@ describe('VS Code UI E2E driver', () => {
     ]);
   });
 
+  it('exposes natural-language function search through stable selectors', () => {
+    const selectors: string[] = [];
+    const target = {
+      locator(selector: string) {
+        selectors.push(selector);
+        return { selector };
+      },
+    };
+    const hub = new HubPage(target);
+
+    hub.naturalLanguageSearchInput();
+    hub.naturalLanguageSearchButton();
+    hub.naturalLanguageSearchStatus();
+    hub.naturalLanguageSearchResults();
+
+    assert.deepEqual(selectors, [
+      '#functionsNlSearchInput',
+      '#btnFunctionsNlSearch',
+      '#functionsNlSearchStatus',
+      '#functionsNlSearchResults',
+    ]);
+  });
+
   it('exposes cloud and Ollama provider settings through stable selectors', () => {
     const selectors: string[] = [];
     const target = {
