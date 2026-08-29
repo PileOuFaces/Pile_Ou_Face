@@ -14,6 +14,13 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .pointer_relations import attach_active_frame_pointer_relations
+
+try:
+    from backends.static.binary.sections import extract_sections
+except Exception:  # pragma: no cover - optional dependency path
+    extract_sections = None
+
 try:
     from backends.static.binary.symbols import extract_symbols
 except Exception:  # pragma: no cover - optional dependency path
@@ -537,6 +544,26 @@ class StaticTraceResolver:
         # any range lookup so that a rebased address like 0x401d4d is compared as
         # 0x1d4d against the ELF-relative symbol table.
         self.load_base = _parse_int(meta.get("base")) or 0
+        self.data_ranges: list[tuple[int, int]] = []
+        if extract_sections is not None:
+            try:
+                sections = extract_sections(binary_path)
+            except Exception:
+                sections = []
+            for section in sections if isinstance(sections, list) else []:
+                if not isinstance(section, dict):
+                    continue
+                name = str(section.get("name") or "").strip().lower()
+                section_type = str(section.get("type") or "").strip().upper()
+                if section_type not in {"DATA", "BSS"} and name not in {
+                    ".data",
+                    ".bss",
+                }:
+                    continue
+                start = _parse_int(section.get("vma"))
+                size = _parse_int(section.get("size"))
+                if start is not None and size is not None and size > 0:
+                    self.data_ranges.append((start, start + size))
 
     def _load_annotations(self) -> tuple[dict[int, str], dict[int, str]]:
         if self._annotation_names is not None and self._annotation_comments is not None:
@@ -639,6 +666,21 @@ class StaticTraceResolver:
                     return dict(symbol)
         return None
 
+    def resolve_function_entry(self, address: int | None) -> dict | None:
+        """Resolve only an exact function entry, never an interior code address."""
+        if address is None:
+            return None
+        resolved = self.resolve_function(address)
+        if not resolved:
+            return None
+        normalized = (
+            address - self.load_base
+            if self.load_base > 0 and address >= self.load_base
+            else address
+        )
+        symbol_address = _parse_int(resolved.get("addr"))
+        return resolved if symbol_address == normalized else None
+
     def frame_for_function(self, func_addr: int | None) -> dict:
         if func_addr is None:
             return {}
@@ -698,6 +740,13 @@ class StaticTraceResolver:
         if self.code_min is not None and self.code_max is not None:
             if self.code_min <= value <= self.code_max + 0x40:
                 return "code"
+        # Section VMAs are ELF-relative for PIE binaries while traced pointer
+        # values are runtime addresses. Mirror resolve_function's load-base
+        # normalization, but reject unrebased values in a rebased trace.
+        if not self.load_base or value >= self.load_base:
+            normalized = value - self.load_base if self.load_base else value
+            if any(start <= normalized < end for start, end in self.data_ranges):
+                return "global"
         return None
 
     def classify_pointer(
@@ -1237,6 +1286,27 @@ def _slot_flags(
     return flags, recent_write, recent_read, corrupted, pointer_kind
 
 
+def _code_pointer_interpretation(
+    role: str,
+    value: int | None,
+    pointer_kind: str | None,
+    resolver: StaticTraceResolver,
+) -> tuple[str | None, dict | None]:
+    if pointer_kind != "code":
+        return None, None
+    if role == "return_address":
+        return "return_address", None
+    symbol = resolver.resolve_function_entry(value)
+    if not symbol:
+        return "code_address", None
+    return "function", {
+        "name": str(symbol.get("name") or "").strip() or None,
+        "address": _hex(value),
+        "source": "static_symbol",
+        "confidence": 1.0,
+    }
+
+
 def _slot_role_label(
     start: int,
     end: int,
@@ -1505,6 +1575,9 @@ def _build_slots(
             function_key,
         )
         value_int = _little_int(data) if len(data) <= 8 else None
+        pointer_sub_kind, pointer_target = _code_pointer_interpretation(
+            role, value_int, pointer_kind, resolver
+        )
         comment = resolver.comment_for(left)
         slot = {
             "key": f"0x{left:x}:0x{right:x}",
@@ -1530,6 +1603,8 @@ def _build_slots(
             "changed": "changed" in flags,
             "corrupted": corrupted,
             "pointerKind": pointer_kind,
+            "pointerSubKind": pointer_sub_kind,
+            "pointerTarget": pointer_target,
             "comment": comment,
             "activePointers": [
                 pointer_name
@@ -1541,6 +1616,7 @@ def _build_slots(
         roles_by_addr[_hex(left) or ""] = role
 
     _assign_display_labels(slots)
+    attach_active_frame_pointer_relations(slots)
 
     viewport_points = []
     for point in (sp, bp, bp + word_size if bp is not None else None):

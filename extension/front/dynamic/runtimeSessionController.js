@@ -3,7 +3,8 @@
  *
  * Après un Run Trace réussi (dynamicTraceReady), ajoute un item dans la
  * sidebar sous l'icône Dynamic et bascule vers le panel #panel-runtime.
- * Le visualiseur standalone reste accessible depuis l'historique Dynamic.
+ * Les traces dynamiques restent dans le Hub Runtime ; seules les traces
+ * statiques utilisent le visualiseur autonome.
  */
 (function initHubRuntimeSessionController(global) {
   function initRuntimeSessionController(deps) {

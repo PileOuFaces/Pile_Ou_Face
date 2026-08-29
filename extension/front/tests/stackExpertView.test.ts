@@ -74,6 +74,7 @@ describe('stackExpertView — buildExpertRowItems', () => {
       flags: [],
       payloadRelated: false,
       pointerKind: '',
+      pointerSubKind: '',
       isSensitive: false,
       detailPayload: null,
       ...overrides
@@ -218,6 +219,35 @@ describe('stackExpertView — buildExpertRowItems', () => {
     ]);
     expect(rows[0].badges).to.include('PTR:STACK');
     expect(rows[1].badges.some((badge: string) => String(badge).startsWith('PTR:'))).to.equal(false);
+  });
+
+  it('renders the global pointer classification', () => {
+    const rows = mod.buildExpertRowItems([
+      makeSlot({ valuePreview: '0x403020', pointerKind: 'global' })
+    ]);
+    expect(rows[0].badges).to.include('PTR:GLOBAL');
+  });
+
+  it('distinguishes an explicit function pointer from a return address', () => {
+    const rows = mod.buildExpertRowItems([
+      makeSlot({
+        kind: 'local',
+        valuePreview: '0x401176',
+        pointerKind: 'code',
+        pointerSubKind: 'function'
+      }),
+      makeSlot({
+        kind: 'return_address',
+        valuePreview: '0x401234',
+        pointerKind: 'code',
+        pointerSubKind: 'return_address'
+      })
+    ]);
+
+    expect(rows[0].badges).to.include('PTR:FUNC');
+    expect(rows[0].badges).to.not.include('PTR:TEXT');
+    expect(rows[1].badges).to.include('RET:CODE');
+    expect(rows[1].badges).to.include('RET');
   });
 
   it('resolves expert rendering explicitly — resolveStackPanelRenderMode', async () => {
