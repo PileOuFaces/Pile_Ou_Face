@@ -7,11 +7,13 @@ on:
       - 'extension/**'
       - 'tooling/loadtest/**'
       - '.github/workflows/ci.yml'
+      - '.github/workflows/large-real-corpus-loadtest.yml'
       - '.github/workflows/publish.yml'
       - '.github/workflows/tripartite-scheduled.yml'
 
 permissions:
   contents: read
+  pull-requests: read
 
 # Un nouveau push (ou une nouvelle synchro de PR) annule le run précédent
 # encore en cours sur la même ref — sans ça, chaque commit successif laisse
@@ -21,6 +23,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # La campagne 100 MiB est coûteuse : elle ne tourne sur develops que lorsque
+  # le runtime, le corpus ou ses budgets changent.
+  large-real-corpus-changes:
+    name: Detect large corpus changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      relevant: ${{ steps.filter.outputs.relevant }}
+    steps:
+      - name: Detect relevant paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            relevant:
+              - 'extension/backends/static/**'
+              - 'extension/backends/requirements.txt'
+              - 'extension/backends/requirements-ci.txt'
+              - 'tooling/loadtest/**'
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/large-real-corpus-loadtest.yml'
+
+  large-real-corpus:
+    name: Large real corpus gate
+    needs: large-real-corpus-changes
+    if: github.base_ref == 'develops' && needs.large-real-corpus-changes.outputs.relevant == 'true'
+    uses: ./.github/workflows/large-real-corpus-loadtest.yml
+
   # ══════════════════════════════════════════════════════════════
   # 🔎 Lint — PRs (une seule fois, ubuntu uniquement)
   # ══════════════════════════════════════════════════════════════
@@ -678,7 +708,7 @@ jobs:
   ci-success:
     name: CI Success
     if: always()
-    needs: [lint, full-test, dynamic-unicorn, real-corpus-arm64, e2e-runtime-audit, backend-loadtest, security-scan, auth-licensing-e2e, auth-licensing-windows]
+    needs: [lint, full-test, dynamic-unicorn, real-corpus-arm64, e2e-runtime-audit, backend-loadtest, security-scan, auth-licensing-e2e, auth-licensing-windows, large-real-corpus-changes, large-real-corpus]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -694,6 +724,8 @@ jobs:
           SECURITY="${{ needs.security-scan.result }}"
           AUTH_LICENSING_E2E="${{ needs.auth-licensing-e2e.result }}"
           AUTH_LICENSING_WINDOWS="${{ needs.auth-licensing-windows.result }}"
+          LARGE_CORPUS_CHANGES="${{ needs.large-real-corpus-changes.result }}"
+          LARGE_CORPUS="${{ needs.large-real-corpus.result }}"
 
           echo "Lint       : $LINT"
           echo "Full test  : $FULL"
@@ -704,6 +736,8 @@ jobs:
           echo "Security   : $SECURITY"
           echo "Auth Win   : $AUTH_LICENSING_WINDOWS"
           echo "Auth E2E   : $AUTH_LICENSING_E2E"
+          echo "Corpus filter: $LARGE_CORPUS_CHANGES"
+          echo "Large corpus : $LARGE_CORPUS"
 
           fail_if_bad() {
             if [[ "$1" == "failure" || "$1" == "cancelled" || "$1" == "skipped" ]]; then
@@ -719,5 +753,9 @@ jobs:
           fail_if_bad "$BACKEND_LOADTEST" "Backend Performance Budgets"
           fail_if_bad "$AUTH_LICENSING_E2E" "Auth Licensing Interop E2E"
           fail_if_bad "$AUTH_LICENSING_WINDOWS" "Auth Licensing Windows Unit Tests"
+          fail_if_bad "$LARGE_CORPUS_CHANGES" "Large Corpus Path Filter"
+          if [[ "$LARGE_CORPUS" == "failure" || "$LARGE_CORPUS" == "cancelled" ]]; then
+            echo "❌ Large Real Corpus failed" && exit 1
+          fi
           # security-scan est informatif uniquement (continue-on-error sur tous ses steps)
-          echo "✅ PR checks passed (lint=$LINT, full=$FULL, unicorn=$DYNAMIC_UNICORN, real-corpus-arm64=$REAL_CORPUS, e2e-audit=$E2E_AUDIT, backend-loadtest=$BACKEND_LOADTEST, security=$SECURITY, auth-licensing-e2e=$AUTH_LICENSING_E2E, auth-licensing-windows=$AUTH_LICENSING_WINDOWS)"
+          echo "✅ PR checks passed (lint=$LINT, full=$FULL, unicorn=$DYNAMIC_UNICORN, real-corpus-arm64=$REAL_CORPUS, e2e-audit=$E2E_AUDIT, backend-loadtest=$BACKEND_LOADTEST, security=$SECURITY, auth-licensing-e2e=$AUTH_LICENSING_E2E, auth-licensing-windows=$AUTH_LICENSING_WINDOWS, large-corpus=$LARGE_CORPUS)"

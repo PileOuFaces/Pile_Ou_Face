@@ -1,6 +1,7 @@
 name: Large Real Corpus Loadtest
 
 on:
+  workflow_call:
   workflow_dispatch:
   schedule:
     - cron: '23 3 * * 1'
@@ -16,7 +17,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: [x86_64, arm64, mips32, ppc32, riscv64]
+        include:
+          - arch: x86_64
+            toolchain: build-essential binutils
+          - arch: arm64
+            toolchain: gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+          - arch: mips32
+            toolchain: gcc-mips-linux-gnu binutils-mips-linux-gnu
+          - arch: ppc32
+            toolchain: gcc-powerpc-linux-gnu binutils-powerpc-linux-gnu
+          - arch: riscv64
+            toolchain: gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu
 
     steps:
       - name: Checkout
@@ -31,12 +42,7 @@ jobs:
       - name: Install native and cross toolchains
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            build-essential binutils \
-            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-            gcc-mips-linux-gnu binutils-mips-linux-gnu \
-            gcc-powerpc-linux-gnu binutils-powerpc-linux-gnu \
-            gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu
+          sudo apt-get install -y ${{ matrix.toolchain }}
           pip install -r extension/backends/requirements-ci.txt
 
       - name: Build 100 MiB compiled corpus
