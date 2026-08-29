@@ -85,6 +85,8 @@ class AnnotationStore:
         if kind not in {
             KIND_COMMENT,
             KIND_RENAME,
+            KIND_REVIEW_STATUS,
+            KIND_REVIEW_NOTES,
             KIND_BOOKMARK,
             KIND_BOOKMARK_COLOR,
         }:
