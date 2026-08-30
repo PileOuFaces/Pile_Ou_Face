@@ -1053,6 +1053,7 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', global
 
   const scriptUri              = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'hub.js'));
   // shared modules
+  const sharedI18nUri         = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'i18n.js'));
   const sharedRawTabCapabilitiesUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'rawTabCapabilities.js'));
   const sharedStateUri         = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'state.js'));
   const sharedBinaryUri        = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'binary.js'));
@@ -1140,6 +1141,8 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', global
 
   return html
     .replace(/{{scriptUri}}/g, scriptUri.toString())
+    .replace(/{{sharedI18nUri}}/g, sharedI18nUri.toString())
+    .replace(/{{locale}}/g, String(vscode.env?.language || '').toLowerCase().startsWith('fr') ? 'fr' : 'en')
     // shared modules
     .replace(/{{sharedRawTabCapabilitiesUri}}/g, sharedRawTabCapabilitiesUri.toString())
     .replace(/{{sharedStateUri}}/g, sharedStateUri.toString())

@@ -526,14 +526,16 @@ async function run() {
       const hub = new HubPage(target);
 
       await hub.openPanel('dashboard');
-      await hub.topBarBinaryName().waitForText('Choisir un fichier', 30000);
-      await hub.autoTriageBinary().waitForText('Aucun binaire', 30000);
+      const locale = await target.evaluate('document.documentElement.lang');
+      const english = String(locale || '').toLowerCase() !== 'fr';
+      await hub.topBarBinaryName().waitForText(english ? 'Choose a file' : 'Choisir un fichier', 30000);
+      await hub.autoTriageBinary().waitForText(english ? 'No binary' : 'Aucun binaire', 30000);
       assert.equal(await hub.autoTriageButton().isEnabled(), false, 'auto-triage must stay disabled without a binary');
 
       await hub.dashboardStaticAction().click();
       await hub.expectActive(hub.panel('static'), 'static panel opened from the empty dashboard');
       await hub.topBarBinaryMenu().waitFor({ state: 'visible' });
-      await hub.currentBinaryName().waitForText('Aucun fichier sélectionné', 30000);
+      await hub.currentBinaryName().waitForText(english ? 'No file selected' : 'Aucun fichier sélectionné', 30000);
       await hub.disassemblyBinarySummary().waitForText('Aucun fichier', 30000);
       assert.equal(await hub.decompileAugmentButton().isEnabled(), false, 'AI augmentation must stay disabled without decompiled code');
     } catch (error) {
@@ -613,15 +615,21 @@ async function run() {
         await vscode.commands.executeCommand('pileOuFace.goToAddress');
         target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
         const hub = new HubPage(target);
+        const locale = await target.evaluate('document.documentElement.lang');
+        const english = String(locale || '').toLowerCase() !== 'fr';
 
         await hub.openPanel('options');
         await target.locator('html').waitForAttribute('data-hub-ai-providers-ready', 'true', 30000);
+        // A late initial settings payload may restore the previously persisted panel.
+        // Force a complete transition after readiness before asserting visibility.
+        await hub.openPanel('dashboard');
+        await hub.openPanel('options');
         await hub.aiProviderCard('openai').waitFor({ state: 'visible', timeout: 30000 });
         await hub.aiProviderStatus('openai').waitForText('Non configuré', 30000);
         await hub.aiProviderKey('openai').fill('e2e-cloud-key');
         await hub.aiProviderModel('openai').fill('gpt-e2e-mini');
         await hub.aiProviderSaveButton('openai').click();
-        await hub.aiProviderStatus('openai').waitForText('Prêt', 30000);
+        await hub.aiProviderStatus('openai').waitForText(english ? 'Ready' : 'Prêt', 30000);
         assert.equal(openAiKey, 'e2e-cloud-key', 'the API key entered through the UI must reach stdin');
         assert.equal(openAiModel, 'gpt-e2e-mini', 'the cloud model selected through the UI must be persisted');
 
@@ -818,6 +826,7 @@ async function run() {
         await hub.autoTriageCancelButton().click();
         await hub.autoTriageState().waitForText('À reprendre', 30000);
         await hub.autoTriageResultTitle().waitForText('Analyse interrompue — reprise disponible', 30000);
+        await hub.autoTriageCancelButton().waitFor({ state: 'hidden', timeout: 30000 });
         assert.equal(await hub.autoTriageButton().isEnabled(), true, 'resume must be available after cancellation');
 
         await hub.autoTriageButton().click();

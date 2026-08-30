@@ -266,7 +266,9 @@ async function connectToHubWebview(endpoint, timeoutMs = DEFAULT_TIMEOUT_MS) {
   const deadline = Date.now() + timeoutMs;
   let targetSummary = '';
   let lastError = '';
-  while (Date.now() < deadline) {
+  let attempted = false;
+  while (!attempted || Date.now() < deadline) {
+    attempted = true;
     try {
       const response = await globalThis.fetch(`${endpoint}/json/list`);
       const targets = await response.json();
@@ -313,7 +315,9 @@ async function connectToHubWebview(endpoint, timeoutMs = DEFAULT_TIMEOUT_MS) {
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
     }
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    if (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, Math.min(100, Math.max(0, deadline - Date.now()))));
+    }
   }
   throw new Error(`Pile ou Face hub webview was not found through CDP. Targets: ${targetSummary || '<none>'}. Last error: ${lastError || '<none>'}`);
 }
@@ -624,6 +628,9 @@ class HubPage {
     let lastError = null;
     while (Date.now() < deadline) {
       try {
+        // A late settings payload can restore another panel after options first
+        // becomes active. Force a complete transition on every retry.
+        await this.openPanel('dashboard');
         await this.openPanel('options');
         // Opening the panel is sufficient once the initial settings payload is
         // ready. Resetting that readiness marker and navigating a second time
