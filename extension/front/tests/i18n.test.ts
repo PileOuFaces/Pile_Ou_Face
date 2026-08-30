@@ -55,6 +55,23 @@ describe('webview i18n', () => {
     expect(document.querySelector('label')?.title).to.equal('Rafraîchir');
   });
 
+  it('localizes the Options and Account panels', () => {
+    const extensionRoot = path.resolve(__dirname, '../..');
+    const panelSources = ['panel-options.html', 'panel-account.html']
+      .map((name) => fs.readFileSync(path.join(extensionRoot, 'front/shared', name), 'utf8'))
+      .join('\n');
+    const dom = new JSDOM(`<!doctype html><html lang="fr"><body>${panelSources}</body></html>`);
+
+    i18n.setLocale('en', dom.window.document);
+    const content = dom.window.document.body.textContent || '';
+    expect(content).to.include('Account');
+    expect(content).to.include('Available decompilers');
+    expect(content).to.include('Global generation settings');
+    expect(content).to.include('Reading comfort');
+    expect(content).to.include('Reset settings');
+    expect(content).not.to.match(/Compte|Décompilateurs disponibles|Paramètres de génération globaux|Confort de lecture|Remettre les réglages à zéro/);
+  });
+
   it('keeps the default and French VS Code manifest catalogs in sync', () => {
     const extensionRoot = path.resolve(__dirname, '../..');
     const manifest = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'package.json'), 'utf8'));
