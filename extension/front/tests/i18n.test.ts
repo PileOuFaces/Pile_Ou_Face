@@ -89,6 +89,28 @@ describe('webview i18n', () => {
     expect(content).not.to.match(/Ouvrir le désassemblage|Qui appelle quoi|Contexte rapide|Chercher en langage naturel|Revue IA|Patches persistés|Gérer les types/);
   });
 
+  it('localizes the dynamic-analysis and tools journeys', () => {
+    const extensionRoot = path.resolve(__dirname, '../..');
+    const panelFiles = [
+      path.join(extensionRoot, 'front/dynamic/panel-dynamic.html'),
+      path.join(extensionRoot, 'front/dynamic/graphical-stack.html'),
+      path.join(extensionRoot, 'front/shared/panel-outils.html'),
+    ];
+    const content = panelFiles.map((file) => {
+      const dom = new JSDOM(fs.readFileSync(file, 'utf8'));
+      i18n.setLocale('en', dom.window.document);
+      return dom.window.document.body.textContent || '';
+    }).join('\n');
+    expect(content).to.include('Optional C source code');
+    expect(content).to.include('Payload preview');
+    expect(content).to.include('History');
+    expect(content).to.include('Guided explanation');
+    expect(content).to.include('Offset calculator');
+    expect(content).to.include('Exploit Assistant');
+    expect(content).to.include('Generated workspace');
+    expect(content).not.to.match(/Code source C optionnel|Aperçu du payload|Historique des traces|Lecture pedagogique|Calculette d'offset|Assistant Exploit|Espace de travail généré/);
+  });
+
   it('keeps the default and French VS Code manifest catalogs in sync', () => {
     const extensionRoot = path.resolve(__dirname, '../..');
     const manifest = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'package.json'), 'utf8'));
