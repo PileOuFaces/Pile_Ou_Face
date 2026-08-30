@@ -72,6 +72,23 @@ describe('webview i18n', () => {
     expect(content).not.to.match(/Compte|Décompilateurs disponibles|Paramètres de génération globaux|Confort de lecture|Remettre les réglages à zéro/);
   });
 
+  it('localizes the main static-analysis journeys', () => {
+    const extensionRoot = path.resolve(__dirname, '../..');
+    const panel = fs.readFileSync(path.join(extensionRoot, 'front/static/panel-static.html'), 'utf8');
+    const dom = new JSDOM(`<!doctype html><html lang="fr"><body>${panel}</body></html>`);
+
+    i18n.setLocale('en', dom.window.document);
+    const content = dom.window.document.body.textContent || '';
+    expect(content).to.include('Open disassembly');
+    expect(content).to.include('Who calls what?');
+    expect(content).to.include('Quick context');
+    expect(content).to.include('Search using natural language');
+    expect(content).to.include('AI review');
+    expect(content).to.include('Persisted patches');
+    expect(content).to.include('Manage types');
+    expect(content).not.to.match(/Ouvrir le désassemblage|Qui appelle quoi|Contexte rapide|Chercher en langage naturel|Revue IA|Patches persistés|Gérer les types/);
+  });
+
   it('keeps the default and French VS Code manifest catalogs in sync', () => {
     const extensionRoot = path.resolve(__dirname, '../..');
     const manifest = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'package.json'), 'utf8'));
