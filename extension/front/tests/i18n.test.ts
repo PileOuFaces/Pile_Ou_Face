@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect } from 'chai';
 import fs from 'fs';
-import { JSDOM } from 'jsdom';
+import { JSDOM, VirtualConsole } from 'jsdom';
 import path from 'path';
 
 const i18n = require('../shared/i18n.js');
@@ -60,7 +60,9 @@ describe('webview i18n', () => {
     const panelSources = ['panel-options.html', 'panel-account.html']
       .map((name) => fs.readFileSync(path.join(extensionRoot, 'front/shared', name), 'utf8'))
       .join('\n');
-    const dom = new JSDOM(`<!doctype html><html lang="fr"><body>${panelSources}</body></html>`);
+    const dom = new JSDOM(`<!doctype html><html lang="fr"><body>${panelSources}</body></html>`, {
+      virtualConsole: new VirtualConsole(),
+    });
 
     i18n.setLocale('en', dom.window.document);
     const content = dom.window.document.body.textContent || '';
@@ -109,6 +111,25 @@ describe('webview i18n', () => {
     expect(content).to.include('Exploit Assistant');
     expect(content).to.include('Generated workspace');
     expect(content).not.to.match(/Code source C optionnel|Aperçu du payload|Historique des traces|Lecture pedagogique|Calculette d'offset|Assistant Exploit|Espace de travail généré/);
+  });
+
+  it('localizes the remaining shell and plugin guidance without touching technical paths', () => {
+    const extensionRoot = path.resolve(__dirname, '../..');
+    const panelSources = [
+      path.join(extensionRoot, 'front/hub.html'),
+      path.join(extensionRoot, 'front/shared/panel-options.html'),
+    ].map((file) => fs.readFileSync(file, 'utf8')).join('\n');
+    const dom = new JSDOM(`<!doctype html><html lang="fr"><body>${panelSources}</body></html>`, {
+      virtualConsole: new VirtualConsole(),
+    });
+
+    i18n.setLocale('en', dom.window.document);
+    const content = dom.window.document.body.textContent || '';
+    expect(dom.window.document.getElementById('exploitNotesFab')?.getAttribute('title')).to.equal('Open exploit notes');
+    expect(content).to.include('Plugins installed through this interface are stored in');
+    expect(content).to.include('No license file is required.');
+    expect(content).to.include('~/.pile-ou-face/plugins/');
+    expect(content).not.to.match(/Les plugins installés via cette interface|Aucun fichier de licence requis/);
   });
 
   it('keeps the default and French VS Code manifest catalogs in sync', () => {
