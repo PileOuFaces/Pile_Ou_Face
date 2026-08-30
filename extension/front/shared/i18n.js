@@ -552,6 +552,22 @@
     'Rafraîchir la disponibilité des compilateurs': 'Refresh compiler availability',
     'Réutiliser le cache': 'Reuse cache',
     'Supprimer le cache des binaires inexistants': 'Delete cache for missing binaries',
+    'Ouvrir Notes exploit': 'Open exploit notes',
+    'Notes exploit flottantes': 'Floating exploit notes',
+    'Réduire': 'Collapse',
+    'Fonction: —': 'Function: —',
+    '-Og · debug optimisé': '-Og · optimized debug',
+    '-O1 · léger': '-O1 · light',
+    '-O2 · équilibré': '-O2 · balanced',
+    '-O3 · agressif': '-O3 · aggressive',
+    '-Os · taille': '-Os · size',
+    '⟳ Rafraîchir': '⟳ Refresh',
+    'Les plugins installés via cette interface vont dans': 'Plugins installed through this interface are stored in',
+    'et sont disponibles dans tous tes projets. Le dossier': 'and are available in all your projects. The folder',
+    'reste réservé aux tests et au développement local.': 'remains reserved for tests and local development.',
+    'Les': 'The',
+    ") se déverrouillent automatiquement après connexion dans l'onglet": ') are unlocked automatically after signing in from the',
+    '. Aucun fichier de licence requis.': 'tab. No license file is required.',
   });
 
   const ATTRIBUTES = Object.freeze(['aria-label', 'placeholder', 'title', 'data-tooltip']);
