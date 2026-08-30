@@ -38,6 +38,23 @@ describe('webview i18n', () => {
     expect(input.value).to.equal('user data');
   });
 
+  it('switches the same document between English and French', () => {
+    const dom = new JSDOM(`<!doctype html><html lang="fr"><body>
+      <section><h2>Confort de lecture</h2><label title="Rafraîchir">Langue</label></section>
+    </body></html>`);
+    const document = dom.window.document;
+
+    i18n.setLocale('en', document);
+    expect(document.querySelector('h2')?.textContent).to.equal('Reading comfort');
+    expect(document.querySelector('label')?.textContent).to.equal('Language');
+    expect(document.querySelector('label')?.title).to.equal('Refresh');
+
+    i18n.setLocale('fr', document);
+    expect(document.querySelector('h2')?.textContent).to.equal('Confort de lecture');
+    expect(document.querySelector('label')?.textContent).to.equal('Langue');
+    expect(document.querySelector('label')?.title).to.equal('Rafraîchir');
+  });
+
   it('keeps the default and French VS Code manifest catalogs in sync', () => {
     const extensionRoot = path.resolve(__dirname, '../..');
     const manifest = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'package.json'), 'utf8'));

@@ -101,9 +101,19 @@
     'Rafraîchir': 'Refresh',
     'Assistant prêt.': 'Assistant ready.',
     "Pose ta question sans quitter l'outil courant…": 'Ask your question without leaving the current tool…',
+    'Interface': 'Interface',
+    'Confort de lecture': 'Reading comfort',
+    'Langue': 'Language',
+    "Choisis la langue de l'interface Pile ou Face.": 'Choose the Pile ou Face interface language.',
+    'Français': 'French',
   });
 
   const ATTRIBUTES = Object.freeze(['aria-label', 'placeholder', 'title', 'data-tooltip']);
+  const TEXT_SOURCES = new WeakMap();
+  const TEXT_RENDERED = new WeakMap();
+  const ATTRIBUTE_SOURCES = new WeakMap();
+  const ATTRIBUTE_RENDERED = new WeakMap();
+  let currentLocale = 'en';
 
   function resolveLocale(value) {
     return String(value || '').trim().toLowerCase().startsWith('fr') ? 'fr' : 'en';
@@ -115,20 +125,42 @@
   }
 
   function translateTextNode(node, locale) {
-    const source = String(node.nodeValue || '');
+    const current = String(node.nodeValue || '');
+    const previousRender = TEXT_RENDERED.get(node);
+    if (!TEXT_SOURCES.has(node) || (previousRender !== undefined && current !== previousRender)) {
+      TEXT_SOURCES.set(node, current);
+    }
+    const source = TEXT_SOURCES.get(node);
     const trimmed = source.trim();
     if (!trimmed) return;
     const translated = translate(trimmed, locale);
-    if (translated === trimmed) return;
-    node.nodeValue = source.replace(trimmed, translated);
+    const rendered = source.replace(trimmed, translated);
+    if (current !== rendered) node.nodeValue = rendered;
+    TEXT_RENDERED.set(node, rendered);
   }
 
   function translateElement(element, locale) {
+    let sources = ATTRIBUTE_SOURCES.get(element);
+    let renderedValues = ATTRIBUTE_RENDERED.get(element);
+    if (!sources) {
+      sources = new Map();
+      ATTRIBUTE_SOURCES.set(element, sources);
+    }
+    if (!renderedValues) {
+      renderedValues = new Map();
+      ATTRIBUTE_RENDERED.set(element, renderedValues);
+    }
     ATTRIBUTES.forEach((attribute) => {
       if (!element.hasAttribute?.(attribute)) return;
-      const source = element.getAttribute(attribute);
+      const current = element.getAttribute(attribute);
+      const previousRender = renderedValues.get(attribute);
+      if (!sources.has(attribute) || (previousRender !== undefined && current !== previousRender)) {
+        sources.set(attribute, current);
+      }
+      const source = sources.get(attribute);
       const translated = translate(source, locale);
-      if (translated !== source) element.setAttribute(attribute, translated);
+      if (current !== translated) element.setAttribute(attribute, translated);
+      renderedValues.set(attribute, translated);
     });
     Array.from(element.childNodes || []).forEach((node) => {
       if (node.nodeType === 3) translateTextNode(node, locale);
@@ -140,20 +172,26 @@
     const resolved = resolveLocale(locale);
     if (!documentRef?.documentElement) return resolved;
     documentRef.documentElement.lang = resolved;
-    if (resolved === 'en' && documentRef.body) translateElement(documentRef.body, resolved);
+    if (documentRef.body) translateElement(documentRef.body, resolved);
     return resolved;
   }
 
+  function setLocale(locale, documentRef = typeof document !== 'undefined' ? document : null) {
+    currentLocale = resolveLocale(locale);
+    return localizeDocument(documentRef, currentLocale);
+  }
+
   function observeDocument(documentRef, locale = documentRef?.documentElement?.lang) {
-    const resolved = localizeDocument(documentRef, locale);
+    currentLocale = resolveLocale(locale);
+    const resolved = localizeDocument(documentRef, currentLocale);
     const Observer = documentRef?.defaultView?.MutationObserver;
-    if (resolved === 'fr' || !Observer || !documentRef.body) return null;
+    if (!Observer || !documentRef.body) return null;
     const observer = new Observer((mutations) => mutations.forEach((mutation) => {
-      if (mutation.type === 'characterData') translateTextNode(mutation.target, resolved);
-      if (mutation.type === 'attributes') translateElement(mutation.target, resolved);
+      if (mutation.type === 'characterData') translateTextNode(mutation.target, currentLocale);
+      if (mutation.type === 'attributes') translateElement(mutation.target, currentLocale);
       mutation.addedNodes.forEach((node) => {
-        if (node.nodeType === 3) translateTextNode(node, resolved);
-        else if (node.nodeType === 1) translateElement(node, resolved);
+        if (node.nodeType === 3) translateTextNode(node, currentLocale);
+        else if (node.nodeType === 1) translateElement(node, currentLocale);
       });
     }));
     observer.observe(documentRef.body, {
@@ -174,5 +212,5 @@
     }
   }
 
-  return { EN, resolveLocale, translate, translateElement, localizeDocument, observeDocument };
+  return { EN, resolveLocale, translate, translateElement, localizeDocument, setLocale, observeDocument };
 });

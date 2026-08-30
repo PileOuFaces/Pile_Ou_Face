@@ -85,6 +85,9 @@ function _applySettings(settings) {
     if (el.type === 'checkbox') el.checked = settings[key] === true;
     else el.value = String(settings[key]);
   });
+  if (settings.lang && window.POFI18n?.setLocale) {
+    window.POFI18n.setLocale(settings.lang);
+  }
   renderStaticFeatureSettings(settings);
   syncStaticInterfaceModeControls(settings);
   if (settings.codeFontSize) {
@@ -278,6 +281,10 @@ function _scheduleSave() {
 document.querySelectorAll('#panel-options [data-key]').forEach((el) => {
   el.addEventListener('change', _scheduleSave);
   el.addEventListener('input', _scheduleSave);
+});
+
+document.getElementById('settingLang')?.addEventListener('change', (event) => {
+  window.POFI18n?.setLocale(event.target.value);
 });
 
 document.querySelectorAll('[data-interface-mode]').forEach((btn) => {
