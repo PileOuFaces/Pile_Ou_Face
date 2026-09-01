@@ -95,6 +95,35 @@ describe('webview i18n', () => {
     ]);
   });
 
+  it('catalogs dynamic analysis labels emitted by JavaScript controllers', () => {
+    const labels = {
+      'Auto-triage en cours': 'Auto-triage in progress',
+      'Recherche…': 'Searching…',
+      'Chargement sections…': 'Loading sections…',
+      'Chargement infos…': 'Loading information…',
+      'Chargement symboles…': 'Loading symbols…',
+      'Chargement strings…': 'Loading strings…',
+      'Chargement des strings…': 'Loading strings…',
+      'Chargement CFG…': 'Loading CFG…',
+      'Chargement call graph…': 'Loading call graph…',
+      'Chargement exports…': 'Loading exports…',
+      "Chargement gestionnaires d'exceptions…": 'Loading exception handlers…',
+      'Code source détecté — analyse enrichie activée.': 'Source code detected — enriched analysis enabled.',
+      'Recherche impossible.': 'Search failed.',
+      'Confiance de découverte': 'Discovery confidence',
+      'Prévisualisation du type…': 'Previewing type…',
+    };
+
+    Object.entries(labels).forEach(([source, expected]) => {
+      expect(i18n.translate(source, 'en')).to.equal(expected);
+    });
+
+    expect(i18n.translate('39 fonctions · 0 chaude(s) · page 1/1', 'en'))
+      .to.equal('39 functions · 0 hot · page 1/1');
+    expect(i18n.translate('2 fonction(s) pertinente(s) parmi 39 candidates.', 'en'))
+      .to.equal('2 function(s) relevant among 39 candidates.');
+  });
+
   it('localizes the Options and Account panels', () => {
     const extensionRoot = path.resolve(__dirname, '../..');
     const panelSources = ['panel-options.html', 'panel-account.html']
