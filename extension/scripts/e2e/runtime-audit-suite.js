@@ -832,9 +832,9 @@ async function run() {
         await hub.autoTriageButton().click();
         await hub.autoTriageModal().waitFor({ state: 'visible' });
         await hub.autoTriageConfirmButton().click();
-        await hub.autoTriageState().waitForText('Terminé', 30000);
+        await hub.autoTriageState().waitForText('Completed', 30000);
         await hub.autoTriageResult().waitFor({ state: 'visible' });
-        await hub.autoTriageResultTitle().waitForText('Dernier auto-triage terminé', 30000);
+        await hub.autoTriageResultTitle().waitForText('Latest auto-triage completed', 30000);
         assert.equal(await hub.autoTriageModal().getAttribute('hidden'), '', 'confirmation modal must stay closed after success');
         assert.equal(attempt, 3, 'one timeout, one cancelled run and one successful resume must execute');
       });
