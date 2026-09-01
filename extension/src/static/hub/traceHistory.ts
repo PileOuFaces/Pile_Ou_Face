@@ -258,7 +258,7 @@ function createTraceHistory({
     openDynamicTraceHistory: async (message) => {
       const requestedTracePath = String(message.tracePath || '').trim();
       if (!isManagedDynamicTracePath(requestedTracePath) || !fs.existsSync(requestedTracePath)) {
-        vscode.window.showErrorMessage('Trace historique introuvable.');
+        vscode.window.showErrorMessage('Historical trace not found.');
         postDynamicTraceHistory();
         return;
       }

@@ -910,11 +910,11 @@ function staticHandlers(config) {
         }
         if (!consented) {
           const choice = await vscode.window.showWarningMessage(
-            `Le plugin ${pluginId} demande l’envoi de données à "${provider}" pour ${followup.capability}. Continuer ?`,
+            `Plugin ${pluginId} wants to send data to "${provider}" for ${followup.capability}. Continue?`,
             { modal: true },
-            'Autoriser',
+            'Allow',
           );
-          if (choice !== 'Autoriser') throw new Error('Appel IA plugin annulé : consentement refusé.');
+          if (choice !== 'Allow') throw new Error('Plugin AI call cancelled: consent was denied.');
           await runPython(['backends/mcp/ai_consent.py', '--provider', provider, '--grant']);
         }
 
@@ -1200,12 +1200,12 @@ function staticHandlers(config) {
           canSelectFiles: true,
           canSelectFolders: true,
           canSelectMany: false,
-          openLabel: 'Installer le plugin',
+          openLabel: 'Install plugin',
           defaultUri: vscode.Uri.file(getPreferredPluginArtifactDir('plugins')),
           filters: {
             'Plugin bundle': ['pofplug', 'zip'],
           },
-          title: 'Sélectionner un plugin compilé ou un dossier plugin',
+          title: 'Select a compiled plugin or plugin folder',
         });
         if (!Array.isArray(picked) || !picked.length) {
           panel.webview.postMessage({
@@ -1588,11 +1588,11 @@ function staticHandlers(config) {
       }
       if (!consented) {
         const choice = await vscode.window.showWarningMessage(
-          `Le code de ce binaire sera envoyé à "${provider}" pour analyse. Continuer ?`,
+          `This binary's code will be sent to "${provider}" for analysis. Continue?`,
           { modal: true },
-          'Autoriser',
+          'Allow',
         );
-        if (choice !== 'Autoriser') {
+        if (choice !== 'Allow') {
           fail('Triage annulé : consentement refusé.');
           return;
         }
@@ -1710,7 +1710,7 @@ function staticHandlers(config) {
     hubAutoTriageOpenReport: async (message = {}) => {
       const reportPath = String(message.reportPath || '').trim();
       if (!reportPath || !fs.existsSync(reportPath)) {
-        vscode.window.showErrorMessage('Rapport de triage introuvable.');
+        vscode.window.showErrorMessage('Triage report not found.');
         return;
       }
       const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(reportPath));
@@ -1719,17 +1719,17 @@ function staticHandlers(config) {
     hubAutoTriageExportReport: async (message = {}) => {
       const reportPath = String(message.reportPath || '').trim();
       if (!reportPath || !fs.existsSync(reportPath)) {
-        vscode.window.showErrorMessage('Rapport de triage introuvable.');
+        vscode.window.showErrorMessage('Triage report not found.');
         return;
       }
       const destination = await vscode.window.showSaveDialog({
         defaultUri: vscode.Uri.file(path.basename(reportPath)),
         filters: { Markdown: ['md'] },
-        saveLabel: 'Exporter le rapport',
+        saveLabel: 'Export report',
       });
       if (!destination) return;
       await fs.promises.copyFile(reportPath, destination.fsPath);
-      vscode.window.showInformationMessage(`Rapport exporté : ${destination.fsPath}`);
+      vscode.window.showInformationMessage(`Report exported: ${destination.fsPath}`);
     },
     hubAutoTriageGetReport: async (message = {}) => {
       const binaryPath = String(message.binaryPath || '').trim();
@@ -1773,7 +1773,7 @@ function staticHandlers(config) {
       }[lang] || { 'Source': ['c', 'cpp', 'rs', 'go'] };
       const picked = await vscode.window.showOpenDialog({
         canSelectFiles: true, canSelectFolders: false, canSelectMany: false,
-        openLabel: 'Choisir le fichier source',
+        openLabel: 'Choose source file',
         defaultUri: vscode.Uri.file(root),
         filters,
       });
@@ -1790,8 +1790,8 @@ function staticHandlers(config) {
       const suggested = ext ? `${stem}.${ext}` : stem;
       const saved = await vscode.window.showSaveDialog({
         defaultUri: vscode.Uri.file(path.join(root, suggested)),
-        filters: ext ? { 'Binaire': [ext] } : { 'Binaire': ['*'] },
-        title: 'Chemin du binaire de sortie',
+        filters: ext ? { 'Binary': [ext] } : { 'Binary': ['*'] },
+        title: 'Output binary path',
       });
       panel.webview.postMessage({
         type: 'compilerBrowseOutputResult',
@@ -1898,11 +1898,11 @@ function staticHandlers(config) {
       }
       if (!consented) {
         const choice = await vscode.window.showWarningMessage(
-          `Le pseudo-code de cette fonction sera envoyé à "${provider}" pour proposer des annotations. Continuer ?`,
+          `This function's pseudocode will be sent to "${provider}" to suggest annotations. Continue?`,
           { modal: true },
-          'Autoriser',
+          'Allow',
         );
-        if (choice !== 'Autoriser') {
+        if (choice !== 'Allow') {
           respond(false, 'Augmentation annulée : consentement refusé.');
           return;
         }
@@ -2392,11 +2392,11 @@ function staticHandlers(config) {
       }
       if (!consented) {
         const choice = await vscode.window.showWarningMessage(
-          `La question et les preuves d’analyse seront envoyées à "${provider}" pour classer les fonctions. Continuer ?`,
+          `The question and analysis evidence will be sent to "${provider}" to rank functions. Continue?`,
           { modal: true },
-          'Autoriser',
+          'Allow',
         );
-        if (choice !== 'Autoriser') {
+        if (choice !== 'Allow') {
           respond(false, 'Recherche annulée : consentement refusé.');
           return;
         }

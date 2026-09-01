@@ -230,7 +230,7 @@ function createHub(config) {
 
   context.subscriptions.push(vscode.commands.registerCommand('pileOuFace.perfSnapshot', () => {
     if (!perfDiagnosticsEnabled()) {
-      vscode.window.showInformationMessage('Diagnostics performance Pile ou Face désactivés. Activez pileOuFace.perfDiagnostics pour capturer un snapshot.');
+      vscode.window.showInformationMessage('Pile ou Face performance diagnostics are disabled. Enable pileOuFace.perfDiagnostics to capture a snapshot.');
       return;
     }
     const mem = process.memoryUsage();
@@ -280,7 +280,7 @@ function createHub(config) {
     if (options.autoTriageBinary) pendingAutoTriageBinary = String(options.autoTriageBinary);
     const folders = vscode.workspace.workspaceFolders;
     if (!folders || folders.length === 0) {
-      vscode.window.showErrorMessage('Aucun workspace ouvert.');
+      vscode.window.showErrorMessage('No workspace is open.');
       return null;
     }
     const workspaceRoot = folders[0].uri.fsPath;
@@ -1366,7 +1366,7 @@ function createHub(config) {
           }
           if (useExistingBinary && !binaryPath) {
             runTelemetry.fail('invalid_input');
-            vscode.window.showErrorMessage('Chemin binaire requis.');
+            vscode.window.showErrorMessage('A binary path is required.');
             return;
           }
           if (!useExistingBinary && !sourcePath) {
@@ -1448,7 +1448,7 @@ function createHub(config) {
           }
           if (injectArgv && payloadHex && hexContainsNullByte(payloadHex)) {
             runTelemetry.fail('invalid_input');
-            vscode.window.showErrorMessage('Payload invalide pour argv[1]: contient un octet NUL. Utilisez stdin ou Fichier.');
+            vscode.window.showErrorMessage('Invalid argv[1] payload: it contains a NUL byte. Use stdin or File instead.');
             return;
           }
           logChannel.appendLine(`[payload] runTrace mode=${stagedInputFile ? 'file' : inputMeta.mode} target=${payloadTarget} inject=${injectPayload} size=${payloadHex ? payloadHex.length / 2 : payloadString.length} hex=${payloadHex ? payloadHex.slice(0, 160) : ''}`);

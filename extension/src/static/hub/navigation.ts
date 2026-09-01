@@ -72,7 +72,7 @@ function createNavigation({
   }) => {
     const normalized = normalizeAddress(addr);
     if (!normalized) {
-      throw new Error('Adresse invalide.');
+      throw new Error('Invalid address.');
     }
     const { mapping, mappingPath, disasmPath } = await resolveDisasmMappingContext({
       binaryPath,
@@ -85,7 +85,7 @@ function createNavigation({
       ? findDisasmMappingEntryByAddress(mapping.lines, normalized.norm)
       : await findMappingEntryByAddr(mappingPath, normalized.norm);
     if (!entry || typeof entry.line !== 'number') {
-      throw new Error(`Adresse ${normalized.norm} introuvable dans le désassemblage.`);
+      throw new Error(`Address ${normalized.norm} was not found in the disassembly.`);
     }
     if (syncHex) {
       panel.webview.postMessage({
@@ -111,7 +111,7 @@ function createNavigation({
       const symbolName = message.symbol || 'main';
       let addrVal = null;
       if (!exists || isDirectory) {
-        vscode.window.showErrorMessage(`Binaire introuvable: ${absPath}`);
+        vscode.window.showErrorMessage(`Binary not found: ${absPath}`);
         return;
       }
       if (symbolName === '__entry__') {
@@ -119,7 +119,7 @@ function createNavigation({
           const info = await loadBinaryHeaders(absPath);
           const entry = (info.entry || '').trim();
           if (!entry) {
-            vscode.window.showWarningMessage('Entry point non trouvé dans les headers.');
+            vscode.window.showWarningMessage('Entry point not found in the headers.');
             return;
           }
           addrVal = parseInt(entry.replace(/^0x/, ''), 16);
@@ -144,15 +144,15 @@ function createNavigation({
           }
           if (!sym) {
             const hint = symbolName === '_start' && isMachOFormat(info)
-              ? ' (sur Mach-O, utilisez plutôt « Aller à l\'entry point »)'
+              ? ' (on Mach-O, use "Go to entry point" instead)'
               : '';
-            vscode.window.showWarningMessage(`Symbole ${symbolName} non trouvé.${hint}`);
+            vscode.window.showWarningMessage(`Symbol ${symbolName} not found.${hint}`);
             return;
           }
           if (!addrVal && sym.addr) addrVal = parseInt(sym.addr, 16);
           addrVal = parseInt(sym.addr, 16);
         } catch (err) {
-          vscode.window.showErrorMessage(`Aller à ${symbolName}: ${err.message}`);
+          vscode.window.showErrorMessage(`Go to ${symbolName}: ${err.message}`);
           return;
         }
       }
@@ -163,7 +163,7 @@ function createNavigation({
           logPrefix: 'GoToSymbol',
         });
       } catch (err) {
-        vscode.window.showErrorMessage(`Aller à ${symbolName}: ${err.message}`);
+        vscode.window.showErrorMessage(`Go to ${symbolName}: ${err.message}`);
       }
       return;
     },
@@ -185,7 +185,7 @@ function createNavigation({
       if (artifacts?.binaryMeta?.kind === 'raw') {
         const baseAddr = parseIntLiteral(artifacts.binaryMeta.rawConfig?.baseAddr || '0');
         if (baseAddr == null) {
-          vscode.window.showInformationMessage(`Impossible de convertir l'offset ${fileOffsetStr} pour ce blob brut.`);
+          vscode.window.showInformationMessage(`Unable to convert offset ${fileOffsetStr} for this raw blob.`);
           return;
         }
         const addr = `0x${(baseAddr + fileOffset).toString(16)}`;
@@ -228,11 +228,11 @@ function createNavigation({
               });
             }
           } else {
-            vscode.window.showInformationMessage(`Offset ${fileOffsetStr} : pas d'adresse virtuelle (section non chargée ou binaire non-ELF).`);
+            vscode.window.showInformationMessage(`Offset ${fileOffsetStr}: no virtual address (unloaded section or non-ELF binary).`);
             return;
           }
         } catch (_) {
-          vscode.window.showInformationMessage(`Impossible de convertir l'offset ${fileOffsetStr} en adresse virtuelle.`);
+          vscode.window.showInformationMessage(`Unable to convert offset ${fileOffsetStr} to a virtual address.`);
           return;
         }
       }

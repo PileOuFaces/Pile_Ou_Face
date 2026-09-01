@@ -320,26 +320,26 @@ function sharedHandlers(ctx) {
 
   const handleMissingBinarySelection = async (binaryPath) => {
     const target = String(binaryPath || '').trim();
-    const displayName = path.basename(target) || target || 'ce fichier';
+    const displayName = path.basename(target) || target || 'this file';
     const answer = await vscode.window.showWarningMessage(
-      `${displayName} est introuvable. Voulez-vous retirer cette entrée des récents et nettoyer les fichiers générés obsolètes ?`,
+      `${displayName} was not found. Remove this entry from recent files and clean up stale generated files?`,
       { modal: true },
-      'Retirer seulement',
-      'Retirer et nettoyer',
-      'Annuler'
+      'Remove only',
+      'Remove and clean up',
+      'Cancel'
     );
-    if (!answer || answer === 'Annuler') return null;
+    if (!answer || answer === 'Cancel') return null;
     forgetRecentBinary(target);
     if (context) await forgetRecentBinaryState(context, target);
     await Promise.resolve(clearRawProfile?.(target));
-    if (answer === 'Retirer et nettoyer') {
+    if (answer === 'Remove and clean up') {
       await patchHistoryBridge.deleteHistory(target);
       const result = fileManager.cleanupForBinary(storageDir || root, target, {
         purgeStale: true,
         root,
       });
       if (result.total > 0) {
-        vscode.window.showInformationMessage(`Reverse Workspace : ${result.total} fichier(s) généré(s) supprimé(s).`);
+        vscode.window.showInformationMessage(`Reverse Workspace: ${result.total} generated file(s) removed.`);
       }
       panel.webview.postMessage({ type: 'refreshGeneratedFiles' });
       panel.webview.postMessage({ type: 'generatedFiles', files: fileManager.listAll(storageDir || root) });
@@ -353,8 +353,8 @@ function sharedHandlers(ctx) {
     const pickedArch = await vscode.window.showQuickPick(
       RAW_ARCH_ITEMS.map((item) => ({ ...item, picked: item.value === defaultArch })),
       {
-        title: `Blob brut — architecture (${path.basename(binaryPath)})`,
-        placeHolder: 'Choisissez l’architecture à utiliser pour le désassemblage',
+        title: `Raw blob — architecture (${path.basename(binaryPath)})`,
+        placeHolder: 'Choose the architecture to use for disassembly',
       }
     );
     if (!pickedArch) return null;
@@ -362,15 +362,15 @@ function sharedHandlers(ctx) {
     let pickedEndianValue = 'little';
     if (!pickedArch.value.startsWith('i386')) {
       const endianItems = [
-        { label: 'Little-endian', description: 'Ordre d’octets le plus courant', value: 'little' },
-        { label: 'Big-endian', description: 'Utile pour certains firmwares et blobs réseau', value: 'big' },
+        { label: 'Little-endian', description: 'The most common byte order', value: 'little' },
+        { label: 'Big-endian', description: 'Useful for some firmware and network blobs', value: 'big' },
       ];
       const defaultEndian = preset?.endian || 'little';
       const pickedEndian = await vscode.window.showQuickPick(
         endianItems.map((item) => ({ ...item, picked: item.value === defaultEndian })),
         {
-          title: `Blob brut — endianness (${path.basename(binaryPath)})`,
-          placeHolder: 'Choisissez l’endianness du blob brut',
+          title: `Raw blob — endianness (${path.basename(binaryPath)})`,
+          placeHolder: 'Choose the raw blob endianness',
         }
       );
       if (!pickedEndian) return null;
@@ -378,15 +378,15 @@ function sharedHandlers(ctx) {
     }
 
     const baseAddr = await vscode.window.showInputBox({
-      title: `Blob brut — adresse de base (${path.basename(binaryPath)})`,
-      prompt: 'Adresse virtuelle de base (ex: 0x401000)',
+      title: `Raw blob — base address (${path.basename(binaryPath)})`,
+      prompt: 'Virtual base address (for example: 0x401000)',
       value: preset?.baseAddr || '0x0',
       validateInput: (value) => {
         const text = String(value || '').trim();
-        if (!text) return 'Adresse requise.';
+        if (!text) return 'An address is required.';
         if (/^0x[0-9a-f]+$/i.test(text)) return null;
         if (/^\d+$/.test(text)) return null;
-        return 'Entrez une adresse en hexadécimal (0x...) ou en décimal.';
+        return 'Enter a hexadecimal (0x...) or decimal address.';
       },
     });
     if (baseAddr == null) return null;
@@ -454,19 +454,19 @@ function sharedHandlers(ctx) {
         const reuseChoice = await vscode.window.showQuickPick(
           [
             {
-              label: 'Utiliser le profil enregistré',
+              label: 'Use the saved profile',
               description: `${existingRawProfile.arch} · ${existingRawProfile.endian} · ${existingRawProfile.baseAddr}`,
               value: 'reuse',
             },
             {
-              label: 'Reconfigurer le blob',
-              description: 'Changer architecture, endianness ou base virtuelle',
+              label: 'Reconfigure the blob',
+              description: 'Change the architecture, endianness, or virtual base address',
               value: 'reconfigure',
             },
           ],
           {
-            title: `Blob brut — profil existant (${path.basename(normalizedBinaryPath)})`,
-            placeHolder: 'Choisissez le profil à appliquer à ce blob brut',
+            title: `Raw blob — existing profile (${path.basename(normalizedBinaryPath)})`,
+            placeHolder: 'Choose the profile to apply to this raw blob',
           }
         );
         if (!reuseChoice) return null;
@@ -480,12 +480,12 @@ function sharedHandlers(ctx) {
     }
     if (!rawProfile) {
       const answer = await vscode.window.showWarningMessage(
-        `${path.basename(normalizedBinaryPath)} n'est pas reconnu comme ELF, PE ou Mach-O. Voulez-vous l'ouvrir comme blob brut ?`,
+        `${path.basename(normalizedBinaryPath)} is not recognized as ELF, PE, or Mach-O. Open it as a raw blob?`,
         { modal: true },
-        'Configurer le blob',
-        'Annuler'
+        'Configure the blob',
+        'Cancel'
       );
-      if (answer !== 'Configurer le blob') return null;
+      if (answer !== 'Configure the blob') return null;
       rawProfile = await promptRawProfile(normalizedBinaryPath, null);
       if (!rawProfile) return null;
     }
@@ -508,10 +508,10 @@ function sharedHandlers(ctx) {
     },
     requestBinarySelection: async () => {
       const binaryUri = await vscode.window.showOpenDialog({
-        title: 'Choisir le fichier de travail à analyser',
+        title: 'Choose the working file to analyze',
         defaultUri: vscode.Uri.file(root),
         canSelectMany: false,
-        filters: { 'Tous les fichiers': ['*'] }
+        filters: { 'All files': ['*'] }
       });
       if (!binaryUri?.length) return;
       const binaryPath = binaryUri[0].fsPath;
@@ -574,13 +574,13 @@ function sharedHandlers(ctx) {
       const target = String(message?.target || 'manual').trim() || 'manual';
       const uri = await vscode.window.showOpenDialog({
         title: target === 'global'
-          ? 'Reverse Workspace — Définir la bibliothèque YARA globale'
-          : 'Reverse Workspace — Sélectionner un fichier .yar ou un dossier de règles',
+          ? 'Reverse Workspace — Set the global YARA library'
+          : 'Reverse Workspace — Select a .yar file or rules folder',
         defaultUri: vscode.Uri.file(root),
         canSelectMany: false,
         canSelectFiles: true,
         canSelectFolders: true,
-        filters: { 'Règles YARA': ['yar', 'yara'], 'Tous': ['*'] }
+        filters: { 'YARA rules': ['yar', 'yara'], 'All files': ['*'] }
       });
       if (uri?.length) {
         const p = uri[0].fsPath;
@@ -596,17 +596,17 @@ function sharedHandlers(ctx) {
     cleanupGeneratedFiles: async (message) => {
       if (message?.confirm) {
         const choice = await vscode.window.showWarningMessage(
-          'Supprimer tous les artifacts et le cache ? Cette action est irréversible.',
+          'Delete all artifacts and cached data? This action cannot be undone.',
           { modal: true },
-          'Supprimer',
-          'Annuler'
+          'Delete',
+          'Cancel'
         );
-        if (choice !== 'Supprimer') return;
+        if (choice !== 'Delete') return;
       }
       const { removedArtifacts, removedCache } = fileManager.cleanupAll(storageDir || root);
       const total = removedArtifacts + removedCache;
       if (total > 0) {
-        vscode.window.showInformationMessage(`Reverse Workspace : ${total} fichier(s) supprimé(s).`);
+        vscode.window.showInformationMessage(`Reverse Workspace: ${total} file(s) removed.`);
       }
       panel.webview.postMessage({ type: 'refreshGeneratedFiles' });
       panel.webview.postMessage({ type: 'generatedFiles', files: fileManager.listAll(storageDir || root) });
@@ -617,14 +617,14 @@ function sharedHandlers(ctx) {
       const removed = removedFiles + removedPatches;
       vscode.window.showInformationMessage(
         removed > 0
-          ? `Reverse Workspace : ${removed} entrée(s) de cache obsolète(s) supprimée(s).`
-          : 'Reverse Workspace : aucune entrée de cache obsolète trouvée.'
+          ? `Reverse Workspace: ${removed} stale cache entry or entries removed.`
+          : 'Reverse Workspace: no stale cache entries found.'
       );
       panel.webview.postMessage({ type: 'refreshGeneratedFiles' });
       panel.webview.postMessage({ type: 'generatedFiles', files: fileManager.listAll(storageDir || root) });
     },
     hubError: (message) => {
-      vscode.window.showErrorMessage(message.message || 'Erreur');
+      vscode.window.showErrorMessage(message.message || 'Error');
     },
     hubLoadChatHistory: async () => {
       try {
@@ -660,7 +660,7 @@ function sharedHandlers(ctx) {
         const annotations = await annotationsBridge.loadAnnotations(binaryPath);
         panel.webview.postMessage(buildAnnotationsMessage(binaryPath, annotations));
       } catch (err) {
-        vscode.window.showErrorMessage(`Impossible de charger les annotations : ${err?.message || err}`);
+        vscode.window.showErrorMessage(`Unable to load annotations: ${err?.message || err}`);
       }
     },
     hubSaveAnnotation: async (message) => {
@@ -670,9 +670,9 @@ function sharedHandlers(ctx) {
       try {
         const { annotations, overlay } = await annotationsBridge.saveAnnotation(binaryPath, normAddr, { comment, name });
         notifyAnnotations(binaryPath, annotations, overlay);
-        vscode.window.showInformationMessage(`Annotation enregistrée pour ${normAddr}`);
+        vscode.window.showInformationMessage(`Annotation saved for ${normAddr}`);
       } catch (err) {
-        vscode.window.showErrorMessage(`Impossible d'enregistrer l'annotation : ${err?.message || err}`);
+        vscode.window.showErrorMessage(`Unable to save the annotation: ${err?.message || err}`);
       }
     },
     hubSaveFunctionReview: async (message) => {
@@ -683,7 +683,7 @@ function sharedHandlers(ctx) {
         const { annotations, overlay } = await annotationsBridge.saveFunctionReview(binaryPath, normAddr, { reviewStatus, reviewNotes });
         notifyAnnotations(binaryPath, annotations, overlay);
       } catch (err) {
-        vscode.window.showErrorMessage(`Impossible d'enregistrer la revue : ${err?.message || err}`);
+        vscode.window.showErrorMessage(`Unable to save the review: ${err?.message || err}`);
       }
     },
     hubSaveBookmark: async (message) => {
@@ -697,7 +697,7 @@ function sharedHandlers(ctx) {
         const { annotations, overlay } = await annotationsBridge.saveBookmark(binaryPath, normAddr, { label: resolvedLabel, color: resolvedColor });
         notifyAnnotations(binaryPath, annotations, overlay);
       } catch (err) {
-        vscode.window.showErrorMessage(`Impossible d'enregistrer le bookmark : ${err?.message || err}`);
+        vscode.window.showErrorMessage(`Unable to save the bookmark: ${err?.message || err}`);
       }
     },
     hubDeleteBookmark: async (message) => {
@@ -708,7 +708,7 @@ function sharedHandlers(ctx) {
         const { annotations, overlay } = await annotationsBridge.deleteBookmark(binaryPath, normAddr);
         notifyAnnotations(binaryPath, annotations, overlay);
       } catch (err) {
-        vscode.window.showErrorMessage(`Impossible de supprimer le bookmark : ${err?.message || err}`);
+        vscode.window.showErrorMessage(`Unable to delete the bookmark: ${err?.message || err}`);
       }
     },
     hubClearBookmarks: async (message) => {
@@ -718,7 +718,7 @@ function sharedHandlers(ctx) {
         const { annotations, overlay } = await annotationsBridge.clearBookmarks(binaryPath);
         notifyAnnotations(binaryPath, annotations, overlay);
       } catch (err) {
-        vscode.window.showErrorMessage(`Impossible d'effacer les bookmarks : ${err?.message || err}`);
+        vscode.window.showErrorMessage(`Unable to clear the bookmarks: ${err?.message || err}`);
       }
     },
     hubDeleteAnnotation: async (message) => {
@@ -729,7 +729,7 @@ function sharedHandlers(ctx) {
         const { annotations, overlay } = await annotationsBridge.deleteAnnotation(binaryPath, normAddr);
         notifyAnnotations(binaryPath, annotations, overlay);
       } catch (err) {
-        vscode.window.showErrorMessage(`Impossible de supprimer l'annotation : ${err?.message || err}`);
+        vscode.window.showErrorMessage(`Unable to delete the annotation: ${err?.message || err}`);
       }
     },
     hubRejectAiAnnotations: async (message) => {
@@ -740,7 +740,7 @@ function sharedHandlers(ctx) {
         const { annotations, overlay } = await annotationsBridge.rejectAiAnnotations(binaryPath, normAddr);
         notifyAnnotations(binaryPath, annotations, overlay);
       } catch (err) {
-        vscode.window.showErrorMessage(`Impossible de rejeter les suggestions IA : ${err?.message || err}`);
+        vscode.window.showErrorMessage(`Unable to reject the AI suggestions: ${err?.message || err}`);
       }
     },
     hubValidateAiAnnotations: async (message) => {
@@ -751,7 +751,7 @@ function sharedHandlers(ctx) {
         const { annotations, overlay } = await annotationsBridge.validateAiAnnotations(binaryPath, normAddr);
         notifyAnnotations(binaryPath, annotations, overlay);
       } catch (err) {
-        vscode.window.showErrorMessage(`Impossible de valider les suggestions IA : ${err?.message || err}`);
+        vscode.window.showErrorMessage(`Unable to approve the AI suggestions: ${err?.message || err}`);
       }
     },
     hubAiProvidersGet: () => {
@@ -789,7 +789,7 @@ function sharedHandlers(ctx) {
         try {
           const setResult = JSON.parse(stdout || '{}');
           if (!setResult.ok) {
-            panel.webview.postMessage({ type: 'hubError', message: String(setResult.error || 'Erreur inconnue') });
+            panel.webview.postMessage({ type: 'hubError', message: String(setResult.error || 'Unknown error') });
             return;
           }
         } catch (_) {
@@ -802,7 +802,7 @@ function sharedHandlers(ctx) {
             const listResult = JSON.parse(stdout2 || '{}');
             panel.webview.postMessage({ type: 'hubAiProvidersResult', data: listResult });
           } catch (_) {
-            panel.webview.postMessage({ type: 'hubAiProvidersResult', data: { error: 'Mise à jour enregistrée — actualisation échouée' } });
+            panel.webview.postMessage({ type: 'hubAiProvidersResult', data: { error: 'Update saved — refresh failed' } });
           }
         });
       });
@@ -830,8 +830,8 @@ function sharedHandlers(ctx) {
           if (found) {
             vscode.window.showInformationMessage(
               found.configured
-                ? `AI Provider "${provider}" : clé configurée (modèle : ${found.model || '—'})`
-                : `AI Provider "${provider}" : aucune clé configurée`
+                ? `AI provider "${provider}": key configured (model: ${found.model || '—'})`
+                : `AI provider "${provider}": no key configured`
             );
           }
         } catch (_) {
@@ -866,7 +866,7 @@ function sharedHandlers(ctx) {
           } catch (_) {
             panel.webview.postMessage({
               type: 'hubError',
-              message: 'Provider par défaut enregistré, réponse illisible.',
+              message: 'Default provider saved, but the response could not be read.',
             });
           }
         },
@@ -1010,18 +1010,18 @@ function sharedHandlers(ctx) {
         [
           {
             label: 'Markdown',
-            description: 'Lisible, partageable et compatible avec les outils de documentation',
+            description: 'Readable, shareable, and compatible with documentation tools',
             value: 'markdown',
           },
           {
             label: 'JSON',
-            description: 'Structuré avec métadonnées, modèles et consommation de tokens',
+            description: 'Structured with metadata, models, and token usage',
             value: 'json',
           },
         ],
         {
-          title: 'Exporter la conversation IA',
-          placeHolder: 'Choisir un format',
+          title: 'Export the AI conversation',
+          placeHolder: 'Choose a format',
         },
       );
       if (!selected) return;
@@ -1042,7 +1042,7 @@ function sharedHandlers(ctx) {
       const content = format === 'json' ? `${JSON.stringify(json, null, 2)}\n` : markdown;
       fs.writeFileSync(uri.fsPath, content, 'utf8');
       vscode.window.showInformationMessage(
-        `Conversation exportée : ${path.basename(uri.fsPath)}`,
+        `Conversation exported: ${path.basename(uri.fsPath)}`,
       );
     },
     hubExportData: async (message) => {
@@ -1074,7 +1074,7 @@ function sharedHandlers(ctx) {
         content = [headers.join(','), ...rows.map(csvRow)].join('\n');
       }
       fs.writeFileSync(uri.fsPath, content, 'utf8');
-      vscode.window.showInformationMessage(`Exporté : ${path.basename(uri.fsPath)}`);
+      vscode.window.showInformationMessage(`Exported: ${path.basename(uri.fsPath)}`);
     },
   };
 }

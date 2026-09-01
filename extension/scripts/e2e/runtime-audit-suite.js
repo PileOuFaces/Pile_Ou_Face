@@ -625,7 +625,7 @@ async function run() {
         await hub.openPanel('dashboard');
         await hub.openPanel('options');
         await hub.aiProviderCard('openai').waitFor({ state: 'visible', timeout: 30000 });
-        await hub.aiProviderStatus('openai').waitForText('Non configuré', 30000);
+        await hub.aiProviderStatus('openai').waitForText(english ? 'Not configured' : 'Non configuré', 30000);
         await hub.aiProviderKey('openai').fill('e2e-cloud-key');
         await hub.aiProviderModel('openai').fill('gpt-e2e-mini');
         await hub.aiProviderSaveButton('openai').click();
@@ -2085,16 +2085,16 @@ async function run() {
         const entries = Array.isArray(items) ? items : [];
         if (title.includes('mode')) return entries.find((item) => item.value === 'local') || entries[0];
         if (title.includes('provider')) return entries.find((item) => item.value === 'local') || entries[0];
-        if (title.includes('finaliser')) return entries.find((item) => item.value === 'save') || entries[0];
+        if (title.includes('finish')) return entries.find((item) => item.value === 'save') || entries[0];
         return entries[0];
       },
       showInputBox: async (options = {}) => {
         const prompt = `${options.title || ''} ${options.prompt || ''}`.toLowerCase();
-        if (prompt.includes('binaire')) return fixture.path;
-        if (prompt.includes('identifiant')) return 'e2e-tool';
-        if (prompt.includes('nom affich')) return 'E2E Tool';
-        if (prompt.includes('commande locale')) return `"${fakeDecompilerPython}" "${fakeDecompilerPath}" --binary {binary} --addr {addr}`;
-        if (prompt.includes('binaire complet')) return '';
+        if (prompt.includes('local command')) return `"${fakeDecompilerPython}" "${fakeDecompilerPath}" --binary {binary} --addr {addr}`;
+        if (prompt.includes('whole binary')) return '';
+        if (prompt.includes('identifier')) return 'e2e-tool';
+        if (prompt.includes('display name')) return 'E2E Tool';
+        if (prompt.includes('binary')) return fixture.path;
         return '0x40';
       },
       showSaveDialog: async () => vscode.Uri.file(exportPath),
@@ -2105,7 +2105,7 @@ async function run() {
         return items[0];
       },
       showWarningMessage: async (message, ...items) => {
-        if (String(message || '').includes('Supprimer')) return items.find((item) => item === 'Supprimer') || 'Supprimer';
+        if (String(message || '').includes('Delete')) return items.find((item) => item === 'Delete') || 'Delete';
         return items.find((item) => item === 'OK') || undefined;
       },
       withProgress: async (_options, task) => task(
