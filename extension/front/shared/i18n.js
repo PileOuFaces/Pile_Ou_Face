@@ -619,6 +619,7 @@
     'Références depuis': 'References from',
     'Références vers': 'References to',
     'Lecture : l’instruction sélectionnée pointe vers les adresses ci-dessous. Clique une cible pour ouvrir le désassemblage à cet endroit.': 'Reading: the selected instruction points to the addresses below. Click a target to open the disassembly there.',
+    "Lecture : l'instruction sélectionnée pointe vers les adresses ci-dessous. Clique une cible pour ouvrir le désassemblage à cet endroit.": 'Reading: the selected instruction points to the addresses below. Click a target to open the disassembly there.',
     'Réessayer': 'Retry',
     'Clic sur une section → désassembler cette section (fichier séparé). Le désasm complet reste intact.': 'Click a section → disassemble that section (separate file). The full disassembly remains unchanged.',
     'bloc(s) — Clic sur une adresse → aller au désassemblage.': 'block(s) — Click an address → go to disassembly.',
