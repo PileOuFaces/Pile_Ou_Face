@@ -268,14 +268,14 @@ function updateDecompileSearchUi(count = null) {
   if (!query) {
     if (prevBtn) prevBtn.disabled = true;
     if (nextBtn) nextBtn.disabled = true;
-    label.textContent = 'Recherche inactive';
+    label.textContent = 'Search inactive';
     return;
   }
   if (typeof resolvedCount === 'number') {
     if (resolvedCount <= 0) {
       if (prevBtn) prevBtn.disabled = true;
       if (nextBtn) nextBtn.disabled = true;
-      label.textContent = 'Aucun hit';
+      label.textContent = 'No matches';
       return;
     }
     const active = Number.isFinite(decompileUiState.activeSearchHit) && decompileUiState.activeSearchHit >= 0
@@ -632,7 +632,7 @@ function requestDecompileForCurrentSelection(options = {}) {
   if (pendingDecompileRequests.has(requestKey)) return;
   pendingDecompileRequests.add(requestKey);
   cancelPendingDecompileHighlight();
-  setStaticLoading('decompileContent', 'Décompilation en cours…');
+  setStaticLoading('decompileContent', 'Decompilation in progress…');
   if (addr) {
     vscode.postMessage({ type: 'hubLoadDecompile', binaryPath: bp, addr, funcName, full: false, decompiler, quality, provider, useCache: useCacheChecked });
   } else {
