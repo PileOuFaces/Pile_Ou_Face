@@ -814,7 +814,7 @@ async function run() {
         await hub.autoTriageModal().waitFor({ state: 'visible' });
         assert.equal(await hub.autoTriageModal().getAttribute('hidden'), null, 'confirmation modal must be open');
         await hub.autoTriageConfirmButton().click();
-        await hub.autoTriageState().waitForText('Échec', 30000);
+        await hub.autoTriageState().waitForText('Failed', 30000);
         await hub.autoTriageHelp().waitForText('Timeout provider après 30 s', 30000);
         assert.equal(await hub.autoTriageModal().getAttribute('hidden'), '', 'confirmation modal must close after the timed-out run starts');
         assert.equal(await hub.autoTriageButton().isEnabled(), true, 'retry must be available after a provider timeout');
@@ -824,17 +824,17 @@ async function run() {
         await hub.autoTriageConfirmButton().click();
         await hub.autoTriageCancelButton().waitFor({ state: 'visible' });
         await hub.autoTriageCancelButton().click();
-        await hub.autoTriageState().waitForText('À reprendre', 30000);
-        await hub.autoTriageResultTitle().waitForText('Analyse interrompue — reprise disponible', 30000);
+        await hub.autoTriageState().waitForText('Resume required', 30000);
+        await hub.autoTriageResultTitle().waitForText('Analysis interrupted — resume available', 30000);
         await hub.autoTriageCancelButton().waitFor({ state: 'hidden', timeout: 30000 });
         assert.equal(await hub.autoTriageButton().isEnabled(), true, 'resume must be available after cancellation');
 
         await hub.autoTriageButton().click();
         await hub.autoTriageModal().waitFor({ state: 'visible' });
         await hub.autoTriageConfirmButton().click();
-        await hub.autoTriageState().waitForText('Terminé', 30000);
+        await hub.autoTriageState().waitForText('Completed', 30000);
         await hub.autoTriageResult().waitFor({ state: 'visible' });
-        await hub.autoTriageResultTitle().waitForText('Dernier auto-triage terminé', 30000);
+        await hub.autoTriageResultTitle().waitForText('Latest auto-triage completed', 30000);
         assert.equal(await hub.autoTriageModal().getAttribute('hidden'), '', 'confirmation modal must stay closed after success');
         assert.equal(attempt, 3, 'one timeout, one cancelled run and one successful resume must execute');
       });
@@ -1435,8 +1435,8 @@ async function run() {
         assert.match(visibleSections, /section\(s\)/);
 
         await hub.openStaticTab('code', 'discovered');
-        const visibleFunctionCount = await hub.binaryFunctionsCount().waitForText('fonction', 30000);
-        assert.match(visibleFunctionCount, /\d+ fonction/);
+        const visibleFunctionCount = await hub.binaryFunctionsCount().waitForText('function', 30000);
+        assert.match(visibleFunctionCount, /\d+ function/);
         await hub.binaryFunctions().waitFor({ state: 'visible', timeout: 30000 });
 
         const functionExportPath = path.join(

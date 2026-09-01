@@ -2108,9 +2108,9 @@ function renderFunctionsWorkspace(rows = [], radar = null, opts = {}) {
         <div class="functions-pagination ${placement === 'top' ? 'top' : 'bottom'}">
           <span class="hint">${escapeHtml(String(pageStart + 1))}-${escapeHtml(String(pageStart + visibleRows.length))} / ${escapeHtml(String(filtered.length))}</span>
           <div class="functions-pagination-actions">
-            <button type="button" class="btn btn-xs btn-secondary" data-functions-page="prev"${currentPage <= 1 ? ' disabled' : ''}>Précédent</button>
+            <button type="button" class="btn btn-xs btn-secondary" data-functions-page="prev"${currentPage <= 1 ? ' disabled' : ''}>Previous</button>
             <span class="functions-pagination-current">Page ${escapeHtml(String(currentPage))} / ${escapeHtml(String(totalPages))}</span>
-            <button type="button" class="btn btn-xs btn-secondary" data-functions-page="next"${currentPage >= totalPages ? ' disabled' : ''}>Suivant</button>
+            <button type="button" class="btn btn-xs btn-secondary" data-functions-page="next"${currentPage >= totalPages ? ' disabled' : ''}>Next</button>
           </div>
         </div>
       `;
@@ -2118,7 +2118,7 @@ function renderFunctionsWorkspace(rows = [], radar = null, opts = {}) {
 
     if (countEl) {
       const hotCount = filtered.filter((entry) => Number(entry.priorityScore || 0) >= 52).length;
-      countEl.textContent = `${filtered.length} fonction(s) · ${hotCount} chaude(s) · page ${currentPage}/${totalPages}`;
+      countEl.textContent = `${filtered.length} function(s) · ${hotCount} hot · page ${currentPage}/${totalPages}`;
     }
 
     const selectedInVisibleRows = getFunctionRowByAddr(functionsUiState.selectedAddr, visibleRows);
@@ -2129,7 +2129,7 @@ function renderFunctionsWorkspace(rows = [], radar = null, opts = {}) {
     }
 
     if (!filtered.length) {
-      container.innerHTML = '<p class="hint">Aucune fonction ne correspond aux filtres actifs.</p>';
+      container.innerHTML = '<p class="hint">No functions match the active filters.</p>';
       renderFunctionDetails(null);
       return;
     }
