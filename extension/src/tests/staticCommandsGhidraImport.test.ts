@@ -50,6 +50,6 @@ describe('static command Ghidra import', () => {
       '--workspace-root', '/storage',
     ]);
     expect(refreshSidebar.calledOnceWith('/tmp/sample.elf')).to.equal(true);
-    expect(showInformationMessage.firstCall.args[0]).to.include('3 importé(s), 1 ignoré(s), 2 conflit(s)');
+    expect(showInformationMessage.firstCall.args[0]).to.include('3 imported, 1 skipped, 2 conflict(s)');
   });
 });

@@ -540,15 +540,15 @@ function createActions({
         ghidra: [
           'macOS :  brew install ghidra && brew install openjdk@21',
           'Windows: winget install NationalSecurityAgency.Ghidra && winget install EclipseAdoptium.Temurin.21.JDK',
-          'Linux  :  téléchargement manuel → https://ghidra-sre.org',
+          'Linux  :  manual download → https://ghidra-sre.org',
         ],
       };
 
       const label = LABELS[tool] || tool;
       const lines = INSTALL_LINES[tool] || [
-        'Décompilateur custom : ajoutez une entrée dans storageUri/decompilers.json.',
-        'Format : {"decompilers":{"mon-outil":{"command":["mon-outil","--binary","{binary}","--addr","{addr}"]}}}',
-        'Fallback Docker : make decompilers-docker-build puis relancez la décompilation.',
+        'Custom decompiler: add an entry to storageUri/decompilers.json.',
+        'Format: {"decompilers":{"my-tool":{"command":["my-tool","--binary","{binary}","--addr","{addr}"]}}}',
+        'Docker fallback: run make decompilers-docker-build, then retry decompilation.',
       ];
       const detail = lines.join('\n');
 
@@ -561,16 +561,16 @@ function createActions({
         installCmd = 'make decompilers-docker-build';
       }
 
-      const buttons = installCmd ? ['Copier la commande', 'Annuler'] : (tool === 'ghidra' ? ['Ouvrir ghidra-sre.org', 'Annuler'] : ['Annuler']);
+      const buttons = installCmd ? ['Copy command', 'Cancel'] : (tool === 'ghidra' ? ['Open ghidra-sre.org', 'Cancel'] : ['Cancel']);
       const answer = await vscode.window.showInformationMessage(
-        `${label} n'est pas installé`,
+        `${label} is not installed`,
         { modal: true, detail },
         ...buttons
       );
-      if (answer === 'Copier la commande' && installCmd) {
+      if (answer === 'Copy command' && installCmd) {
         await vscode.env.clipboard.writeText(installCmd);
-        vscode.window.showInformationMessage(`Commande copiée : ${installCmd}`);
-      } else if (answer === 'Ouvrir ghidra-sre.org') {
+        vscode.window.showInformationMessage(`Command copied: ${installCmd}`);
+      } else if (answer === 'Open ghidra-sre.org') {
         vscode.env.openExternal(vscode.Uri.parse('https://ghidra-sre.org/'));
       }
     },
@@ -592,7 +592,7 @@ function createActions({
           binaryPath: absPath,
           binaryMeta,
           emitProgress: true,
-          progressTitle: `Désassemblage de ${path.basename(absPath)}`,
+          progressTitle: `Disassembling ${path.basename(absPath)}`,
           useCacheDb: binaryMeta?.kind !== 'raw',
         });
         await finalizeDisasmOpen({
@@ -632,23 +632,23 @@ function createActions({
       });
       disasmPath = fallback.disasmPath;
       if (!disasmPath || !fs.existsSync(disasmPath)) {
-        vscode.window.showWarningMessage('Aucun désassemblage trouvé. Ouvrez d\'abord le désassemblage ou sélectionnez un binaire.');
+        vscode.window.showWarningMessage('No disassembly found. Open the disassembly first or select a binary.');
         return;
       }
       const defaultName = path.basename(disasmPath, '.asm').replace('.disasm', '') + '.disasm.txt';
       const defaultPath = path.join(path.dirname(disasmPath), defaultName);
       vscode.window.showSaveDialog({
-        title: 'Exporter le désassemblage',
+        title: 'Export the disassembly',
         defaultUri: vscode.Uri.file(defaultPath),
-        filters: { 'Texte': ['txt'], 'Tous': ['*'] },
+        filters: { 'Text': ['txt'], 'All files': ['*'] },
       }).then(async (saveUri) => {
         if (!saveUri) return;
         try {
           const text = fs.readFileSync(disasmPath, 'utf8');
           await fs.promises.writeFile(saveUri.fsPath, text, 'utf8');
-          vscode.window.showInformationMessage(`Exporté: ${path.basename(saveUri.fsPath)}`);
+          vscode.window.showInformationMessage(`Exported: ${path.basename(saveUri.fsPath)}`);
         } catch (err) {
-          vscode.window.showErrorMessage(`Export échoué: ${err.message}`);
+          vscode.window.showErrorMessage(`Export failed: ${err.message}`);
         }
       });
     },
@@ -714,7 +714,7 @@ function createActions({
       });
       if (!exists || isDirectory) {
         auditPerfStep('hubOpenDisasm.invalidInput', Date.now() - totalStart, auditCommon);
-        vscode.window.showErrorMessage(`Binaire introuvable: ${absPath}`);
+        vscode.window.showErrorMessage(`Binary not found: ${absPath}`);
         return;
       }
       try {
@@ -770,7 +770,7 @@ function createActions({
             syntax: message.syntax || 'intel',
             dwarfLines: artifacts.binaryMeta.kind !== 'raw',
             emitProgress: true,
-            progressTitle: `Désassemblage de ${path.basename(absPath)}`,
+            progressTitle: `Disassembling ${path.basename(absPath)}`,
             useCacheDb: cacheEligible,
             cacheWriteOnly: !useCache,
             forceRebuild: !useCache,
@@ -802,7 +802,7 @@ function createActions({
           ...auditCommon,
           error: err.message || String(err),
         });
-        vscode.window.showErrorMessage(`Désassemblage: ${err.message}`);
+        vscode.window.showErrorMessage(`Disassembly: ${err.message}`);
       }
     },
 
@@ -869,7 +869,7 @@ function createActions({
       const isYara = ruleType === 'yara';
       const picked = await vscode.window.showOpenDialog({
         canSelectMany: true,
-        title: `Importer des règles ${ruleType.toUpperCase()}`,
+        title: `Import ${ruleType.toUpperCase()} rules`,
         filters: isYara
           ? { 'YARA Rules': ['yar', 'yara'] }
           : { 'CAPA Rules': ['yml', 'yaml'] },
@@ -986,7 +986,7 @@ function createActions({
         if (refreshSidebar) refreshSidebar(result.pathForWebview);
         vscode.window.showInformationMessage(`Compilation OK: ${result.pathForWebview}`);
       } catch (err) {
-        vscode.window.showErrorMessage(`Compilation échouée: ${err.message || err}`);
+        vscode.window.showErrorMessage(`Compilation failed: ${err.message || err}`);
       } finally {
         panel.webview.postMessage({ type: 'hubStaticCompileDone' });
       }
@@ -1005,7 +1005,7 @@ function createActions({
       const picked = await vscode.window.showOpenDialog({
         canSelectFiles: true, canSelectMany: false,
         filters: { 'Python': ['py'] },
-        title: 'Charger un script Python',
+        title: 'Load a Python script',
         defaultUri: vscode.Uri.file(path.join(storageDir, 'scripts')),
       });
       if (picked && picked[0]) {
@@ -1020,7 +1020,7 @@ function createActions({
         canSelectFiles: true,
         canSelectMany: false,
         filters: { 'Python': ['py'] },
-        title: 'Importer un script pwntools',
+        title: 'Import a pwntools script',
         defaultUri: vscode.Uri.file(root),
       });
       if (picked && picked[0]) {
@@ -1122,18 +1122,18 @@ function createActions({
         defaultUri: vscode.Uri.file(root),
       };
       if (isBinaryTarget) {
-        dialogOpts.title = 'Sélectionner un binaire (ELF, Mach-O, PE)';
-        dialogOpts.filters = { 'Tous les fichiers': ['*'] };
+        dialogOpts.title = 'Select a binary (ELF, Mach-O, PE)';
+        dialogOpts.filters = { 'All files': ['*'] };
       } else if (isSourceTarget) {
-        dialogOpts.title = 'Sélectionner un fichier source C';
-        dialogOpts.filters = { 'Source C': ['c', 'h'], 'Tous les fichiers': ['*'] };
+        dialogOpts.title = 'Select a C source file';
+        dialogOpts.filters = { 'C source': ['c', 'h'], 'All files': ['*'] };
       } else {
-        dialogOpts.title = 'Sélectionner un fichier';
+        dialogOpts.title = 'Select a file';
       }
       const picked = await vscode.window.showOpenDialog(dialogOpts);
       if (picked && picked[0]) {
         if (isBinaryTarget && !isSupportedBinary(picked[0].fsPath)) {
-          vscode.window.showErrorMessage('Format non supporté — sélectionnez un binaire ELF, Mach-O ou PE.');
+          vscode.window.showErrorMessage('Unsupported format — select an ELF, Mach-O, or PE binary.');
           return;
         }
         panel.webview.postMessage({ type: 'hubPickedFile', target: message.target, path: picked[0].fsPath });
@@ -1167,10 +1167,10 @@ function createActions({
 
     selectRunTraceBinary: async (message) => {
       const binaryUri = await vscode.window.showOpenDialog({
-        title: 'Pile ou Face — Sélectionner le binaire du projet',
+        title: 'Pile ou Face — Select the project binary',
         defaultUri: vscode.Uri.file(root),
         canSelectMany: false,
-        filters: { 'Binaires': ['elf', 'out', 'bin'], 'Tous': ['*'] },
+        filters: { 'Binaries': ['elf', 'out', 'bin'], 'All files': ['*'] },
       });
       if (!binaryUri?.length) return;
       const binaryPath = binaryUri[0].fsPath;
