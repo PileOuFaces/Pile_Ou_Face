@@ -19,6 +19,8 @@ describe('webview i18n', () => {
     expect(i18n.translate('Analyse statique', 'fr')).to.equal('Analyse statique');
     expect(i18n.translate('Analyse statique', 'en')).to.equal('Static analysis');
     expect(i18n.translate('0x401000', 'en')).to.equal('0x401000');
+    expect(i18n.translate('Fonction: malware_entry_point', 'en')).to.equal('Function: malware_entry_point');
+    expect(i18n.translate('Adresse active 0x8049170', 'en')).to.equal('Active address 0x8049170');
   });
 
   it('localizes text and accessible attributes without changing ids or values', () => {
