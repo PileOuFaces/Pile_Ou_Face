@@ -55,6 +55,44 @@ describe('webview i18n', () => {
     expect(document.querySelector('label')?.title).to.equal('Rafraîchir');
   });
 
+  it('localizes runtime labels added after the webview has loaded', async () => {
+    const dom = new JSDOM('<!doctype html><html lang="en"><body><main id="content"></main></body></html>', {
+      pretendToBeVisual: true,
+    });
+    i18n.observeDocument(dom.window.document, 'en');
+
+    const labels = [
+      'IA · à vérifier',
+      'Valider IA',
+      'Rejeter IA',
+      'Modifier',
+      'Aucun bookmark. Ctrl+B dans le désassemblage.',
+      'Utilise Go, les raccourcis ou le sélecteur de symbole pour te déplacer rapidement dans le binaire.',
+      'Actualiser',
+      'Purge obsolète',
+      'Tout nettoyer',
+    ];
+    const content = dom.window.document.getElementById('content') as HTMLElement;
+    labels.forEach((label) => {
+      const element = dom.window.document.createElement('button');
+      element.textContent = label;
+      content.appendChild(element);
+    });
+    await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+
+    expect([...content.children].map((element) => element.textContent)).to.deep.equal([
+      'AI · needs review',
+      'Approve AI',
+      'Reject AI',
+      'Edit',
+      'No bookmarks. Press Ctrl+B in the disassembly.',
+      'Use Go, keyboard shortcuts, or the symbol selector to move quickly through the binary.',
+      'Refresh',
+      'Purge stale entries',
+      'Clean all',
+    ]);
+  });
+
   it('localizes the Options and Account panels', () => {
     const extensionRoot = path.resolve(__dirname, '../..');
     const panelSources = ['panel-options.html', 'panel-account.html']
