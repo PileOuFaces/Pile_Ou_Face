@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
-
 const DEFAULT_TIMEOUT_MS = 1500;
 const DEFAULT_MAX_IN_FLIGHT = 4;
 
@@ -20,7 +18,7 @@ function createTelemetryTransport({
   maxInFlight = DEFAULT_MAX_IN_FLIGHT,
 } = {}) {
   const normalizedEndpoint = normalizeTelemetryEndpoint(endpoint);
-  const controllers = new Set();
+  const controllers = new Set<AbortController>();
   let disposed = false;
 
   async function sendBody(body) {
