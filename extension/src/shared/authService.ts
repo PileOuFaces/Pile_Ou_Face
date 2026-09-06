@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 /**
  * @file authService.ts
  * @brief Authentification avec le serveur POF Auth. Stocke JWT + content_keys dans SecretStorage.
@@ -44,8 +43,67 @@ const SECRET_KEYS = Object.freeze([
 ]);
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 
-function discoverInstalledPluginReleases(searchDirs = []) {
-  const releases = {};
+type ServerIdentity = Awaited<ReturnType<typeof discoverAuthServer>>;
+
+interface SecretStore {
+  get(key: string): PromiseLike<string | undefined>;
+  store(key: string, value: string): PromiseLike<void>;
+  delete(key: string): PromiseLike<void>;
+}
+
+interface AuthServiceOptions {
+  deploymentProfile?: string;
+  pluginSearchDirs?: string[];
+}
+
+interface AuthTokenResponse {
+  access_token: string;
+  refresh_token: string;
+}
+
+interface RefreshTokenResponse {
+  access_token: string;
+  refresh_token?: string;
+}
+
+interface AuthProfile {
+  active_plugin_ids?: unknown[];
+  [key: string]: unknown;
+}
+
+interface PluginArtifact {
+  releaseId: string;
+  ciphertextSha256: string;
+}
+
+interface EnrollmentChallengeResponse {
+  challenge: string;
+  challenge_id: string;
+}
+
+interface LeaseEntry {
+  lease: string;
+  release_id: string;
+  ciphertext_sha256: string;
+  wrapped_dek: string;
+}
+
+interface LeaseResponse {
+  plugins?: Record<string, LeaseEntry>;
+}
+
+interface ServerBinding {
+  profile?: string;
+  origin?: string;
+  namespace?: string;
+}
+
+interface StatusError extends Error {
+  status?: number;
+}
+
+function discoverInstalledPluginReleases(searchDirs: readonly string[] = []): Record<string, string> {
+  const releases: Record<string, string> = {};
   for (const pluginsDir of searchDirs) {
     if (!pluginsDir || !fs.existsSync(pluginsDir)) continue;
     let entries = [];
@@ -66,8 +124,10 @@ function discoverInstalledPluginReleases(searchDirs = []) {
   return releases;
 }
 
-function discoverInstalledPluginArtifacts(searchDirs = []) {
-  const artifacts = {};
+function discoverInstalledPluginArtifacts(
+  searchDirs: readonly string[] = [],
+): Record<string, PluginArtifact> {
+  const artifacts: Record<string, PluginArtifact> = {};
   for (const pluginsDir of searchDirs) {
     if (!pluginsDir || !fs.existsSync(pluginsDir)) continue;
     let entries = [];
@@ -94,7 +154,20 @@ function discoverInstalledPluginArtifacts(searchDirs = []) {
 }
 
 class AuthService {
-  constructor(secrets, serverUrl, options = {}) {
+  declare static _instance: AuthService | null;
+
+  declare private readonly _rawSecrets: SecretStore;
+  declare serverUrl: string;
+  declare readonly deploymentProfile: string;
+  declare private readonly _secretIsolationEnabled: boolean;
+  declare private _secretNamespace: string;
+  declare private readonly secrets: SecretStore;
+  declare private _refreshTimer: NodeJS.Timeout | null;
+  declare pluginSearchDirs: string[];
+  declare private _serverIdentity: ServerIdentity | null | undefined;
+  declare private _jwksCache: { jwks: unknown; fetchedAt: number } | null | undefined;
+
+  constructor(secrets: SecretStore, serverUrl: string, options: AuthServiceOptions = {}) {
     this._rawSecrets = secrets;
     this.serverUrl = serverUrl;
     this.deploymentProfile = String(options.deploymentProfile || '').trim();
@@ -111,7 +184,11 @@ class AuthService {
       : [];
   }
 
-  static getInstance(secrets, serverUrl, options = {}) {
+  static getInstance(
+    secrets: SecretStore,
+    serverUrl: string,
+    options: AuthServiceOptions = {},
+  ): AuthService {
     if (!AuthService._instance) {
       AuthService._instance = new AuthService(secrets, serverUrl, options);
     } else if (serverUrl && serverUrl !== AuthService._instance.serverUrl) {
@@ -126,7 +203,12 @@ class AuthService {
     return AuthService._instance;
   }
 
-  getDeploymentStatus(configuredDeploymentId = '') {
+  getDeploymentStatus(configuredDeploymentId = ''): {
+    profile: string;
+    origin: string;
+    deploymentId: string;
+    verified: boolean;
+  } {
     return {
       profile: this.deploymentProfile,
       origin: String(this._serverIdentity?.origin || this.serverUrl || '').replace(/\/+$/, ''),
@@ -137,13 +219,13 @@ class AuthService {
     };
   }
 
-  async login(email, password) {
+  async login(email: string, password: string): Promise<void> {
     const attempts = this._getCandidateServerUrls();
-    let lastError = null;
+    let lastError: unknown = null;
     for (const baseUrl of attempts) {
       try {
         await this._ensureServerIdentity(baseUrl);
-        const data = await this._postJson(baseUrl, '/auth/login', { email, password });
+        const data = await this._postJson<AuthTokenResponse>(baseUrl, '/auth/login', { email, password });
         this.serverUrl = baseUrl;
         await this._store(data.access_token, data.refresh_token, email);
         await this._syncLicenseLeases(data.access_token);
@@ -156,7 +238,7 @@ class AuthService {
     throw lastError || new Error('Connexion échouée');
   }
 
-  async logout() {
+  async logout(): Promise<void> {
     const refreshToken = await this.secrets.get(KEY_REFRESH_TOKEN);
     if (refreshToken) {
       fetch(`${this.serverUrl}/auth/logout`, {
@@ -182,7 +264,7 @@ class AuthService {
    * lease signé qui les accompagnait. Il n'existe aucune grâce offline après
    * expiration, ni fallback vers un ancien format de licence.
    */
-  async getContentKeys() {
+  async getContentKeys(): Promise<Record<string, string>> {
     const raw = await this.secrets.get(KEY_CONTENT_KEYS);
     if (!raw) { return {}; }
     const expiresAtRaw = await this.secrets.get(KEY_LEASE_EXPIRES_AT);
@@ -191,34 +273,34 @@ class AuthService {
       this._log('lease absent ou expiré — content_keys refusées');
       return {};
     }
-    try { return JSON.parse(raw); }
+    try { return JSON.parse(raw) as Record<string, string>; }
     catch { return {}; }
   }
 
-  async getProfile() {
+  async getProfile(): Promise<AuthProfile | null> {
     const accessToken = await this.secrets.get(KEY_ACCESS_TOKEN);
     if (!accessToken) return null;
     try {
-      return await this._getJsonAuthenticated(this.serverUrl, '/auth/me', accessToken);
+      return await this._getJsonAuthenticated<AuthProfile>(this.serverUrl, '/auth/me', accessToken);
     } catch {
       return null;
     }
   }
 
-  async getEmail() {
+  async getEmail(): Promise<string> {
     return (await this.secrets.get(KEY_EMAIL)) || '';
   }
 
-  async getContentKey(pluginId) {
+  async getContentKey(pluginId: string): Promise<string | null> {
     const keys = await this.getContentKeys();
     return keys[pluginId] ?? null;
   }
 
-  async isAuthenticated() {
+  async isAuthenticated(): Promise<boolean> {
     return !!(await this.secrets.get(KEY_ACCESS_TOKEN));
   }
 
-  async refresh() {
+  async refresh(): Promise<boolean> {
     if (this._secretIsolationEnabled) {
       try { await this._ensureServerIdentity(this.serverUrl); }
       catch { return false; }
@@ -227,7 +309,11 @@ class AuthService {
     if (!refreshToken) { return false; }
     try {
       await this._ensureServerIdentity(this.serverUrl);
-      const data = await this._postJson(this.serverUrl, '/auth/refresh', { refresh_token: refreshToken });
+      const data = await this._postJson<RefreshTokenResponse>(
+        this.serverUrl,
+        '/auth/refresh',
+        { refresh_token: refreshToken },
+      );
       // Le serveur peut faire tourner le refresh token (rotation + détection de
       // réutilisation, cf. Pile_ou_Face_auth#9) — toujours stocker celui renvoyé
       // s'il y en a un, sinon garder l'ancien (compat avec un serveur qui n'a
@@ -239,7 +325,7 @@ class AuthService {
     } catch { return false; }
   }
 
-  async _store(accessToken, refreshToken, email) {
+  private async _store(accessToken: string, refreshToken: string, email?: string): Promise<void> {
     await this.secrets.store(KEY_ACCESS_TOKEN, accessToken);
     await this.secrets.store(KEY_REFRESH_TOKEN, refreshToken);
     if (email) await this.secrets.store(KEY_EMAIL, email);
@@ -252,7 +338,9 @@ class AuthService {
    * - revoked: true si le serveur a répondu 4xx (clés supprimées)
    * En cas d'erreur réseau, retourne { refreshed: false, revoked: false } (mode gracieux).
    */
-  async refreshKeysIfStale(ttlMs = 24 * 3600_000) {
+  async refreshKeysIfStale(
+    ttlMs = 24 * 3600_000,
+  ): Promise<{ refreshed: boolean; revoked: boolean }> {
     const raw = await this.secrets.get(KEY_KEYS_VALIDATED_AT);
     const validatedAt = raw ? Number(raw) : 0;
     const age = Date.now() - validatedAt;
@@ -264,13 +352,20 @@ class AuthService {
       return { refreshed: false, revoked: false };
     }
     try {
-      const data = await this._postJson(this.serverUrl, '/auth/refresh', { refresh_token: refreshToken });
+      const data = await this._postJson<RefreshTokenResponse>(
+        this.serverUrl,
+        '/auth/refresh',
+        { refresh_token: refreshToken },
+      );
       await this._store(data.access_token, data.refresh_token || refreshToken);
       await this._syncLicenseLeases(data.access_token);
       return { refreshed: true, revoked: false };
     } catch (err) {
-      const status = err?.status ?? 0;
-      const isAuthError = (status >= 400 && status < 500) || String(err?.message || '').includes('Auth failed');
+      const status = err instanceof Error && 'status' in err
+        ? Number((err as StatusError).status || 0)
+        : 0;
+      const message = err instanceof Error ? err.message : String(err || '');
+      const isAuthError = (status >= 400 && status < 500) || message.includes('Auth failed');
       if (isAuthError) {
         await this.secrets.delete(KEY_ACCESS_TOKEN);
         await this.secrets.delete(KEY_REFRESH_TOKEN);
@@ -295,11 +390,11 @@ class AuthService {
    * Un échec réseau n'autorise aucune fenêtre supplémentaire : un DEK déjà
    * reçu reste utilisable uniquement jusqu'à l'expiration de son lease.
    */
-  async _syncLicenseLeases(accessToken) {
+  private async _syncLicenseLeases(accessToken: string): Promise<void> {
     if (!accessToken) return;
     try {
       const { deviceId, privateKeyPem, publicKeyPem } = await this._getOrCreateDeviceIdentity();
-      const enrollmentChallenge = await this._postJsonAuthenticated(
+      const enrollmentChallenge = await this._postJsonAuthenticated<EnrollmentChallengeResponse>(
         this.serverUrl,
         '/plugins/enroll/challenge',
         accessToken,
@@ -322,14 +417,16 @@ class AuthService {
         await this.secrets.delete(KEY_LEASE_EXPIRES_AT);
         return;
       }
-      const leaseData = await this._postJsonAuthenticated(this.serverUrl, '/plugins/lease', accessToken, {
-        device_id: deviceId,
-        releases: installedReleases,
-      });
+      const leaseData = await this._postJsonAuthenticated<LeaseResponse>(
+        this.serverUrl,
+        '/plugins/lease',
+        accessToken,
+        { device_id: deviceId, releases: installedReleases },
+      );
       const jwks = await this._fetchJwks();
       const expectedSubject = getJwtSubject(accessToken);
-      const contentKeys = {};
-      const leaseExpirations = [];
+      const contentKeys: Record<string, string> = {};
+      const leaseExpirations: number[] = [];
       for (const [pluginId, entry] of Object.entries(leaseData.plugins || {})) {
         try {
           const expectedReleaseId = installedReleases[pluginId];
@@ -358,7 +455,7 @@ class AuthService {
         } catch (err) {
           // Un lease individuel invalide/expiré ne doit pas faire échouer les
           // autres plugins — celui-ci reste simplement absent des content_keys.
-          this._log(`lease invalide pour ${pluginId}: ${err.message}`);
+          this._log(`lease invalide pour ${pluginId}: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
       // Remplace aussi le cache par un objet vide : une release installée sans
@@ -370,11 +467,11 @@ class AuthService {
         await this.secrets.delete(KEY_LEASE_EXPIRES_AT);
       }
     } catch (err) {
-      this._log(`sync licence par installation échouée: ${err.message}`);
+      this._log(`sync licence par installation échouée: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
-  _log(message) {
+  private _log(message: string): void {
     // Pas de canal de log injecté dans ce service — évite d'imposer une
     // dépendance vscode.OutputChannel pour un chemin best-effort. À
     // remplacer par un vrai logger si ce chemin devient bruyant en pratique.
@@ -383,7 +480,11 @@ class AuthService {
     }
   }
 
-  async _getOrCreateDeviceIdentity() {
+  private async _getOrCreateDeviceIdentity(): Promise<{
+    deviceId: string;
+    privateKeyPem: string;
+    publicKeyPem: string;
+  }> {
     let deviceId = await this.secrets.get(KEY_DEVICE_ID);
     let privateKeyPem = await this.secrets.get(KEY_DEVICE_PRIVATE_KEY);
     let publicKeyPem = await this.secrets.get(KEY_DEVICE_PUBLIC_KEY);
@@ -400,7 +501,7 @@ class AuthService {
     return { deviceId, privateKeyPem, publicKeyPem };
   }
 
-  async _fetchJwks() {
+  private async _fetchJwks(): Promise<unknown> {
     const cacheTtlMs = 3600_000;
     if (this._jwksCache && Date.now() - this._jwksCache.fetchedAt < cacheTtlMs) {
       return this._jwksCache.jwks;
@@ -413,7 +514,7 @@ class AuthService {
     return jwks;
   }
 
-  async _ensureServerIdentity(serverUrl) {
+  private async _ensureServerIdentity(serverUrl: string): Promise<ServerIdentity> {
     const normalized = String(serverUrl || '').replace(/\/+$/, '');
     if (this._serverIdentity?.origin === normalized) {
       if (this._secretIsolationEnabled && !this._secretNamespace) {
@@ -428,7 +529,7 @@ class AuthService {
     return this._serverIdentity;
   }
 
-  _namespaceFor(identity) {
+  private _namespaceFor(identity: Pick<ServerIdentity, 'deployment_id' | 'origin'>): string {
     const fingerprint = [
       this.deploymentProfile,
       String(identity?.deployment_id || '').trim(),
@@ -437,16 +538,16 @@ class AuthService {
     return `pof.auth.ns.${crypto.createHash('sha256').update(fingerprint).digest('hex').slice(0, 24)}`;
   }
 
-  async _readServerBinding() {
+  private async _readServerBinding(): Promise<ServerBinding | null> {
     try {
       const raw = await this._rawSecrets.get(KEY_SERVER_BINDING);
-      return raw ? JSON.parse(raw) : null;
+      return raw ? JSON.parse(raw) as ServerBinding : null;
     } catch {
       return null;
     }
   }
 
-  async _resolveSecretKey(key) {
+  private async _resolveSecretKey(key: string): Promise<string> {
     if (!SECRET_KEYS.includes(key)) return key;
     if (!this._secretNamespace) {
       const binding = await this._readServerBinding();
@@ -465,14 +566,14 @@ class AuthService {
     return `${namespace}.${key.slice('pof.auth.'.length)}`;
   }
 
-  async _deleteNamespace(namespace) {
+  private async _deleteNamespace(namespace: string): Promise<void> {
     if (!namespace) return;
     await Promise.all(SECRET_KEYS.map((key) => (
       this._rawSecrets.delete(`${namespace}.${key.slice('pof.auth.'.length)}`)
     )));
   }
 
-  async _bindSecretNamespace(identity) {
+  private async _bindSecretNamespace(identity: ServerIdentity): Promise<void> {
     const namespace = this._namespaceFor(identity);
     const binding = await this._readServerBinding();
     if (binding?.namespace && binding.namespace !== namespace) {
@@ -495,8 +596,13 @@ class AuthService {
     }));
   }
 
-  async _postJsonAuthenticated(baseUrl, path, accessToken, payload) {
-    const res = await fetch(`${String(baseUrl || '').replace(/\/+$/, '')}${path}`, {
+  private async _postJsonAuthenticated<T>(
+    baseUrl: string,
+    requestPath: string,
+    accessToken: string,
+    payload: unknown,
+  ): Promise<T> {
+    const res = await fetch(`${String(baseUrl || '').replace(/\/+$/, '')}${requestPath}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -505,13 +611,13 @@ class AuthService {
       body: JSON.stringify(payload),
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw Object.assign(new Error(String(err['detail'] ?? `Auth failed: ${res.status}`)), { status: res.status });
+      const err = await res.json().catch(() => ({})) as Record<string, unknown>;
+      throw Object.assign(new Error(String(err.detail ?? `Auth failed: ${res.status}`)), { status: res.status });
     }
-    return res.json();
+    return res.json() as Promise<T>;
   }
 
-  _scheduleRefresh() {
+  private _scheduleRefresh(): void {
     this._clearRefreshTimer();
     this._refreshTimer = setTimeout(
       () => { this.refresh().catch(() => {}); },
@@ -519,16 +625,16 @@ class AuthService {
     );
   }
 
-  _clearRefreshTimer() {
+  private _clearRefreshTimer(): void {
     if (this._refreshTimer) {
       clearTimeout(this._refreshTimer);
       this._refreshTimer = null;
     }
   }
 
-  _getCandidateServerUrls() {
+  private _getCandidateServerUrls(): string[] {
     const baseUrl = String(this.serverUrl || '').trim();
-    let parsed;
+    let parsed: URL;
     try {
       parsed = new URL(baseUrl);
     } catch (_) {
@@ -548,29 +654,33 @@ class AuthService {
     return [...new Set([baseUrl, ...candidates])];
   }
 
-  async _postJson(baseUrl, path, payload) {
-    const res = await fetch(`${String(baseUrl || '').replace(/\/+$/, '')}${path}`, {
+  private async _postJson<T>(baseUrl: string, requestPath: string, payload: unknown): Promise<T> {
+    const res = await fetch(`${String(baseUrl || '').replace(/\/+$/, '')}${requestPath}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw Object.assign(new Error(String(err['detail'] ?? `Auth failed: ${res.status}`)), { status: res.status });
+      const err = await res.json().catch(() => ({})) as Record<string, unknown>;
+      throw Object.assign(new Error(String(err.detail ?? `Auth failed: ${res.status}`)), { status: res.status });
     }
-    return res.json();
+    return res.json() as Promise<T>;
   }
 
-  async _getJsonAuthenticated(baseUrl, path, accessToken) {
-    const res = await fetch(`${String(baseUrl || '').replace(/\/+$/, '')}${path}`, {
+  private async _getJsonAuthenticated<T = unknown>(
+    baseUrl: string,
+    requestPath: string,
+    accessToken: string,
+  ): Promise<T> {
+    const res = await fetch(`${String(baseUrl || '').replace(/\/+$/, '')}${requestPath}`, {
       method: 'GET',
       headers: { Authorization: `Bearer ${accessToken}` },
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(String(err['detail'] ?? `Auth failed: ${res.status}`));
+      const err = await res.json().catch(() => ({})) as Record<string, unknown>;
+      throw new Error(String(err.detail ?? `Auth failed: ${res.status}`));
     }
-    return res.json();
+    return res.json() as Promise<T>;
   }
 }
 
