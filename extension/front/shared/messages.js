@@ -2430,6 +2430,11 @@ window.addEventListener('message', (event) => {
     const autoKey = buildDecompileRequestKey(payload.binaryPath, '', payload.quality, payload.addr, payload.full, payload.provider, payload.funcName);
     pendingDecompileRequests.delete(autoKey);
     cacheDecompileResult(requestKey, payload);
+    // En mode auto, la requête part avec decompiler='' mais la réponse porte
+    // le backend concret sélectionné. Conserver aussi cet alias empêche un
+    // événement d'adresse retardé de relancer le même travail juste après la
+    // fin de la requête explicite.
+    if (autoKey !== requestKey) cacheDecompileResult(autoKey, payload);
     // Track best decompiler when this result is better
     const forced = decompileUiState.forcedDecompiler;
     if (msg.isBetter) {
