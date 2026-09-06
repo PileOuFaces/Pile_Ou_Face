@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 /**
  * @file extension.js
  * @brief Entree principale de l'extension VS Code.
@@ -50,6 +49,18 @@ const { mapPlatform } = require('./shared/telemetry/telemetryMappings');
 const logger = require('./shared/logger');
 
 const decorationTypes = new Map();
+
+interface HubConfig {
+  [key: string]: unknown;
+  refreshSidebar?: (binaryPath: string) => void;
+  setSidebarMode?: (mode: string) => void;
+}
+
+interface PythonCommandOptions {
+  timeout?: number;
+  maxBuffer?: number;
+  cwd?: string;
+}
 
 // Filet de sécurité : capture les promesses rejetées non gérées et les logue
 // via le canal de l'extension au lieu de les laisser invisibles dans la
@@ -163,7 +174,7 @@ function activate(context) {
   _authService.refresh().catch(() => {}); // refresh silencieux au démarrage
 
   const openVisualizerWebview = createVisualizer({ context, logChannel, decorationTypes, telemetry });
-  const hubConfig = {
+  const hubConfig: HubConfig = {
     context,
     logChannel,
     storageDir,
@@ -211,7 +222,10 @@ function activate(context) {
 
   // Commandes de gestion des décompilateurs (add, remove, list, test, openConfig)
   const cp = require('child_process');
-  const _runPythonForCmds = (argsWithScript, { timeout = 60000, maxBuffer = 4 * 1024 * 1024, cwd } = {}) =>
+  const _runPythonForCmds = (
+    argsWithScript: string[],
+    { timeout = 60000, maxBuffer = 4 * 1024 * 1024, cwd }: PythonCommandOptions = {},
+  ) =>
     new Promise((resolve, reject) => {
       const [scriptRelPath, ...rest] = argsWithScript;
       const scriptPath = require('path').join(cwd || root, scriptRelPath);
