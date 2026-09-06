@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 /**
  * @file staticHandlers.js
  * @brief Handlers de messages liés au mode statique (désassemblage, symboles, sections, etc.).
@@ -39,14 +38,51 @@ const _dockerImageUpdateCache = new Map();
 let _dockerRuntimeStatusCache = null;
 const _activeTriageRuns = new Map(); // binaryPath -> requestId
 
+type LooseMessage = Record<string, any>;
+
+interface ProcessOutput {
+  code: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+interface ProcessOptions {
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+  timeout?: number;
+}
+
+interface DockerStatusOptions {
+  force?: boolean;
+  logChannel?: any;
+}
+
+interface RuntimeOptions {
+  timeout?: number;
+  maxBuffer?: number;
+  onProgress?: (progress: LooseMessage) => void;
+}
+
+interface PythonResult {
+  stdout: string;
+  stderr?: string;
+  meta?: LooseMessage;
+}
+
+type ProcessError = Error & {
+  pythonMeta?: LooseMessage;
+  stderr?: string;
+  stdout?: string;
+};
+
 function encodePluginRuntimeStdin(contentKeys) {
   const entries = Object.entries(contentKeys || {}).filter(([, value]) => String(value || '').trim());
   if (!entries.length) return '';
   return `${JSON.stringify({ content_keys: Object.fromEntries(entries) })}\n`;
 }
 
-function _collectProcessOutput(command, args, options = {}) {
-  return new Promise((resolve) => {
+function _collectProcessOutput(command, args, options: ProcessOptions = {}): Promise<ProcessOutput> {
+  return new Promise<ProcessOutput>((resolve) => {
     if (typeof cp.spawn !== 'function') {
       resolve({ code: -1, stdout: '', stderr: 'spawn unavailable' });
       return;
@@ -234,7 +270,7 @@ function _readLocalDockerImageMetadata(payload) {
   };
 }
 
-async function _checkDockerRuntimeStatus(options = {}) {
+async function _checkDockerRuntimeStatus(options: DockerStatusOptions = {}) {
   if (!options.force) {
     const cached = _getCachedDockerRuntimeStatus();
     if (cached) return cached;
@@ -267,7 +303,7 @@ async function _checkDockerRuntimeStatus(options = {}) {
   return value;
 }
 
-async function _postDockerRuntimeStatus(panel, options = {}) {
+async function _postDockerRuntimeStatus(panel, options: DockerStatusOptions = {}) {
   const status = await _checkDockerRuntimeStatus(options);
   _logDecompilerDocker(options.logChannel, 'runtime.status', {
     dockerFound: status.dockerFound,
@@ -279,7 +315,7 @@ async function _postDockerRuntimeStatus(panel, options = {}) {
   panel.webview.postMessage({ type: 'hubDockerRuntimeStatus', status });
 }
 
-async function _checkDockerImageUpdate(image, platform = '', options = {}) {
+async function _checkDockerImageUpdate(image, platform = '', options: DockerStatusOptions = {}) {
   if (!options.force) {
     const cached = _getCachedDockerImageUpdate(image, platform);
     if (cached) return cached;
@@ -368,7 +404,7 @@ async function _checkDockerImageUpdate(image, platform = '', options = {}) {
   return value;
 }
 
-async function _postDecompilerImageUpdateStatus(panel, result, options = {}) {
+async function _postDecompilerImageUpdateStatus(panel, result, options: DockerStatusOptions = {}) {
   const meta = result?._meta || {};
   const dockerImages = meta.docker_images || {};
   const dockerAvail = meta.docker_images_available || {};
@@ -377,7 +413,7 @@ async function _postDecompilerImageUpdateStatus(panel, result, options = {}) {
   if (!ids.length) return;
 
   const pendingIds = [];
-  const cached = {};
+  const cached: LooseMessage = {};
   ids.forEach((id) => {
     const image = dockerImages[id];
     const platform = dockerPlatform[id] || '';
@@ -418,7 +454,7 @@ async function _postDecompilerImageUpdateStatus(panel, result, options = {}) {
   panel.webview.postMessage({ type: 'hubDecompilerImageUpdates', updates: Object.fromEntries(entries) });
 }
 
-function staticHandlers(config) {
+function staticHandlers(config: LooseMessage) {
   const { root, panel, context, logChannel, storageDir, globalDir } = config;
   const productConfig = getProductConfig();
   const extensionPath = context?.extensionPath || root;
@@ -545,8 +581,8 @@ function staticHandlers(config) {
     return lines.join('\n');
   };
 
-  const runPython = (argsWithScript, { timeout = 60000, maxBuffer = 4 * 1024 * 1024 } = {}) =>
-    new Promise((resolve, reject) => {
+  const runPython = (argsWithScript, { timeout = 60000, maxBuffer = 4 * 1024 * 1024 }: RuntimeOptions = {}): Promise<PythonResult> =>
+    new Promise<PythonResult>((resolve, reject) => {
       const [scriptRelPath, ...rest] = argsWithScript;
       const scriptPath = path.join(extensionPath, scriptRelPath);
       const startedAt = Date.now();
@@ -682,7 +718,7 @@ function staticHandlers(config) {
     };
   };
 
-  const runPluginRuntimeStreaming = async (runtimeArgs, options = {}) => {
+  const runPluginRuntimeStreaming = async (runtimeArgs, options: RuntimeOptions = {}) => {
     if (typeof cp.spawn !== 'function') return runPluginRuntime(runtimeArgs, options);
     const pluginRuntime = await buildPluginRuntimeContext();
     const {
@@ -713,7 +749,7 @@ function staticHandlers(config) {
       return nextSize;
     };
 
-    const stdout = await new Promise((resolve, reject) => {
+    const stdout = await new Promise<string>((resolve, reject) => {
       let settled = false;
       const proc = cp.spawn(getPythonExecutable(), args, {
         cwd: root,
@@ -736,7 +772,7 @@ function staticHandlers(config) {
         } catch (error) {
           logDebug(`[plugin-progress] kill après timeout ignoré: ${error?.message || error}`);
         }
-        const error = new Error(`Timeout plugin runtime après ${timeout} ms`);
+        const error = new Error(`Timeout plugin runtime après ${timeout} ms`) as ProcessError;
         error.stderr = stderrChunks.join('');
         finish(reject, error);
       }, timeout);
@@ -747,7 +783,7 @@ function staticHandlers(config) {
       proc.stderr?.on('data', (chunk) => {
         stderrSize = append(stderrChunks, stderrFilter.push(chunk), stderrSize);
       });
-      proc.on('error', (error) => {
+      proc.on('error', (error: ProcessError) => {
         error.stderr = stderrChunks.join('');
         finish(reject, error);
       });
@@ -756,7 +792,7 @@ function staticHandlers(config) {
         stderrSize = append(stderrChunks, stderrFilter.flush(), stderrSize);
         const stderr = stderrChunks.join('');
         if (code) {
-          const error = new Error(stderr || `Plugin runtime exited with code ${code}`);
+          const error = new Error(stderr || `Plugin runtime exited with code ${code}`) as ProcessError;
           error.stderr = stderr;
           finish(reject, error);
           return;
@@ -767,12 +803,12 @@ function staticHandlers(config) {
     return JSON.parse(String(stdout || '{}'));
   };
 
-  const runPluginRuntime = async (runtimeArgs, options = {}) => {
+  const runPluginRuntime = async (runtimeArgs, options: RuntimeOptions = {}) => {
     if (typeof cp.spawn === 'function') return runPluginRuntimeStreaming(runtimeArgs, options);
     const pluginRuntime = await buildPluginRuntimeContext();
     const { timeout = 60000, maxBuffer = 4 * 1024 * 1024 } = options;
     const scriptPath = path.join(extensionPath, 'backends/plugins/runtime.py');
-    const { stdout } = await new Promise((resolve, reject) => {
+    const { stdout } = await new Promise<PythonResult>((resolve, reject) => {
       cp.execFile(getPythonExecutable(), [
         scriptPath,
         '--host-version', pluginHostVersion,
@@ -1061,7 +1097,7 @@ function staticHandlers(config) {
         });
       }
     },
-    hubGrantPluginConsent: async (message = {}) => {
+    hubGrantPluginConsent: async (message: LooseMessage = {}) => {
       const pluginId = String(message.pluginId || message.plugin_id || '').trim();
       if (!pluginId) return;
       try {
@@ -1076,7 +1112,7 @@ function staticHandlers(config) {
       // Re-fetch full state so the freshly-approved plugin flips to "active".
       await handlers.hubLoadPluginState();
     },
-    hubRevokePluginConsent: async (message = {}) => {
+    hubRevokePluginConsent: async (message: LooseMessage = {}) => {
       const pluginId = String(message.pluginId || message.plugin_id || '').trim();
       if (!pluginId) return;
       try {
@@ -1090,7 +1126,7 @@ function staticHandlers(config) {
       }
       await handlers.hubLoadPluginState();
     },
-    hubPluginInvoke: async (message = {}) => {
+    hubPluginInvoke: async (message: LooseMessage = {}) => {
       const feature = String(message.feature || message.featureId || '').trim();
       const requestId = String(message.requestId || message.id || '');
       if (!feature) {
@@ -1118,7 +1154,7 @@ function staticHandlers(config) {
       }
       const featureLabel = feature.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
       let lastPercent = 0;
-      const reportPluginProgress = (progress, update = {}) => {
+      const reportPluginProgress = (progress, update: LooseMessage = {}) => {
         const rawPercent = update.percent;
         const hasPercent = rawPercent !== null
           && rawPercent !== undefined
@@ -1169,7 +1205,7 @@ function staticHandlers(config) {
         result,
       });
     },
-    hubOpenPluginDirectory: async (message = {}) => {
+    hubOpenPluginDirectory: async (message: LooseMessage = {}) => {
       const requestedScope = String(message.scope || 'user').trim() === 'workspace' ? 'workspace' : 'user';
       const pluginDir = getHostArtifactRoot('plugins');
       const scope = storageDir ? 'workspace' : requestedScope;
@@ -1192,7 +1228,7 @@ function staticHandlers(config) {
         });
       }
     },
-    hubInstallPlugin: async (message = {}) => {
+    hubInstallPlugin: async (message: LooseMessage = {}) => {
       const requestedScope = String(message.scope || 'user').trim() === 'workspace' ? 'workspace' : 'user';
       const selectedScope = storageDir ? 'workspace' : requestedScope;
       try {
@@ -1439,7 +1475,7 @@ function staticHandlers(config) {
         }
       });
     },
-    hubListDecompilers: async (message = {}) => {
+    hubListDecompilers: async (message: LooseMessage = {}) => {
       const provider = message.provider || 'auto';
       _logDecompilerDocker(logChannel, 'list.start', { provider });
       try {
@@ -1458,7 +1494,7 @@ function staticHandlers(config) {
         });
       }
     },
-    hubPullDecompilerImage: async (message = {}) => {
+    hubPullDecompilerImage: async (message: LooseMessage = {}) => {
       const decompiler = String(message.decompiler || '').trim();
       const image = String(message.image || '').trim();
       const mode = String(message.mode || 'pull').trim();
@@ -1530,7 +1566,7 @@ function staticHandlers(config) {
         }
       });
     },
-    hubAutoTriageStart: async (message = {}) => {
+    hubAutoTriageStart: async (message: LooseMessage = {}) => {
       const requestId = String(message.requestId || '').trim() || `triage-${Date.now()}`;
       const binaryPath = String(message.binaryPath || '').trim();
       const pythonEnv = buildPythonEnv();
@@ -1707,7 +1743,7 @@ function staticHandlers(config) {
         fail(String(err.message || err));
       });
     },
-    hubAutoTriageOpenReport: async (message = {}) => {
+    hubAutoTriageOpenReport: async (message: LooseMessage = {}) => {
       const reportPath = String(message.reportPath || '').trim();
       if (!reportPath || !fs.existsSync(reportPath)) {
         vscode.window.showErrorMessage('Triage report not found.');
@@ -1716,7 +1752,7 @@ function staticHandlers(config) {
       const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(reportPath));
       await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Beside, preview: false });
     },
-    hubAutoTriageExportReport: async (message = {}) => {
+    hubAutoTriageExportReport: async (message: LooseMessage = {}) => {
       const reportPath = String(message.reportPath || '').trim();
       if (!reportPath || !fs.existsSync(reportPath)) {
         vscode.window.showErrorMessage('Triage report not found.');
@@ -1731,7 +1767,7 @@ function staticHandlers(config) {
       await fs.promises.copyFile(reportPath, destination.fsPath);
       vscode.window.showInformationMessage(`Report exported: ${destination.fsPath}`);
     },
-    hubAutoTriageGetReport: async (message = {}) => {
+    hubAutoTriageGetReport: async (message: LooseMessage = {}) => {
       const binaryPath = String(message.binaryPath || '').trim();
       const reports = context.globalState.get('pof.autoTriage.reports', {} as Record<string, string>);
       const reportPath = String(reports[binaryPath] || '').trim();
@@ -1744,7 +1780,7 @@ function staticHandlers(config) {
         result: exists ? (results[binaryPath] || null) : null,
       });
     },
-    hubAutoTriagePreflight: async (message = {}) => {
+    hubAutoTriagePreflight: async (message: LooseMessage = {}) => {
       const binaryPath = String(message.binaryPath || '').trim();
       const baseName = binaryPath ? (path.basename(binaryPath, path.extname(binaryPath)) || 'binary') : '';
       const mappingPath = baseName ? path.join(storageDir, `${baseName}.disasm.mapping.json`) : '';
@@ -1763,7 +1799,7 @@ function staticHandlers(config) {
         maxTotalTokens: Number(config.get('maxTotalTokens', 100000)),
       });
     },
-    compilerBrowseSource: async (message = {}) => {
+    compilerBrowseSource: async (message: LooseMessage = {}) => {
       const lang = String(message.lang || 'c');
       const filters: Record<string, string[]> = {
         c:    { 'C source': ['c', 'h'] },
@@ -1782,7 +1818,7 @@ function staticHandlers(config) {
         path: picked?.[0]?.fsPath || null,
       });
     },
-    compilerBrowseOutput: async (message = {}) => {
+    compilerBrowseOutput: async (message: LooseMessage = {}) => {
       const target = String(message.target || 'elf-x64');
       const ext = target.startsWith('pe-') ? 'exe' : target.startsWith('macho-') ? '' : 'elf';
       const src = String(message.src || '');
@@ -1807,7 +1843,7 @@ function staticHandlers(config) {
         panel.webview.postMessage({ type: 'compilerListResult', compilers: [], error: String(err) });
       }
     },
-    compileRequest: async (message = {}) => {
+    compileRequest: async (message: LooseMessage = {}) => {
       const { src, lang, target, output, flags } = message;
       if (!src || !lang || !target) {
         panel.webview.postMessage({ type: 'compileResult', error: 'src, lang et target sont requis.' });
@@ -1824,7 +1860,7 @@ function staticHandlers(config) {
         panel.webview.postMessage({ type: 'compileResult', error: String(err) });
       }
     },
-    hubExecuteCommand: async (message = {}) => {
+    hubExecuteCommand: async (message: LooseMessage = {}) => {
       // Permet au webview de déclencher une commande VS Code enregistrée
       const commandId = String(message?.command || '').trim();
       const requestId = message?.requestId || null;
@@ -1862,7 +1898,7 @@ function staticHandlers(config) {
         }
       }
     },
-    hubAugmentDecompile: async (message = {}) => {
+    hubAugmentDecompile: async (message: LooseMessage = {}) => {
       const binaryPath = String(message.binaryPath || '').trim();
       const backendBinaryPath = path.isAbsolute(binaryPath) ? binaryPath : path.join(root, binaryPath);
       const addr = String(message.addr || '').trim();
@@ -1941,7 +1977,7 @@ function staticHandlers(config) {
         }
       }
     },
-    hubAcceptDecompileAugmentation: async (message = {}) => {
+    hubAcceptDecompileAugmentation: async (message: LooseMessage = {}) => {
       const inputPath = path.join(os.tmpdir(), `pof-decompile-accept-${crypto.randomUUID()}.json`);
       try {
         fs.writeFileSync(inputPath, JSON.stringify({
@@ -1967,7 +2003,7 @@ function staticHandlers(config) {
         }
       }
     },
-    hubLoadDecompileAugmentationCache: async (message = {}) => {
+    hubLoadDecompileAugmentationCache: async (message: LooseMessage = {}) => {
       const binaryPath = String(message.binaryPath || '').trim();
       const backendBinaryPath = path.isAbsolute(binaryPath) ? binaryPath : path.join(root, binaryPath);
       const addr = String(message.addr || '').trim();
@@ -2063,7 +2099,7 @@ function staticHandlers(config) {
       let bestIndex = Infinity;
       let firstResult = true;
 
-      const runOne = (t, targetIndex) => new Promise((resolve) => {
+      const runOne = (t, targetIndex) => new Promise<void>((resolve) => {
         const args = buildArgs(t || '');
         const timeoutMs = ((decompilerTimeouts[t] || 120) + 30) * 1000;
         runPython(args, { timeout: timeoutMs }).then(({ stdout }) => {
@@ -2325,7 +2361,9 @@ function staticHandlers(config) {
           { name: 'function_radar', args: ['backends/static/analysis/function_radar.py', '--binary', binaryPath] },
         ];
         const settled = await Promise.all(functionSteps.map((step) =>
-          runPython(step.args).then((res) => ({ ...step, ok: true, res })).catch((err) => ({ ...step, ok: false, err }))
+          runPython(step.args)
+            .then((res) => ({ ...step, ok: true, res, err: null }))
+            .catch((err) => ({ ...step, ok: false, res: null, err }))
         ));
         const diagnostics = settled.map((step) => ({
           name: step.name,
@@ -2344,7 +2382,7 @@ function staticHandlers(config) {
           });
           return;
         }
-        const [symRes, ccRes, radarRes] = settled.map((step) => step.res);
+        const [symRes, ccRes, radarRes] = settled.map((step) => step.res as PythonResult);
         const symbols = JSON.parse(symRes.stdout);
         const cc = JSON.parse(ccRes.stdout);
         const radar = JSON.parse(radarRes.stdout);
@@ -2360,7 +2398,7 @@ function staticHandlers(config) {
         });
       }
     },
-    hubNaturalLanguageSearch: async (message = {}) => {
+    hubNaturalLanguageSearch: async (message: LooseMessage = {}) => {
       const binaryPath = String(message.binaryPath || '').trim();
       const backendBinaryPath = path.isAbsolute(binaryPath) ? binaryPath : path.join(root, binaryPath);
       const query = String(message.query || '').trim();
