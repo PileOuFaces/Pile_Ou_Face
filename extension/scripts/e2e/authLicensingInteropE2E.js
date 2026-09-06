@@ -157,6 +157,7 @@ async function main() {
   const { publicKey, privateKey } = generateServerRsaKeys();
   const env = {
     ...process.env,
+    AUTH_PUBLIC_URL: BASE_URL,
     DATABASE_URL: `sqlite:///${tmpDbFile}`,
     JWT_PRIVATE_KEY: privateKey,
     JWT_PUBLIC_KEY: publicKey,
