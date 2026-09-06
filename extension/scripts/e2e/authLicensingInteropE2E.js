@@ -158,6 +158,7 @@ async function main() {
   const env = {
     ...process.env,
     AUTH_PUBLIC_URL: BASE_URL,
+    DEPLOYMENT_ID: 'pof-e2e',
     DATABASE_URL: `sqlite:///${tmpDbFile}`,
     JWT_PRIVATE_KEY: privateKey,
     JWT_PUBLIC_KEY: publicKey,
