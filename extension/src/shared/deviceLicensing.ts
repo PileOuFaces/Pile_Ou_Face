@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 /**
  * @file deviceLicensing.ts
  * @brief Primitives cryptographiques pour l'agent de licence par installation
