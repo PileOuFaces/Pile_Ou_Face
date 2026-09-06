@@ -467,6 +467,10 @@ jobs:
           POF_E2E_BUDGET_BACKEND_GLOBAL_TOTAL_FAIL_MS: "45000"
         run: xvfb-run -a npm run test:e2e:audit
 
+      - name: Run MCP stdio E2E smoke
+        working-directory: ./extension
+        run: npm run test:e2e:mcp
+
       - name: Upload audit reports
         if: always()
         uses: actions/upload-artifact@v4
