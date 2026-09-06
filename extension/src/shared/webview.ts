@@ -30,12 +30,32 @@ function _derivePluginSlug(pluginDir, manifest) {
 function _resolvePluginAssetPath(pluginDir, manifest, relativeAssetPath) {
   const relPath = String(relativeAssetPath || '').trim();
   if (!relPath) return '';
-  const directPath = path.join(pluginDir, relPath);
-  if (fs.existsSync(directPath)) return directPath;
+
+  const resolveContainedPath = (...segments) => {
+    try {
+      const realPluginDir = fs.realpathSync(pluginDir);
+      const candidatePath = path.resolve(realPluginDir, ...segments);
+      const relativePath = path.relative(realPluginDir, candidatePath);
+      if (relativePath === '..' || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)) {
+        return '';
+      }
+      if (!fs.existsSync(candidatePath)) return '';
+
+      const realCandidatePath = fs.realpathSync(candidatePath);
+      const realRelativePath = path.relative(realPluginDir, realCandidatePath);
+      if (realRelativePath === '..' || realRelativePath.startsWith(`..${path.sep}`) || path.isAbsolute(realRelativePath)) {
+        return '';
+      }
+      return realCandidatePath;
+    } catch (_) {
+      return '';
+    }
+  };
+
+  const directPath = resolveContainedPath(relPath);
+  if (directPath) return directPath;
   const slug = _derivePluginSlug(pluginDir, manifest);
-  const extrasPath = path.join(pluginDir, 'metadata', 'extras', 'plugins', slug, relPath);
-  if (fs.existsSync(extrasPath)) return extrasPath;
-  return '';
+  return resolveContainedPath('metadata', 'extras', 'plugins', slug, relPath);
 }
 
 function _escapeHtmlAttr(value) {
@@ -1002,7 +1022,7 @@ function loadPluginWebviews(options: { storageDir?: string; globalDir?: string; 
 
   const framesHtml = frames.map((f) => {
     const escapedSrcdoc = _escapeHtmlAttr(f.srcdoc);
-    return `<iframe id="${f.frameId}" data-plugin-id="${_escapeHtmlAttr(f.pluginId)}" data-plugin-slug="${_escapeHtmlAttr(f.pluginSlug)}" class="plugin-iframe static-panel" sandbox="allow-scripts allow-same-origin" srcdoc="${escapedSrcdoc}"></iframe>`;
+    return `<iframe id="${f.frameId}" data-plugin-id="${_escapeHtmlAttr(f.pluginId)}" data-plugin-slug="${_escapeHtmlAttr(f.pluginSlug)}" class="plugin-iframe static-panel" sandbox="allow-scripts" srcdoc="${escapedSrcdoc}"></iframe>`;
   }).join('\n');
 
   return { groupStyles: groupStyles.trim(), frames, framesHtml: framesHtml.trim() };
