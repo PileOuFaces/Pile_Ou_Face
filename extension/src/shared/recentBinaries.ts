@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 /**
  * @file recentBinaries.js
  * @brief Historique des fichiers de travail pour l'ouverture rapide.
@@ -13,7 +12,12 @@ const MAX_RECENT_BINARIES = 8;
 function normalizeBinaryMeta(meta) {
   if (!meta || typeof meta !== 'object') return null;
   const kind = meta.kind === 'raw' ? 'raw' : 'native';
-  const normalized = {
+  const normalized: {
+    kind: string;
+    format: string;
+    arch: string;
+    rawConfig?: { arch: string; endian: string; baseAddr: string };
+  } = {
     kind,
     format: String(meta.format || (kind === 'raw' ? 'RAW' : '')).trim(),
     arch: String(meta.arch || '').trim(),
