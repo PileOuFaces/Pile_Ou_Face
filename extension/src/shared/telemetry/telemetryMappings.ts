@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
-
 function mapPlatform(value) {
   if (value === 'win32') return 'windows';
   if (value === 'darwin') return 'macos';
