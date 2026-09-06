@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 /**
  * @file authConfig.ts
  * @brief Resolution de l'URL auth entre valeur sauvegardee, config VS Code et mode dev local.
@@ -16,12 +15,42 @@ const { DEPLOYMENT_PROFILES, getProductConfig, validateProductConfig } = require
 
 const DEFAULT_LOCAL_AUTH_URL = 'http://localhost:8000';
 
-function normalizeAuthUrl(value = '') {
+type ExistsSync = (filePath: string) => boolean;
+
+interface LegacyAuthUrlMigrationOptions {
+  deploymentProfile?: string;
+  legacyUrl?: string;
+  configuredUrl?: string;
+}
+
+interface ProductConfigInput {
+  deploymentProfile?: string;
+  deploymentId?: string;
+  authProviderUrl?: string;
+  collabProviderUrl?: string;
+  telemetryProviderUrl?: string;
+}
+
+interface ResolveAuthServerUrlOptions {
+  savedAuthServerUrl?: string;
+  configuredAuthServerUrl?: string;
+  projectRoot?: string;
+  existsSync?: ExistsSync;
+  defaultRemoteAuthUrl?: string;
+  productConfig?: ProductConfigInput;
+}
+
+interface LegacyAuthUrlMigrationPlan {
+  removeLegacy: boolean;
+  configuredUrl: string;
+}
+
+function normalizeAuthUrl(value: unknown = ''): string {
   const normalized = String(value || '').trim();
   return normalized || '';
 }
 
-function isLoopbackUrl(value) {
+function isLoopbackUrl(value: string): boolean {
   try {
     const hostname = new URL(value).hostname.toLowerCase();
     return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
@@ -30,7 +59,7 @@ function isLoopbackUrl(value) {
   }
 }
 
-function requireSecureAuthUrl(value) {
+function requireSecureAuthUrl(value: unknown): string {
   const url = normalizeAuthUrl(value);
   if (!url) return '';
   const parsed = new URL(url);
@@ -40,7 +69,11 @@ function requireSecureAuthUrl(value) {
   return url.replace(/\/$/, '');
 }
 
-function planLegacyAuthUrlMigration({ deploymentProfile, legacyUrl = '', configuredUrl = '' } = {}) {
+function planLegacyAuthUrlMigration({
+  deploymentProfile,
+  legacyUrl = '',
+  configuredUrl = '',
+}: LegacyAuthUrlMigrationOptions = {}): LegacyAuthUrlMigrationPlan {
   const legacy = normalizeAuthUrl(legacyUrl);
   if (!legacy) return { removeLegacy: false, configuredUrl: normalizeAuthUrl(configuredUrl) };
   if (deploymentProfile === DEPLOYMENT_PROFILES.OSS_DEVELOPMENT && !normalizeAuthUrl(configuredUrl)) {
@@ -49,7 +82,7 @@ function planLegacyAuthUrlMigration({ deploymentProfile, legacyUrl = '', configu
   return { removeLegacy: true, configuredUrl: normalizeAuthUrl(configuredUrl) };
 }
 
-function hasLocalAuthWorkspace(projectRoot, existsSync = fs.existsSync) {
+function hasLocalAuthWorkspace(projectRoot: unknown, existsSync: ExistsSync = fs.existsSync): boolean {
   const root = String(projectRoot || '').trim();
   if (!root) return false;
   const candidates = [
@@ -74,7 +107,7 @@ function resolveAuthServerUrl({
   existsSync = fs.existsSync,
   defaultRemoteAuthUrl = undefined,
   productConfig = undefined,
-} = {}) {
+}: ResolveAuthServerUrlOptions = {}): string {
   const product = validateProductConfig(productConfig || {
     ...getProductConfig(),
     ...(defaultRemoteAuthUrl !== undefined ? { authProviderUrl: defaultRemoteAuthUrl } : {}),
