@@ -561,7 +561,7 @@ function _normalizeDecompileQuality(quality) {
 // See CONTRACTS_SHARED.md §Plugin Webview API.
 window.PoF = {
   // Contract version — plugins declare minPoFVersion in plugin.json to enforce compatibility.
-  version: '1.0.0',
+  version: '1.1.0',
 
   // Returns the currently loaded binary path (empty string if none).
   getBinaryPath: () => (typeof getStaticBinaryPath === 'function' ? getStaticBinaryPath() : ''),
@@ -575,6 +575,22 @@ window.PoF = {
 
   // Persistent storage (defined in state.js, no lazy guard needed).
   saveStorage: (data) => _saveStorage(data),
+
+  // Plugin tab metadata mirrored into sandboxed plugin frames.
+  getGroupLabels: () => ({ ...(typeof GROUP_LABELS !== 'undefined' ? GROUP_LABELS : {}) }),
+  getTabFamilies: () => ({ ...(typeof PREMIUM_TAB_FAMILY !== 'undefined' ? PREMIUM_TAB_FAMILY : {}) }),
+  getDisabledFamilies: () => getDisabledFamilies(),
+
+  // Loading helper kept on the host facade as part of the stable 1.1 API.
+  setLoading: (containerId, message) => {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    el.replaceChildren();
+    const p = document.createElement('p');
+    p.className = 'loading-state';
+    p.textContent = message || 'Chargement…';
+    el.appendChild(p);
+  },
 
   // Navigation actions that only make sense in the host's own DOM/scope
   // (panel/group switching, address-context sync, xrefs/strings reveal).

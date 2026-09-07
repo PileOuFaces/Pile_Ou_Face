@@ -249,7 +249,7 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
     });
   }
   window.PoF = {
-    version: null,
+    version: '1.1.0',
     // Synchronous: mirrors the __binaryPath broadcast already cached locally,
     // no round-trip needed (and plugin code written pre-iframe expects a string, not a Promise).
     getBinaryPath:       function () { return window._pofCurrentBinaryPath || ''; },
