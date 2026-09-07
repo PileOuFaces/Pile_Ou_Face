@@ -619,7 +619,14 @@ async function run() {
         const english = String(locale || '').toLowerCase() !== 'fr';
 
         await hub.openPanel('options');
+        // The hub can finish a real provider request before this scenario installs
+        // its child-process mock. Refresh under the mock and wait for its sentinel
+        // model so assertions cannot consume stale provider state.
+        await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+          type: 'hubAiProvidersGet',
+        });
         await target.locator('html').waitForAttribute('data-hub-ai-providers-ready', 'true', 30000);
+        await hub.aiProviderModel('openai').waitForText('gpt-e2e-mini', 30000);
         // A late initial settings payload may restore the previously persisted panel.
         // Force a complete transition after readiness before asserting visibility.
         await hub.openPanel('dashboard');
@@ -882,7 +889,11 @@ async function run() {
         raw_code: sourceCode,
         augmented_code: sourceCode === functionCode ? functionAugmentedCode : globalAugmentedCode,
         accepted_ids: accepted ? ['summary'] : [],
-        proposal: { summary: 'Nom et commentaire proposés par le test E2E' },
+        proposal: {
+          summary: sourceCode === functionCode
+            ? 'Proposition fonction prête pour le test E2E'
+            : 'Proposition globale prête pour le test E2E',
+        },
       };
       augmentationResults.set(cacheKey, result);
       return result;
@@ -988,7 +999,7 @@ async function run() {
 
         await hub.decompileAugmentButton().clickDom();
         await hub.decompileAugmentReview().waitFor({ state: 'visible', timeout: 30000 });
-        await hub.decompileAugmentSuggestions().waitForText('Nom et commentaire proposés', 30000);
+        await hub.decompileAugmentSuggestions().waitForText('Proposition fonction prête', 30000);
         await hub.decompileAugmentAcceptButton().clickDom();
         await hub.decompileOutput().waitForText('function validated by E2E', 30000);
         await hub.decompileAugmentStatus().waitForText('Version IA', 30000);
@@ -1016,7 +1027,7 @@ async function run() {
 
         await hub.decompileAugmentButton().clickDom();
         await hub.decompileAugmentReview().waitFor({ state: 'visible', timeout: 30000 });
-        await hub.decompileAugmentSuggestions().waitForText('Nom et commentaire proposés', 30000);
+        await hub.decompileAugmentSuggestions().waitForText('Proposition globale prête', 30000);
         await hub.decompileAugmentAcceptButton().clickDom();
         await hub.decompileOutput().waitForText('global validated by E2E', 30000);
         const acceptedStatus = await hub.decompileAugmentStatus().waitForText('Version IA', 30000);
