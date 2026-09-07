@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 /** SQLite-only, bounded cache for static-analysis results. */
 
 const fs = require('fs');
@@ -10,6 +9,16 @@ const { getExtensionPath } = require('./utils');
 
 const CACHE_DIR_NAME = 'static_cache';
 const CACHE_DB_NAME = 'static-cache.sqlite3';
+
+type CacheStoreOptions = {
+  input?: string;
+};
+
+type CacheVariantOptions = {
+  encoding?: string;
+  section?: string;
+  minLen?: number;
+};
 
 function getCacheKey(absPath) {
   try {
@@ -45,7 +54,7 @@ function detectPythonExecutable(root) {
   return candidates.find((candidate) => fs.existsSync(candidate)) || 'python3';
 }
 
-function runCacheStore(storageDir, args, { input } = {}) {
+function runCacheStore(storageDir, args, { input }: CacheStoreOptions = {}) {
   try {
     const extensionPath = getExtensionPath();
     const scriptPath = getCacheScriptPath(extensionPath);
@@ -70,14 +79,14 @@ function runCacheStore(storageDir, args, { input } = {}) {
   }
 }
 
-function cacheVariant(type, options = {}) {
+function cacheVariant(type, options: CacheVariantOptions = {}) {
   if (type !== 'strings') return '';
   const enc = String(options.encoding || 'utf-8').replace(/[^a-z0-9-]/gi, '_');
   const section = String(options.section || '').replace(/[^a-z0-9._-]/gi, '_') || 'all';
   return `${options.minLen || 4}_${enc}_${section}_v2`;
 }
 
-function readCache(storageDir, absPath, type, options = {}) {
+function readCache(storageDir, absPath, type, options: CacheVariantOptions = {}) {
   const key = getCacheKey(absPath);
   if (!key) return null;
   const result = runCacheStore(storageDir, [
@@ -86,7 +95,7 @@ function readCache(storageDir, absPath, type, options = {}) {
   return result?.found === true ? result.payload : null;
 }
 
-function writeCache(storageDir, absPath, type, data, options = {}) {
+function writeCache(storageDir, absPath, type, data, options: CacheVariantOptions = {}) {
   const key = getCacheKey(absPath);
   if (!key) return false;
   try {
