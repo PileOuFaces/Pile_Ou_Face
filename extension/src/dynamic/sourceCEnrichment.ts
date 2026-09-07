@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 /**
  * @file sourceCEnrichment.js
  * @brief Parseur C pragmatique et couche d'enrichissement optionnelle.
@@ -303,7 +302,7 @@ function parseDeclarator(fragment, baseType, archBits, { kind = 'local', order =
   };
 }
 
-function parseDeclarationStatement(statement, archBits, options = {}) {
+function parseDeclarationStatement(statement, archBits, options: { kind?: string; orderBase?: number } = {}) {
   const prefix = declarationPrefix(statement);
   if (!prefix) return [];
   if (!prefix.typeText) return [];
@@ -312,7 +311,7 @@ function parseDeclarationStatement(statement, archBits, options = {}) {
   return parts
     .map((part, index) => parseDeclarator(part, prefix.typeText, archBits, {
       kind: options.kind || 'local',
-      order: options.orderBase + index
+      order: (options.orderBase || 0) + index
     }))
     .filter(Boolean);
 }

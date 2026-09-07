@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 /**
  * @file hub/actions.ts
  * @brief Handlers UI/misc, disasm, export, scan, rules, compilation, trace init, settings.
@@ -1117,7 +1116,7 @@ function createActions({
     hubPickFile: async (message) => {
       const isBinaryTarget = message.fileType === 'binary';
       const isSourceTarget = message.fileType === 'sourceC' || message.target === 'dynamicSourcePath';
-      const dialogOpts = {
+      const dialogOpts: Record<string, any> = {
         canSelectFiles: true, canSelectMany: false,
         defaultUri: vscode.Uri.file(root),
       };

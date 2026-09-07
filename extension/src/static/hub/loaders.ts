@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 
 function createLoaders({
   panel,
@@ -33,7 +32,7 @@ function createLoaders({
     cacheKey,
     cacheOptions = undefined,
     logLabel = null,
-    isCacheUsable = () => true,
+    isCacheUsable = (_cached = undefined) => true,
     compute,
     useCache = true,
   }) => {
@@ -89,7 +88,7 @@ function createLoaders({
         // Section filtering stays in Python (uses file-offset ranges, not VA — correct for PE RVA).
         const BASE_MIN_LEN = 4;
         const extractMinLen = Math.min(minLen, BASE_MIN_LEN);
-        const opts = { minLen: extractMinLen, encoding, maxResults: MAX_CACHED_STRINGS };
+        const opts: Record<string, any> = { minLen: extractMinLen, encoding, maxResults: MAX_CACHED_STRINGS };
         if (section) opts.section = section;
         const allStrings = await resolveCachedBinaryView({
           absPath,

@@ -1,4 +1,3 @@
-// @ts-nocheck
 const { expect } = require("chai");
 const crypto = require("crypto");
 const {

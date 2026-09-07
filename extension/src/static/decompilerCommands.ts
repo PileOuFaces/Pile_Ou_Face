@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 /**
  * @file decompilerCommands.js
  * @brief Commandes VS Code pour gérer les décompilateurs dynamiquement.
@@ -64,7 +63,7 @@ async function _fetchOciVersions(imageRepo) {
     const tokenUrl = `https://ghcr.io/token?service=ghcr.io&scope=repository:${imageRepo}:pull`;
     const tokRes = await fetch(tokenUrl, { signal: controller.signal });
     if (!tokRes.ok) return [];
-    const tok = await tokRes.json();
+    const tok: any = await tokRes.json();
     const token = tok.token || tok.access_token;
     if (!token) return [];
     const tagsRes = await fetch(`https://ghcr.io/v2/${imageRepo}/tags/list`, {
@@ -72,7 +71,7 @@ async function _fetchOciVersions(imageRepo) {
       signal: controller.signal,
     });
     if (!tagsRes.ok) return [];
-    const data = await tagsRes.json();
+    const data: any = await tagsRes.json();
     return _filterOciVersionTags(data && data.tags);
   } catch (_) {
     return [];
@@ -366,7 +365,7 @@ async function cmdDecompilerAdd(root, storageDir, editId = null) {
 
   let id = isEdit ? editId : null;
   let label = isEdit ? (existing.label || editId) : '';
-  const config = {};
+  const config: Record<string, any> = {};
 
   // ── ÉTAPE 2 : Source de l'image Docker ───────────────────────────────────
   if (mode === 'docker' || mode === 'both') {
@@ -399,7 +398,7 @@ async function cmdDecompilerAdd(root, storageDir, editId = null) {
 
     // ── ÉTAPE 3a : Image OCI PileOuFaces ─────────────────────────────────
     if (dockerSource === 'oci') {
-      const ociChoices = Object.entries(ociDecompilers()).map(([key, d]) => {
+      const ociChoices = Object.entries(ociDecompilers()).map(([key, d]: [string, any]) => {
         const alreadyHere = !!cfg.decompilers[key];
         const localAvail = _checkDockerImageSync(`ghcr.io/pileoufaces/pile-ou-face/decompiler-${key}:latest`);
         const statusIcon = localAvail ? '$(check)' : '$(cloud-download)';
@@ -923,7 +922,7 @@ async function cmdDecompilerList(root, runPython, logChannel) {
 
 async function cmdDecompilerTest(root, storageDir, runPython, preselectedId = null) {
   // 1. Récupérer la liste
-  let decompilerData = {};
+  let decompilerData: Record<string, any> = {};
   if (runPython) {
     try {
       const { stdout } = await runPython(['backends/static/decompile/decompile.py', '--list', '--provider', 'auto'], { cwd: root });
@@ -1031,7 +1030,7 @@ async function cmdDecompilerTest(root, storageDir, runPython, preselectedId = nu
         } else {
           args.push('--addr', addr);
         }
-        const result = await _runPythonDirect(pythonExe, args, root, 120000, storageDir);
+        const result: any = await _runPythonDirect(pythonExe, args, root, 120000, storageDir);
         if (result.error) {
           const provider = result.provider || providerChoice.value;
           const rawError = String(result.error || '');

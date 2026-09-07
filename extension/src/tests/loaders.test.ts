@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 const { expect } = require('chai');
 const sinon = require('sinon');
 const { createLoaders } = require('../static/hub/loaders');

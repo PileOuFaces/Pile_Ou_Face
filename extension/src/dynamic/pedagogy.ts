@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 /**
  * @file pedagogy.js
  * @brief Helpers deterministes pour focus function, modele de fonction et explications debutant.
@@ -220,7 +219,7 @@ function looksLikeUnsafeCall(name) {
   return UNSAFE_CALLS.has(normalizeFunctionName(name));
 }
 
-function createLocal(offset, next = {}) {
+function createLocal(offset, next: Record<string, any> = {}) {
   return {
     name: next.name || '',
     offset,
@@ -844,7 +843,7 @@ function slotText(slot) {
 function payloadChunks(payloadText) {
   const text = String(payloadText || '').trim();
   if (!text) return [];
-  const out = new Set();
+  const out = new Set<string>();
   if (text.length >= 4) {
     out.add(text.slice(0, Math.min(8, text.length)).toLowerCase());
     out.add(text.slice(Math.max(0, text.length - 8)).toLowerCase());
@@ -858,7 +857,7 @@ function payloadChunks(payloadText) {
 function payloadHexChunks(payloadHex) {
   const hex = String(payloadHex || '').replace(/[^0-9a-f]/gi, '').toLowerCase();
   if (hex.length < 8) return [];
-  const out = new Set();
+  const out = new Set<string>();
   out.add(hex.slice(0, Math.min(16, hex.length)));
   out.add(hex.slice(Math.max(0, hex.length - 16)));
   for (let index = 0; index <= hex.length - 8; index += 8) {
