@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 
 const { logDebug, logWarning } = require('../../shared/utils');
 const { getFunctionInstrCounts } = require('../../shared/mappingStore');

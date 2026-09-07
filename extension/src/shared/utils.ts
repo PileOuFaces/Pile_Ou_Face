@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 /**
  * @file utils.js
  * @brief Utilitaires partagés (temp, Python, runCommand, etc.)
@@ -110,7 +109,7 @@ function ensureStorageDir(context) {
   return dir;
 }
 
-async function ensurePythonDependencies(pythonExe, root, options = {}) {
+async function ensurePythonDependencies(pythonExe, root, options: { quiet?: boolean } = {}) {
   const { quiet = false } = options || {};
   const backendBase = _extensionPath || path.resolve(String(root || '').trim());
   const requirementsPath = path.join(backendBase, 'backends', 'requirements.txt');
@@ -123,7 +122,7 @@ async function ensurePythonDependencies(pythonExe, root, options = {}) {
     if (!fs.existsSync(venvPath)) {
       logChannel.appendLine('[venv] Création du venv…');
       try {
-        await new Promise((resolve, reject) => {
+        await new Promise<void>((resolve, reject) => {
           cp.exec(`${pythonExe} -m venv ${venvPath}`, (error, stdout, stderr) =>
             error ? reject(new Error(stderr)) : resolve());
         });
@@ -152,7 +151,7 @@ async function ensurePythonDependencies(pythonExe, root, options = {}) {
   let needInstall = false;
   for (const dep of coreDeps) {
     try {
-      await new Promise((resolve, reject) => {
+      await new Promise<void>((resolve, reject) => {
         cp.exec(`${pythonExe} -c "import ${dep}"`, (error) => (error ? reject(error) : resolve()));
       });
     } catch {
@@ -166,7 +165,7 @@ async function ensurePythonDependencies(pythonExe, root, options = {}) {
   }
   logChannel.appendLine('[pip] Installation des dépendances…');
   try {
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       cp.execFile(pythonExe, ['-m', 'pip', 'install', '-r', requirementsPath, '--quiet', '--break-system-packages'], (error, stdout, stderr) =>
         error ? reject(new Error(stderr || error.message)) : resolve());
     });
@@ -224,8 +223,8 @@ function resolveDockerExecutable() {
  * Accepts buildRuntimeEnv(root, storageDir, extraEnv).
  * When storageDir is provided, injects POF_STORAGE_DIR, DECOMPILERS_CONFIG, COMPILERS_CONFIG.
  */
-function buildRuntimeEnv(root, storageDir = '', extraEnv = {}) {
-  const mergedExtra = extraEnv && typeof extraEnv === 'object' ? extraEnv : {};
+function buildRuntimeEnv(root, storageDir = '', extraEnv: NodeJS.ProcessEnv = {}) {
+  const mergedExtra: NodeJS.ProcessEnv = extraEnv && typeof extraEnv === 'object' ? extraEnv : {};
   const backendBase = _extensionPath || path.resolve(String(root || '').trim());
   const env = { ...process.env, ...mergedExtra };
   if (!mergedExtra.BINHOST_LOG_LEVEL) {
@@ -276,20 +275,20 @@ function check32BitToolchain(output) {
   };
 }
 
-function runCommand(command, args, cwd, output, envOverrides = {}, streamHooks = {}) {
+function runCommand(command, args, cwd, output, envOverrides: NodeJS.ProcessEnv = {}, streamHooks: Record<string, any> = {}) {
   const env = buildRuntimeEnv(cwd, '', envOverrides);
   const startedAt = Date.now();
   let stdoutBytes = 0;
   let stderrBytes = 0;
   output.appendLine(`[cmd] ${command} ${args.join(' ')}`);
-  return new Promise((resolve, reject) => {
+  return new Promise<void>((resolve, reject) => {
     let settled = false;
     let cancelled = false;
     let processAuditRecorded = false;
     let cancelSubscription = null;
     let forceKillTimer = null;
     const child = cp.spawn(command, args, { cwd, env });
-    const recordProcessAudit = ({ ok, exitCode = -1 } = {}) => {
+    const recordProcessAudit = ({ ok, exitCode = -1 }: { ok: boolean; exitCode?: number }) => {
       if (processAuditRecorded) return;
       processAuditRecorded = true;
       recordRuntimeEvent('process', command, {
