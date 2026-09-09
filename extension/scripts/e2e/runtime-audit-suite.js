@@ -16,6 +16,7 @@ const {
 const {
   HubPage,
   captureUiFailure,
+  captureUiScreenshot,
   connectToHubWebview,
 } = require('./vscode-ui-driver');
 
@@ -24,6 +25,25 @@ const E2E_AUDIT_MOCHA_TIMEOUT_MS = 120000;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function captureDocumentationScreenshot(target, name) {
+  const outputDir = process.env.POF_E2E_DOC_SCREENSHOTS_DIR;
+  if (!outputDir) return '';
+  await vscode.commands.executeCommand('workbench.action.closePanel');
+  await vscode.commands.executeCommand('workbench.action.closeAuxiliaryBar');
+  await vscode.commands.executeCommand('notifications.clearAll');
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const ready = await target.evaluate(`(() => {
+      const progress = document.querySelector('#pof-task-progress');
+      return !progress || progress.hidden;
+    })()`);
+    if (ready) break;
+    await sleep(100);
+  }
+  await sleep(300);
+  return captureUiScreenshot(target, outputDir, name);
 }
 
 function findAuditFiles(root) {
@@ -531,6 +551,7 @@ async function run() {
       await hub.topBarBinaryName().waitForText(english ? 'Choose a file' : 'Choisir un fichier', 30000);
       await hub.autoTriageBinary().waitForText(english ? 'No binary' : 'Aucun binaire', 30000);
       assert.equal(await hub.autoTriageButton().isEnabled(), false, 'auto-triage must stay disabled without a binary');
+      await captureDocumentationScreenshot(target, '01-empty-workspace');
 
       await hub.dashboardStaticAction().click();
       await hub.expectActive(hub.panel('static'), 'static panel opened from the empty dashboard');
@@ -1440,6 +1461,7 @@ async function run() {
         const visibleInfo = await hub.binaryInfo().waitForText('Entry point', 30000);
         assert.match(visibleInfo, /Format/);
         assert.match(visibleInfo, /Bits/);
+        await captureDocumentationScreenshot(target, '02-binary-information');
 
         await hub.openStaticTab('data', 'sections');
         const visibleSections = await hub.binarySections().waitForText('.text', 30000);
@@ -1471,6 +1493,7 @@ async function run() {
         await hub.firstFunctionDisasmButton().click();
         await hub.expectActive(hub.subTab('disasm'), 'disassembly opened from the function list');
         await hub.goToAddressInput().waitForValue(String(fixture.entry || '0x400078'), 30000);
+        await captureDocumentationScreenshot(target, '03-disassembly');
 
         target.close();
         target = null;
