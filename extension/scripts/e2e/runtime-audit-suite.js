@@ -34,6 +34,7 @@ async function captureDocumentationScreenshot(target, name) {
   await vscode.commands.executeCommand('workbench.action.closeAuxiliaryBar');
   await vscode.commands.executeCommand('workbench.action.closeSidebar');
   await vscode.commands.executeCommand('notifications.clearAll');
+  await target.evaluate(`document.querySelector('#pof-toast-container')?.replaceChildren()`);
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
     const ready = await target.evaluate(`(() => {
@@ -1234,6 +1235,7 @@ async function run() {
         await hub.scriptRunButton().click();
         await hub.scriptStatus().waitForText('✓', 30000);
         await hub.scriptOutput().waitForText('script fixture succeeded', 30000);
+        await captureDocumentationScreenshot(target, '06-scripting');
 
         await hub.scriptEditor().fill('raise RuntimeError("fixture")');
         await hub.scriptRunButton().click();
@@ -1292,6 +1294,7 @@ async function run() {
       await hub.typedDataContent().waitForText('E2EUiType', 30000);
       await hub.typedDataContent().waitForText('x', 30000);
       await hub.typedDataContent().waitForText('y', 30000);
+      await captureDocumentationScreenshot(target, '07-typed-data');
 
       await hub.openTypeManager();
       await hub.typeEditorCatalog().waitForText('E2EUiType', 30000);
@@ -2556,6 +2559,8 @@ async function run() {
     mocha.grep(/IDA keymap through real webview keyboard events/);
   } else if (uiOnly === 'annotations-isolation') {
     mocha.grep(/isolates annotations when switching between recent binaries/);
+  } else if (uiOnly === 'docs-features') {
+    mocha.grep(/refuses then authorizes a plugin|drives the hub through real webview controls/);
   } else if (['1', 'true', 'yes'].includes(uiOnly)) {
     mocha.grep(/real webview controls|real confirmation UI|restores both caches through the real UI|binary analysis backend error|restores the selected binary and visible analysis|loading, empty, error and success xrefs states through the real UI|IDA keymap through real webview keyboard events/);
   }
