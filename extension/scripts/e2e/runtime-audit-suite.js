@@ -32,6 +32,7 @@ async function captureDocumentationScreenshot(target, name) {
   if (!outputDir) return '';
   await vscode.commands.executeCommand('workbench.action.closePanel');
   await vscode.commands.executeCommand('workbench.action.closeAuxiliaryBar');
+  await vscode.commands.executeCommand('workbench.action.closeSidebar');
   await vscode.commands.executeCommand('notifications.clearAll');
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
@@ -1466,11 +1467,13 @@ async function run() {
         await hub.openStaticTab('data', 'sections');
         const visibleSections = await hub.binarySections().waitForText('.text', 30000);
         assert.match(visibleSections, /section\(s\)/);
+        await captureDocumentationScreenshot(target, '04-sections');
 
         await hub.openStaticTab('code', 'discovered');
         const visibleFunctionCount = await hub.binaryFunctionsCount().waitForText('function', 30000);
         assert.match(visibleFunctionCount, /\d+ function/);
         await hub.binaryFunctions().waitFor({ state: 'visible', timeout: 30000 });
+        await captureDocumentationScreenshot(target, '05-functions');
 
         const functionExportPath = path.join(
           process.env.POF_E2E_ARTIFACTS_DIR,
