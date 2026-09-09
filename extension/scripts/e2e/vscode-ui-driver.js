@@ -301,6 +301,7 @@ async function connectToHubWebview(endpoint, timeoutMs = DEFAULT_TIMEOUT_MS) {
             try {
               if (await target.evaluate('Boolean(globalThis.document?.querySelector("#panel-dashboard"))', contextId)) {
                 target.contextId = contextId;
+                target.endpoint = endpoint;
                 return target;
               }
             } catch (error) {
@@ -890,10 +891,34 @@ async function captureUiFailure(target, artifactsDir, testName) {
   return written;
 }
 
+async function captureUiScreenshot(target, outputDir, name) {
+  if (!target || !outputDir) return '';
+  fs.mkdirSync(outputDir, { recursive: true });
+  const safeName = String(name || 'ui').replace(/[^a-z0-9_-]+/gi, '-').toLowerCase();
+  const screenshotPath = path.join(outputDir, `${safeName}.png`);
+  const response = await globalThis.fetch(`${target.endpoint}/json/list`);
+  const targets = await response.json();
+  const page = targets.find((candidate) => candidate.type === 'page' && candidate.webSocketDebuggerUrl);
+  if (!page) throw new Error('Top-level VS Code page was not found through CDP');
+  const socket = await openSocket(page.webSocketDebuggerUrl, DEFAULT_TIMEOUT_MS);
+  const pageTarget = new CdpTarget(socket);
+  try {
+    const screenshot = await pageTarget.send('Page.captureScreenshot', {
+      format: 'png',
+      captureBeyondViewport: false,
+    });
+    fs.writeFileSync(screenshotPath, Buffer.from(screenshot.data, 'base64'));
+  } finally {
+    pageTarget.close();
+  }
+  return screenshotPath;
+}
+
 module.exports = {
   CdpLocator,
   CdpTarget,
   HubPage,
   captureUiFailure,
+  captureUiScreenshot,
   connectToHubWebview,
 };
