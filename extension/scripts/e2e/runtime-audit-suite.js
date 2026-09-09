@@ -1017,6 +1017,7 @@ async function run() {
         allowFunctionDecompileSuccess = true;
         await hub.decompileRebuildButton().clickDom();
         await hub.decompileOutput().waitForText('function retry succeeded', 30000);
+        await captureDocumentationScreenshot(target, '08-decompiler');
         assert.ok(functionDecompileAttempts > attemptsBeforeRetry, 'the explicit retry must execute a new function run');
         assert.equal(functionDecompileSuccesses, 1, 'the explicit retry must produce exactly one successful function run');
 
@@ -1477,6 +1478,13 @@ async function run() {
         assert.match(visibleFunctionCount, /\d+ function/);
         await hub.binaryFunctions().waitFor({ state: 'visible', timeout: 30000 });
         await captureDocumentationScreenshot(target, '05-functions');
+
+        if (process.env.POF_E2E_DOC_SCREENSHOTS_DIR) {
+          await hub.openStaticTab('data', 'symbols');
+          await target.locator('#symbolsContent').waitForText('entry_e2e', 30000);
+          await captureDocumentationScreenshot(target, '09-symbols');
+          await hub.openStaticTab('code', 'discovered');
+        }
 
         const functionExportPath = path.join(
           process.env.POF_E2E_ARTIFACTS_DIR,
@@ -2561,6 +2569,12 @@ async function run() {
     mocha.grep(/isolates annotations when switching between recent binaries/);
   } else if (uiOnly === 'docs-features') {
     mocha.grep(/refuses then authorizes a plugin|drives the hub through real webview controls/);
+  } else if (uiOnly === 'docs-analysis') {
+    mocha.grep(/accepts function and global decompile augmentation|restores the selected binary and visible analysis/);
+  } else if (uiOnly === 'docs-decompiler') {
+    mocha.grep(/accepts function and global decompile augmentation/);
+  } else if (uiOnly === 'docs-symbols') {
+    mocha.grep(/restores the selected binary and visible analysis/);
   } else if (['1', 'true', 'yes'].includes(uiOnly)) {
     mocha.grep(/real webview controls|real confirmation UI|restores both caches through the real UI|binary analysis backend error|restores the selected binary and visible analysis|loading, empty, error and success xrefs states through the real UI|IDA keymap through real webview keyboard events/);
   }
