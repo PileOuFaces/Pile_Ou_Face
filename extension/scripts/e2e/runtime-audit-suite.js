@@ -1483,6 +1483,16 @@ async function run() {
           await hub.openStaticTab('data', 'symbols');
           await target.locator('#symbolsContent').waitForText('entry_e2e', 30000);
           await captureDocumentationScreenshot(target, '09-symbols');
+
+          await hub.openStaticTab('data', 'strings');
+          await target.locator('#stringsContent .data-table').waitFor({ state: 'visible', timeout: 30000 });
+          await target.locator('#stringsContent').waitForText('chaîne(s)', 30000);
+          await captureDocumentationScreenshot(target, '10-strings');
+
+          await hub.openStaticTab('code', 'hex');
+          await target.locator('#hexContent .hex-table').waitFor({ state: 'visible', timeout: 30000 });
+          await target.locator('#hexRenderStatus').waitForText('lignes', 30000);
+          await captureDocumentationScreenshot(target, '11-hex-view');
           await hub.openStaticTab('code', 'discovered');
         }
 
@@ -2574,6 +2584,8 @@ async function run() {
   } else if (uiOnly === 'docs-decompiler') {
     mocha.grep(/accepts function and global decompile augmentation/);
   } else if (uiOnly === 'docs-symbols') {
+    mocha.grep(/restores the selected binary and visible analysis/);
+  } else if (uiOnly === 'docs-strings-hex') {
     mocha.grep(/restores the selected binary and visible analysis/);
   } else if (['1', 'true', 'yes'].includes(uiOnly)) {
     mocha.grep(/real webview controls|real confirmation UI|restores both caches through the real UI|binary analysis backend error|restores the selected binary and visible analysis|loading, empty, error and success xrefs states through the real UI|IDA keymap through real webview keyboard events/);
