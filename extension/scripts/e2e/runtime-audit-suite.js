@@ -1427,7 +1427,8 @@ async function run() {
 
   suite.addTest(new Mocha.Test('restores the selected binary and visible analysis after reopening the hub', async () => {
     const fixtures = readFixtureSpecs();
-    const fixture = String(process.env.POF_E2E_UI_ONLY || '').toLowerCase() === 'docs-graphs'
+    const docsMode = String(process.env.POF_E2E_UI_ONLY || '').toLowerCase();
+    const fixture = docsMode === 'docs-graphs'
       ? fixtures.find((candidate) => candidate.kind === 'real-compiled' && candidate.opt === '-O0')
       : fixtures[0];
     assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
@@ -1485,7 +1486,7 @@ async function run() {
         await hub.binaryFunctions().waitFor({ state: 'visible', timeout: 30000 });
         await captureDocumentationScreenshot(target, '05-functions');
 
-        if (process.env.POF_E2E_DOC_SCREENSHOTS_DIR) {
+        if (process.env.POF_E2E_DOC_SCREENSHOTS_DIR && docsMode === 'docs-graphs') {
           await hub.openStaticTab('data', 'symbols');
           await target.locator('#symbolsContent').waitForText('entry_e2e', 30000);
           await captureDocumentationScreenshot(target, '09-symbols');
@@ -1525,7 +1526,7 @@ async function run() {
         await hub.goToAddressInput().waitForValue(String(fixture.entry || '0x400078'), 30000);
         await captureDocumentationScreenshot(target, '03-disassembly');
 
-        if (process.env.POF_E2E_DOC_SCREENSHOTS_DIR) {
+        if (process.env.POF_E2E_DOC_SCREENSHOTS_DIR && docsMode === 'docs-graphs') {
           await vscode.commands.executeCommand('pileOuFace.goToAddress');
           await hub.openStaticTab('code', 'cfg');
           await target.locator('#cfgContent .cfg-table-view .data-table').waitFor({ state: 'attached', timeout: 30000 });
@@ -1537,6 +1538,47 @@ async function run() {
           await target.locator('#callgraphContent .cfg-graph-view .cfg-svg').waitFor({ state: 'visible', timeout: 30000 });
           await target.locator('#callgraphContent').waitForText('fonction(s)', 30000);
           await captureDocumentationScreenshot(target, '13-call-graph');
+        }
+
+        if (process.env.POF_E2E_DOC_SCREENSHOTS_DIR && docsMode === 'docs-epic-final') {
+          await vscode.commands.executeCommand('pileOuFace.goToAddress');
+          await hub.openStaticTab('code', 'stack');
+          await target.locator('#stackFrameSize').waitForText('Frame:', 30000);
+          await captureDocumentationScreenshot(target, '14-stack-frame');
+
+          await hub.openStaticTab('data', 'imports');
+          await target.locator('#importsContent').waitForText('Score de suspicion', 30000);
+          await target.locator('#exportsContent').waitForText('Exports', 30000);
+          await captureDocumentationScreenshot(target, '15-imports-exports');
+
+          await hub.openStaticTab('data', 'recherche');
+          await target.locator('#searchBinaryPattern').fill('ELF');
+          await target.locator('#btnSearchBinary').clickDom();
+          await target.locator('#searchResultsContainer').waitFor({ state: 'visible', timeout: 30000 });
+          await target.locator('#searchResultsCount').waitForText('résultat', 30000);
+          await captureDocumentationScreenshot(target, '16-search');
+
+          await hub.openStaticTab('data', 'exceptions');
+          await target.locator('#exceptionsContent').waitForText('gestionnaire', 30000);
+          await captureDocumentationScreenshot(target, '18-exception-handlers');
+
+          const peFixture = fixtures.find((candidate) => candidate.kind === 'synthetic-pe');
+          assert.ok(peFixture?.path && fs.existsSync(peFixture.path), 'PE UI fixture binary must exist');
+          await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+            type: 'hubUseBinaryPath',
+            binaryPath: peFixture.path,
+          });
+          await hub.binaryPath().waitForValue(path.basename(peFixture.path), 30000);
+          await hub.openPanel('static');
+          await hub.openStaticTab('data', 'pe_resources');
+          await target.locator('#peResourcesContent').waitFor({ state: 'visible', timeout: 30000 });
+          await captureDocumentationScreenshot(target, '17-pe-resources');
+
+          await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+            type: 'hubUseBinaryPath',
+            binaryPath: fixture.path,
+          });
+          await hub.binaryPath().waitForValue(binaryName, 30000);
         }
 
         target.close();
@@ -2608,6 +2650,8 @@ async function run() {
   } else if (uiOnly === 'docs-strings-hex') {
     mocha.grep(/restores the selected binary and visible analysis/);
   } else if (uiOnly === 'docs-graphs') {
+    mocha.grep(/restores the selected binary and visible analysis/);
+  } else if (uiOnly === 'docs-epic-final') {
     mocha.grep(/restores the selected binary and visible analysis/);
   } else if (['1', 'true', 'yes'].includes(uiOnly)) {
     mocha.grep(/real webview controls|real confirmation UI|restores both caches through the real UI|binary analysis backend error|restores the selected binary and visible analysis|loading, empty, error and success xrefs states through the real UI|IDA keymap through real webview keyboard events/);
