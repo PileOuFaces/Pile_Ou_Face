@@ -66,6 +66,35 @@ function createFixtureBinary(extensionRoot, workspacePath, spec) {
   };
 }
 
+function createPeFixtureBinary(extensionRoot, workspacePath) {
+  const fixturePath = path.join(workspacePath, 'e2e-fixture-minimal.exe');
+  const makerPath = path.join(extensionRoot, 'backends', 'static', 'tests', 'fixtures', 'pe_fixture.py');
+  const pythonCmd = process.env.PYTHON || 'python3';
+  const script = [
+    'import importlib.util, pathlib, sys',
+    'maker = pathlib.Path(sys.argv[1])',
+    'out = pathlib.Path(sys.argv[2])',
+    'spec = importlib.util.spec_from_file_location("pe_fixture", maker)',
+    'mod = importlib.util.module_from_spec(spec)',
+    'spec.loader.exec_module(mod)',
+    'mod.write_minimal_pe64(str(out))',
+  ].join('; ');
+  const result = spawnSync(pythonCmd, ['-c', script, makerPath, fixturePath], {
+    cwd: extensionRoot,
+    encoding: 'utf8',
+  });
+  if (result.status !== 0) {
+    throw new Error(`Failed to create PE E2E fixture with ${pythonCmd}: ${result.stderr || result.stdout}`);
+  }
+  return {
+    name: 'minimal-pe',
+    path: fixturePath,
+    entry: '0x140001000',
+    sizeBytes: fs.statSync(fixturePath).size,
+    kind: 'synthetic-pe',
+  };
+}
+
 function createRealCorpusFixtures(extensionRoot, workspacePath) {
   if (!['1', 'true', 'yes'].includes(String(process.env.POF_E2E_REAL_CORPUS || '').toLowerCase())) {
     return [];
@@ -225,6 +254,9 @@ async function main() {
   const cdpEndpoint = `http://127.0.0.1:${cdpPort}`;
   const fixtures = [
     ...FIXTURE_SPECS.map((spec) => createFixtureBinary(extensionRoot, workspacePath, spec)),
+    ...(String(process.env.POF_E2E_UI_ONLY || '').toLowerCase() === 'docs-epic-final'
+      ? [createPeFixtureBinary(extensionRoot, workspacePath)]
+      : []),
     ...createRealCorpusFixtures(extensionRoot, workspacePath),
     ...readUserFixturePaths(),
   ];
