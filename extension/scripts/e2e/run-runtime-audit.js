@@ -250,6 +250,7 @@ async function main() {
   let failed = false;
   try {
     await runTests({
+      version: process.env.POF_E2E_VSCODE_VERSION || undefined,
       extensionDevelopmentPath: extensionRoot,
       extensionTestsPath,
       launchArgs: [

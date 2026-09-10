@@ -1426,7 +1426,10 @@ async function run() {
   }));
 
   suite.addTest(new Mocha.Test('restores the selected binary and visible analysis after reopening the hub', async () => {
-    const [fixture] = readFixtureSpecs();
+    const fixtures = readFixtureSpecs();
+    const fixture = String(process.env.POF_E2E_UI_ONLY || '').toLowerCase() === 'docs-graphs'
+      ? fixtures.find((candidate) => candidate.kind === 'real-compiled' && candidate.opt === '-O0')
+      : fixtures[0];
     assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
     const binaryName = path.basename(fixture.path);
     let target = null;
@@ -1469,7 +1472,10 @@ async function run() {
         await captureDocumentationScreenshot(target, '02-binary-information');
 
         await hub.openStaticTab('data', 'sections');
-        const visibleSections = await hub.binarySections().waitForText('.text', 30000);
+        const codeSectionName = fixture.kind === 'real-compiled' && process.platform === 'darwin'
+          ? '__text'
+          : '.text';
+        const visibleSections = await hub.binarySections().waitForText(codeSectionName, 30000);
         assert.match(visibleSections, /section\(s\)/);
         await captureDocumentationScreenshot(target, '04-sections');
 
@@ -1518,6 +1524,20 @@ async function run() {
         await hub.expectActive(hub.subTab('disasm'), 'disassembly opened from the function list');
         await hub.goToAddressInput().waitForValue(String(fixture.entry || '0x400078'), 30000);
         await captureDocumentationScreenshot(target, '03-disassembly');
+
+        if (process.env.POF_E2E_DOC_SCREENSHOTS_DIR) {
+          await vscode.commands.executeCommand('pileOuFace.goToAddress');
+          await hub.openStaticTab('code', 'cfg');
+          await target.locator('#cfgContent .cfg-table-view .data-table').waitFor({ state: 'attached', timeout: 30000 });
+          await target.locator('input[name="cfgView"][value="graph"]').clickDom();
+          await target.locator('#cfgContent .cfg-graph-view .cfg-svg').waitFor({ state: 'visible', timeout: 30000 });
+          await captureDocumentationScreenshot(target, '12-cfg');
+
+          await hub.openStaticTab('code', 'callgraph');
+          await target.locator('#callgraphContent .cfg-graph-view .cfg-svg').waitFor({ state: 'visible', timeout: 30000 });
+          await target.locator('#callgraphContent').waitForText('fonction(s)', 30000);
+          await captureDocumentationScreenshot(target, '13-call-graph');
+        }
 
         target.close();
         target = null;
@@ -2586,6 +2606,8 @@ async function run() {
   } else if (uiOnly === 'docs-symbols') {
     mocha.grep(/restores the selected binary and visible analysis/);
   } else if (uiOnly === 'docs-strings-hex') {
+    mocha.grep(/restores the selected binary and visible analysis/);
+  } else if (uiOnly === 'docs-graphs') {
     mocha.grep(/restores the selected binary and visible analysis/);
   } else if (['1', 'true', 'yes'].includes(uiOnly)) {
     mocha.grep(/real webview controls|real confirmation UI|restores both caches through the real UI|binary analysis backend error|restores the selected binary and visible analysis|loading, empty, error and success xrefs states through the real UI|IDA keymap through real webview keyboard events/);
