@@ -261,7 +261,7 @@ async function openSocket(url, timeoutMs) {
   });
 }
 
-async function connectToHubWebview(endpoint, timeoutMs = DEFAULT_TIMEOUT_MS) {
+async function connectToHubWebview(endpoint, timeoutMs = DEFAULT_TIMEOUT_MS, documentSelector = '#panel-dashboard') {
   if (!endpoint) throw new Error('POF_E2E_CDP_ENDPOINT is required for UI E2E');
   const deadline = Date.now() + timeoutMs;
   let targetSummary = '';
@@ -299,7 +299,7 @@ async function connectToHubWebview(endpoint, timeoutMs = DEFAULT_TIMEOUT_MS) {
           const contexts = target.executionContextIds.length ? target.executionContextIds : [null];
           for (const contextId of contexts) {
             try {
-              if (await target.evaluate('Boolean(globalThis.document?.querySelector("#panel-dashboard"))', contextId)) {
+              if (await target.evaluate(`Boolean(globalThis.document?.querySelector(${JSON.stringify(documentSelector)}))`, contextId)) {
                 target.contextId = contextId;
                 target.endpoint = endpoint;
                 return target;
@@ -320,7 +320,7 @@ async function connectToHubWebview(endpoint, timeoutMs = DEFAULT_TIMEOUT_MS) {
       await new Promise((resolve) => setTimeout(resolve, Math.min(100, Math.max(0, deadline - Date.now()))));
     }
   }
-  throw new Error(`Pile ou Face hub webview was not found through CDP. Targets: ${targetSummary || '<none>'}. Last error: ${lastError || '<none>'}`);
+  throw new Error(`CDP document matching ${documentSelector} was not found. Targets: ${targetSummary || '<none>'}. Last error: ${lastError || '<none>'}`);
 }
 
 class HubPage {

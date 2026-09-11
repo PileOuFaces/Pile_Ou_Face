@@ -509,9 +509,46 @@ function jsonResponse(body, status = 200) {
   };
 }
 
+function readExternalPluginContract() {
+  const contractPath = String(process.env.POF_E2E_PLUGIN_CONTRACT_PATH || '').trim();
+  if (!contractPath) return null;
+  assert.ok(fs.existsSync(contractPath), `external plugin E2E contract must exist: ${contractPath}`);
+  const contract = JSON.parse(fs.readFileSync(contractPath, 'utf8'));
+  assert.equal(contract.schema_version, 1, 'external plugin E2E contract schema_version must be 1');
+  for (const key of ['plugin_id', 'display_name', 'plugin_slug']) {
+    assert.ok(String(contract[key] || '').trim(), `external plugin E2E contract requires ${key}`);
+  }
+  assert.ok(String(contract.tab?.group || '').trim(), 'external plugin E2E contract requires tab.group');
+  assert.ok(String(contract.tab?.id || '').trim(), 'external plugin E2E contract requires tab.id');
+  assert.ok(String(contract.action?.selector || '').trim(), 'external plugin E2E contract requires action.selector');
+  assert.ok(String(contract.result?.selector || '').trim(), 'external plugin E2E contract requires result.selector');
+  assert.ok(String(contract.result?.text || '').trim(), 'external plugin E2E contract requires result.text');
+  const bundlePath = path.resolve(String(process.env.POF_E2E_PLUGIN_BUNDLE || ''));
+  const fixturePath = path.resolve(String(process.env.POF_E2E_PLUGIN_FIXTURE || ''));
+  assert.ok(fs.existsSync(bundlePath), `external plugin bundle must exist: ${bundlePath}`);
+  assert.ok(fs.existsSync(fixturePath), `external plugin fixture must exist: ${fixturePath}`);
+  return { ...contract, bundlePath, fixturePath };
+}
+
+async function waitForPluginContextValue(target, expression, predicate, timeoutMs = 30000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastValue;
+  while (Date.now() < deadline) {
+    for (const contextId of target.executionContextIds.length ? target.executionContextIds : [target.contextId]) {
+      try {
+        lastValue = await target.evaluate(expression, contextId);
+        if (predicate(lastValue)) return { contextId, value: lastValue };
+      } catch { /* Contexts can disappear while the webview reloads. */ }
+    }
+    await sleep(100);
+  }
+  throw new Error(`Timed out waiting for plugin context value; last=${JSON.stringify(lastValue)}`);
+}
+
 async function run() {
   const mocha = new Mocha({ ui: 'bdd', color: true, timeout: E2E_AUDIT_MOCHA_TIMEOUT_MS });
   const suite = Mocha.Suite.create(mocha.suite, 'runtime usage audit e2e');
+  const externalPlugin = readExternalPluginContract();
 
   suite.addTest(new Mocha.Test('creates audit JSONL and records hub startup events', async () => {
     const userDataDir = process.env.POF_E2E_USER_DATA_DIR;
@@ -1255,6 +1292,92 @@ async function run() {
     } finally {
       target?.close();
       try { fs.rmSync(pluginBundlePath, { force: true }); } catch { /* Best-effort fixture cleanup. */ }
+    }
+  }));
+
+  if (externalPlugin) suite.addTest(new Mocha.Test('installs and exercises an external plugin contract through its real webview', async () => {
+    const userDataDir = process.env.POF_E2E_USER_DATA_DIR;
+    let target = null;
+    let pluginTarget = null;
+    try {
+      await withWindowMocks({
+        showOpenDialog: async () => [vscode.Uri.file(externalPlugin.bundlePath)],
+      }, async () => {
+        await vscode.commands.executeCommand('pileOuFace.goToAddress');
+        target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+        const hub = new HubPage(target);
+        await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+          type: 'hubUseBinaryPath',
+          binaryPath: externalPlugin.fixturePath,
+        });
+        await hub.binaryPath().waitForValue(path.basename(externalPlugin.fixturePath), 30000);
+
+        await hub.openPanel('options');
+        await hub.pluginInstallButton().click();
+        await hub.toastContainer().waitForText('Plugin installé', 30000);
+        await hub.pluginStateList().waitForText(externalPlugin.display_name, 30000);
+        const requiresConsent = await target.evaluate(
+          'Boolean(document.querySelector("#pluginStateList .plugin-consent-grant"))',
+        );
+        if (requiresConsent) await hub.pluginConsentButton().click();
+        await hub.pluginStateList().waitForText('active', 30000);
+
+        target.close();
+        target = null;
+        await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+        await vscode.commands.executeCommand('pileOuFace.goToAddress');
+        target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+        const reloadedHub = new HubPage(target);
+        await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+          type: 'hubUseBinaryPath',
+          binaryPath: externalPlugin.fixturePath,
+        });
+        await reloadedHub.binaryPath().waitForValue(path.basename(externalPlugin.fixturePath), 30000);
+
+        await reloadedHub.openPanel('static');
+        await reloadedHub.openStaticTab(externalPlugin.tab.group, externalPlugin.tab.id);
+        const frameIsActive = await target.evaluate(`Boolean(document.querySelector(${JSON.stringify(`iframe.plugin-iframe.active[data-plugin-slug="${externalPlugin.plugin_slug}"]`)}))`);
+        assert.equal(frameIsActive, true, 'external plugin tab must activate its sandboxed frame');
+        pluginTarget = await connectToHubWebview(
+          process.env.POF_E2E_CDP_ENDPOINT,
+          30000,
+          externalPlugin.action.selector,
+        );
+        const { contextId: pluginContextId } = await waitForPluginContextValue(
+          pluginTarget,
+          `Boolean(document.querySelector(${JSON.stringify(externalPlugin.action.selector)}))`,
+          Boolean,
+        );
+        await pluginTarget.evaluate(`(() => {
+          const element = document.querySelector(${JSON.stringify(externalPlugin.action.selector)});
+          if (!element) throw new Error('external plugin action is unavailable');
+          element.click();
+        })()`, pluginContextId);
+        await waitForPluginContextValue(
+          pluginTarget,
+          `document.querySelector(${JSON.stringify(externalPlugin.result.selector)})?.textContent || ''`,
+          (value) => String(value || '').includes(externalPlugin.result.text),
+          60000,
+        );
+        const { events } = await waitForAuditEvents(userDataDir, (candidateEvents) => (
+          candidateEvents.some((event) => event.kind === 'webview_post_message'
+            && event.name === 'hubPluginResult'
+            && Array.isArray(event.keys)
+            && event.keys.includes('feature'))
+        ), 60000);
+        assert.ok(events.length > 0, 'external plugin invocation must be recorded by the runtime audit');
+      });
+    } catch (error) {
+      const artifacts = await captureUiFailure(
+        target,
+        process.env.POF_E2E_ARTIFACTS_DIR,
+        'external-plugin-contract',
+      );
+      error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
+      throw error;
+    } finally {
+      pluginTarget?.close();
+      target?.close();
     }
   }));
 
@@ -2653,6 +2776,8 @@ async function run() {
     mocha.grep(/restores the selected binary and visible analysis/);
   } else if (uiOnly === 'docs-epic-final') {
     mocha.grep(/restores the selected binary and visible analysis/);
+  } else if (uiOnly === 'external-plugin') {
+    mocha.grep(/external plugin contract/);
   } else if (['1', 'true', 'yes'].includes(uiOnly)) {
     mocha.grep(/real webview controls|real confirmation UI|restores both caches through the real UI|binary analysis backend error|restores the selected binary and visible analysis|loading, empty, error and success xrefs states through the real UI|IDA keymap through real webview keyboard events/);
   }
