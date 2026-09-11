@@ -10,9 +10,11 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import mmap
 import os
 import re
 import sys
+from collections import namedtuple
 from collections.abc import Callable
 from pathlib import Path
 
@@ -203,10 +205,25 @@ _DISASM_WINDOW_BYTES = 4 * 1024 * 1024
 # autres ISA supportées ici sont à taille fixe ≤ 8 octets).
 _DISASM_WINDOW_OVERLAP_BYTES = 32
 
+# Le blob brut (raw_arch) est mappé via mmap plutôt que chargé en RAM
+# (cf. _mmap_file_readonly) : les fonctions qui manipulent ce buffer doivent
+# donc accepter aussi bien `bytes` (section lief déjà matérialisée) qu'un
+# mmap paginé à la demande par l'OS.
+CodeBuffer = bytes | mmap.mmap
+
+# Cs.disasm() enveloppe chaque instruction décodée dans un objet CsInsn dont
+# le __init__ fait une copie profonde (copy_ctypes) de la struct C native par
+# instruction, en plus de l'allocation de l'objet Python — coût payé même
+# quand seuls address/size/mnemonic/op_str sont utilisés en aval (notre cas).
+# Cs.disasm_lite() lit les mêmes champs directement sur le tableau natif sans
+# copie ni wrapper ; les octets bruts ne sont plus exposés par Capstone mais
+# on les reconstruit par slice du buffer déjà en notre possession.
+_LiteInsn = namedtuple("_LiteInsn", "address size mnemonic op_str")
+
 
 def _iter_windowed_instructions(
     md,
-    code_bytes: bytes,
+    code_bytes: CodeBuffer,
     base_addr: int,
     *,
     window_bytes: int = _DISASM_WINDOW_BYTES,
@@ -229,12 +246,14 @@ def _iter_windowed_instructions(
         chunk = code_bytes[offset:read_end]
         soft_limit_addr = base_addr + offset + window_bytes
         reached_soft_limit = False
-        for instr in md.disasm(chunk, base_addr + offset):
-            if read_end < total and instr.address >= soft_limit_addr:
-                offset = instr.address - base_addr
+        for address, size, mnemonic, op_str in md.disasm_lite(
+            chunk, base_addr + offset
+        ):
+            if read_end < total and address >= soft_limit_addr:
+                offset = address - base_addr
                 reached_soft_limit = True
                 break
-            yield instr
+            yield _LiteInsn(address, size, mnemonic, op_str)
         if reached_soft_limit:
             continue
         if read_end >= total:
@@ -359,6 +378,23 @@ def _find_code_section(
     return None
 
 
+def _mmap_file_readonly(path: str) -> bytes | mmap.mmap:
+    """Lit un fichier en lecture seule via mmap plutôt qu'en RAM entière.
+
+    Le blob brut (mode raw_arch) peut être un firmware/shellcode de
+    plusieurs Go sans structure lief à parser : `read_bytes()` matérialisait
+    tout le fichier en mémoire avant même le fenêtrage Capstone. mmap laisse
+    l'OS paginer à la demande — seules les fenêtres réellement slicées par
+    `_iter_windowed_instructions` sont chargées. Le fd peut être refermé
+    juste après : POSIX garantit que le mapping reste valide indépendamment
+    du descripteur qui l'a créé.
+    """
+    if os.path.getsize(path) == 0:
+        return b""
+    with open(path, "rb") as f:
+        return mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+
+
 def _resolve_disasm_source(
     binary_path: str,
     *,
@@ -366,7 +402,7 @@ def _resolve_disasm_source(
     raw_arch: str | None = None,
     raw_base_addr: str | int | None = None,
     raw_endian: str | None = None,
-) -> tuple[bytes, int, int, int] | None:
+) -> tuple[CodeBuffer, int, int, int] | None:
     """Résout (code_bytes, base_addr, cs_arch, cs_mode) une seule fois.
 
     Extrait de disassemble_with_capstone/disassemble_raw_blob pour pouvoir
@@ -382,7 +418,7 @@ def _resolve_disasm_source(
         if not arch_mode:
             raise DisassemblyError(f"Unsupported raw architecture: {raw_arch}")
         try:
-            code_bytes = Path(binary_path).read_bytes()
+            code_bytes = _mmap_file_readonly(binary_path)
         except OSError as exc:
             raise BinaryParseError(f"Failed to read raw blob: {binary_path}") from exc
         try:
@@ -420,7 +456,7 @@ def _resolve_disasm_source(
 def _iter_raw_instruction_dicts(
     md,
     cs_arch: int,
-    code_bytes: bytes,
+    code_bytes: CodeBuffer,
     base_addr: int,
     *,
     progress_callback: Callable[[dict], None] | None = None,
@@ -435,7 +471,10 @@ def _iter_raw_instruction_dicts(
     total = max(total_code_bytes or len(code_bytes), 1)
     next_report_percent = 15
     for instr in _iter_windowed_instructions(md, code_bytes, base_addr):
-        bytes_hex = " ".join(f"{b:02x}" for b in instr.bytes)
+        insn_bytes = code_bytes[
+            instr.address - base_addr : instr.address - base_addr + instr.size
+        ]
+        bytes_hex = " ".join(f"{b:02x}" for b in insn_bytes)
         op_str = _normalize_capstone_operands(cs_arch, instr)
         text = f"{bytes_hex:<20} {instr.mnemonic:<8} {op_str}".strip()
         yield {
@@ -445,7 +484,7 @@ def _iter_raw_instruction_dicts(
             "mnemonic": instr.mnemonic,
             "operands": op_str,
         }
-        processed = min(total, max(0, (instr.address - base_addr) + len(instr.bytes)))
+        processed = min(total, max(0, (instr.address - base_addr) + instr.size))
         percent = 10 + int((processed / total) * 75)
         if percent >= next_report_percent:
             _emit_progress(
