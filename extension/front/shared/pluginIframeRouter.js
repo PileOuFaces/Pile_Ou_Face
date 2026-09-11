@@ -51,7 +51,7 @@
 
   /**
    * Register an iframe element so the router can send messages to it.
-   * @param {string} slug     - Plugin slug (e.g. "malware-triage-pro")
+   * @param {string} slug     - Plugin slug (e.g. "analysis-demo")
    * @param {HTMLIFrameElement} frameEl - The iframe DOM element
    */
   function register(slug, frameEl) {
@@ -60,7 +60,7 @@
 
   /**
    * Dispatch a host-originated message to a specific plugin's iframe.
-   * @param {string} pluginId - Plugin id (e.g. "pof.malware-triage-pro")
+   * @param {string} pluginId - Plugin id (e.g. "vendor.analysis-demo")
    * @param {object} msg
    */
   function dispatch(pluginId, msg) {

@@ -58,7 +58,7 @@ class TestPluginApiImports(unittest.TestCase):
         result = request_ai_followup(
             "Explain the suspicious decoder",
             {"function": "decode_config", "signals": ["xor-loop"]},
-            "pof.malware-triage-pro.ai.deobfuscate",
+            "vendor.analysis-demo.ai.explain",
         )
 
         self.assertEqual(
@@ -68,7 +68,7 @@ class TestPluginApiImports(unittest.TestCase):
                     "version": 1,
                     "prompt": "Explain the suspicious decoder",
                     "context": {"function": "decode_config", "signals": ["xor-loop"]},
-                    "capability": "pof.malware-triage-pro.ai.deobfuscate",
+                    "capability": "vendor.analysis-demo.ai.explain",
                 }
             },
         )
