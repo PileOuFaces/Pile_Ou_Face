@@ -306,6 +306,9 @@ async function main() {
         POF_E2E_CDP_ENDPOINT: cdpEndpoint,
         POF_E2E_ARTIFACTS_DIR: path.dirname(perfPath),
         POF_E2E_UI_ONLY: process.env.POF_E2E_UI_ONLY || '',
+        POF_E2E_PLUGIN_CONTRACT_PATH: process.env.POF_E2E_PLUGIN_CONTRACT_PATH || '',
+        POF_E2E_PLUGIN_BUNDLE: process.env.POF_E2E_PLUGIN_BUNDLE || '',
+        POF_E2E_PLUGIN_FIXTURE: process.env.POF_E2E_PLUGIN_FIXTURE || '',
       },
     });
     console.log(`[e2e] perf samples: ${perfPath}`);
