@@ -181,20 +181,20 @@ describe("plugin state helpers", () => {
       summary: { active: 1 },
       plugins: [
         {
-          id: "pof.malware-triage-pro",
+          id: "vendor.analysis-demo",
           state: "active",
           manifest: {
-            name: "Malware Triage Pro",
+            name: "Analysis Demo",
             version: "1.0.0",
             kind: "analysis-pack",
             ui: {
-              family: "malware",
+              family: "analysis",
               tabs: [
-                { tabId: "detection", label: "Detection", group: "malware" },
-                { tabId: "packer",    label: "Packer",    group: "malware" },
+                { tabId: "overview", label: "Overview", group: "analysis" },
+                { tabId: "details", label: "Details", group: "analysis" },
               ],
             },
-            capabilities: { analysis: ["malware.detect"] },
+            capabilities: { analysis: ["analysis.inspect"] },
           },
         },
       ],
@@ -202,9 +202,9 @@ describe("plugin state helpers", () => {
 
     expect(state.tabRegistrations).to.have.length(2);
     state.tabRegistrations.forEach((reg) => {
-      expect(reg.pluginSlug).to.equal("malware-triage-pro");
+      expect(reg.pluginSlug).to.equal("vendor.analysis-demo");
     });
-    expect(state.tabRegistrations.map((r) => r.tabId)).to.deep.equal(["detection", "packer"]);
+    expect(state.tabRegistrations.map((r) => r.tabId)).to.deep.equal(["overview", "details"]);
   });
 
   it("returns a safe empty state when plugin loading fails", () => {

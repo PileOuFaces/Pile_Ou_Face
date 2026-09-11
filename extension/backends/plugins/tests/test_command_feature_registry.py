@@ -1,22 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Regression guard for the frozen plugin command/feature registry.
+"""Generic contract tests for manifest-driven plugin command resolution.
 
-See CONTRACTS_SHARED.md (workspace root), section "Plugin Runtime Commands",
-"Frozen registry" — this is the host-side half of that contract. It snapshots
-the *real* command ids/features/aliases declared by the 4 in-house plugins
-(Pile_ou_Face_plugins) and verifies resolve_plugin_command_for_feature()
-still resolves every one of them correctly.
-
-This intentionally does NOT read the plugins repo (private, not checked out
-in this repo's CI) — the snapshot below is the source of truth on the host
-side. If a plugin renames a feature/alias/id, this test won't catch it (that
-guard lives in the plugins repo's own test suite) — what this test catches is
-a regression in the host's *resolution algorithm* breaking a feature name
-that used to resolve correctly.
-
-If you deliberately change this registry (a plugin renamed something via the
-XSYNC process), update this snapshot AND the CONTRACTS_SHARED.md table in the
-same PR.
+The host must not know which plugins exist or snapshot their command ids.
+These synthetic manifests exercise the public protocol accepted from any
+compatible plugin while each plugin repository owns its concrete contracts.
 """
 
 from __future__ import annotations
@@ -40,49 +27,17 @@ from backends.plugins.runtime import (
     resolve_plugin_command_for_feature,
 )
 
-# Mirrors CONTRACTS_SHARED.md's "Frozen registry" table exactly.
-# (plugin_id, family, [(command_id, feature, [aliases])])
-FROZEN_REGISTRY: list[tuple[str, str, list[tuple[str, str, list[str]]]]] = [
+GENERIC_PLUGIN_CASES: list[tuple[str, list[tuple[str, str, list[str]]]]] = [
     (
-        "pof.malware-triage-pro",
-        "malware",
+        "example.analysis-one",
         [
-            ("malware.behavior.run", "behavior", []),
-            ("malware.anti_analysis.run", "anti_analysis", []),
-            ("malware.capa.run", "capa_scan", ["capa"]),
-            ("malware.yara.run", "yara_scan", ["yara"]),
-            ("malware.deobfuscate.run", "deobfuscate", ["string_deobfuscate"]),
-            ("malware.attck.tag", "attck", []),
-            ("malware.packer.run", "packer", ["packer_detect"]),
-            ("malware.capa.delete_rules", "capa_rules_delete", []),
-            ("malware.capa.check_rules", "capa_rules_check", []),
-            ("malware.capa.download_rules", "capa_rules_download", []),
-            ("malware.ioc_export.run", "ioc_export", []),
+            ("example.inspect.run", "inspect", ["inspect_legacy"]),
+            ("example.report.run", "report", []),
         ],
     ),
     (
-        "pof.cross-analysis-pro",
-        "croisee",
-        [("croisee.cross_analyze.run", "cross_analysis", ["cross_analyze"])],
-    ),
-    (
-        "pof.offensive-research-pro",
-        "offensif",
-        [
-            ("offensive.flirt.run", "flirt", []),
-            ("offensive.rop.run", "rop", ["rop_gadgets"]),
-            ("offensive.rop.build", "rop_build", []),
-            ("offensive.bindiff.run", "bindiff", []),
-            ("offensive.func_similarity.run", "func_similarity", []),
-        ],
-    ),
-    (
-        "pof.vulnerability-audit-pro",
-        "audit",
-        [
-            ("audit.vulns.run", "vulns", ["vuln_patterns"]),
-            ("audit.taint.run", "taint", []),
-        ],
+        "vendor.analysis-two",
+        [("vendor.correlate.run", "correlate", ["correlate_legacy"])],
     ),
 ]
 
@@ -135,28 +90,29 @@ def _make_context(command_ids: list[str]) -> PluginContext:
     return context
 
 
-@pytest.fixture(params=FROZEN_REGISTRY, ids=[entry[0] for entry in FROZEN_REGISTRY])
+@pytest.fixture(
+    params=GENERIC_PLUGIN_CASES, ids=[entry[0] for entry in GENERIC_PLUGIN_CASES]
+)
 def plugin_fixture(request):
-    plugin_id, family, commands = request.param
+    plugin_id, commands = request.param
     manifest = _make_manifest(plugin_id, commands)
     record = _make_record(plugin_id, manifest)
     context = _make_context([cid for cid, _feature, _aliases in commands])
-    return plugin_id, family, commands, record, context
+    return plugin_id, commands, record, context
 
 
-def test_every_frozen_feature_resolves_to_its_command(plugin_fixture):
-    plugin_id, _family, commands, record, context = plugin_fixture
+def test_every_manifest_feature_resolves_to_its_command(plugin_fixture):
+    plugin_id, commands, record, context = plugin_fixture
     for command_id, feature, _aliases in commands:
         resolved = resolve_plugin_command_for_feature(context, [record], feature)
         assert resolved == command_id, (
             f"{plugin_id}: feature '{feature}' resolved to {resolved!r}, "
-            f"expected {command_id!r} — resolution algorithm regressed for a "
-            f"real, in-use feature name (see CONTRACTS_SHARED.md frozen registry)"
+            f"expected {command_id!r}"
         )
 
 
-def test_every_frozen_alias_resolves_to_its_command(plugin_fixture):
-    plugin_id, _family, commands, record, context = plugin_fixture
+def test_every_manifest_alias_resolves_to_its_command(plugin_fixture):
+    plugin_id, commands, record, context = plugin_fixture
     for command_id, _feature, aliases in commands:
         for alias in aliases:
             resolved = resolve_plugin_command_for_feature(context, [record], alias)
@@ -167,7 +123,7 @@ def test_every_frozen_alias_resolves_to_its_command(plugin_fixture):
 
 
 def test_raw_command_id_resolves_to_itself(plugin_fixture):
-    plugin_id, _family, commands, record, context = plugin_fixture
+    plugin_id, commands, record, context = plugin_fixture
     for command_id, _feature, _aliases in commands:
         resolved = resolve_plugin_command_for_feature(context, [record], command_id)
         assert resolved == command_id, (
@@ -176,24 +132,24 @@ def test_raw_command_id_resolves_to_itself(plugin_fixture):
 
 
 def test_no_cross_plugin_feature_collisions():
-    """Every feature/alias across all 4 plugins must resolve unambiguously.
+    """Features and aliases from arbitrary manifests resolve unambiguously.
 
     If two plugins declared the same feature name, whichever's context.commands
     happened to be checked first would win silently — this would be a real,
     hard-to-debug cross-plugin routing bug. Guard against it by checking all
-    4 plugins' commands/features/aliases are attached to a single context and
-    resolve to the *correct* plugin's command every time.
+    plugins' commands/features/aliases are attached to a single context and
+    resolve to the correct manifest command every time.
     """
     all_records = []
     all_command_ids: list[str] = []
-    for plugin_id, _family, commands in FROZEN_REGISTRY:
+    for plugin_id, commands in GENERIC_PLUGIN_CASES:
         manifest = _make_manifest(plugin_id, commands)
         all_records.append(_make_record(plugin_id, manifest))
         all_command_ids.extend(cid for cid, _f, _a in commands)
 
     context = _make_context(all_command_ids)
 
-    for plugin_id, _family, commands in FROZEN_REGISTRY:
+    for plugin_id, commands in GENERIC_PLUGIN_CASES:
         for command_id, feature, aliases in commands:
             resolved = resolve_plugin_command_for_feature(context, all_records, feature)
             assert resolved == command_id, (

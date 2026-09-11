@@ -277,7 +277,7 @@ describe('PLUGIN_BRIDGE_PREAMBLE', () => {
     });
   });
 
-  describe('code-navigation helpers (ported from vulnerability-audit-pro, shared across plugins)', () => {
+  describe('generic code-navigation helpers shared across plugins', () => {
     it('isCodeNavigationAddress is false with empty caches and no address', () => {
       const { win } = makeBridgeWindow();
       expect(win.isCodeNavigationAddress('')).to.equal(false);

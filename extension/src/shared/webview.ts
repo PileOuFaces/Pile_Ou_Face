@@ -307,8 +307,8 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
   window.PREMIUM_TAB_FAMILY = window.PREMIUM_TAB_FAMILY || {};
   window.GROUP_LABELS = window.GROUP_LABELS || {};
   // Mirror the host's registerPluginTabs(): populate label/family lookups for
-  // every tab across all plugins, so cross-plugin display code (e.g. cross-analysis
-  // showing "source: audit") doesn't need direct access to the host's own state.
+  // every tab across all plugins, so cross-plugin display code can use manifest
+  // metadata without direct access to the host's own state.
   window.addEventListener('message', function (e) {
     if (!e.data || !e.data.__pof_host) return;
     var msg = e.data.payload;
@@ -332,10 +332,9 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
   window.functionListCache = window.functionListCache || [];
   window.functionsUiState = window.functionsUiState || { selectedAddr: '' };
 
-  // ── Code-navigation helpers (mirrors vulnerability-audit-pro/webview/tab.ts) ──
-  // These plugins used to share one global scope with vulnerability-audit-pro
-  // before iframe isolation; provided here so every plugin can resolve addresses
-  // without duplicating this logic. Address caches are always empty in an
+  // ── Generic code-navigation helpers exposed by the host bridge ──
+  // Provided here so every plugin can resolve addresses without duplicating
+  // host integration logic. Address caches are always empty in an
   // isolated iframe, so these gracefully return '' / false instead of crashing.
   function _isExecutableSection(section) {
     if (!section || typeof section !== 'object') return false;

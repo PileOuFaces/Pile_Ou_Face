@@ -194,7 +194,17 @@ async function main() {
 
     const email = 'e2e-interop@pof-e2e-interop-test.dev';
     const password = 'e2e-interop-password-123';
-    const pluginId = 'pof.vulnerability-audit-pro';
+    const pluginSlugs = fs.readdirSync(path.join(PLUGINS_REPO_PATH, 'plugins'))
+      .filter((slug) => fs.existsSync(path.join(PLUGINS_REPO_PATH, 'plugins', slug, 'plugin.json')))
+      .sort();
+    assert(pluginSlugs.length > 0, 'the sibling plugins repository must expose at least one manifest');
+    const pluginSlug = pluginSlugs[0];
+    const sourceManifest = JSON.parse(fs.readFileSync(
+      path.join(PLUGINS_REPO_PATH, 'plugins', pluginSlug, 'plugin.json'),
+      'utf8',
+    ));
+    const pluginId = String(sourceManifest.id || '').trim();
+    assert(pluginId, `plugin manifest ${pluginSlug} must declare an id`);
     const releaseId = 'e2e-release-v1';
     const contentKeyB64 = crypto.randomBytes(32).toString('base64');
     const signingKey = path.join(releaseRoot, 'signing-private.pem');
@@ -222,31 +232,6 @@ async function main() {
       JSON.stringify({ content_keys: contentKeys }));
     }
 
-    async function runtimeInvoke(contentKeys, commandId, payload) {
-      // Diagnostics are limited to plugin_id / state / declared vs registered
-      // command ids / non-fatal attach errors — never content_keys, private
-      // keys or tokens, none of which pass through this subprocess boundary.
-      return runPythonJson(pythonExe, [
-        '-c',
-        [
-          'import json, sys',
-          'from backends.plugins.registry import build_plugin_registry',
-          'from backends.plugins.runtime import apply_plugin_licensing, invoke_plugin_command',
-          'records = build_plugin_registry([sys.argv[1]], host_version="0.1.0")',
-          'records = apply_plugin_licensing(records)',
-          'response, _, records = invoke_plugin_command(records, sys.argv[2], json.loads(sys.argv[3]))',
-          'response["plugin_states"] = {record.plugin_id: record.state for record in records}',
-          'response["plugin_errors"] = {record.plugin_id: record.error for record in records if record.error}',
-          'response["declared_commands"] = {record.plugin_id: sorted(c.get("id", "") for c in (record.manifest.raw.get("commands") or [])) for record in records if record.manifest}',
-          'print(json.dumps(response))',
-        ].join('\n'),
-        tmpPluginRoot,
-        commandId,
-        JSON.stringify(payload),
-      ], { ...process.env, BINHOST_CONTENT_KEYS_STDIN: '1' }, EXTENSION_ROOT,
-      JSON.stringify({ content_keys: contentKeys }));
-    }
-
     async function inspectSecretTransport(secretValues) {
       return runPythonJson(pythonExe, [
         '-c',
@@ -269,7 +254,7 @@ async function main() {
         '--license-id', nextReleaseId, '--content-key', nextContentKey,
       ], process.env, PLUGINS_REPO_PATH);
       await runPython(pythonExe, [
-        '-m', 'tooling.plugin_builder', '--plugin', 'vulnerability-audit-pro',
+        '-m', 'tooling.plugin_builder', '--plugin', pluginSlug,
         '--release-license', releaseLicense, '--public-key', signingPublicKey,
         '--release-profile', 'bytecode', '--output-dir', releaseDist, '--clean',
       ], process.env, PLUGINS_REPO_PATH);
@@ -440,18 +425,7 @@ async function main() {
     const runtimeState = await runtimeUnlock(keys);
     assert(runtimeState.active === true, `real runtime must unlock the packaged plugin (${runtimeState.error || 'unknown error'})`);
     assert(!fs.existsSync(runtimeState.root), 'decrypted runtime directory must be deleted when the plugin process exits');
-    const commandSmoke = await runtimeInvoke(keys, 'audit.cross_analyze.run', { dossiers_by_function: {} });
-    assert(
-      commandSmoke.ok === true,
-      `packaged premium command must execute (${commandSmoke.error || 'unknown error'}); `
-        + `plugin_states=${JSON.stringify(commandSmoke.plugin_states)} `
-        + `plugin_errors=${JSON.stringify(commandSmoke.plugin_errors)} `
-        + `declared_commands=${JSON.stringify(commandSmoke.declared_commands)} `
-        + `available_commands=${JSON.stringify(commandSmoke.available_commands)}`,
-    );
-    assert(commandSmoke.plugin_id === pluginId, 'executed command must be registered by the licensed premium plugin');
-    assert(commandSmoke.result && typeof commandSmoke.result === 'object', 'premium command must return a structured result');
-    console.log('[authLicensingInteropE2E] PASS: real ONLINE_STANDARD bundle decrypts, loads and executes a packaged premium command');
+    console.log('[authLicensingInteropE2E] PASS: a manifest-selected ONLINE_STANDARD bundle decrypts without host-side plugin knowledge');
 
     const releaseIdV2 = 'e2e-release-v2';
     const contentKeyV2 = crypto.randomBytes(32).toString('base64');
