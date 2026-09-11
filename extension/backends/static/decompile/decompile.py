@@ -2100,9 +2100,8 @@ def _load_disasm_context(
             normalized = _normalize_hex_addr(line.get("addr"))
             if not normalized:
                 continue
-            copied = dict(line)
-            copied["addr"] = normalized
-            normalized_lines.append(copied)
+            line["addr"] = normalized
+            normalized_lines.append(line)
         for index, line in enumerate(normalized_lines):
             next_addr = (
                 normalized_lines[index + 1]["addr"]
