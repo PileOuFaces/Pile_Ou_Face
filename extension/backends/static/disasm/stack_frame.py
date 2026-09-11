@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import os
 import re
@@ -107,8 +108,21 @@ def _detect_abi(binary) -> tuple[str, int, str]:
     return (info.family, info.ptr_size, info.abi)
 
 
-def _get_code_bytes(binary, start_addr: int) -> tuple[bytes, int] | None:
-    """Find the code bytes starting at start_addr within the binary."""
+# analyse_stack_frame() only ever inspects the first 512 decoded instructions
+# (or fewer, if a `ret` is hit first) after start_addr. Reading — and letting
+# Capstone decode — everything up to the end of the containing section used
+# to cost O(section size) per function analysed, i.e. O(functions * section
+# size) overall on a stripped binary with one big .text section. Bounding the
+# read to comfortably more bytes than 512 instructions can ever need (worst
+# case here is x86 at up to 15 bytes/instruction; every other supported ISA
+# uses shorter fixed-width encodings) makes each call O(1) instead.
+_STACK_FRAME_MAX_SCAN_BYTES = 512 * 15
+
+
+def _get_code_bytes(
+    binary, start_addr: int, max_size: int = _STACK_FRAME_MAX_SCAN_BYTES
+) -> tuple[bytes, int] | None:
+    """Find up to `max_size` code bytes starting at start_addr within the binary."""
     sections = []
     if lief and isinstance(binary, lief.PE.Binary):
         base = binary.optional_header.imagebase
@@ -116,7 +130,9 @@ def _get_code_bytes(binary, start_addr: int) -> tuple[bytes, int] | None:
             va = sec.virtual_address + base
             size = sec.size
             if va <= start_addr < va + size:
-                return bytes(sec.content)[start_addr - va :], start_addr
+                offset = start_addr - va
+                end = min(size, offset + max_size)
+                return bytes(sec.content[offset:end]), start_addr
         return None
 
     if (
@@ -129,9 +145,11 @@ def _get_code_bytes(binary, start_addr: int) -> tuple[bytes, int] | None:
 
     for sec in sections:
         va = sec.virtual_address
-        content = bytes(sec.content)
-        if content and va <= start_addr < va + len(content):
-            return content[start_addr - va :], start_addr
+        size = sec.size
+        if size and va <= start_addr < va + size:
+            offset = start_addr - va
+            end = min(size, offset + max_size)
+            return bytes(sec.content[offset:end]), start_addr
     return None
 
 
@@ -742,7 +760,7 @@ def analyse_stack_frame(binary_path: str, func_addr: int) -> dict:
     code_bytes, base_addr = code_data
     md = capstone.Cs(*arch_mode)
     md.detail = True
-    instrs = list(md.disasm(code_bytes, base_addr))[:512]
+    instrs = list(itertools.islice(md.disasm(code_bytes, base_addr), 512))
 
     stack_adjust = 0
     stack_adjust_known = True

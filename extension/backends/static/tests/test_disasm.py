@@ -16,11 +16,14 @@ if str(ROOT) not in sys.path:
 
 from backends.shared.exceptions import BinaryNotFoundError
 from backends.static.disasm.disasm import (
+    _DISASM_WINDOW_BYTES,
     _augment_context_with_discovered_functions,
     _iter_windowed_instructions,
+    _mmap_file_readonly,
     _normalize_capstone_operands,
     _write_disasm_outputs,
     disassemble,
+    disassemble_raw_blob,
     disassemble_with_capstone,
 )
 from backends.static.disasm.mapping_db import query_window
@@ -313,6 +316,44 @@ class TestDisassemble(unittest.TestCase):
             self.assertEqual(mapping["raw"]["endian"], "little")
             self.assertEqual(mapping["arch"]["key"], "x86_64")
             self.assertEqual(mapping["arch"]["support"]["cfg"]["level"], "full")
+
+    def test_mmap_file_readonly_matches_read_bytes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "blob.bin"
+            content = bytes.fromhex("554889e5c3") * 1000
+            path.write_bytes(content)
+            mapped = _mmap_file_readonly(str(path))
+            self.assertEqual(bytes(mapped), content)
+            self.assertEqual(len(mapped), len(content))
+            self.assertEqual(mapped[10:20], content[10:20])
+
+    def test_mmap_file_readonly_empty_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "empty.bin"
+            path.write_bytes(b"")
+            self.assertEqual(_mmap_file_readonly(str(path)), b"")
+
+    def test_raw_blob_empty_file_returns_no_instructions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "empty.bin"
+            path.write_bytes(b"")
+            lines = disassemble_raw_blob(str(path), raw_arch="i386:x86-64")
+            self.assertEqual(lines, [])
+
+    def test_raw_blob_mmap_backed_source_spans_multiple_windows(self):
+        # `mov eax, 1` (5 bytes), repeated past several window boundaries, to
+        # confirm the mmap-backed buffer decodes identically to an in-memory
+        # bytes buffer across _iter_windowed_instructions' soft-limit logic.
+        instr = bytes.fromhex("b801000000")
+        count = (_DISASM_WINDOW_BYTES // len(instr)) * 2 + 3
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "big.bin"
+            path.write_bytes(instr * count)
+            lines = disassemble_raw_blob(str(path), raw_arch="i386:x86-64")
+            self.assertEqual(len(lines), count)
+            self.assertTrue(all(line["mnemonic"] == "mov" for line in lines))
+            addrs = [int(line["addr"], 16) for line in lines]
+            self.assertTrue(all(b - a == len(instr) for a, b in zip(addrs, addrs[1:])))
 
 
 class TestDisasmEnrichmentFormatting(unittest.TestCase):
@@ -724,7 +765,18 @@ class TestWindowedDisassembly(unittest.TestCase):
         # Fenêtre volontairement minuscule (plus petite qu'un pattern complet)
         # pour forcer de nombreuses frontières mid-instruction.
         windowed = [
-            (instr.address, instr.mnemonic, instr.op_str, bytes(instr.bytes))
+            (
+                instr.address,
+                instr.mnemonic,
+                instr.op_str,
+                bytes(
+                    code_bytes[
+                        instr.address - base_addr : instr.address
+                        - base_addr
+                        + instr.size
+                    ]
+                ),
+            )
             for instr in _iter_windowed_instructions(
                 md_windowed, code_bytes, base_addr, window_bytes=7, overlap_bytes=32
             )
@@ -745,7 +797,18 @@ class TestWindowedDisassembly(unittest.TestCase):
 
         md_windowed, _ = self._make_disassembler()
         windowed = [
-            (instr.address, instr.mnemonic, instr.op_str, bytes(instr.bytes))
+            (
+                instr.address,
+                instr.mnemonic,
+                instr.op_str,
+                bytes(
+                    code_bytes[
+                        instr.address - base_addr : instr.address
+                        - base_addr
+                        + instr.size
+                    ]
+                ),
+            )
             for instr in _iter_windowed_instructions(
                 md_windowed, code_bytes, base_addr, window_bytes=3, overlap_bytes=16
             )
@@ -766,7 +829,18 @@ class TestWindowedDisassembly(unittest.TestCase):
 
         md_windowed, _ = self._make_disassembler()
         windowed = [
-            (instr.address, instr.mnemonic, instr.op_str, bytes(instr.bytes))
+            (
+                instr.address,
+                instr.mnemonic,
+                instr.op_str,
+                bytes(
+                    code_bytes[
+                        instr.address - base_addr : instr.address
+                        - base_addr
+                        + instr.size
+                    ]
+                ),
+            )
             for instr in _iter_windowed_instructions(
                 md_windowed, code_bytes, base_addr, window_bytes=6, overlap_bytes=32
             )

@@ -1124,5 +1124,50 @@ class TestStackFrame(unittest.TestCase):
                 )
 
 
+@unittest.skipUnless(
+    _lief_available() and _capstone_available(), "lief et capstone requis"
+)
+class TestGetCodeBytesBounding(unittest.TestCase):
+    """_get_code_bytes doit borner sa lecture a max_size, meme si la section
+    est plus grande (evite un scan O(taille_section) par fonction)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.binary_path = str(Path(self.tmp) / "test.elf")
+        make_minimal_elf(self.binary_path)
+        import lief
+
+        self.binary = lief.parse(self.binary_path)
+        self.text_addr = 0x400078  # cf. make_elf.py: base .text de make_minimal_elf
+
+    def test_result_capped_to_max_size(self):
+        result = stack_frame_module._get_code_bytes(
+            self.binary, self.text_addr, max_size=10
+        )
+        self.assertIsNotNone(result)
+        assert result is not None
+        code, addr = result
+        self.assertEqual(len(code), 10)
+        self.assertEqual(addr, self.text_addr)
+
+    def test_default_max_size_matches_constant(self):
+        result = stack_frame_module._get_code_bytes(self.binary, self.text_addr)
+        self.assertIsNotNone(result)
+        assert result is not None
+        code, _ = result
+        self.assertLessEqual(len(code), stack_frame_module._STACK_FRAME_MAX_SCAN_BYTES)
+
+    def test_max_size_never_exceeds_section_bounds(self):
+        # La section .text de make_minimal_elf fait 0x100 octets ; demander
+        # plus large ne doit jamais deborder au-dela de la section.
+        result = stack_frame_module._get_code_bytes(
+            self.binary, self.text_addr, max_size=1_000_000
+        )
+        self.assertIsNotNone(result)
+        assert result is not None
+        code, _ = result
+        self.assertLessEqual(len(code), 0x100)
+
+
 if __name__ == "__main__":
     unittest.main()
