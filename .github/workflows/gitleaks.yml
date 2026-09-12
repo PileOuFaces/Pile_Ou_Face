@@ -1,0 +1,59 @@
+name: Gitleaks
+
+on:
+  pull_request:
+    branches: [main, develops]
+    paths: ["extension/**", "tooling/**", "security/**", ".gitleaks.toml", ".github/workflows/gitleaks.yml"]
+  push:
+    branches: [main, develops]
+    paths: ["extension/**", "tooling/**", "security/**", ".gitleaks.toml", ".github/workflows/gitleaks.yml"]
+  schedule:
+    - cron: "17 4 * * 3"
+  workflow_dispatch:
+
+concurrency:
+  group: gitleaks-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Gitleaks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - name: Scan pull-request commits
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: >-
+          docker run --rm -v "$PWD:/repo" -w /repo zricethezav/gitleaks:v8.28.0
+          detect --source . --redact --log-opts="${BASE_SHA}..HEAD"
+          --config .gitleaks.toml --report-format sarif --report-path gitleaks.sarif
+      - name: Scan complete repository history
+        if: github.event_name != 'pull_request'
+        continue-on-error: true
+        run: >-
+          docker run --rm -v "$PWD:/repo" -w /repo zricethezav/gitleaks:v8.28.0
+          detect --source . --redact --config .gitleaks.toml
+          --report-format sarif --report-path gitleaks.sarif
+      - name: Upload Gitleaks SARIF
+        if: always() && hashFiles('gitleaks.sarif') != ''
+        uses: github/codeql-action/upload-sarif@311b4ee155dcdab395044f00946f664bd51ff173 # v4
+        with:
+          sarif_file: gitleaks.sarif
+          category: gitleaks
+      - name: Archive Gitleaks results
+        if: always() && hashFiles('gitleaks.sarif') != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: gitleaks-sarif
+          path: gitleaks.sarif
+          retention-days: 14
