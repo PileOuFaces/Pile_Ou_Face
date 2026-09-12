@@ -19,6 +19,26 @@ permissions:
   contents: read
 
 jobs:
+  sbom:
+    name: Generate SBOM
+    if: github.event_name == 'push' || inputs.openvsx_mode == 'package'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - name: Generate CycloneDX SBOM
+        run: >-
+          docker run --rm -v "$PWD:/workspace" anchore/syft:v1.30.0
+          dir:/workspace -o cyclonedx-json=/workspace/pile-ou-face-${GITHUB_SHA}.cdx.json
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pile-ou-face-sbom-${{ github.sha }}
+          path: pile-ou-face-${{ github.sha }}.cdx.json
+          retention-days: 90
+
   publish-marketplace:
     name: Publish VS Code Marketplace
     if: github.event_name == 'push'

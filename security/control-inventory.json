@@ -13,7 +13,7 @@
     {"id": "sast.bandit", "category": "sast", "status": "enabled-informational", "scope": "extension/backends/**/*.py and tooling/**/*.py; medium or higher severity and confidence", "workflow": ".github/workflows/sast.yml", "blocking": false},
     {"id": "secrets.gitleaks", "category": "secrets", "status": "enabled-informational", "scope": "pull-request commits and repository history", "workflow": ".github/workflows/gitleaks.yml", "blocking": false},
     {"id": "containers.trivy", "category": "containers", "status": "enabled-informational", "scope": "Dockerfiles and repository filesystem", "workflow": ".github/workflows/trivy.yml", "blocking": false},
-    {"id": "supply-chain.sbom", "category": "supply-chain", "status": "missing", "scope": "release artifacts", "workflow": null, "blocking": false},
+    {"id": "supply-chain.sbom", "category": "supply-chain", "status": "enabled-informational", "scope": "release artifacts and repository dependencies", "workflow": ".github/workflows/publish.yml", "blocking": false},
     {"id": "supply-chain.provenance", "category": "supply-chain", "status": "missing", "scope": "release artifacts", "workflow": null, "blocking": false}
   ]
 }
