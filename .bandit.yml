@@ -1,0 +1,7 @@
+exclude_dirs:
+  - tests
+  - .venv
+  - node_modules
+skips:
+  # Assertions are excluded with test directories and remain covered by Ruff elsewhere.
+  - B101

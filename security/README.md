@@ -28,3 +28,20 @@ repository's **Security > Code scanning** view.
 The workflow itself is validated locally, but a complete CodeQL database and SARIF upload require a
 GitHub Actions run. CodeQL is currently informational: findings are triaged in the private scanner
 view before code-scanning merge protection is enabled, avoiding an undocumented blanket suppression.
+
+## Semgrep and Bandit
+
+`security/semgrep/host-security.yml` contains repository-owned rules for webview HTML, process
+execution, plaintext HTTP, weak hashes and archive extraction. Rule fixtures live beside the rules
+and must pass `semgrep --test security/semgrep`. Pull requests use Semgrep's baseline mode so only
+findings introduced relative to the PR base are reported; scheduled and branch runs scan the full
+scope.
+
+Bandit complements those rules for Python without duplicating Ruff. It scans production backend and
+tooling code, excludes tests and reports only findings with medium-or-higher severity and confidence.
+Pull requests scan only changed Python files; branch and scheduled runs cover the complete scope.
+Both scanners upload SARIF to **Security > Code scanning** and retain the same report as a 14-day CI
+artifact. During baseline triage they are informational; accepted findings still require a narrow,
+owned and expiring entry in `suppressions.json`. Bandit's native report is retained unchanged in the
+artifact; only the GitHub presentation level is temporarily capped at `warning`, while native
+severity and confidence remain present in SARIF properties for triage.

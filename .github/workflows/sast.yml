@@ -1,0 +1,139 @@
+name: Semgrep and Bandit
+
+on:
+  pull_request:
+    branches: [main, develops]
+    paths:
+      - "extension/**"
+      - "tooling/**"
+      - "security/**"
+      - ".bandit.yml"
+      - ".github/workflows/sast.yml"
+  push:
+    branches: [main, develops]
+    paths:
+      - "extension/**"
+      - "tooling/**"
+      - "security/**"
+      - ".bandit.yml"
+      - ".github/workflows/sast.yml"
+  schedule:
+    - cron: "41 4 * * 2"
+  workflow_dispatch:
+
+concurrency:
+  group: sast-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  semgrep:
+    name: Semgrep
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - name: Setup Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1e # v6
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Semgrep
+        run: python3 -m pip install "semgrep==1.177.0"
+      - name: Test repository rules
+        run: semgrep --test security/semgrep
+      - name: Scan pull-request changes
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        run: >-
+          semgrep scan --config security/semgrep/host-security.yml
+          --baseline-commit "${{ github.event.pull_request.base.sha }}"
+          --sarif --output semgrep.sarif extension tooling
+      - name: Scan complete repository scope
+        if: github.event_name != 'pull_request'
+        continue-on-error: true
+        run: >-
+          semgrep scan --config security/semgrep/host-security.yml
+          --sarif --output semgrep.sarif extension tooling
+      - name: Upload Semgrep SARIF
+        if: always() && hashFiles('semgrep.sarif') != ''
+        uses: github/codeql-action/upload-sarif@311b4ee155dcdab395044f00946f664bd51ff173 # v4
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+      - name: Archive Semgrep results
+        if: always() && hashFiles('semgrep.sarif') != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: semgrep-sarif
+          path: semgrep.sarif
+          retention-days: 14
+
+  bandit:
+    name: Bandit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - name: Setup Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1e # v6
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install Bandit and SARIF formatter
+        run: >-
+          python3 -m pip install
+          "bandit==1.9.4"
+          "bandit-sarif-formatter==1.1.1"
+      - name: Scan changed Python files
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git diff --name-only --diff-filter=ACMR -z "$BASE_SHA"...HEAD -- \
+            'extension/backends/**/*.py' 'tooling/**/*.py' \
+            | xargs -0 --no-run-if-empty bandit --configfile .bandit.yml \
+                --severity-level medium --confidence-level medium \
+                --format sarif --output bandit.sarif
+      - name: Scan complete Python scope
+        if: github.event_name != 'pull_request'
+        continue-on-error: true
+        run: >-
+          bandit --configfile .bandit.yml --recursive extension/backends tooling
+          --severity-level medium --confidence-level medium
+          --format sarif --output bandit.sarif
+      - name: Preserve native severity and mark baseline as informational
+        if: always() && hashFiles('bandit.sarif') != ''
+        run: |
+          mv bandit.sarif bandit-native.sarif
+          jq '(.runs[].results[] | select(.level == "error").level) = "warning"' bandit-native.sarif > bandit.sarif
+      - name: Upload Bandit SARIF
+        if: always() && hashFiles('bandit.sarif') != ''
+        uses: github/codeql-action/upload-sarif@311b4ee155dcdab395044f00946f664bd51ff173 # v4
+        with:
+          sarif_file: bandit.sarif
+          category: bandit
+      - name: Archive Bandit results
+        if: always() && hashFiles('bandit.sarif') != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bandit-sarif
+          path: |
+            bandit.sarif
+            bandit-native.sarif
+          retention-days: 14
