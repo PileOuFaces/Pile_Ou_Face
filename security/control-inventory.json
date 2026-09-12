@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "repository": "PileOuFaces/Pile_Ou_Face",
+  "reviewed_at": "2026-09-12",
+  "controls": [
+    {"id": "quality.python.ruff", "category": "quality", "status": "enabled", "scope": "extension/**/*.py", "workflow": ".github/workflows/ci.yml", "blocking": true},
+    {"id": "quality.javascript.eslint", "category": "quality", "status": "enabled", "scope": "extension/**/*.{js,ts}", "workflow": ".github/workflows/ci.yml", "blocking": true},
+    {"id": "dependencies.npm-audit", "category": "dependencies", "status": "enabled-informational", "scope": "extension/package-lock.json", "workflow": ".github/workflows/ci.yml", "blocking": false},
+    {"id": "dependencies.pip-audit", "category": "dependencies", "status": "enabled-informational", "scope": "extension/backends/**/requirements*.txt", "workflow": ".github/workflows/ci.yml", "blocking": false},
+    {"id": "dependencies.dependabot", "category": "dependencies", "status": "enabled", "scope": "npm, pip, github-actions, docker", "workflow": ".github/dependabot.yml", "blocking": false},
+    {"id": "sast.codeql", "category": "sast", "status": "missing", "scope": "JavaScript/TypeScript and Python", "workflow": null, "blocking": false},
+    {"id": "sast.semgrep", "category": "sast", "status": "missing", "scope": "webviews, IPC, process execution, paths, archives, HTTP and crypto", "workflow": null, "blocking": false},
+    {"id": "sast.bandit", "category": "sast", "status": "missing", "scope": "extension/**/*.py", "workflow": null, "blocking": false},
+    {"id": "secrets.gitleaks", "category": "secrets", "status": "missing", "scope": "pull-request commits and repository history", "workflow": null, "blocking": false},
+    {"id": "containers.trivy", "category": "containers", "status": "missing", "scope": "Dockerfiles and built images", "workflow": null, "blocking": false},
+    {"id": "supply-chain.sbom", "category": "supply-chain", "status": "missing", "scope": "release artifacts", "workflow": null, "blocking": false},
+    {"id": "supply-chain.provenance", "category": "supply-chain", "status": "missing", "scope": "release artifacts", "workflow": null, "blocking": false}
+  ]
+}
