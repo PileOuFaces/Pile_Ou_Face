@@ -17,3 +17,14 @@ python3 -m tooling.security_baseline
 The guard validates structure, unique identifiers, referenced workflow paths, ownership and expiry.
 It never prints finding contents or secrets. Existing vulnerabilities belong in private scanner/SARIF
 results and tracking issues, not in this baseline file.
+
+## CodeQL
+
+`.github/workflows/codeql.yml` analyzes JavaScript/TypeScript and Python with the
+`security-extended` query suite. It runs on pull requests and pushes targeting maintained branches,
+on a weekly schedule, and on manual dispatch. GitHub uploads the SARIF results directly to the
+repository's **Security > Code scanning** view.
+
+The workflow itself is validated locally, but a complete CodeQL database and SARIF upload require a
+GitHub Actions run. CodeQL is currently informational: findings are triaged in the private scanner
+view before code-scanning merge protection is enabled, avoiding an undocumented blanket suppression.

@@ -8,7 +8,7 @@
     {"id": "dependencies.npm-audit", "category": "dependencies", "status": "enabled-informational", "scope": "extension/package-lock.json", "workflow": ".github/workflows/ci.yml", "blocking": false},
     {"id": "dependencies.pip-audit", "category": "dependencies", "status": "enabled-informational", "scope": "extension/backends/**/requirements*.txt", "workflow": ".github/workflows/ci.yml", "blocking": false},
     {"id": "dependencies.dependabot", "category": "dependencies", "status": "enabled", "scope": "npm, pip, github-actions, docker", "workflow": ".github/dependabot.yml", "blocking": false},
-    {"id": "sast.codeql", "category": "sast", "status": "missing", "scope": "JavaScript/TypeScript and Python", "workflow": null, "blocking": false},
+    {"id": "sast.codeql", "category": "sast", "status": "enabled", "scope": "JavaScript/TypeScript and Python", "workflow": ".github/workflows/codeql.yml", "blocking": false},
     {"id": "sast.semgrep", "category": "sast", "status": "missing", "scope": "webviews, IPC, process execution, paths, archives, HTTP and crypto", "workflow": null, "blocking": false},
     {"id": "sast.bandit", "category": "sast", "status": "missing", "scope": "extension/**/*.py", "workflow": null, "blocking": false},
     {"id": "secrets.gitleaks", "category": "secrets", "status": "missing", "scope": "pull-request commits and repository history", "workflow": null, "blocking": false},
