@@ -1,0 +1,61 @@
+name: Trivy container security
+
+on:
+  pull_request:
+    branches: [main, develops]
+    paths: ["docker/**", "extension/backends/static/decompile/**", ".github/workflows/trivy.yml"]
+  push:
+    branches: [main, develops]
+    paths: ["docker/**", "extension/backends/static/decompile/**", ".github/workflows/trivy.yml"]
+  schedule:
+    - cron: "37 4 * * 4"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trivy-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    name: Trivy config and filesystem
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - name: Scan Dockerfiles and IaC
+        continue-on-error: true
+        run: >-
+          docker run --rm -v "$PWD:/repo" -w /repo aquasec/trivy:0.66.0
+          config --format sarif --output trivy-config.sarif
+          --severity HIGH,CRITICAL docker
+      - name: Scan repository filesystem
+        continue-on-error: true
+        run: >-
+          docker run --rm -v "$PWD:/repo" -w /repo aquasec/trivy:0.66.0
+          fs --scanners vuln --format sarif --output trivy-fs.sarif
+          --severity HIGH,CRITICAL --ignore-unfixed .
+      - name: Upload Trivy config SARIF
+        if: always() && hashFiles('trivy-config.sarif') != ''
+        uses: github/codeql-action/upload-sarif@311b4ee155dcdab395044f00946f664bd51ff173 # v4
+        with:
+          sarif_file: trivy-config.sarif
+          category: trivy-config
+      - name: Upload Trivy filesystem SARIF
+        if: always() && hashFiles('trivy-fs.sarif') != ''
+        uses: github/codeql-action/upload-sarif@311b4ee155dcdab395044f00946f664bd51ff173 # v4
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-filesystem
+      - name: Archive Trivy reports
+        if: always() && (hashFiles('trivy-config.sarif') != '' || hashFiles('trivy-fs.sarif') != '')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: trivy-sarif
+          path: trivy-*.sarif
+          retention-days: 14
