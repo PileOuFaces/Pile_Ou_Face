@@ -59,3 +59,10 @@ findings, uploads SARIF to Code Scanning and retains a 14-day artifact. Run loca
 docker run --rm -v "$PWD:/repo" -w /repo zricethezav/gitleaks:v8.28.0 \\
   detect --source . --redact --config .gitleaks.toml
 ```
+
+## Trivy
+
+`.github/workflows/trivy.yml` scans all Dockerfiles/IaC and repository filesystem dependencies
+for high and critical vulnerabilities. It uses the pinned `aquasec/trivy:0.66.0` container and
+publishes redacted SARIF plus 14-day artifacts. Run locally with `docker run ... trivy config docker`
+and `trivy fs --scanners vuln .`.
