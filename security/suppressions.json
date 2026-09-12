@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "policy": {
+    "maximum_lifetime_days": 90,
+    "required_fields": ["id", "scanner", "rule", "path", "reason", "owner", "expires"]
+  },
+  "suppressions": []
+}

@@ -10,6 +10,9 @@ on:
       - '.github/workflows/large-real-corpus-loadtest.yml'
       - '.github/workflows/publish.yml'
       - '.github/workflows/tripartite-scheduled.yml'
+      - 'security/**'
+      - 'tooling/security_baseline.py'
+      - 'tooling/tests/test_security_baseline.py'
 
 permissions:
   contents: read
@@ -23,6 +26,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  security-baseline:
+    name: Security baseline policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+      - name: Validate inventory and suppressions
+        run: python3 -m tooling.security_baseline
+
   # La campagne 100 MiB est coûteuse : elle ne tourne sur develops que lorsque
   # le runtime, le corpus ou ses budgets changent.
   large-real-corpus-changes:
@@ -716,7 +733,7 @@ jobs:
   ci-success:
     name: CI Success
     if: always()
-    needs: [lint, full-test, dynamic-unicorn, real-corpus-arm64, e2e-runtime-audit, backend-loadtest, security-scan, auth-licensing-e2e, auth-licensing-windows, large-real-corpus-changes, large-real-corpus]
+    needs: [security-baseline, lint, full-test, dynamic-unicorn, real-corpus-arm64, e2e-runtime-audit, backend-loadtest, security-scan, auth-licensing-e2e, auth-licensing-windows, large-real-corpus-changes, large-real-corpus]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -724,6 +741,7 @@ jobs:
         shell: bash
         run: |
           LINT="${{ needs.lint.result }}"
+          SECURITY_BASELINE="${{ needs.security-baseline.result }}"
           FULL="${{ needs.full-test.result }}"
           DYNAMIC_UNICORN="${{ needs.dynamic-unicorn.result }}"
           REAL_CORPUS="${{ needs.real-corpus-arm64.result }}"
@@ -736,6 +754,7 @@ jobs:
           LARGE_CORPUS="${{ needs.large-real-corpus.result }}"
 
           echo "Lint       : $LINT"
+          echo "Sec policy : $SECURITY_BASELINE"
           echo "Full test  : $FULL"
           echo "Unicorn    : $DYNAMIC_UNICORN"
           echo "Corpus ARM : $REAL_CORPUS"
@@ -754,6 +773,7 @@ jobs:
           }
 
           fail_if_bad "$LINT" "Lint"
+          fail_if_bad "$SECURITY_BASELINE" "Security Baseline Policy"
           fail_if_bad "$FULL" "Full test"
           fail_if_bad "$DYNAMIC_UNICORN" "Dynamic Unicorn Regression"
           fail_if_bad "$REAL_CORPUS" "Real Corpus ARM64"
