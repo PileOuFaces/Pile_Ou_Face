@@ -72,3 +72,6 @@ and `trivy fs --scanners vuln .`.
 Le workflow `publish.yml` génère un SBOM CycloneDX JSON avec Syft `v1.30.0` pour chaque publication
 ou packaging manuel, puis le conserve comme artifact 90 jours. En local :
 `docker run --rm -v "$PWD:/workspace" anchore/syft:v1.30.0 dir:/workspace -o cyclonedx-json=/workspace/sbom.cdx.json`.
+
+Le même workflow publie une attestation de provenance SLSA avec `actions/attest-build-provenance`
+pour chaque SBOM. La vérification se fait avec `gh attestation verify <fichier> -R PileOuFaces/Pile_Ou_Face`.
