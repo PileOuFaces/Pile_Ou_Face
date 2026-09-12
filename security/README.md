@@ -66,3 +66,9 @@ docker run --rm -v "$PWD:/repo" -w /repo zricethezav/gitleaks:v8.28.0 \\
 for high and critical vulnerabilities. It uses the pinned `aquasec/trivy:0.66.0` container and
 publishes redacted SARIF plus 14-day artifacts. Run locally with `docker run ... trivy config docker`
 and `trivy fs --scanners vuln .`.
+
+## SBOM
+
+Le workflow `publish.yml` génère un SBOM CycloneDX JSON avec Syft `v1.30.0` pour chaque publication
+ou packaging manuel, puis le conserve comme artifact 90 jours. En local :
+`docker run --rm -v "$PWD:/workspace" anchore/syft:v1.30.0 dir:/workspace -o cyclonedx-json=/workspace/sbom.cdx.json`.
