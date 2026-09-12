@@ -25,6 +25,9 @@ results and tracking issues, not in this baseline file.
 on a weekly schedule, and on manual dispatch. GitHub uploads the SARIF results directly to the
 repository's **Security > Code scanning** view.
 
+`.github/codeql/codeql-config.yml` excludes only the deliberately vulnerable positive fixtures used
+to test repository-owned Semgrep rules. Production, tooling and ordinary test code remain analyzed.
+
 The workflow itself is validated locally, but a complete CodeQL database and SARIF upload require a
 GitHub Actions run. CodeQL is currently informational: findings are triaged in the private scanner
 view before code-scanning merge protection is enabled, avoiding an undocumented blanket suppression.
