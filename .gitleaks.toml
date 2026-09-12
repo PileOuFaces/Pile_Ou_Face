@@ -1,0 +1,6 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Repository-owned scanner fixtures and generated local artifacts"
+paths = ['''(^|/)\.worktrees/''', '''(^|/)security/semgrep/fixtures/''']

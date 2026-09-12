@@ -48,3 +48,14 @@ artifact. During baseline triage they are informational; accepted findings still
 owned and expiring entry in `suppressions.json`. Bandit's native report is retained unchanged in the
 artifact; only the GitHub presentation level is temporarily capped at `warning`, while native
 severity and confidence remain present in SARIF properties for triage.
+
+## Gitleaks
+
+`.github/workflows/gitleaks.yml` scans PR commit ranges and complete repository history on branch,
+scheduled and manual runs. It uses the pinned `zricethezav/gitleaks:v8.28.0` container, redacts
+findings, uploads SARIF to Code Scanning and retains a 14-day artifact. Run locally with:
+
+```bash
+docker run --rm -v "$PWD:/repo" -w /repo zricethezav/gitleaks:v8.28.0 \\
+  detect --source . --redact --config .gitleaks.toml
+```
