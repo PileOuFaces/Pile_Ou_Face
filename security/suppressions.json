@@ -2,7 +2,79 @@
   "schema_version": 1,
   "policy": {
     "maximum_lifetime_days": 90,
-    "required_fields": ["id", "scanner", "rule", "path", "reason", "owner", "expires"]
+    "required_fields": [
+      "id",
+      "scanner",
+      "rule",
+      "path",
+      "reason",
+      "owner",
+      "expires"
+    ]
   },
-  "suppressions": []
+  "suppressions": [
+    {
+      "id": "gitleaks.historical-fixture-1",
+      "scanner": "gitleaks",
+      "rule": "historical false positive",
+      "path": "extension/scripts/e2e/runtime-audit-suite.js",
+      "reason": "Synthetic decompiler cache identifier; scoped by AND to exact commit c1091be43d920bf13aeef6ded36e649b067b3ffc and this path. Reviewed 2026-09-27.",
+      "owner": "@leoteissier",
+      "expires": "2026-12-20"
+    },
+    {
+      "id": "gitleaks.historical-fixture-2",
+      "scanner": "gitleaks",
+      "rule": "historical false positive",
+      "path": "extension/backends/plugins/tests/test_runtime_env_key.py",
+      "reason": "Synthetic ignored test key; scoped by AND to exact commit bd70f7ecfc6062722f0cdfd14aa3d00285328829 and this path. Reviewed 2026-09-27.",
+      "owner": "@leoteissier",
+      "expires": "2026-12-20"
+    },
+    {
+      "id": "gitleaks.historical-fixture-3",
+      "scanner": "gitleaks",
+      "rule": "historical false positive",
+      "path": "extension/src/tests/logger.test.ts",
+      "reason": "Public example JWT used to test log redaction; scoped by AND to exact commit e0b5873e26805f1e65094ff76405cb7e8f4005be and this path. Reviewed 2026-09-27.",
+      "owner": "@leoteissier",
+      "expires": "2026-12-20"
+    },
+    {
+      "id": "gitleaks.historical-fixture-4",
+      "scanner": "gitleaks",
+      "rule": "historical false positive",
+      "path": "extension/src/tests/staticCache.test.ts",
+      "reason": "Synthetic cache directory identifier; scoped by AND to exact commit d87d6a443f618071da1a65cc087b616b1071942d and this path. Reviewed 2026-09-27.",
+      "owner": "@leoteissier",
+      "expires": "2026-12-20"
+    },
+    {
+      "id": "gitleaks.historical-fixture-5",
+      "scanner": "gitleaks",
+      "rule": "historical false positive",
+      "path": "backends/plugins/tests/test_runtime_env_key.py",
+      "reason": "Synthetic test key; scoped by AND to exact commit b10106cd4a3053fc9713b3cf8337617ea8147ad2 and this path. Reviewed 2026-09-27.",
+      "owner": "@leoteissier",
+      "expires": "2026-12-20"
+    },
+    {
+      "id": "gitleaks.historical-fixture-6",
+      "scanner": "gitleaks",
+      "rule": "historical false positive",
+      "path": "extension/webview/dynamic/graphical-stack.html",
+      "reason": "Browser layout localStorage identifier; scoped by AND to exact commit b10106cd4a3053fc9713b3cf8337617ea8147ad2 and this path. Reviewed 2026-09-27.",
+      "owner": "@leoteissier",
+      "expires": "2026-12-20"
+    },
+    {
+      "id": "gitleaks.historical-fixture-7",
+      "scanner": "gitleaks",
+      "rule": "historical false positive",
+      "path": "extension/webview/dynamic/runtimeWorkspaceLayoutController.js",
+      "reason": "Browser layout localStorage identifier; scoped by AND to exact commit b10106cd4a3053fc9713b3cf8337617ea8147ad2 and this path. Reviewed 2026-09-27.",
+      "owner": "@leoteissier",
+      "expires": "2026-12-20"
+    }
+  ]
 }

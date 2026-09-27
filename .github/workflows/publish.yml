@@ -17,36 +17,11 @@ on:
 
 permissions:
   contents: read
-  id-token: write
-  attestations: write
 
 jobs:
-  sbom:
-    name: Generate SBOM
-    if: github.event_name == 'push' || inputs.openvsx_mode == 'package'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        with:
-          fetch-depth: 0
-      - name: Generate CycloneDX SBOM
-        run: >-
-          docker run --rm -v "$PWD:/workspace" anchore/syft:v1.30.0
-          dir:/workspace -o cyclonedx-json=/workspace/pile-ou-face-${GITHUB_SHA}.cdx.json
-      - name: Upload SBOM artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: pile-ou-face-sbom-${{ github.sha }}
-          path: pile-ou-face-${{ github.sha }}.cdx.json
-          retention-days: 90
-      - name: Attest SBOM provenance
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
-        with:
-          subject-path: pile-ou-face-${{ github.sha }}.cdx.json
-
   publish-marketplace:
     name: Publish VS Code Marketplace
+    needs: openvsx
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -71,9 +46,11 @@ jobs:
         run: npm ci
         working-directory: extension
 
-      - name: Pin official SaaS deployment profile
-        run: npm run profile:prepare:official
-        working-directory: extension
+      - name: Download verified VSIX
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: pile-ou-face-openvsx-${{ github.sha }}
+          path: extension/release
 
       - name: Publish to VS Code Marketplace
         env:
@@ -81,16 +58,19 @@ jobs:
           TAG: ${{ github.ref_name }}
           POF_AUTH_PROVIDER_URL: https://auth.pileouface.dev
         run: |
-          npm run configure:official
           if [[ "$TAG" == *"-pre"* || "$TAG" == *"-beta"* || "$TAG" == *"-rc"* ]]; then
-            npx vsce publish --pre-release --pat "$VSCE_PAT"
+            npx vsce publish --packagePath release/pile-ou-face.vsix --pre-release --pat "$VSCE_PAT"
           else
-            npx vsce publish --pat "$VSCE_PAT"
+            npx vsce publish --packagePath release/pile-ou-face.vsix --pat "$VSCE_PAT"
           fi
         working-directory: extension
 
   openvsx:
     name: Open VSX
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -125,9 +105,11 @@ jobs:
         id: meta
         working-directory: extension
         run: |
-          echo "publisher=$(node -p "require('./package.json').publisher")" >> "$GITHUB_OUTPUT"
-          echo "name=$(node -p "require('./package.json').name")" >> "$GITHUB_OUTPUT"
-          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+          {
+            echo "publisher=$(node -p "require('./package.json').publisher")"
+            echo "name=$(node -p "require('./package.json').name")"
+            echo "version=$(node -p "require('./package.json').version")"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Verify Open VSX token
         if: github.event_name == 'push' || inputs.openvsx_mode == 'verify'
@@ -141,16 +123,40 @@ jobs:
         working-directory: extension
         env:
           POF_AUTH_PROVIDER_URL: https://auth.pileouface.dev
+          TAG: ${{ github.ref_name }}
         run: |
           npm run configure:official
-          npx vsce package --out pile-ou-face.vsix
+          if [[ "$TAG" == *"-pre"* || "$TAG" == *"-beta"* || "$TAG" == *"-rc"* ]]; then
+            npx vsce package --pre-release --out pile-ou-face.vsix
+          else
+            npx vsce package --out pile-ou-face.vsix
+          fi
+
+      - name: Generate SBOM from the packaged extension
+        if: github.event_name == 'push' || inputs.openvsx_mode == 'package'
+        run: |
+          mkdir -p release-sbom-input
+          unzip -q extension/pile-ou-face.vsix -d release-sbom-input
+          docker run --rm -v "$PWD:/workspace" anchore/syft:v1.30.0 \
+            dir:/workspace/release-sbom-input \
+            -o cyclonedx-json=/workspace/extension/pile-ou-face.cdx.json
+
+      - name: Attest the exact VSIX and its SBOM
+        if: github.event_name == 'push' || inputs.openvsx_mode == 'package'
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+        with:
+          subject-path: |
+            extension/pile-ou-face.vsix
+            extension/pile-ou-face.cdx.json
 
       - name: Upload VSIX artifact
         if: github.event_name == 'push' || inputs.openvsx_mode == 'package'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: pile-ou-face-openvsx-${{ github.sha }}
-          path: extension/pile-ou-face.vsix
+          path: |
+            extension/pile-ou-face.vsix
+            extension/pile-ou-face.cdx.json
           retention-days: 30
 
       - name: Publish to Open VSX

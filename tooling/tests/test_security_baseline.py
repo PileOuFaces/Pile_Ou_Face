@@ -22,7 +22,7 @@ def _read(path: Path) -> dict:
 
 def test_repository_security_files_are_valid():
     validate_inventory(_read(DEFAULT_INVENTORY), repository_root=REPOSITORY_ROOT)
-    validate_suppressions(_read(DEFAULT_SUPPRESSIONS), today=date(2026, 9, 12))
+    validate_suppressions(_read(DEFAULT_SUPPRESSIONS), today=date.today())
 
 
 def test_inventory_rejects_duplicate_controls():
