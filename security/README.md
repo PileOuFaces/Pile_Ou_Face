@@ -52,12 +52,12 @@ severity and confidence remain present in SARIF properties for triage.
 ## Gitleaks
 
 `.github/workflows/gitleaks.yml` scans PR commit ranges and complete repository history on branch,
-scheduled and manual runs. It uses the pinned `zricethezav/gitleaks:v8.28.0` container, redacts
+scheduled and manual runs. Findings fail the job. It uses the pinned `ghcr.io/gitleaks/gitleaks:v8.30.1` container, redacts
 findings, uploads SARIF to Code Scanning and retains a 14-day artifact. Run locally with:
 
 ```bash
-docker run --rm -v "$PWD:/repo" -w /repo zricethezav/gitleaks:v8.28.0 \\
-  detect --source . --redact --config .gitleaks.toml
+docker run --rm -v "$PWD:/repo" -w /repo ghcr.io/gitleaks/gitleaks:v8.30.1 \\
+  git --redact=100 --config .gitleaks.toml
 ```
 
 ## Trivy
@@ -69,9 +69,11 @@ and `trivy fs --scanners vuln .`.
 
 ## SBOM
 
-Le workflow `publish.yml` génère un SBOM CycloneDX JSON avec Syft `v1.30.0` pour chaque publication
-ou packaging manuel, puis le conserve comme artifact 90 jours. En local :
-`docker run --rm -v "$PWD:/workspace" anchore/syft:v1.30.0 dir:/workspace -o cyclonedx-json=/workspace/sbom.cdx.json`.
+Le workflow `publish.yml` génère un SBOM CycloneDX JSON avec Syft `v1.30.0` à partir du
+contenu extrait du VSIX, puis conserve ensemble VSIX et SBOM pendant 30 jours.
 
 Le même workflow publie une attestation de provenance SLSA avec `actions/attest-build-provenance`
-pour chaque SBOM. La vérification se fait avec `gh attestation verify <fichier> -R PileOuFaces/Pile_Ou_Face`.
+pour le VSIX exact et son SBOM avant publication. Marketplace télécharge le même VSIX
+que celui publié sur Open VSX, sans le reconstruire. Une erreur Open VSX bloque donc
+également Marketplace. La vérification se fait avec
+`gh attestation verify <fichier> -R PileOuFaces/Pile_Ou_Face`.

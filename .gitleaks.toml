@@ -1,6 +1,51 @@
 [extend]
 useDefault = true
 
-[allowlist]
-description = "Repository-owned scanner fixtures and generated local artifacts"
-paths = ['''(^|/)\.worktrees/''', '''(^|/)security/semgrep/fixtures/''']
+# Owner @leoteissier; reviewed 2026-09-27; expires 2026-12-20.
+[[allowlists]]
+description = "Synthetic decompiler cache identifier"
+condition = "AND"
+commits = ["c1091be43d920bf13aeef6ded36e649b067b3ffc"]
+paths = ['''^extension/scripts/e2e/runtime-audit-suite\.js$''']
+
+# Owner @leoteissier; reviewed 2026-09-27; expires 2026-12-20.
+[[allowlists]]
+description = "Synthetic ignored test key"
+condition = "AND"
+commits = ["bd70f7ecfc6062722f0cdfd14aa3d00285328829"]
+paths = ['''^extension/backends/plugins/tests/test_runtime_env_key\.py$''']
+
+# Owner @leoteissier; reviewed 2026-09-27; expires 2026-12-20.
+[[allowlists]]
+description = "Public example JWT used to test log redaction"
+condition = "AND"
+commits = ["e0b5873e26805f1e65094ff76405cb7e8f4005be"]
+paths = ['''^extension/src/tests/logger\.test\.ts$''']
+
+# Owner @leoteissier; reviewed 2026-09-27; expires 2026-12-20.
+[[allowlists]]
+description = "Synthetic cache directory identifier"
+condition = "AND"
+commits = ["d87d6a443f618071da1a65cc087b616b1071942d"]
+paths = ['''^extension/src/tests/staticCache\.test\.ts$''']
+
+# Owner @leoteissier; reviewed 2026-09-27; expires 2026-12-20.
+[[allowlists]]
+description = "Synthetic test key"
+condition = "AND"
+commits = ["b10106cd4a3053fc9713b3cf8337617ea8147ad2"]
+paths = ['''^backends/plugins/tests/test_runtime_env_key\.py$''']
+
+# Owner @leoteissier; reviewed 2026-09-27; expires 2026-12-20.
+[[allowlists]]
+description = "Browser layout localStorage identifier"
+condition = "AND"
+commits = ["b10106cd4a3053fc9713b3cf8337617ea8147ad2"]
+paths = ['''^extension/webview/dynamic/graphical-stack\.html$''']
+
+# Owner @leoteissier; reviewed 2026-09-27; expires 2026-12-20.
+[[allowlists]]
+description = "Browser layout localStorage identifier"
+condition = "AND"
+commits = ["b10106cd4a3053fc9713b3cf8337617ea8147ad2"]
+paths = ['''^extension/webview/dynamic/runtimeWorkspaceLayoutController\.js$''']
