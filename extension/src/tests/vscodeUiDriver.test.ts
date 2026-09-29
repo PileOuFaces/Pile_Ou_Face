@@ -324,15 +324,14 @@ describe('VS Code UI E2E driver', () => {
     assert.deepEqual(calls, ['attached', 'class:active:750']);
   });
 
-  it('retries settings actions when late hub initialization restores the UI', async () => {
+  it('waits for the settings save acknowledgement before accepting the selected mode', async () => {
     const calls: string[] = [];
-    let modeAttempts = 0;
     const hub = new HubPage({
       locator(selector: string) {
-        assert.equal(selector, 'html');
+        calls.push(`locator:${selector}`);
         return {
           async waitForAttribute(name: string, value: string) {
-            calls.push(`ready:${name}:${value}`);
+            calls.push(`wait:${name}:${value}`);
           },
         };
       },
@@ -343,20 +342,20 @@ describe('VS Code UI E2E driver', () => {
         calls.push(`button:${state}:${timeout}`);
       },
       async clickDom() { calls.push('click-simple'); },
-      async waitForAttribute() {
-        if (modeAttempts++ === 0) throw new Error('hub rerendered');
-      },
+      async waitForAttribute(name: string, value: string) { calls.push(`button:${name}:${value}`); },
     });
     hub.interfaceModeInput = () => ({
-      async waitForValue() { calls.push('wait-simple'); },
+      async waitForValue(value: string) { calls.push(`input:${value}`); },
     });
 
     await hub.selectInterfaceMode('simple');
 
     assert.deepEqual(calls, [
-      'ready:data-hub-settings-ready:true',
-      'open-dashboard', 'open-options', 'button:visible:1000', 'click-simple', 'wait-simple',
-      'open-dashboard', 'open-options', 'button:visible:1000', 'click-simple', 'wait-simple', 'wait-simple',
+      'locator:html', 'wait:data-hub-settings-ready:true', 'open-options',
+      'locator:html', 'wait:data-hub-settings-ready:true', 'button:visible:15000', 'click-simple',
+      'locator:html', 'wait:data-hub-settings-save-pending:false',
+      'locator:html', 'wait:data-hub-settings-ready:true',
+      'input:simple', 'button:aria-pressed:true',
     ]);
   });
 

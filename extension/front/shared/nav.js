@@ -14,7 +14,7 @@ function initPanel() {
   renderRecentBinaries();
   showPanel(panelId);
   updateActiveContextBars(window._lastDisasmAddr);
-  vscode.postMessage({ type: 'hubGetSettings' });
+  _requestSettings();
 }
 
 function showPanel(id) {
@@ -57,7 +57,7 @@ function showPanel(id) {
     requestRunTraceInit();
   }
   if (id === 'options') {
-    vscode.postMessage({ type: 'hubGetSettings' });
+    _requestSettings();
   }
   syncStaticBinary();
   vscode.postMessage({ type: 'hubModeChange', mode: id === 'static' ? 'static' : id === 'dynamic' ? 'dynamic' : 'other' });

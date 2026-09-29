@@ -625,47 +625,18 @@ class HubPage {
     const button = this.interfaceModeButton(mode);
     const input = this.interfaceModeInput();
     await this.target.locator('html').waitForAttribute('data-hub-settings-ready', 'true', DEFAULT_TIMEOUT_MS);
-    const deadline = Date.now() + DEFAULT_TIMEOUT_MS;
-    let lastError = null;
-    while (Date.now() < deadline) {
-      try {
-        // A late settings payload can restore another panel after options first
-        // becomes active. Force a complete transition on every retry.
-        await this.openPanel('dashboard');
-        await this.openPanel('options');
-        // Opening the panel is sufficient once the initial settings payload is
-        // ready. Resetting that readiness marker and navigating a second time
-        // can leave the options panel hidden until the whole action times out.
-        await button.waitFor({ state: 'visible', timeout: 1000 });
-        // The options panel can still move while late hub settings are applied.
-        // A DOM click targets the idempotent mode button without relying on stale
-        // screen coordinates from the CDP layout snapshot.
-        await button.clickDom();
-        await Promise.all([
-          input.waitForValue(mode, 750),
-          button.waitForAttribute('aria-pressed', 'true', 750),
-        ]);
-        // A late hubSettings response can briefly restore the previous value
-        // after both controls first look correct. Require the selection to stay
-        // settled beyond the settings debounce before accepting it.
-        await new Promise((resolve) => setTimeout(resolve, 750));
-        await Promise.all([
-          input.waitForValue(mode, 1),
-          button.waitForAttribute('aria-pressed', 'true', 1),
-        ]);
-        return;
-      } catch (error) {
-        lastError = error;
-        // Retry if late hub initialization restored the previous panel/settings.
-      }
-    }
-    const [actualMode, pressed] = await Promise.all([
-      input.inputValue(),
-      button.getAttribute('aria-pressed'),
+    await this.openPanel('options');
+    await this.target.locator('html').waitForAttribute('data-hub-settings-ready', 'true', DEFAULT_TIMEOUT_MS);
+    await button.waitFor({ state: 'visible', timeout: DEFAULT_TIMEOUT_MS });
+    await button.clickDom();
+    // Observe the host's persistence acknowledgement, not an arbitrary delay or
+    // the optimistic state of the controls, before the caller can reload.
+    await this.target.locator('html').waitForAttribute('data-hub-settings-save-pending', 'false', DEFAULT_TIMEOUT_MS);
+    await this.target.locator('html').waitForAttribute('data-hub-settings-ready', 'true', DEFAULT_TIMEOUT_MS);
+    await Promise.all([
+      input.waitForValue(mode, DEFAULT_TIMEOUT_MS),
+      button.waitForAttribute('aria-pressed', 'true', DEFAULT_TIMEOUT_MS),
     ]);
-    throw new Error(
-      `Unable to select interface mode ${JSON.stringify(mode)}; value=${JSON.stringify(actualMode)} aria-pressed=${JSON.stringify(pressed)} lastError=${JSON.stringify(lastError?.message || String(lastError || 'unknown'))}`,
-    );
   }
 
   interfaceModeInput() {

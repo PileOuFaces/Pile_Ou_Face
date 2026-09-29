@@ -1180,19 +1180,19 @@ function createActions({
       if (refreshSidebar) refreshSidebar(pathForWebview);
     },
 
-    hubGetSettings: async (_message) => {
+    hubGetSettings: async (message) => {
       const settings = context.globalState.get('pof-settings', SETTINGS_DEFAULTS);
-      panel.webview.postMessage({ type: 'hubSettings', settings: { ...SETTINGS_DEFAULTS, ...settings } });
+      panel.webview.postMessage({ type: 'hubSettings', settings: { ...SETTINGS_DEFAULTS, ...settings }, requestId: message.requestId });
     },
 
     hubSaveSettings: async (message) => {
       await context.globalState.update('pof-settings', message.settings);
-      panel.webview.postMessage({ type: 'hubSettingsSaved', ok: true });
+      panel.webview.postMessage({ type: 'hubSettingsSaved', ok: true, requestId: message.requestId });
     },
 
-    hubResetSettings: async (_message) => {
+    hubResetSettings: async (message) => {
       await context.globalState.update('pof-settings', SETTINGS_DEFAULTS);
-      panel.webview.postMessage({ type: 'hubSettings', settings: { ...SETTINGS_DEFAULTS } });
+      panel.webview.postMessage({ type: 'hubSettings', settings: { ...SETTINGS_DEFAULTS }, requestId: message.requestId });
     },
   };
 }
