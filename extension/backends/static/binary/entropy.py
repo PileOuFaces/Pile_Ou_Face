@@ -16,8 +16,18 @@ Output JSON:
 from __future__ import annotations
 
 import math
+from collections import Counter
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+
+@lru_cache(maxsize=8)
+def _entropy_terms(length: int) -> tuple[float, ...]:
+    """Reuse Shannon terms for small windows, with a bounded cache."""
+    return (0.0,) + tuple(
+        -(count / length) * math.log2(count / length) for count in range(1, length + 1)
+    )
 
 
 def entropy_of_bytes(data: bytes) -> float:
@@ -33,15 +43,17 @@ def entropy_of_bytes(data: bytes) -> float:
     # overlapping window while preserving the exact entropy result.
     if data.count(data[:1]) == len(data):
         return 0.0
-    counts = [0] * 256
-    for b in data:
-        counts[b] += 1
+    counts = Counter(data)
     length = len(data)
+    # Sliding windows repeatedly use the same probabilities. Avoid millions
+    # of redundant log2 calls without allocating a table for a whole file.
+    if length <= 4096:
+        terms = _entropy_terms(length)
+        return sum(terms[count] for count in counts.values())
     entropy = 0.0
-    for c in counts:
-        if c:
-            p = c / length
-            entropy -= p * math.log2(p)
+    for c in counts.values():
+        p = c / length
+        entropy -= p * math.log2(p)
     return entropy
 
 
