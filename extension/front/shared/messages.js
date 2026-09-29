@@ -2932,11 +2932,13 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubSettings') {
-    _applySettings(msg.settings);
-    document.documentElement.dataset.hubSettingsReady = 'true';
+    if (_applySettings(msg.settings, msg.requestId)) {
+      document.documentElement.dataset.hubSettingsReady = 'true';
+    }
     return;
   }
   if (msg.type === 'hubSettingsSaved') {
+    _settingsSaved(msg);
     return;
   }
   if (msg.type === 'hubScriptResult') {

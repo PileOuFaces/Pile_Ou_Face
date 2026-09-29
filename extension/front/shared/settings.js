@@ -1,6 +1,31 @@
 // ── Settings ─────────────────────────────────────────────────────────────────
 let _settingsCache = null;
 let _settingsDebounce = null;
+let _settingsRequestId = 0;
+let _settingsSavePending = false;
+
+function _requestSettings() {
+  // A read while a local edit is waiting to be saved would fetch old values.
+  if (_settingsSavePending) return;
+  document.documentElement.dataset.hubSettingsReady = 'false';
+  vscode.postMessage({ type: 'hubGetSettings', requestId: ++_settingsRequestId });
+}
+
+function _settingsSaved(message) {
+  if (!message.ok || message.requestId !== _settingsRequestId) return;
+  _settingsSavePending = false;
+  document.documentElement.dataset.hubSettingsSavePending = 'false';
+  _requestSettings();
+}
+
+function _resetSettings() {
+  clearTimeout(_settingsDebounce);
+  _settingsDebounce = null;
+  _settingsSavePending = false;
+  document.documentElement.dataset.hubSettingsSavePending = 'false';
+  document.documentElement.dataset.hubSettingsReady = 'false';
+  vscode.postMessage({ type: 'hubResetSettings', requestId: ++_settingsRequestId });
+}
 
 function renderStaticFeatureSettings(settings = _settingsCache || {}) {
   const checklist = document.getElementById('staticFeatureChecklist');
@@ -70,7 +95,10 @@ function refreshStaticNavigationForSettings() {
   }
 }
 
-function _applySettings(settings) {
+function _applySettings(settings, requestId) {
+  // Opening Options can return a snapshot taken before the user's latest edit.
+  // Only the current request may replace the form, never a pending local save.
+  if (_settingsSavePending || requestId !== _settingsRequestId) return false;
   _settingsCache = settings;
   if (typeof applyGlobalAiGenerationSettings === 'function') {
     applyGlobalAiGenerationSettings(settings);
@@ -104,6 +132,7 @@ function _applySettings(settings) {
     _renderDecompilerStatusList({ ..._decompilerAvailability, _meta: _decompilerMeta });
   }
   refreshStaticNavigationForSettings();
+  return true;
 }
 
 function _collectSettings() {
@@ -265,12 +294,16 @@ function _applyDecompilerLocalPathVisibility(key, visibility) {
 
 function _scheduleSave() {
   clearTimeout(_settingsDebounce);
+  const requestId = ++_settingsRequestId;
+  _settingsSavePending = true;
+  document.documentElement.dataset.hubSettingsSavePending = 'true';
   _settingsDebounce = setTimeout(() => {
+    _settingsDebounce = null;
     const settings = _collectSettings();
     _settingsCache = settings;
     syncStaticInterfaceModeControls(settings);
     refreshStaticNavigationForSettings();
-    vscode.postMessage({ type: 'hubSaveSettings', settings });
+    vscode.postMessage({ type: 'hubSaveSettings', settings, requestId });
     if (isStaticTabActive('decompile')) {
       vscode.postMessage({ type: 'hubListDecompilers', provider: _getConfiguredDecompilerProvider() });
       requestDecompileForCurrentSelection({ skipHistory: true, preserveStackEntry: true });
@@ -403,7 +436,7 @@ document.getElementById('panel-options')?.addEventListener('change', (event) => 
 });
 
 document.getElementById('btnResetSettings')?.addEventListener('click', () => {
-  vscode.postMessage({ type: 'hubResetSettings' });
+  _resetSettings();
 });
 document.getElementById('btnPluginRefresh')?.addEventListener('click', () => {
   vscode.postMessage({ type: 'hubLoadPluginState' });
