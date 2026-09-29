@@ -345,7 +345,7 @@ class TestExtractSymbols(unittest.TestCase):
         with tempfile.NamedTemporaryFile() as f:
             binary = _FakeLief.MachO.Binary(
                 symbols=[
-                    _FakeSymbol("absolute", type=1, value=0x1111, size=0),
+                    _FakeSymbol("absolute", type=2, value=0x1111, size=0),
                     _FakeSymbol("bad_type", type=object(), value=0x2222, size=0),
                     _FakeSymbol("bad_type", type=0x0E, value=0x3333, size=0),
                     _FakeSymbol("_extern", type=0, value=0, size=0),
@@ -358,7 +358,10 @@ class TestExtractSymbols(unittest.TestCase):
 
         self.assertEqual(
             symbols,
-            [{"name": "absolute", "addr": "0x1111", "type": "A", "size": None}],
+            [
+                {"name": "absolute", "addr": "0x1111", "type": "A", "size": None},
+                {"name": "bad_type", "addr": "0x3333", "type": "T", "size": None},
+            ],
         )
 
     def test_pe_imported_functions_skip_duplicate_names(self):
