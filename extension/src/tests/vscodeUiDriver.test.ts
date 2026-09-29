@@ -351,7 +351,7 @@ describe('VS Code UI E2E driver', () => {
     await hub.selectInterfaceMode('simple');
 
     assert.deepEqual(calls, [
-      'locator:html', 'wait:data-hub-settings-ready:true', 'open-options',
+      'locator:html', 'wait:data-hub-settings-ready:true', 'open-dashboard', 'open-options',
       'locator:html', 'wait:data-hub-settings-ready:true', 'button:visible:15000', 'click-simple',
       'locator:html', 'wait:data-hub-settings-save-pending:false',
       'locator:html', 'wait:data-hub-settings-ready:true',

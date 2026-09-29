@@ -625,6 +625,9 @@ class HubPage {
     const button = this.interfaceModeButton(mode);
     const input = this.interfaceModeInput();
     await this.target.locator('html').waitForAttribute('data-hub-settings-ready', 'true', DEFAULT_TIMEOUT_MS);
+    // Re-establish a known panel state before opening Options. A previous
+    // analysis flow can restore Static while the hub settings request settles.
+    await this.openPanel('dashboard');
     await this.openPanel('options');
     await this.target.locator('html').waitForAttribute('data-hub-settings-ready', 'true', DEFAULT_TIMEOUT_MS);
     await button.waitFor({ state: 'visible', timeout: DEFAULT_TIMEOUT_MS });
