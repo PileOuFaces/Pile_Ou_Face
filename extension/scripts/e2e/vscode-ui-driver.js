@@ -265,7 +265,7 @@ async function connectToHubWebview(
   endpoint,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   documentSelector = '#panel-dashboard',
-  { requireHubSettingsReady = true } = {},
+  { requireHubSettingsReady = true, requireDocumentComplete = false } = {},
 ) {
   if (!endpoint) throw new Error('POF_E2E_CDP_ENDPOINT is required for UI E2E');
   const deadline = Date.now() + timeoutMs;
@@ -310,7 +310,9 @@ async function connectToHubWebview(
                   const documentFound = Boolean(globalThis.document?.querySelector(${JSON.stringify(documentSelector)}));
                   return {
                     documentFound,
-                    ready: documentFound && (!${requireHubSettingsReady} || globalThis.document.documentElement?.dataset.hubSettingsReady === 'true'),
+                    ready: documentFound
+                      && (!${requireDocumentComplete} || globalThis.document.readyState === 'complete')
+                      && (!${requireHubSettingsReady} || globalThis.document.documentElement?.dataset.hubSettingsReady === 'true'),
                   };
                 })()`, contextId);
                 if (state?.ready) {
