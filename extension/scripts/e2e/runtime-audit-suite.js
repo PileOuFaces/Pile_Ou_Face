@@ -545,11 +545,12 @@ function readExternalPluginContract() {
   return { ...contract, steps, bundlePath, fixturePath };
 }
 
-async function waitForPluginContextValue(target, expression, predicate, timeoutMs = 30000) {
+async function waitForPluginContextValue(target, expression, predicate, timeoutMs = 30000, description = 'plugin context value') {
   const deadline = Date.now() + timeoutMs;
   let lastValue;
+  const contextIds = target.executionContextIds.length ? target.executionContextIds : [target.contextId];
   while (Date.now() < deadline) {
-    for (const contextId of target.executionContextIds.length ? target.executionContextIds : [target.contextId]) {
+    for (const contextId of contextIds) {
       try {
         lastValue = await target.evaluate(expression, contextId);
         if (predicate(lastValue)) return { contextId, value: lastValue };
@@ -557,7 +558,7 @@ async function waitForPluginContextValue(target, expression, predicate, timeoutM
     }
     await sleep(100);
   }
-  throw new Error(`Timed out waiting for plugin context value; last=${JSON.stringify(lastValue)}`);
+  throw new Error(`Timed out waiting for ${description}; last=${JSON.stringify(lastValue)}`);
 }
 
 async function waitForPluginTabLoader(target, pluginSlug, tabId, timeoutMs = 30000) {
@@ -579,6 +580,7 @@ function documentAssertionExpression(step) {
       text: element?.textContent || '',
       value: element && 'value' in element ? String(element.value) : '',
       checked: Boolean(element?.checked),
+      disabled: Boolean(element?.disabled),
     };
   })()`;
 }
@@ -588,6 +590,7 @@ function matchesDocumentAssertion(value, step) {
   if (Object.hasOwn(step, 'text') && !String(value.text).includes(String(step.text))) return false;
   if (Object.hasOwn(step, 'value') && value.value !== String(step.value)) return false;
   if (Object.hasOwn(step, 'checked') && value.checked !== Boolean(step.checked)) return false;
+  if (Object.hasOwn(step, 'disabled') && value.disabled !== Boolean(step.disabled)) return false;
   return true;
 }
 
@@ -1429,6 +1432,7 @@ async function run() {
             assertion,
             (value) => matchesDocumentAssertion(value, step),
             Number(step.timeout_ms || 60000),
+            `${step.operation} step ${index} (${step.selector})`,
           );
           if (step.operation.endsWith('_click')) {
             await stepTarget.evaluate(`document.querySelector(${JSON.stringify(step.selector)})?.click()`, contextId);
