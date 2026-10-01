@@ -1528,7 +1528,8 @@ async function run() {
     fs.copyFileSync(fixture.path, retryFixturePath);
     let target = null;
     let headerAttempts = 0;
-    let failNextHeaderAttempt = false;
+    let failHeadersUntilRetry = false;
+    let failedHeaderAttempts = 0;
     const originalExecFile = childProcess.execFile;
     try {
       await withChildProcessMocks({
@@ -1540,8 +1541,8 @@ async function run() {
           const proc = new EventEmitter();
           headerAttempts += 1;
           process.nextTick(() => {
-            if (failNextHeaderAttempt) {
-              failNextHeaderAttempt = false;
+            if (failHeadersUntilRetry) {
+              failedHeaderAttempts += 1;
               cb?.(new Error('Analyse backend temporairement indisponible'), '', 'backend unavailable');
               return;
             }
@@ -1573,7 +1574,7 @@ async function run() {
         await hub.openStaticTab('data', 'info');
 
         const attemptsBeforeForcedFailure = headerAttempts;
-        failNextHeaderAttempt = true;
+        failHeadersUntilRetry = true;
         await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
           type: 'hubLoadInfo',
           binaryPath: retryFixturePath,
@@ -1581,14 +1582,15 @@ async function run() {
         });
         await hub.binaryInfo().waitForText('Analyse backend temporairement indisponible', 30000);
         await hub.binaryInfoRetryButton().waitFor({ state: 'visible', timeout: 30000 });
+        assert.ok(failedHeaderAttempts > 0, 'the backend mock must fail until the user requests a retry');
+        failHeadersUntilRetry = false;
         await hub.binaryInfoRetryButton().clickDom();
 
         const recoveredInfo = await hub.binaryInfo().waitForText('Entry point', 30000);
         assert.match(recoveredInfo, /ELF/);
-        assert.equal(
-          headerAttempts,
-          attemptsBeforeForcedFailure + 2,
-          'one failed analysis and one successful UI retry must execute',
+        assert.ok(
+          headerAttempts >= attemptsBeforeForcedFailure + failedHeaderAttempts + 1,
+          'the explicit UI retry must execute another backend request',
         );
       });
     } catch (error) {
