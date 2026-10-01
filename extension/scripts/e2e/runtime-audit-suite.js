@@ -580,6 +580,7 @@ function documentAssertionExpression(step) {
       text: element?.textContent || '',
       value: element && 'value' in element ? String(element.value) : '',
       checked: Boolean(element?.checked),
+      disabled: Boolean(element?.disabled),
     };
   })()`;
 }
@@ -589,6 +590,7 @@ function matchesDocumentAssertion(value, step) {
   if (Object.hasOwn(step, 'text') && !String(value.text).includes(String(step.text))) return false;
   if (Object.hasOwn(step, 'value') && value.value !== String(step.value)) return false;
   if (Object.hasOwn(step, 'checked') && value.checked !== Boolean(step.checked)) return false;
+  if (Object.hasOwn(step, 'disabled') && value.disabled !== Boolean(step.disabled)) return false;
   return true;
 }
 
