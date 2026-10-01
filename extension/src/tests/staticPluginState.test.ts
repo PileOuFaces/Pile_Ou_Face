@@ -2,6 +2,7 @@ const { expect } = require("chai");
 const { EventEmitter } = require("events");
 const proxyquire = require("proxyquire").noCallThru();
 const sinon = require("sinon");
+const vscode = require("vscode");
 
 function loadStaticHandlers(execFile, spawn) {
   return proxyquire("../static/staticHandlers", {
@@ -290,6 +291,58 @@ describe("staticHandlers plugin bridge", () => {
       capability: "pof.demo-plugin.ai.explain",
       text: "AI explanation",
       usage: { output_tokens: 12 },
+    });
+  });
+
+  it("keeps deterministic plugin results when AI data sharing is declined", async () => {
+    const execFile = sinon.stub().callsFake((_pythonBin, _args, _options, callback) => {
+      callback(null, JSON.stringify({ consented: false }), "");
+    });
+    const spawn = sinon.stub().callsFake(() => {
+      const proc = new EventEmitter();
+      proc.stdout = new EventEmitter();
+      proc.stderr = new EventEmitter();
+      proc.kill = sinon.spy();
+      process.nextTick(() => {
+        proc.stdout.emit("data", JSON.stringify({
+          ok: true,
+          plugin_id: "pof.demo-plugin",
+          command: "demo.scan.run",
+          result: {
+            ok: true,
+            findings: [{ id: "CWE-78" }],
+            ai_followup: {
+              version: 1,
+              prompt: "Explain the finding",
+              context: { finding_count: 1 },
+              capability: "pof.demo-plugin.ai.explain",
+            },
+          },
+        }));
+        proc.emit("close", 0);
+      });
+      return proc;
+    });
+    const originalWarning = vscode.window.showWarningMessage;
+    const warning = sinon.stub()
+      .rejects(new Error("DialogService: refused to show dialog in tests"));
+    vscode.window.showWarningMessage = warning;
+    const postMessage = sinon.spy();
+    const handlers = createHandlers(loadStaticHandlers(execFile, spawn), postMessage);
+
+    try {
+      await handlers.hubPluginInvoke({ requestId: "req-ai-declined", feature: "demo_feature" });
+    } finally {
+      vscode.window.showWarningMessage = originalWarning;
+    }
+
+    expect(warning.calledOnce).to.equal(true);
+    expect(spawn.calledOnce).to.equal(true);
+    const resultMessage = postMessage.getCalls().map((call) => call.args[0])
+      .find((message) => message.type === "hubPluginResult");
+    expect(resultMessage.result).to.deep.equal({
+      ok: true,
+      findings: [{ id: "CWE-78" }],
     });
   });
 
