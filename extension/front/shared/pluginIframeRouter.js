@@ -82,6 +82,11 @@
     }
   }
 
+  /** Check whether a plugin iframe completed its tab-loader registration handshake. */
+  function hasTabLoader(slug, tabId) {
+    return _tabLoaders.get(String(tabId || ''))?.has(String(slug || '')) === true;
+  }
+
   /** Send a PoF proxy reply back to a frame's contentWindow. */
   function _reply(contentWindow, seq, result) {
     contentWindow.postMessage({ __pof_host: true, payload: { __pof_reply: true, __seq: seq, result } }, '*');
@@ -167,7 +172,7 @@
     }
   }
 
-  const PluginIframeRouter = { init, register, dispatch, broadcast };
+  const PluginIframeRouter = { init, register, dispatch, broadcast, hasTabLoader };
 
   // CommonJS (Node / test environment) or browser global
   if (typeof module !== 'undefined' && module.exports) {

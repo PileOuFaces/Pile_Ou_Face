@@ -88,6 +88,23 @@ describe('PluginIframeRouter', () => {
     expect(sent[0]).to.deep.include({ type: 'hubPluginInvoke' });
   });
 
+  it('reports tab loaders only after the plugin registration handshake', async () => {
+    const frame = makeFrame('pof.my-plugin');
+    router.register('my-plugin', frame);
+    expect(router.hasTabLoader('my-plugin', 'audit')).to.equal(false);
+
+    emit({
+      __pof_plugin: true,
+      __pof_call: true,
+      method: 'registerTabLoader',
+      args: ['audit'],
+      __seq: 7,
+    }, frame.contentWindow);
+    await new Promise(r => setTimeout(r, 0));
+
+    expect(router.hasTabLoader('my-plugin', 'audit')).to.equal(true);
+  });
+
   it('handles a PoF proxy call and sends reply to source frame', async () => {
     const frame = makeFrame('pof.my-plugin');
     router.register('my-plugin', frame);

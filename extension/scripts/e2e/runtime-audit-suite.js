@@ -560,6 +560,16 @@ async function waitForPluginContextValue(target, expression, predicate, timeoutM
   throw new Error(`Timed out waiting for plugin context value; last=${JSON.stringify(lastValue)}`);
 }
 
+async function waitForPluginTabLoader(target, pluginSlug, tabId, timeoutMs = 30000) {
+  const deadline = Date.now() + timeoutMs;
+  const expression = `Boolean(window.PluginIframeRouter?.hasTabLoader(${JSON.stringify(pluginSlug)}, ${JSON.stringify(tabId)}))`;
+  while (Date.now() < deadline) {
+    if (await target.evaluate(expression)) return;
+    await sleep(100);
+  }
+  throw new Error(`Timed out waiting for plugin tab loader registration: ${pluginSlug}/${tabId}`);
+}
+
 function documentAssertionExpression(step) {
   return `(() => {
     const elements = Array.from(document.querySelectorAll(${JSON.stringify(step.selector)}));
@@ -1393,6 +1403,7 @@ async function run() {
               { requireHubSettingsReady: false, requireDocumentComplete: true },
             );
             pluginDocument.close();
+            await waitForPluginTabLoader(target, externalPlugin.plugin_slug, step.id);
             await hub.openPanel('static');
             await hub.openStaticTab(step.group, step.id);
             const frameIsActive = await target.evaluate(`Boolean(document.querySelector(${JSON.stringify(`iframe.plugin-iframe.active[data-plugin-slug="${externalPlugin.plugin_slug}"]`)}))`);
