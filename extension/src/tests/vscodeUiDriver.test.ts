@@ -618,6 +618,7 @@ describe('VS Code UI E2E driver', () => {
     const sockets: FakeSocket[] = [];
     const socketUrls: string[] = [];
     let readinessChecks = 0;
+    let runtimeEvaluations = 0;
     globalThis.fetch = (async (url: string) => ({
       json: async () => url.endsWith('/json/version')
         ? { webSocketDebuggerUrl: 'ws://local/browser' }
@@ -650,7 +651,14 @@ describe('VS Code UI E2E driver', () => {
                 : {
                   result: {
                     value: request.method === 'Runtime.evaluate'
-                      ? { documentFound: true, ready: ++readinessChecks > 1 }
+                      ? (() => {
+                        runtimeEvaluations += 1;
+                        const bypassHubReadiness = request.params.expression.includes('!false');
+                        return {
+                          documentFound: true,
+                          ready: bypassHubReadiness || ++readinessChecks > 1,
+                        };
+                      })()
                       : true,
                   },
                 },
@@ -666,9 +674,20 @@ describe('VS Code UI E2E driver', () => {
       assert.ok(target instanceof CdpTarget);
       assert.equal(target.sessionId, 'hub-session');
       assert.ok(readinessChecks > 1, 'waits for the Hub webview readiness signal');
-      assert.deepEqual(socketUrls, ['ws://local/browser']);
+      const pluginTarget = await connectToHubWebview(
+        'http://127.0.0.1:9222',
+        1000,
+        '#unifiedAuditStatus',
+        { requireHubSettingsReady: false },
+      );
+      assert.ok(pluginTarget instanceof CdpTarget);
+      assert.equal(readinessChecks, 2, 'plugin webviews do not check the Hub readiness signal');
+      assert.equal(runtimeEvaluations, 3, 'the plugin document is accepted as soon as it is found');
+      assert.deepEqual(socketUrls, ['ws://local/browser', 'ws://local/browser']);
       target.close();
+      pluginTarget.close();
       assert.equal(sockets[0].closed, true);
+      assert.equal(sockets[1].closed, true);
     } finally {
       globalThis.fetch = originalFetch;
       globalThis.WebSocket = originalWebSocket;

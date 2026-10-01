@@ -1391,7 +1391,12 @@ async function run() {
           }
           const isPluginStep = step.operation.startsWith('plugin_');
           const stepTarget = isPluginStep
-            ? await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT, 30000, step.selector)
+            ? await connectToHubWebview(
+              process.env.POF_E2E_CDP_ENDPOINT,
+              30000,
+              step.selector,
+              { requireHubSettingsReady: false },
+            )
             : target;
           if (isPluginStep) {
             pluginTarget?.close();
