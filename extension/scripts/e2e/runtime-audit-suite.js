@@ -545,11 +545,12 @@ function readExternalPluginContract() {
   return { ...contract, steps, bundlePath, fixturePath };
 }
 
-async function waitForPluginContextValue(target, expression, predicate, timeoutMs = 30000) {
+async function waitForPluginContextValue(target, expression, predicate, timeoutMs = 30000, description = 'plugin context value') {
   const deadline = Date.now() + timeoutMs;
   let lastValue;
+  const contextIds = target.executionContextIds.length ? target.executionContextIds : [target.contextId];
   while (Date.now() < deadline) {
-    for (const contextId of target.executionContextIds.length ? target.executionContextIds : [target.contextId]) {
+    for (const contextId of contextIds) {
       try {
         lastValue = await target.evaluate(expression, contextId);
         if (predicate(lastValue)) return { contextId, value: lastValue };
@@ -557,7 +558,19 @@ async function waitForPluginContextValue(target, expression, predicate, timeoutM
     }
     await sleep(100);
   }
-  throw new Error(`Timed out waiting for plugin context value; last=${JSON.stringify(lastValue)}`);
+  const lastContextSummary = [];
+  for (const contextId of contextIds) {
+    try {
+      const summary = await target.evaluate(`(() => ({
+        title: document.title || '',
+        body: (document.body?.innerText || '').slice(0, 1200),
+        pluginScope: document.querySelector('[data-plugin-scope]')?.getAttribute('data-plugin-scope') || '',
+        errors: Array.from(document.querySelectorAll('.empty-state, [role="alert"]')).map((el) => (el.textContent || '').trim()).filter(Boolean).slice(0, 5),
+      }))()`, contextId);
+      lastContextSummary.push({ contextId, ...summary });
+    } catch { /* Contexts can disappear after a timeout too. */ }
+  }
+  throw new Error(`Timed out waiting for ${description}; last=${JSON.stringify(lastValue)}; contexts=${JSON.stringify(lastContextSummary)}`);
 }
 
 async function waitForPluginTabLoader(target, pluginSlug, tabId, timeoutMs = 30000) {
@@ -1429,6 +1442,7 @@ async function run() {
             assertion,
             (value) => matchesDocumentAssertion(value, step),
             Number(step.timeout_ms || 60000),
+            `${step.operation} step ${index} (${step.selector})`,
           );
           if (step.operation.endsWith('_click')) {
             await stepTarget.evaluate(`document.querySelector(${JSON.stringify(step.selector)})?.click()`, contextId);
