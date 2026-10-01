@@ -618,6 +618,7 @@ describe('VS Code UI E2E driver', () => {
     const sockets: FakeSocket[] = [];
     const socketUrls: string[] = [];
     let readinessChecks = 0;
+    let documentCompleteChecks = 0;
     let runtimeEvaluations = 0;
     let pluginDocumentProbe = '';
     globalThis.fetch = (async (url: string) => ({
@@ -654,11 +655,13 @@ describe('VS Code UI E2E driver', () => {
                     value: request.method === 'Runtime.evaluate'
                       ? (() => {
                         runtimeEvaluations += 1;
-                        const bypassHubReadiness = request.params.expression.includes('!false');
+                        const bypassHubReadiness = request.params.expression.includes('!false || globalThis.document.documentElement?.dataset.hubSettingsReady');
+                        const requiresDocumentComplete = request.params.expression.includes('!true || globalThis.document.readyState');
                         if (bypassHubReadiness) pluginDocumentProbe = request.params.expression;
                         return {
                           documentFound: true,
-                          ready: bypassHubReadiness || ++readinessChecks > 1,
+                          ready: (!requiresDocumentComplete || ++documentCompleteChecks > 1)
+                            && (bypassHubReadiness || ++readinessChecks > 1),
                         };
                       })()
                       : true,
@@ -686,11 +689,22 @@ describe('VS Code UI E2E driver', () => {
       assert.equal(readinessChecks, 2, 'plugin webviews do not check the Hub readiness signal');
       assert.equal(runtimeEvaluations, 3, 'the plugin document is accepted as soon as it is found');
       assert.ok(pluginDocumentProbe.includes('querySelector("[data-plugin-scope=\\\"vulnerability-audit-pro\\\"]:not(iframe)")'), 'plugin target discovery uses the stable plugin scope marker inside the plugin document');
-      assert.deepEqual(socketUrls, ['ws://local/browser', 'ws://local/browser']);
+      const readyPluginTarget = await connectToHubWebview(
+        'http://127.0.0.1:9222',
+        1000,
+        '[data-plugin-scope="vulnerability-audit-pro"]:not(iframe)',
+        { requireHubSettingsReady: false, requireDocumentComplete: true },
+      );
+      assert.ok(readyPluginTarget instanceof CdpTarget);
+      assert.ok(documentCompleteChecks > 1, 'waits for plugin scripts to finish before returning the document');
+      assert.ok(runtimeEvaluations > 3);
+      assert.deepEqual(socketUrls, ['ws://local/browser', 'ws://local/browser', 'ws://local/browser']);
       target.close();
       pluginTarget.close();
+      readyPluginTarget.close();
       assert.equal(sockets[0].closed, true);
       assert.equal(sockets[1].closed, true);
+      assert.equal(sockets[2].closed, true);
     } finally {
       globalThis.fetch = originalFetch;
       globalThis.WebSocket = originalWebSocket;

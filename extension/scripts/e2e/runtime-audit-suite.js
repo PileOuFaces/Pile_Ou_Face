@@ -1383,6 +1383,16 @@ async function run() {
           if (step.operation === 'open_tab') {
             pluginTarget?.close();
             pluginTarget = null;
+            // Plugin tabs and their tab loaders are registered by scripts inside
+            // the sandboxed iframe. Wait for those scripts to finish before the
+            // tab change can dispatch its first load request.
+            const pluginDocument = await connectToHubWebview(
+              process.env.POF_E2E_CDP_ENDPOINT,
+              30000,
+              `[data-plugin-scope="${externalPlugin.plugin_slug}"]:not(iframe)`,
+              { requireHubSettingsReady: false, requireDocumentComplete: true },
+            );
+            pluginDocument.close();
             await hub.openPanel('static');
             await hub.openStaticTab(step.group, step.id);
             const frameIsActive = await target.evaluate(`Boolean(document.querySelector(${JSON.stringify(`iframe.plugin-iframe.active[data-plugin-slug="${externalPlugin.plugin_slug}"]`)}))`);
