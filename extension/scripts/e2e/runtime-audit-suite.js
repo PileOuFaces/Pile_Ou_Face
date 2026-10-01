@@ -558,19 +558,7 @@ async function waitForPluginContextValue(target, expression, predicate, timeoutM
     }
     await sleep(100);
   }
-  const lastContextSummary = [];
-  for (const contextId of contextIds) {
-    try {
-      const summary = await target.evaluate(`(() => ({
-        title: document.title || '',
-        body: (document.body?.innerText || '').slice(0, 1200),
-        pluginScope: document.querySelector('[data-plugin-scope]')?.getAttribute('data-plugin-scope') || '',
-        errors: Array.from(document.querySelectorAll('.empty-state, [role="alert"]')).map((el) => (el.textContent || '').trim()).filter(Boolean).slice(0, 5),
-      }))()`, contextId);
-      lastContextSummary.push({ contextId, ...summary });
-    } catch { /* Contexts can disappear after a timeout too. */ }
-  }
-  throw new Error(`Timed out waiting for ${description}; last=${JSON.stringify(lastValue)}; contexts=${JSON.stringify(lastContextSummary)}`);
+  throw new Error(`Timed out waiting for ${description}; last=${JSON.stringify(lastValue)}`);
 }
 
 async function waitForPluginTabLoader(target, pluginSlug, tabId, timeoutMs = 30000) {
