@@ -945,12 +945,25 @@ function staticHandlers(config: LooseMessage) {
           }
         }
         if (!consented) {
-          const choice = await vscode.window.showWarningMessage(
-            `Plugin ${pluginId} wants to send data to "${provider}" for ${followup.capability}. Continue?`,
-            { modal: true },
-            'Allow',
-          );
-          if (choice !== 'Allow') throw new Error('Plugin AI call cancelled: consent was denied.');
+          let choice;
+          try {
+            choice = await vscode.window.showWarningMessage(
+              `Plugin ${pluginId} wants to send data to "${provider}" for ${followup.capability}. Continue?`,
+              { modal: true },
+              'Allow',
+            );
+          } catch {
+            // Test hosts and non-interactive environments can reject dialogs.
+            // Treat that as declined consent and keep the deterministic result.
+            choice = undefined;
+          }
+          if (choice !== 'Allow') {
+            // Keep the deterministic analysis usable when the optional AI step
+            // is declined (or unavailable in a non-interactive environment).
+            const deterministicResult = { ...firstResult };
+            delete deterministicResult.ai_followup;
+            return { pluginId, result: deterministicResult };
+          }
           await runPython(['backends/mcp/ai_consent.py', '--provider', provider, '--grant']);
         }
 
