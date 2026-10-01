@@ -1394,7 +1394,7 @@ async function run() {
             ? await connectToHubWebview(
               process.env.POF_E2E_CDP_ENDPOINT,
               30000,
-              step.selector,
+              'body',
               { requireHubSettingsReady: false },
             )
             : target;
