@@ -617,6 +617,7 @@ describe('VS Code UI E2E driver', () => {
     const originalWebSocket = globalThis.WebSocket;
     const sockets: FakeSocket[] = [];
     const socketUrls: string[] = [];
+    let readinessChecks = 0;
     globalThis.fetch = (async (url: string) => ({
       json: async () => url.endsWith('/json/version')
         ? { webSocketDebuggerUrl: 'ws://local/browser' }
@@ -646,7 +647,13 @@ describe('VS Code UI E2E driver', () => {
               id: request.id,
               result: request.method === 'Target.attachToTarget'
                 ? { sessionId: 'hub-session' }
-                : { result: { value: true } },
+                : {
+                  result: {
+                    value: request.method === 'Runtime.evaluate'
+                      ? { documentFound: true, ready: ++readinessChecks > 1 }
+                      : true,
+                  },
+                },
             }),
           }));
         };
@@ -655,9 +662,10 @@ describe('VS Code UI E2E driver', () => {
       }
     } as any;
     try {
-      const target = await connectToHubWebview('http://127.0.0.1:9222', 100);
+      const target = await connectToHubWebview('http://127.0.0.1:9222', 1000);
       assert.ok(target instanceof CdpTarget);
       assert.equal(target.sessionId, 'hub-session');
+      assert.ok(readinessChecks > 1, 'waits for the Hub webview readiness signal');
       assert.deepEqual(socketUrls, ['ws://local/browser']);
       target.close();
       assert.equal(sockets[0].closed, true);

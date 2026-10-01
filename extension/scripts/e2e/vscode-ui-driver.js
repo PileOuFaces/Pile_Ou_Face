@@ -298,15 +298,30 @@ async function connectToHubWebview(endpoint, timeoutMs = DEFAULT_TIMEOUT_MS, doc
           await target.send('Runtime.enable');
           const contexts = target.executionContextIds.length ? target.executionContextIds : [null];
           for (const contextId of contexts) {
-            try {
-              if (await target.evaluate(`Boolean(globalThis.document?.querySelector(${JSON.stringify(documentSelector)}))`, contextId)) {
-                target.contextId = contextId;
-                target.endpoint = endpoint;
-                return target;
+            let documentFound = false;
+            while (Date.now() < deadline) {
+              try {
+                const state = await target.evaluate(`(() => {
+                  const documentFound = Boolean(globalThis.document?.querySelector(${JSON.stringify(documentSelector)}));
+                  return {
+                    documentFound,
+                    ready: documentFound && globalThis.document.documentElement?.dataset.hubSettingsReady === 'true',
+                  };
+                })()`, contextId);
+                if (state?.ready) {
+                  target.contextId = contextId;
+                  target.endpoint = endpoint;
+                  return target;
+                }
+                if (!state?.documentFound) break;
+                documentFound = true;
+              } catch (error) {
+                lastError = error instanceof Error ? error.message : String(error);
+                break;
               }
-            } catch (error) {
-              lastError = error instanceof Error ? error.message : String(error);
+              await new Promise((resolve) => setTimeout(resolve, Math.min(100, Math.max(0, deadline - Date.now()))));
             }
+            if (documentFound) lastError = 'Hub document was present but had not reported initialization complete';
           }
         } catch (error) {
           lastError = error instanceof Error ? error.message : String(error);
@@ -320,7 +335,7 @@ async function connectToHubWebview(endpoint, timeoutMs = DEFAULT_TIMEOUT_MS, doc
       await new Promise((resolve) => setTimeout(resolve, Math.min(100, Math.max(0, deadline - Date.now()))));
     }
   }
-  throw new Error(`CDP document matching ${documentSelector} was not found. Targets: ${targetSummary || '<none>'}. Last error: ${lastError || '<none>'}`);
+  throw new Error(`Initialized CDP Hub document matching ${documentSelector} was not found. Targets: ${targetSummary || '<none>'}. Last error: ${lastError || '<none>'}`);
 }
 
 class HubPage {
