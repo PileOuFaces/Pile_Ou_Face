@@ -619,6 +619,7 @@ describe('VS Code UI E2E driver', () => {
     const socketUrls: string[] = [];
     let readinessChecks = 0;
     let runtimeEvaluations = 0;
+    let pluginDocumentProbe = '';
     globalThis.fetch = (async (url: string) => ({
       json: async () => url.endsWith('/json/version')
         ? { webSocketDebuggerUrl: 'ws://local/browser' }
@@ -654,6 +655,7 @@ describe('VS Code UI E2E driver', () => {
                       ? (() => {
                         runtimeEvaluations += 1;
                         const bypassHubReadiness = request.params.expression.includes('!false');
+                        if (bypassHubReadiness) pluginDocumentProbe = request.params.expression;
                         return {
                           documentFound: true,
                           ready: bypassHubReadiness || ++readinessChecks > 1,
@@ -677,12 +679,13 @@ describe('VS Code UI E2E driver', () => {
       const pluginTarget = await connectToHubWebview(
         'http://127.0.0.1:9222',
         1000,
-        '#unifiedAuditStatus',
+        'body',
         { requireHubSettingsReady: false },
       );
       assert.ok(pluginTarget instanceof CdpTarget);
       assert.equal(readinessChecks, 2, 'plugin webviews do not check the Hub readiness signal');
       assert.equal(runtimeEvaluations, 3, 'the plugin document is accepted as soon as it is found');
+      assert.ok(pluginDocumentProbe.includes('querySelector("body")'), 'plugin target discovery uses the document, not a late-rendered UI selector');
       assert.deepEqual(socketUrls, ['ws://local/browser', 'ws://local/browser']);
       target.close();
       pluginTarget.close();
