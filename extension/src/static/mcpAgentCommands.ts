@@ -15,6 +15,7 @@ const vscode = require('vscode');
 
 const STATUS_BAR_COMMAND = 'pileOuFace.mcpOpenAgentsPanel';
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+const INITIAL_REFRESH_DELAY_MS = 10 * 1000;
 
 async function cmdMcpDoctor(bridge, getProjectDir, logChannel) {
   try {
@@ -94,13 +95,17 @@ function createMcpStatusBarItem({ bridge, getProjectDir }) {
     }
   }
 
+  // Déférer le premier handshake : il spawn un vrai sous-processus Python et
+  // ne doit pas rentrer en concurrence avec le reste de l'activation (webviews,
+  // E2E) juste après le démarrage de l'extension.
+  const initialTimer = setTimeout(refresh, INITIAL_REFRESH_DELAY_MS);
   const timer = setInterval(refresh, REFRESH_INTERVAL_MS);
-  refresh();
 
   return {
     item,
     refresh,
     dispose() {
+      clearTimeout(initialTimer);
       clearInterval(timer);
       item.dispose();
     },

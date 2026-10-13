@@ -128,8 +128,9 @@ describe("mcpAgentCommands", () => {
         const bar = createMcpStatusBarItem({ bridge, getProjectDir: () => "/proj" });
         expect(statusBarItem.command).to.equal("pileOuFace.mcpOpenAgentsPanel");
         expect(statusBarItem.show.calledOnce).to.equal(true);
+        expect(bridge.doctor.called).to.equal(false);
 
-        await clock.tickAsync(0);
+        await clock.tickAsync(10_000);
         expect(statusBarItem.text).to.equal("$(check) MCP");
 
         bar.dispose();
@@ -147,7 +148,7 @@ describe("mcpAgentCommands", () => {
         const bridge = { doctor: sinon.stub().resolves({ handshake_ok: false, error: "timeout" }) };
         const bar = createMcpStatusBarItem({ bridge, getProjectDir: () => "/proj" });
 
-        await clock.tickAsync(0);
+        await clock.tickAsync(10_000);
         expect(statusBarItem.text).to.equal("$(warning) MCP");
         expect(statusBarItem.tooltip).to.include("timeout");
 
