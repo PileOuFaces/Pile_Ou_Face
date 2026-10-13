@@ -271,12 +271,32 @@ def run_doctor(project_dir: str, *, timeout_s: float = 5.0) -> dict:
             result["error"] = f"invalid JSON response: {exc}"
             return result
 
-        if "error" in response:
-            err = response["error"]
-            result["error"] = f"MCP error {err.get('code')}: {err.get('message')}"
+        if (
+            not isinstance(response, dict)
+            or response.get("jsonrpc") != "2.0"
+            or response.get("id") != request["id"]
+        ):
+            result["error"] = "invalid JSON-RPC response"
             return result
 
-        result["protocol_version"] = response.get("result", {}).get("protocolVersion")
+        if "error" in response:
+            err = response["error"]
+            if isinstance(err, dict):
+                result["error"] = f"MCP error {err.get('code')}: {err.get('message')}"
+            else:
+                result["error"] = f"invalid MCP error response: {err!r}"
+            return result
+
+        initialize_result = response.get("result")
+        if (
+            not isinstance(initialize_result, dict)
+            or not isinstance(initialize_result.get("protocolVersion"), str)
+            or not initialize_result["protocolVersion"]
+        ):
+            result["error"] = "invalid MCP initialize result"
+            return result
+
+        result["protocol_version"] = initialize_result["protocolVersion"]
         result["handshake_ok"] = True
         return result
     finally:

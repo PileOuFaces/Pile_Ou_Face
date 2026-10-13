@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import sys
@@ -228,6 +229,25 @@ class TestRunDoctor(unittest.TestCase):
         self.assertTrue(diagnosis["handshake_ok"])
         self.assertIsNone(diagnosis["error"])
         self.assertEqual(diagnosis["interpreter"], sys.executable)
+
+    def test_rejects_json_without_json_rpc_initialize_result(self):
+        process = unittest.mock.Mock(
+            stdin=unittest.mock.Mock(),
+            stdout=io.BytesIO(b"{}\n"),
+            stderr=io.BytesIO(),
+        )
+        process.poll.return_value = 0
+        with (
+            tempfile.TemporaryDirectory() as tmp_dir,
+            _patch_resolved_interpreter(sys.executable),
+            unittest.mock.patch.object(
+                setup_cli.subprocess, "Popen", return_value=process
+            ),
+        ):
+            diagnosis = setup_cli.run_doctor(tmp_dir)
+
+        self.assertFalse(diagnosis["handshake_ok"])
+        self.assertEqual(diagnosis["error"], "invalid JSON-RPC response")
 
     def test_reports_error_when_interpreter_does_not_exist(self):
         with (

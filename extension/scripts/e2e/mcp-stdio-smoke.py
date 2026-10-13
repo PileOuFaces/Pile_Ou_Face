@@ -18,31 +18,16 @@ TIMEOUT_SECONDS = 20.0
 
 def _frame(message: dict[str, Any]) -> bytes:
     body = json.dumps(message, separators=(",", ":")).encode("utf-8")
-    return f"Content-Length: {len(body)}\r\n\r\n".encode("ascii") + body
+    return body + b"\n"
 
 
 def _parse_messages(stream: bytes) -> list[dict[str, Any]]:
     messages = []
-    cursor = 0
-    while cursor < len(stream):
-        header_end = stream.find(b"\r\n\r\n", cursor)
-        if header_end < 0:
-            raise AssertionError(f"incomplete MCP headers at byte {cursor}")
-        headers = stream[cursor:header_end].decode("ascii").split("\r\n")
-        lengths = [
-            value
-            for key, value in (line.split(":", 1) for line in headers)
-            if key.lower() == "content-length"
-        ]
-        if len(lengths) != 1:
-            raise AssertionError(f"invalid MCP Content-Length headers: {headers!r}")
-        length = int(lengths[0].strip())
-        body_start = header_end + 4
-        body_end = body_start + length
-        if body_end > len(stream):
-            raise AssertionError("incomplete MCP response payload")
-        messages.append(json.loads(stream[body_start:body_end].decode("utf-8")))
-        cursor = body_end
+    for line in stream.split(b"\n"):
+        line = line.strip()
+        if not line:
+            continue
+        messages.append(json.loads(line.decode("utf-8")))
     return messages
 
 
