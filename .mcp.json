@@ -3,7 +3,7 @@
     "pile-ou-face": {
       "command": "python3",
       "args": [
-        "backends/mcp/server.py",
+        "extension/backends/mcp/server.py",
         "--transport",
         "stdio"
       ],
