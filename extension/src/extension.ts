@@ -39,6 +39,9 @@ const { getDisasmScript } = require('./shared/paths');
 const { registerSharedCommands } = require('./shared/commands');
 const { registerStaticCommands } = require('./static/commands');
 const { registerDecompilerCommands } = require('./static/decompilerCommands');
+const { createMcpAgentsPanel } = require('./static/mcpAgentsPanel');
+const { registerMcpAgentCommands, createMcpStatusBarItem } = require('./static/mcpAgentCommands');
+const { makeMcpSetupBridge } = require('./shared/mcpSetupBridge');
 const { AuthService } = require('./shared/authService');
 const { planLegacyAuthUrlMigration, resolveAuthServerUrl } = require('./shared/authConfig');
 const { getProductConfig } = require('./shared/productConfig');
@@ -248,6 +251,26 @@ function activate(context) {
   const decompilerDeps = { runPython: _runPythonForCmds, logChannel };
   const decompilerSubs = registerDecompilerCommands(context, decompilerDeps, root, storageDir);
   context.subscriptions.push(...decompilerSubs);
+
+  // Connexion des agents MCP (Claude Code/Codex) : panel "Connect Agents",
+  // doctor, rollback et barre de statut.
+  const getMcpProjectDir = () => root;
+  const mcpSetupBridge = makeMcpSetupBridge({
+    root,
+    extensionPath: context.extensionPath,
+    getPythonExecutable: () => pythonExe,
+    buildPythonEnv: () => buildRuntimeEnv(root, storageDir),
+  });
+  const mcpAgentsPanel = createMcpAgentsPanel({ context, bridge: mcpSetupBridge, getProjectDir: getMcpProjectDir });
+  const mcpAgentSubs = registerMcpAgentCommands(context, {
+    bridge: mcpSetupBridge,
+    getProjectDir: getMcpProjectDir,
+    panel: mcpAgentsPanel,
+    logChannel,
+  });
+  context.subscriptions.push(...mcpAgentSubs);
+  const mcpStatusBar = createMcpStatusBarItem({ bridge: mcpSetupBridge, getProjectDir: getMcpProjectDir });
+  context.subscriptions.push(mcpStatusBar);
 }
 
 /**
