@@ -144,6 +144,21 @@
         "command": "pileOuFace.perfSnapshot",
         "title": "%command.perfSnapshot%",
         "category": "Pile ou Face"
+      },
+      {
+        "command": "pileOuFace.mcpOpenAgentsPanel",
+        "title": "%command.mcpOpenAgentsPanel%",
+        "category": "Pile ou Face"
+      },
+      {
+        "command": "pileOuFace.mcpDoctor",
+        "title": "%command.mcpDoctor%",
+        "category": "Pile ou Face"
+      },
+      {
+        "command": "pileOuFace.mcpRollback",
+        "title": "%command.mcpRollback%",
+        "category": "Pile ou Face"
       }
     ],
     "menus": {

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import sys
@@ -18,15 +19,26 @@ if str(ROOT) not in sys.path:
 from backends.mcp import setup_cli
 
 
+def _patch_resolved_interpreter(command: str = "/usr/bin/python3.11"):
+    return unittest.mock.patch.object(
+        setup_cli,
+        "resolve_python_interpreter",
+        return_value=(command, (3, 11), False),
+    )
+
+
 class TestInstallClaudeCode(unittest.TestCase):
     def test_creates_project_mcp_json_from_scratch(self):
-        with tempfile.TemporaryDirectory() as tmp_dir:
+        with (
+            tempfile.TemporaryDirectory() as tmp_dir,
+            _patch_resolved_interpreter("/usr/bin/python3.11"),
+        ):
             path = setup_cli.install_claude_code(tmp_dir, "project")
             with open(path, encoding="utf-8") as fh:
                 config = json.load(fh)
         self.assertEqual(path, os.path.join(tmp_dir, ".mcp.json"))
         entry = config["mcpServers"][setup_cli.SERVER_ID]
-        self.assertEqual(entry["command"], "python3")
+        self.assertEqual(entry["command"], "/usr/bin/python3.11")
         self.assertEqual(entry["args"][0], setup_cli.SERVER_PY)
         self.assertEqual(entry["env"]["POF_MCP_WORKSPACE_ROOT"], tmp_dir)
 
@@ -79,7 +91,10 @@ class TestInstallCodex(unittest.TestCase):
         return os.path.join(tmp_dir, "config.toml")
 
     def test_appends_table_to_fresh_file(self):
-        with tempfile.TemporaryDirectory() as tmp_dir:
+        with (
+            tempfile.TemporaryDirectory() as tmp_dir,
+            _patch_resolved_interpreter("/usr/bin/python3.11"),
+        ):
             codex_path = self._codex_home(tmp_dir)
             with unittest.mock.patch(
                 "os.path.expanduser",
@@ -91,7 +106,7 @@ class TestInstallCodex(unittest.TestCase):
             with open(path, encoding="utf-8") as fh:
                 text = fh.read()
         self.assertIn(f"[mcp_servers.{setup_cli.SERVER_ID}]", text)
-        self.assertIn('command = "python3"', text)
+        self.assertIn('command = "/usr/bin/python3.11"', text)
         self.assertIn(tmp_dir, text)
 
     def test_preserves_other_toml_tables(self):
@@ -128,6 +143,120 @@ class TestInstallCodex(unittest.TestCase):
             with open(codex_path, encoding="utf-8") as fh:
                 text = fh.read()
         self.assertEqual(text.count("[mcp_servers."), 1)
+
+
+class TestResolvePythonInterpreter(unittest.TestCase):
+    def test_prefers_sys_executable_when_modern_enough(self):
+        with (
+            unittest.mock.patch.object(
+                setup_cli.sys, "version_info", (3, 12, 0, "final", 0)
+            ),
+            unittest.mock.patch.object(
+                setup_cli.sys, "executable", "/opt/homebrew/bin/python3.12"
+            ),
+        ):
+            command, version, is_fallback = setup_cli.resolve_python_interpreter()
+        self.assertEqual(command, "/opt/homebrew/bin/python3.12")
+        self.assertEqual(version, (3, 12))
+        self.assertFalse(is_fallback)
+
+    def test_probes_named_interpreters_when_running_under_old_python(self):
+        def fake_which(name: str) -> str | None:
+            return f"/usr/local/bin/{name}" if name == "python3.11" else None
+
+        with (
+            unittest.mock.patch.object(
+                setup_cli.sys, "version_info", (3, 9, 6, "final", 0)
+            ),
+            unittest.mock.patch.object(
+                setup_cli.shutil, "which", side_effect=fake_which
+            ),
+            unittest.mock.patch.object(
+                setup_cli, "_interpreter_version", return_value=(3, 11)
+            ),
+        ):
+            command, version, is_fallback = setup_cli.resolve_python_interpreter()
+        self.assertEqual(command, "/usr/local/bin/python3.11")
+        self.assertEqual(version, (3, 11))
+        self.assertFalse(is_fallback)
+
+    def test_falls_back_to_bare_python3_with_warning_when_nothing_found(self):
+        with (
+            unittest.mock.patch.object(
+                setup_cli.sys, "version_info", (3, 9, 6, "final", 0)
+            ),
+            unittest.mock.patch.object(setup_cli.shutil, "which", return_value=None),
+        ):
+            command, version, is_fallback = setup_cli.resolve_python_interpreter()
+        self.assertEqual(command, "python3")
+        self.assertIsNone(version)
+        self.assertTrue(is_fallback)
+
+
+class TestRollback(unittest.TestCase):
+    def test_rollback_restores_backup(self):
+        with tempfile.TemporaryDirectory() as tmp_dir, _patch_resolved_interpreter():
+            setup_cli.install_claude_code(tmp_dir, "project")
+            path = setup_cli._claude_config_path("project", tmp_dir)
+            with open(path, encoding="utf-8") as fh:
+                original = fh.read()
+
+            # Simulate a second install mutating the file, so .bak differs.
+            setup_cli.install_claude_code(tmp_dir, "project")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write('{"mcpServers": {}, "mutated": true}')
+
+            restored_path = setup_cli.rollback("claude", tmp_dir, "project")
+            with open(restored_path, encoding="utf-8") as fh:
+                restored = fh.read()
+
+        self.assertEqual(restored_path, path)
+        self.assertEqual(restored, original)
+
+    def test_rollback_raises_when_no_backup_exists(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with self.assertRaises(FileNotFoundError):
+                setup_cli.rollback("claude", tmp_dir, "project")
+
+
+class TestRunDoctor(unittest.TestCase):
+    def test_handshake_ok_against_real_server(self):
+        with (
+            tempfile.TemporaryDirectory() as tmp_dir,
+            _patch_resolved_interpreter(sys.executable),
+        ):
+            diagnosis = setup_cli.run_doctor(tmp_dir)
+        self.assertTrue(diagnosis["handshake_ok"])
+        self.assertIsNone(diagnosis["error"])
+        self.assertEqual(diagnosis["interpreter"], sys.executable)
+
+    def test_rejects_json_without_json_rpc_initialize_result(self):
+        process = unittest.mock.Mock(
+            stdin=unittest.mock.Mock(),
+            stdout=io.BytesIO(b"{}\n"),
+            stderr=io.BytesIO(),
+        )
+        process.poll.return_value = 0
+        with (
+            tempfile.TemporaryDirectory() as tmp_dir,
+            _patch_resolved_interpreter(sys.executable),
+            unittest.mock.patch.object(
+                setup_cli.subprocess, "Popen", return_value=process
+            ),
+        ):
+            diagnosis = setup_cli.run_doctor(tmp_dir)
+
+        self.assertFalse(diagnosis["handshake_ok"])
+        self.assertEqual(diagnosis["error"], "invalid JSON-RPC response")
+
+    def test_reports_error_when_interpreter_does_not_exist(self):
+        with (
+            tempfile.TemporaryDirectory() as tmp_dir,
+            _patch_resolved_interpreter("/nonexistent/python3-doctor-test"),
+        ):
+            diagnosis = setup_cli.run_doctor(tmp_dir)
+        self.assertFalse(diagnosis["handshake_ok"])
+        self.assertIsNotNone(diagnosis["error"])
 
 
 if __name__ == "__main__":
