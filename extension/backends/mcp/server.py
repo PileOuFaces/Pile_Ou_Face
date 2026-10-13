@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """MCP server for Pile ou Face.
 
-Transport: stdio (JSON-RPC 2.0 with Content-Length framing).
+Transport: stdio (JSON-RPC 2.0, NDJSON — one JSON message per line).
+Content-Length framing is accepted on read for legacy compatibility, but
+all responses are written as NDJSON.
 """
 
 from __future__ import annotations
@@ -1957,9 +1959,11 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _read_message(stdin: Any) -> dict[str, Any] | None:
-    """Read one framed JSON-RPC message from stdin.
+    """Read one JSON-RPC message from stdin.
 
-    MCP stdio framing uses HTTP-like headers:
+    NDJSON (one JSON object per line) is the canonical format written by
+    this server and by real MCP clients. For legacy compatibility, LSP-style
+    Content-Length framing is also accepted on read:
         Content-Length: N
 
         {json payload}
@@ -2012,10 +2016,9 @@ def _read_message(stdin: Any) -> dict[str, Any] | None:
 
 
 def _write_message(stdout: Any, message: dict[str, Any]) -> None:
-    body = json.dumps(message, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
-    headers = f"Content-Length: {len(body)}\r\n\r\n".encode("ascii")
-    stdout.write(headers)
-    stdout.write(body)
+    """Write one JSON-RPC message to stdout as a single NDJSON line."""
+    line = json.dumps(message, ensure_ascii=True, separators=(",", ":")) + "\n"
+    stdout.write(line.encode("utf-8"))
     stdout.flush()
 
 
