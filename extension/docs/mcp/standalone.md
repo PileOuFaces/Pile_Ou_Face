@@ -4,6 +4,11 @@ Le serveur MCP (`backends/mcp/server.py`) est un serveur JSON-RPC 2.0 stdio
 standard. Il peut être utilisé par n'importe quel agent compatible MCP
 (Claude Code, Codex, etc.), pas seulement depuis l'extension VS Code.
 
+Le transport stdio est **NDJSON** (une ligne JSON par message, en lecture
+comme en écriture) — le format canonique parlé par les vrais clients MCP.
+L'ancien framing *Content-Length* (style LSP) reste toléré en lecture par
+tolérance, mais plus jamais émis.
+
 ## Installation automatique (Claude Code / Codex)
 
 ```bash
@@ -31,8 +36,57 @@ Options :
 | `--project-dir` | chemin | cwd | Projet que le serveur doit scanner |
 | `--scope` | `project`, `user` | `project` | Config Claude Code : projet ou utilisateur |
 | `--dry-run` | — | — | Affiche les changements sans écrire |
+| `--json` | — | — | Sortie structurée (une entrée par agent : `agent`, `path`, `dry_run`) au lieu du texte humain |
+| `--doctor` | — | — | Lance un vrai handshake MCP (NDJSON `initialize`) contre le serveur et affiche le diagnostic en JSON ; code de sortie non nul si le handshake échoue |
+| `--rollback` | — | — | Restaure la config de l'agent depuis son `.bak` au lieu d'installer |
 
 Redémarrer l'agent après l'installation pour qu'il recharge sa config MCP.
+
+### Diagnostic (`--doctor`)
+
+```bash
+python3 setup_cli.py --agent claude --project-dir /chemin/vers/ton/projet --doctor
+```
+
+Résout l'interpréteur Python qui serait utilisé dans la config générée,
+lance `server.py` en sous-processus avec ce même interpréteur et
+`POF_MCP_WORKSPACE_ROOT` pointé sur le projet, puis envoie une requête
+`initialize` réelle en NDJSON. La sortie JSON contient `interpreter`,
+`interpreter_version`, `interpreter_is_fallback`, `handshake_ok`,
+`protocol_version` et `error`. C'est le seul moyen fiable de distinguer un
+problème de résolution d'interpréteur (PATH, stub Apple Python 3.9) d'un
+problème de framing ou d'un vrai bug serveur — un simple `curl`/test unitaire
+ne peut pas reproduire un mismatch de transport inter-process avec un
+véritable agent externe.
+
+### Annulation (`--rollback`)
+
+```bash
+python3 setup_cli.py --agent claude --project-dir /chemin/vers/ton/projet --rollback
+```
+
+Restaure le fichier de config de l'agent depuis le `.bak` créé par la
+dernière installation. Échoue explicitement (`FileNotFoundError`) si aucun
+backup n'existe — jamais de restauration silencieuse vers un état inconnu.
+
+## Panneau "Connect Agents" (extension VS Code)
+
+Depuis la palette de commandes VS Code :
+
+- **Pile ou Face: Connect Agents (MCP)** ouvre un panneau webview qui
+  pilote `setup_cli.py` sans terminal : choix de l'agent (Claude
+  Code/Codex/les deux) et du scope, puis Preview (équivalent `--dry-run
+  --json`), Apply, Rollback et Run Doctor, avec le JSON brut de chaque
+  commande affiché dans le panneau.
+- **Pile ou Face: MCP Doctor** lance directement le handshake (équivalent
+  `--doctor`) et affiche le résultat en notification VS Code (info si
+  `handshake_ok`, erreur sinon).
+- **Pile ou Face: MCP Rollback agent config** demande l'agent à restaurer
+  via un quick-pick puis exécute le rollback.
+
+Une barre de statut ("MCP" avec icône plug/check/warning) reflète en
+permanence l'état du dernier handshake, se rafraîchit automatiquement
+toutes les 5 minutes, et ouvre le panneau "Connect Agents" au clic.
 
 ## Variable d'environnement `POF_MCP_WORKSPACE_ROOT`
 
