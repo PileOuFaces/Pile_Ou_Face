@@ -269,7 +269,11 @@ function activate(context) {
     logChannel,
   });
   context.subscriptions.push(...mcpAgentSubs);
-  const mcpStatusBar = createMcpStatusBarItem({ bridge: mcpSetupBridge, getProjectDir: getMcpProjectDir });
+  const mcpStatusBar = createMcpStatusBarItem({
+    bridge: mcpSetupBridge,
+    getProjectDir: getMcpProjectDir,
+    extensionMode: context.extensionMode,
+  });
   context.subscriptions.push(mcpStatusBar);
 }
 

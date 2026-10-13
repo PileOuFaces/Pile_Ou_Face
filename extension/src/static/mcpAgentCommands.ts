@@ -15,7 +15,6 @@ const vscode = require('vscode');
 
 const STATUS_BAR_COMMAND = 'pileOuFace.mcpOpenAgentsPanel';
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
-const INITIAL_REFRESH_DELAY_MS = 10 * 1000;
 
 async function cmdMcpDoctor(bridge, getProjectDir, logChannel) {
   try {
@@ -70,7 +69,7 @@ function registerMcpAgentCommands(context, deps) {
  * on creation and every REFRESH_INTERVAL_MS. Caller is responsible for pushing the
  * returned disposable(s) into context.subscriptions.
  */
-function createMcpStatusBarItem({ bridge, getProjectDir }) {
+function createMcpStatusBarItem({ bridge, getProjectDir, extensionMode }) {
   const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   item.command = STATUS_BAR_COMMAND;
   item.text = '$(plug) MCP';
@@ -95,18 +94,23 @@ function createMcpStatusBarItem({ bridge, getProjectDir }) {
     }
   }
 
-  // Déférer le premier handshake : il spawn un vrai sous-processus Python et
-  // ne doit pas rentrer en concurrence avec le reste de l'activation (webviews,
-  // E2E) juste après le démarrage de l'extension.
-  const initialTimer = setTimeout(refresh, INITIAL_REFRESH_DELAY_MS);
-  const timer = setInterval(refresh, REFRESH_INTERVAL_MS);
+  // The handshake spawns a real Python subprocess; under the automated E2E
+  // runner (ExtensionMode.Test) that competes with the extension host for
+  // CPU and can push unrelated webview-rendering tests past their timeout.
+  // Background polling stays off there — the doctor command is still
+  // reachable manually via pileOuFace.mcpDoctor.
+  const isTestMode = extensionMode === vscode.ExtensionMode.Test;
+  let timer = null;
+  if (!isTestMode) {
+    timer = setInterval(refresh, REFRESH_INTERVAL_MS);
+    refresh();
+  }
 
   return {
     item,
     refresh,
     dispose() {
-      clearTimeout(initialTimer);
-      clearInterval(timer);
+      if (timer) clearInterval(timer);
       item.dispose();
     },
   };

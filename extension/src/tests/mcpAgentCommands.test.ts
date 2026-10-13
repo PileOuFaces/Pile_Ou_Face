@@ -25,6 +25,7 @@ function makeVscodeStub() {
       createStatusBarItem: sinon.stub().returns(statusBarItem),
     },
     StatusBarAlignment: { Right: 2 },
+    ExtensionMode: { Production: 1, Development: 2, Test: 3 },
   };
   return { vscodeStub, registered, statusBarItem };
 }
@@ -128,9 +129,8 @@ describe("mcpAgentCommands", () => {
         const bar = createMcpStatusBarItem({ bridge, getProjectDir: () => "/proj" });
         expect(statusBarItem.command).to.equal("pileOuFace.mcpOpenAgentsPanel");
         expect(statusBarItem.show.calledOnce).to.equal(true);
-        expect(bridge.doctor.called).to.equal(false);
 
-        await clock.tickAsync(10_000);
+        await clock.tickAsync(0);
         expect(statusBarItem.text).to.equal("$(check) MCP");
 
         bar.dispose();
@@ -148,11 +148,34 @@ describe("mcpAgentCommands", () => {
         const bridge = { doctor: sinon.stub().resolves({ handshake_ok: false, error: "timeout" }) };
         const bar = createMcpStatusBarItem({ bridge, getProjectDir: () => "/proj" });
 
-        await clock.tickAsync(10_000);
+        await clock.tickAsync(0);
         expect(statusBarItem.text).to.equal("$(warning) MCP");
         expect(statusBarItem.tooltip).to.include("timeout");
 
         bar.dispose();
+      } finally {
+        clock.restore();
+      }
+    });
+
+    it("does not poll automatically under ExtensionMode.Test", async () => {
+      const { vscodeStub, statusBarItem } = makeVscodeStub();
+      const { createMcpStatusBarItem } = load(vscodeStub);
+      const clock = sinon.useFakeTimers();
+      try {
+        const bridge = { doctor: sinon.stub().resolves({ handshake_ok: true, interpreter: "/usr/bin/python3" }) };
+        const bar = createMcpStatusBarItem({
+          bridge,
+          getProjectDir: () => "/proj",
+          extensionMode: vscodeStub.ExtensionMode.Test,
+        });
+
+        await clock.tickAsync(10 * 60 * 1000);
+        expect(bridge.doctor.called).to.equal(false);
+        expect(statusBarItem.text).to.equal("$(plug) MCP");
+
+        bar.dispose();
+        expect(statusBarItem.dispose.calledOnce).to.equal(true);
       } finally {
         clock.restore();
       }
