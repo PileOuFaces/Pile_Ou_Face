@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
-
 const { EVENT_SCHEMAS } = require('./telemetryEvents');
+
+type TelemetryPropertyDescriptor =
+  | { type: 'boolean'; required: boolean }
+  | { type: 'enum'; values: readonly unknown[]; required: boolean }
+  | { type: 'string'; maxLength: number; pattern: RegExp; required: boolean };
 
 const VALIDATION_ERRORS = Object.freeze({
   UNKNOWN_EVENT: 'unknown_event',
@@ -18,7 +21,7 @@ function isPlainObject(value) {
   return prototype === Object.prototype || prototype === null;
 }
 
-function validateProperty(value, descriptor) {
+function validateProperty(value, descriptor: TelemetryPropertyDescriptor) {
   if (descriptor.type === 'boolean') return typeof value === 'boolean';
   if (descriptor.type === 'enum') return descriptor.values.includes(value);
   if (descriptor.type !== 'string' || typeof value !== 'string') return false;
@@ -40,7 +43,7 @@ function validateTelemetryEvent(eventName, properties) {
     }
   }
 
-  for (const [key, descriptor] of Object.entries(schema)) {
+  for (const [key, descriptor] of Object.entries(schema) as [string, TelemetryPropertyDescriptor][]) {
     if (!Object.prototype.hasOwnProperty.call(properties, key)) {
       if (descriptor.required) {
         return { ok: false, reason: VALIDATION_ERRORS.MISSING_PROPERTY };

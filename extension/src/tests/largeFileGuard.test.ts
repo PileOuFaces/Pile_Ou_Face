@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 const { expect } = require('chai');
 const fs = require('fs');
 const os = require('os');
@@ -23,7 +22,7 @@ describe('largeFileGuard', () => {
   it('allows opening a small file without prompting', async () => {
     const filePath = path.join(dir, 'small.asm');
     fs.writeFileSync(filePath, 'hello');
-    const vscode = makeVscodeStub('Ouvrir quand même');
+    const vscode = makeVscodeStub('Open anyway');
     const ok = await confirmOpenLargeTextFile(filePath, { fs, vscode, warnBytes: 10 * 1024 * 1024 });
     expect(ok).to.equal(true);
     expect(vscode.window.showWarningMessage.called).to.equal(false);
@@ -32,7 +31,7 @@ describe('largeFileGuard', () => {
   it('prompts and allows opening a large file when the user confirms', async () => {
     const filePath = path.join(dir, 'big.asm');
     fs.writeFileSync(filePath, Buffer.alloc(2048));
-    const vscode = makeVscodeStub('Ouvrir quand même');
+    const vscode = makeVscodeStub('Open anyway');
     const ok = await confirmOpenLargeTextFile(filePath, { fs, vscode, warnBytes: 1024 });
     expect(ok).to.equal(true);
     expect(vscode.window.showWarningMessage.calledOnce).to.equal(true);
@@ -49,7 +48,7 @@ describe('largeFileGuard', () => {
   it('does not prompt again for a path already confirmed this session', async () => {
     const filePath = path.join(dir, 'big3.asm');
     fs.writeFileSync(filePath, Buffer.alloc(2048));
-    const vscode = makeVscodeStub('Ouvrir quand même');
+    const vscode = makeVscodeStub('Open anyway');
     await confirmOpenLargeTextFile(filePath, { fs, vscode, warnBytes: 1024 });
     const ok = await confirmOpenLargeTextFile(filePath, { fs, vscode, warnBytes: 1024 });
     expect(ok).to.equal(true);

@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 /**
  * @file extension.js
  * @brief Entree principale de l'extension VS Code.
@@ -32,6 +31,7 @@ const {
   ensureStorageDir,
   getGlobalStorageDir,
   logError,
+  logWarning,
 } = require('./shared/utils');
 const { readTraceJson, writeTraceJson, setViewMode, loadTraceFromWorkspace } = require('./shared/trace');
 const { payloadToHex, parseStdinExpression } = require('./shared/payload');
@@ -39,8 +39,11 @@ const { getDisasmScript } = require('./shared/paths');
 const { registerSharedCommands } = require('./shared/commands');
 const { registerStaticCommands } = require('./static/commands');
 const { registerDecompilerCommands } = require('./static/decompilerCommands');
+const { createMcpAgentsPanel } = require('./static/mcpAgentsPanel');
+const { registerMcpAgentCommands, createMcpStatusBarItem } = require('./static/mcpAgentCommands');
+const { makeMcpSetupBridge } = require('./shared/mcpSetupBridge');
 const { AuthService } = require('./shared/authService');
-const { resolveAuthServerUrl } = require('./shared/authConfig');
+const { planLegacyAuthUrlMigration, resolveAuthServerUrl } = require('./shared/authConfig');
 const { getProductConfig } = require('./shared/productConfig');
 const { configureRuntimeAudit, recordRuntimeEvent, resetRuntimeAudit } = require('./shared/runtimeAudit');
 const { createTelemetryService } = require('./shared/telemetry/telemetry');
@@ -49,6 +52,18 @@ const { mapPlatform } = require('./shared/telemetry/telemetryMappings');
 const logger = require('./shared/logger');
 
 const decorationTypes = new Map();
+
+interface HubConfig {
+  [key: string]: unknown;
+  refreshSidebar?: (binaryPath: string) => void;
+  setSidebarMode?: (mode: string) => void;
+}
+
+interface PythonCommandOptions {
+  timeout?: number;
+  maxBuffer?: number;
+  cwd?: string;
+}
 
 // Filet de sécurité : capture les promesses rejetées non gérées et les logue
 // via le canal de l'extension au lieu de les laisser invisibles dans la
@@ -130,12 +145,31 @@ function activate(context) {
   // checkDecompilerDeps supprimé : l'install est proposé à la demande via le dropdown
 
   const authConfig = vscode.workspace.getConfiguration('pileOuFace').inspect('authServerUrl');
-  const authServerUrl = resolveAuthServerUrl({
-    savedAuthServerUrl: context.globalState.get('pof-settings', {}).authServerUrl || '',
-    configuredAuthServerUrl: authConfig?.workspaceFolderValue || authConfig?.workspaceValue || authConfig?.globalValue || '',
-    projectRoot: folders?.[0]?.uri?.fsPath || '',
+  const authSavedSettings = context.globalState.get('pof-settings', {});
+  const configuredAuthServerUrl = authConfig?.workspaceFolderValue || authConfig?.workspaceValue || authConfig?.globalValue || '';
+  const legacyAuthMigration = planLegacyAuthUrlMigration({
+    deploymentProfile: productConfig.deploymentProfile,
+    legacyUrl: authSavedSettings.authServerUrl || '',
+    configuredUrl: configuredAuthServerUrl,
   });
+  const authServerUrl = resolveAuthServerUrl({
+    savedAuthServerUrl: authSavedSettings.authServerUrl || '',
+    configuredAuthServerUrl,
+    projectRoot: folders?.[0]?.uri?.fsPath || '',
+    productConfig,
+  });
+  if (legacyAuthMigration.removeLegacy) {
+    const { authServerUrl: _removedLegacyAuthUrl, ...migratedSettings } = authSavedSettings;
+    if (!configuredAuthServerUrl && legacyAuthMigration.configuredUrl) {
+      vscode.workspace.getConfiguration('pileOuFace')
+        .update('authServerUrl', legacyAuthMigration.configuredUrl, vscode.ConfigurationTarget.Global)
+        .catch((err) => logWarning(`[Auth] migration du réglage URL échouée: ${err.message || err}`));
+    }
+    context.globalState.update('pof-settings', migratedSettings)
+      .catch((err) => logWarning(`[Auth] suppression de l'ancienne URL échouée: ${err.message || err}`));
+  }
   const _authService = AuthService.getInstance(context.secrets, authServerUrl, {
+    deploymentProfile: productConfig.deploymentProfile,
     pluginSearchDirs: [storageDir, globalDir]
       .filter(Boolean)
       .map((dir) => path.join(dir, 'plugins')),
@@ -143,7 +177,7 @@ function activate(context) {
   _authService.refresh().catch(() => {}); // refresh silencieux au démarrage
 
   const openVisualizerWebview = createVisualizer({ context, logChannel, decorationTypes, telemetry });
-  const hubConfig = {
+  const hubConfig: HubConfig = {
     context,
     logChannel,
     storageDir,
@@ -191,7 +225,10 @@ function activate(context) {
 
   // Commandes de gestion des décompilateurs (add, remove, list, test, openConfig)
   const cp = require('child_process');
-  const _runPythonForCmds = (argsWithScript, { timeout = 60000, maxBuffer = 4 * 1024 * 1024, cwd } = {}) =>
+  const _runPythonForCmds = (
+    argsWithScript: string[],
+    { timeout = 60000, maxBuffer = 4 * 1024 * 1024, cwd }: PythonCommandOptions = {},
+  ) =>
     new Promise((resolve, reject) => {
       const [scriptRelPath, ...rest] = argsWithScript;
       const scriptPath = require('path').join(cwd || root, scriptRelPath);
@@ -214,6 +251,30 @@ function activate(context) {
   const decompilerDeps = { runPython: _runPythonForCmds, logChannel };
   const decompilerSubs = registerDecompilerCommands(context, decompilerDeps, root, storageDir);
   context.subscriptions.push(...decompilerSubs);
+
+  // Connexion des agents MCP (Claude Code/Codex) : panel "Connect Agents",
+  // doctor, rollback et barre de statut.
+  const getMcpProjectDir = () => root;
+  const mcpSetupBridge = makeMcpSetupBridge({
+    root,
+    extensionPath: context.extensionPath,
+    getPythonExecutable: () => pythonExe,
+    buildPythonEnv: () => buildRuntimeEnv(root, storageDir),
+  });
+  const mcpAgentsPanel = createMcpAgentsPanel({ context, bridge: mcpSetupBridge, getProjectDir: getMcpProjectDir });
+  const mcpAgentSubs = registerMcpAgentCommands(context, {
+    bridge: mcpSetupBridge,
+    getProjectDir: getMcpProjectDir,
+    panel: mcpAgentsPanel,
+    logChannel,
+  });
+  context.subscriptions.push(...mcpAgentSubs);
+  const mcpStatusBar = createMcpStatusBarItem({
+    bridge: mcpSetupBridge,
+    getProjectDir: getMcpProjectDir,
+    extensionMode: context.extensionMode,
+  });
+  context.subscriptions.push(mcpStatusBar);
 }
 
 /**

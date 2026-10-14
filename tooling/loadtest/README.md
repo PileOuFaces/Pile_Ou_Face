@@ -74,10 +74,10 @@ Default budgets:
 | `medium` (~20 MB) | 256 MB | 384 MB | 2 s | 5 s |
 | `large` (~200 MB) | 768 MB | 1 GB | 10 s | 30 s |
 
-Scenario-specific calibration: `entropy` on the `medium` profile uses a 4 s
-duration warning and an 8 s failure limit. Its full byte-by-byte scan measured
-5.85 s on the GitHub-hosted Linux runner; the other medium scenarios keep the
-stricter generic 2 s / 5 s limits.
+Scenario-specific calibration: `entropy` uses 4 s / 8 s warning/failure limits
+on `medium`, and 45 s / 60 s on `large`. Its full byte-by-byte scan measured
+5.85 s for the medium fixture and about 35 s for the compiled 100 MiB corpus on
+GitHub-hosted Linux runners. Other scenarios keep the stricter generic limits.
 
 Promote a baseline only from at least three complete reports produced by the
 same machine architecture and Python minor version:
@@ -132,9 +132,10 @@ plugin-aware registry rather than mixing them into this public host matrix.
 ## Large compiled corpus
 
 The `Large Real Corpus Loadtest` workflow runs every Monday and can also be
-started manually. It compiles the shared real-analysis corpus for x86_64 and
-ARM64, adds a deterministic ELF data section until the file reaches about
-100 MiB, then runs each architecture in its own guarded job. Generated
+started manually. It compiles the shared real-analysis corpus for x86_64,
+ARM64, MIPS32, PowerPC 32 and RISC-V64, adds a deterministic ELF data section
+until the file reaches about 100 MiB, then runs each architecture in its own
+guarded job. Generated
 binaries are never committed. Each job enforces the 1.5 GiB process-tree
 limit, the 60 second per-scenario cap, and the absolute `large` budgets.
 

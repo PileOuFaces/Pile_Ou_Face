@@ -74,7 +74,7 @@ describe("sharedHandlers", () => {
     });
     const missingPath = path.join(tempRoot, "ghost.bin");
 
-    vscodeStub.window.showWarningMessage.onFirstCall().resolves("Retirer et nettoyer");
+    vscodeStub.window.showWarningMessage.onFirstCall().resolves("Remove and clean up");
 
     await handlers.hubUseBinaryPath({ binaryPath: missingPath });
 
@@ -135,7 +135,7 @@ describe("sharedHandlers", () => {
     await handlers.purgeStaleCache();
 
     expect(patchHistoryBridge.purgeMissing.calledOnceWithExactly(tempRoot)).to.equal(true);
-    expect(vscodeStub.window.showInformationMessage.firstCall.args[0]).to.include("5 entrée(s)");
+    expect(vscodeStub.window.showInformationMessage.firstCall.args[0]).to.include("5 stale cache entry");
   });
 
   it("allows reconfiguring a stored raw profile when reopening a blob", async () => {

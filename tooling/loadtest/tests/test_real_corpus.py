@@ -37,6 +37,20 @@ class TestRealCorpusBuilder(unittest.TestCase):
             ("/tools/aarch64-linux-gnu-gcc", "/tools/aarch64-linux-gnu-objcopy"),
         )
 
+    @patch("tooling.loadtest.real_corpus.shutil.which", side_effect=lambda name: name)
+    def test_toolchain_covers_static_architecture_matrix(self, _which):
+        expected = {
+            "x86_64": ("gcc", "objcopy"),
+            "arm64": ("aarch64-linux-gnu-gcc", "aarch64-linux-gnu-objcopy"),
+            "mips32": ("mips-linux-gnu-gcc", "mips-linux-gnu-objcopy"),
+            "ppc32": ("powerpc-linux-gnu-gcc", "powerpc-linux-gnu-objcopy"),
+            "riscv64": ("riscv64-linux-gnu-gcc", "riscv64-linux-gnu-objcopy"),
+        }
+
+        for arch, toolchain in expected.items():
+            with self.subTest(arch=arch):
+                self.assertEqual(_toolchain(arch), toolchain)
+
     @patch("tooling.loadtest.real_corpus.shutil.which", return_value=None)
     def test_missing_toolchain_fails_explicitly(self, _which):
         with self.assertRaisesRegex(RuntimeError, "gcc"):

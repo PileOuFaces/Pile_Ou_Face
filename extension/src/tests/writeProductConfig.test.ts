@@ -5,29 +5,27 @@ const os = require('os');
 const path = require('path');
 
 describe('official product config generation', () => {
-  it('writes the production auth URL using the complete three-field contract', () => {
+  it('uses the official deployment profile with the complete provider contract', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pof-official-productcfg-'));
     const outputPath = path.join(tempDir, 'product.json');
     const scriptPath = path.resolve(__dirname, '../../scripts/write-product-config.mjs');
 
     try {
       execFileSync(process.execPath, [scriptPath, outputPath], {
-        env: {
-          ...process.env,
-          POF_AUTH_PROVIDER_URL: 'https://auth.pileouface.dev',
-          POF_COLLAB_PROVIDER_URL: '',
-          POF_TELEMETRY_PROVIDER_URL: '',
-        },
         stdio: 'pipe',
       });
 
       const config = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
       expect(Object.keys(config)).to.deep.equal([
+        'deploymentProfile',
+        'deploymentId',
         'authProviderUrl',
         'collabProviderUrl',
         'telemetryProviderUrl',
       ]);
       expect(config).to.deep.equal({
+        deploymentProfile: 'OFFICIAL_SAAS',
+        deploymentId: 'official-saas',
         authProviderUrl: 'https://auth.pileouface.dev',
         collabProviderUrl: '',
         telemetryProviderUrl: '',

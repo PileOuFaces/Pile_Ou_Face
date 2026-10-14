@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from loadtest.__main__ import DEFAULT_BUDGETS
+from loadtest.__main__ import DEFAULT_BUDGETS, SCENARIO_BUDGETS
 from loadtest.scenarios import FIXTURE_PROFILES, SCENARIOS
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
@@ -30,6 +30,11 @@ class TestFixtureProfiles(unittest.TestCase):
         for budget in DEFAULT_BUDGETS.values():
             self.assertLess(budget.warn_rss_bytes, budget.fail_rss_bytes)
             self.assertLess(budget.warn_duration_s, budget.fail_duration_s)
+
+    def test_large_entropy_budget_matches_hard_timeout(self):
+        budget = SCENARIO_BUDGETS[("entropy", "large")]
+        self.assertEqual(budget.warn_duration_s, 45.0)
+        self.assertEqual(budget.fail_duration_s, 60.0)
 
 
 class TestScenarioRegistry(unittest.TestCase):
@@ -107,6 +112,12 @@ class TestScenarioRegistry(unittest.TestCase):
                         output_value.startswith(str(out_dir)),
                         f"{scenario.name} doit écrire dans out_dir ({out_dir}), a produit {output_value}",
                     )
+
+    def test_strings_scenario_bounds_results(self):
+        scenario = next(item for item in SCENARIOS if item.name == "strings")
+        args = scenario.build_args(Path("target.bin"), Path("out"))
+        max_results_index = args.index("--max-results")
+        self.assertEqual(args[max_results_index + 1], "5000")
 
 
 if __name__ == "__main__":

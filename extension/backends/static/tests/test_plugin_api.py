@@ -58,6 +58,8 @@ class TestPluginApiImports(unittest.TestCase):
             "detect_binary_arch_from_path",
             "get_feature_support",
             "get_raw_arch_info",
+            "AI_FOLLOWUP_VERSION",
+            "request_ai_followup",
         ]:
             self.assertTrue(hasattr(mod, name), f"Missing: {name}")
 

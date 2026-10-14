@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 
 function createLoaders({
   panel,
@@ -17,6 +16,7 @@ function createLoaders({
   getSectionsScript,
   getXrefsScript,
 }) {
+  const MAX_CACHED_STRINGS = 5000;
   const {
     resolveBinaryInputContext,
     buildPseudoRawInfo,
@@ -32,7 +32,7 @@ function createLoaders({
     cacheKey,
     cacheOptions = undefined,
     logLabel = null,
-    isCacheUsable = () => true,
+    isCacheUsable = (_cached = undefined) => true,
     compute,
     useCache = true,
   }) => {
@@ -88,7 +88,7 @@ function createLoaders({
         // Section filtering stays in Python (uses file-offset ranges, not VA — correct for PE RVA).
         const BASE_MIN_LEN = 4;
         const extractMinLen = Math.min(minLen, BASE_MIN_LEN);
-        const opts = { minLen: extractMinLen, encoding };
+        const opts: Record<string, any> = { minLen: extractMinLen, encoding, maxResults: MAX_CACHED_STRINGS };
         if (section) opts.section = section;
         const allStrings = await resolveCachedBinaryView({
           absPath,
@@ -99,7 +99,12 @@ function createLoaders({
           isCacheUsable: (cached) => Array.isArray(cached) && cached.length > 0,
           compute: async () => {
             const scriptPath = getStringsScript(root);
-            const args = ['--binary', absPath, '--min-len', String(extractMinLen), '--encoding', encoding];
+            const args = [
+              '--binary', absPath,
+              '--min-len', String(extractMinLen),
+              '--encoding', encoding,
+              '--max-results', String(MAX_CACHED_STRINGS),
+            ];
             if (section) args.push('--section', section);
             const tmpFile = path.join(storageDir, `strings_${Date.now()}.json`);
             return runPythonJsonViaFile(scriptPath, args, tmpFile);
@@ -258,7 +263,15 @@ function createLoaders({
         });
       } catch (err) {
         logChannel.appendLine(`[Xrefs] ${err.message}`);
-        hubPost('hubXrefs', { binaryPath, addr, refs: [], targets: [], mode, requestKey });
+        hubPost('hubXrefs', {
+          binaryPath,
+          addr,
+          refs: [],
+          targets: [],
+          mode,
+          requestKey,
+          error: err.message || String(err),
+        });
       }
     },
 

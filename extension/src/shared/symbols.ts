@@ -1,28 +1,34 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 /**
  * Helpers for choosing user-facing symbols without tying binary semantics to the
  * host OS running VS Code.
  */
 
-function formatText(binaryInfoOrFormat = '') {
+interface BinaryFormatInfo {
+  format?: unknown;
+  type?: unknown;
+}
+
+type BinaryFormat = string | BinaryFormatInfo;
+
+function formatText(binaryInfoOrFormat: BinaryFormat = '') {
   if (typeof binaryInfoOrFormat === 'string') return binaryInfoOrFormat;
   return String(binaryInfoOrFormat?.format || binaryInfoOrFormat?.type || '').trim();
 }
 
-function isMachOFormat(binaryInfoOrFormat = '') {
+function isMachOFormat(binaryInfoOrFormat: BinaryFormat = '') {
   return /mach/i.test(formatText(binaryInfoOrFormat));
 }
 
-function preferredMainSymbol(binaryInfoOrFormat = '') {
+function preferredMainSymbol(binaryInfoOrFormat: BinaryFormat = '') {
   return isMachOFormat(binaryInfoOrFormat) ? '_main' : 'main';
 }
 
-function mainSymbolCandidates(binaryInfoOrFormat = '') {
+function mainSymbolCandidates(binaryInfoOrFormat: BinaryFormat = '') {
   return isMachOFormat(binaryInfoOrFormat) ? ['_main', 'main'] : ['main', '_main'];
 }
 
-function symbolLookupCandidates(symbolName, binaryInfoOrFormat = '') {
+function symbolLookupCandidates(symbolName, binaryInfoOrFormat: BinaryFormat = '') {
   const raw = String(symbolName || '').trim();
   if (!raw) return [];
   if (raw === '__entry__') return [raw];
@@ -44,7 +50,7 @@ function symbolLookupCandidates(symbolName, binaryInfoOrFormat = '') {
   return candidates;
 }
 
-function normalizeStartSymbolForBinary(symbolName, binaryInfoOrFormat = '') {
+function normalizeStartSymbolForBinary(symbolName, binaryInfoOrFormat: BinaryFormat = '') {
   const raw = String(symbolName || '').trim() || preferredMainSymbol(binaryInfoOrFormat);
   if (raw === '__entry__') return raw;
   if (isMachOFormat(binaryInfoOrFormat)) {

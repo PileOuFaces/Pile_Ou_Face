@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import os
 import re
@@ -28,7 +29,7 @@ except ImportError:
     lief = None
 
 
-STACK_FRAME_CACHE_VERSION = 5
+STACK_FRAME_CACHE_VERSION = 11
 X86_STACK_RE = re.compile(
     r"\[(rbp|ebp|rsp|esp)(?:\s*([+-])\s*(0x[0-9a-fA-F]+|\d+))?\]",
     re.IGNORECASE,
@@ -38,7 +39,7 @@ ARM64_STACK_RE = re.compile(
     re.IGNORECASE,
 )
 ARM32_STACK_RE = re.compile(
-    r"\[(r11|fp|sp)(?:\s*,\s*#?(-?0x[0-9a-fA-F]+|-?\d+))?\]",
+    r"\[(r7|r11|fp|sp)(?:\s*,\s*#?(-?0x[0-9a-fA-F]+|-?\d+))?\]",
     re.IGNORECASE,
 )
 OFFSET_BASE_STACK_RE = re.compile(
@@ -107,8 +108,21 @@ def _detect_abi(binary) -> tuple[str, int, str]:
     return (info.family, info.ptr_size, info.abi)
 
 
-def _get_code_bytes(binary, start_addr: int) -> tuple[bytes, int] | None:
-    """Find the code bytes starting at start_addr within the binary."""
+# analyse_stack_frame() only ever inspects the first 512 decoded instructions
+# (or fewer, if a `ret` is hit first) after start_addr. Reading — and letting
+# Capstone decode — everything up to the end of the containing section used
+# to cost O(section size) per function analysed, i.e. O(functions * section
+# size) overall on a stripped binary with one big .text section. Bounding the
+# read to comfortably more bytes than 512 instructions can ever need (worst
+# case here is x86 at up to 15 bytes/instruction; every other supported ISA
+# uses shorter fixed-width encodings) makes each call O(1) instead.
+_STACK_FRAME_MAX_SCAN_BYTES = 512 * 15
+
+
+def _get_code_bytes(
+    binary, start_addr: int, max_size: int = _STACK_FRAME_MAX_SCAN_BYTES
+) -> tuple[bytes, int] | None:
+    """Find up to `max_size` code bytes starting at start_addr within the binary."""
     sections = []
     if lief and isinstance(binary, lief.PE.Binary):
         base = binary.optional_header.imagebase
@@ -116,7 +130,9 @@ def _get_code_bytes(binary, start_addr: int) -> tuple[bytes, int] | None:
             va = sec.virtual_address + base
             size = sec.size
             if va <= start_addr < va + size:
-                return bytes(sec.content)[start_addr - va :], start_addr
+                offset = start_addr - va
+                end = min(size, offset + max_size)
+                return bytes(sec.content[offset:end]), start_addr
         return None
 
     if (
@@ -129,9 +145,11 @@ def _get_code_bytes(binary, start_addr: int) -> tuple[bytes, int] | None:
 
     for sec in sections:
         va = sec.virtual_address
-        content = bytes(sec.content)
-        if content and va <= start_addr < va + len(content):
-            return content[start_addr - va :], start_addr
+        size = sec.size
+        if size and va <= start_addr < va + size:
+            offset = start_addr - va
+            end = min(size, offset + max_size)
+            return bytes(sec.content[offset:end]), start_addr
     return None
 
 
@@ -175,6 +193,13 @@ def _canonical_frame_base(base_reg: str) -> str:
     return normalized
 
 
+def _arm32_widthless_mnemonic(mnemonic: str) -> str:
+    normalized = str(mnemonic or "").strip().lower()
+    if normalized.endswith((".w", ".n")):
+        return normalized[:-2]
+    return normalized
+
+
 def _stack_arg_start_offset(
     base_reg: str, arch_family: str, ptr_size: int, abi_name: str
 ) -> int:
@@ -183,7 +208,7 @@ def _stack_arg_start_offset(
         if abi_name == "win64":
             return 0x30
         return ptr_size * 2
-    if arch_family == "arm" and base in {"r11", "fp"}:
+    if arch_family == "arm" and base in {"r7", "r11", "fp"}:
         return ptr_size * 2
     if arch_family == "arm64" and base == "x29":
         return 0x10
@@ -240,7 +265,20 @@ def _parse_stack_access(op_str: str, arch_family: str) -> tuple[str, int, str] |
 
 
 def _size_from_instruction(ins, ptr_size: int) -> int:
-    """Déduit la taille mémoire manipulée."""
+    """Déduit la taille mémoire manipulée.
+
+    `lea` calcule une adresse sans jamais accéder à la mémoire: son
+    opérande `[base+-N]` ne porte donc aucun mot-clé de taille (qword/
+    dword/...) et ne doit jamais retomber sur le `ptr_size` par défaut
+    ci-dessous -- cela ferait croire qu'un accès pointer-sized a eu lieu
+    à cet offset. `lea` prouve seulement qu'une variable existe à cet
+    offset précis, jamais son étendue: on ne réclame donc que l'unité
+    minimale (1 octet), que `_merge_stack_entry` ne pourra jamais faire
+    gagner face à une taille réellement observée (dword/qword/...) pour
+    le même offset.
+    """
+    if ins.mnemonic.lower() == "lea":
+        return 1
     op_lower = ins.op_str.lower()
     if "xmmword" in op_lower:
         return 16
@@ -306,13 +344,21 @@ def _extract_frame_pointer_anchor(
         return None
 
     if arch_family == "arm":
-        if mnem == "mov" and re.fullmatch(r"(r11|fp)\s*,\s*sp", op_str):
-            return ("r11", stack_adjust)
+        mnem = _arm32_widthless_mnemonic(mnem)
+        match = re.fullmatch(r"(r7|r11|fp)\s*,\s*sp", op_str)
+        if mnem == "mov" and match:
+            return (_canonical_frame_base(match.group(1)), stack_adjust)
         if mnem == "add":
-            match = re.fullmatch(r"(r11|fp)\s*,\s*sp\s*,\s*#?(0x[0-9a-f]+|\d+)", op_str)
+            match = re.fullmatch(
+                r"(r7|r11|fp)\s*,\s*sp\s*,\s*#?(0x[0-9a-f]+|\d+)",
+                op_str,
+            )
             if match:
                 imm = _parse_int(match.group(2)) or 0
-                return ("r11", max(0, stack_adjust - imm))
+                return (
+                    _canonical_frame_base(match.group(1)),
+                    max(0, stack_adjust - imm),
+                )
         return None
 
     return None
@@ -471,29 +517,49 @@ def _update_stack_adjust(
         return updated
 
     if arch_family == "arm":
-        if mnem == "push":
+        mnem = _arm32_widthless_mnemonic(mnem)
+        stack_op_str = re.sub(r"\br13\b", "sp", op_str)
+        if mnem in {"push", "vpush"}:
+            reg_count = _register_list_count(op_str)
+            if reg_count:
+                register_size = ptr_size
+                if mnem == "vpush":
+                    register_size = 16 if re.search(r"\bq\d+\b", op_str) else 8
+                    if re.search(r"\bs\d+\b", op_str):
+                        register_size = 4
+                return stack_adjust + (reg_count * register_size)
+        if mnem in {"pop", "vpop"}:
+            reg_count = _register_list_count(op_str)
+            if reg_count:
+                register_size = ptr_size
+                if mnem == "vpop":
+                    register_size = 16 if re.search(r"\bq\d+\b", op_str) else 8
+                    if re.search(r"\bs\d+\b", op_str):
+                        register_size = 4
+                return max(0, stack_adjust - (reg_count * register_size))
+        if mnem in {"stmdb", "stmfd"} and op_str.startswith("sp!"):
             reg_count = _register_list_count(op_str)
             if reg_count:
                 return stack_adjust + (reg_count * ptr_size)
-        if mnem == "pop":
-            reg_count = _register_list_count(op_str)
-            if reg_count:
-                return max(0, stack_adjust - (reg_count * ptr_size))
-        if mnem == "stmdb" and op_str.startswith("sp!"):
-            reg_count = _register_list_count(op_str)
-            if reg_count:
-                return stack_adjust + (reg_count * ptr_size)
-        if mnem in {"ldmia", "ldm"} and (
+        if mnem in {"ldmia", "ldm", "ldmfd"} and (
             op_str.startswith("sp!") or op_str.startswith("sp,")
         ):
             reg_count = _register_list_count(op_str)
             if reg_count:
                 return max(0, stack_adjust - (reg_count * ptr_size))
-        if mnem == "sub" and op_str.startswith("sp, sp"):
+        if mnem in {"str", "strd"}:
+            delta = _preindexed_sp_delta(stack_op_str)
+            if delta:
+                return stack_adjust + delta
+        if mnem in {"ldr", "ldrd"}:
+            delta = _postindexed_sp_delta(stack_op_str)
+            if delta:
+                return max(0, stack_adjust - delta)
+        if mnem == "sub" and op_str.startswith("sp,"):
             imm = _parse_int(op_str.split(",")[-1].strip().lstrip("#"))
             if imm:
                 return stack_adjust + imm
-        if mnem == "add" and op_str.startswith("sp, sp"):
+        if mnem == "add" and op_str.startswith("sp,"):
             imm = _parse_int(op_str.split(",")[-1].strip().lstrip("#"))
             if imm:
                 return max(0, stack_adjust - imm)
@@ -607,11 +673,13 @@ def _classify_stack_access(
         canonical_base,
         _stack_arg_start_offset(canonical_base, arch_family, ptr_size, abi_name),
     )
-    if base_reg in {"rbp", "ebp", "x29", "r11", "fp"}:
+    if canonical_base in {"rbp", "ebp", "x29", "r7", "r11"}:
         if raw_offset < 0:
             return ("var", raw_offset, location)
         if raw_offset >= arg_start:
             return ("arg", raw_offset, location)
+        if canonical_base == "r7" and canonical_base in frame_arg_starts:
+            return ("var", raw_offset - arg_start, location)
         return None
 
     if base_reg in {"rsp", "esp", "sp"}:
@@ -692,7 +760,7 @@ def analyse_stack_frame(binary_path: str, func_addr: int) -> dict:
     code_bytes, base_addr = code_data
     md = capstone.Cs(*arch_mode)
     md.detail = True
-    instrs = list(md.disasm(code_bytes, base_addr))[:512]
+    instrs = list(itertools.islice(md.disasm(code_bytes, base_addr), 512))
 
     stack_adjust = 0
     stack_adjust_known = True

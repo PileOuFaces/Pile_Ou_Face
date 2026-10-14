@@ -1681,9 +1681,12 @@ def _load_typed_var_binding_payload(
 
     field_access_map: dict[str, dict[int, str]] = {}
     for identity, offsets in raw_field_access.items():
-        resolved = _resolve_identity(identity)
-        if resolved:
-            field_access_map.setdefault(resolved, {}).update(offsets)
+        base_identity, sep, chain_suffix = identity.partition("->")
+        resolved = _resolve_identity(base_identity)
+        if not resolved:
+            continue
+        key = f"{resolved}->{chain_suffix}" if sep else resolved
+        field_access_map.setdefault(key, {}).update(offsets)
 
     enum_literal_map: dict[str, dict[int, str]] = {}
     for identity, values in raw_enum_literal.items():
@@ -2097,9 +2100,8 @@ def _load_disasm_context(
             normalized = _normalize_hex_addr(line.get("addr"))
             if not normalized:
                 continue
-            copied = dict(line)
-            copied["addr"] = normalized
-            normalized_lines.append(copied)
+            line["addr"] = normalized
+            normalized_lines.append(line)
         for index, line in enumerate(normalized_lines):
             next_addr = (
                 normalized_lines[index + 1]["addr"]
@@ -2312,34 +2314,48 @@ def _rewrite_typed_field_access(
 ) -> str:
     """Rewrite `*(TYPE *)(base ± off)` into `base->field` for known struct/union bindings.
 
-    Regex-based, single level only: `base->inner->field` is not produced (the cast's
-    inner parens must contain a bare identifier, not another `->` expression). Non-constant
-    offsets (`base + i*8`) never match, which is the correct no-op default. A cast that
-    differs from the field's declared type still substitutes based on offset alone —
-    imprecise but informative, not a correctness blocker for this lot.
+    Regex-based. The cast's inner parens must contain a bare `base` expression — a
+    plain identifier for depth 0, or a `base->inner`-style chain produced by an
+    earlier pass for deeper levels. Multi-level chains (`base->inner->field`) are
+    keyed in `field_access_map` as e.g. `"base->inner"`, and are only resolvable once
+    the literal `base->inner` text exists in `code` — so bindings are applied one
+    chain-depth at a time (shallowest first), each pass exposing the text the next
+    depth's pattern needs. Non-constant offsets (`base + i*8`) never match, which is
+    the correct no-op default. A cast that differs from the field's declared type
+    still substitutes based on offset alone — imprecise but informative, not a
+    correctness blocker for this lot.
     """
     if not code or not field_access_map:
         return code
-    for var_name, offsets in sorted(
-        field_access_map.items(), key=lambda item: (-len(item[0]), item[0])
-    ):
-        pattern = re.compile(
-            rf"\*\(\s*(?:[A-Za-z_]\w*\s+)*\*+\s*\)\s*\(\s*{re.escape(var_name)}\s*"
-            rf"(?P<sign>[+\-])\s*(?P<off>0x[0-9a-fA-F]+|\d+)\s*\)"
-        )
+    max_depth = max(var_name.count("->") for var_name in field_access_map)
+    for depth in range(max_depth + 1):
+        level_items = [
+            (var_name, offsets)
+            for var_name, offsets in field_access_map.items()
+            if var_name.count("->") == depth
+        ]
+        for var_name, offsets in sorted(
+            level_items, key=lambda item: (-len(item[0]), item[0])
+        ):
+            pattern = re.compile(
+                rf"\*\(\s*(?:[A-Za-z_]\w*\s+)*\*+\s*\)\s*\(\s*{re.escape(var_name)}\s*"
+                rf"(?P<sign>[+\-])\s*(?P<off>0x[0-9a-fA-F]+|\d+)\s*\)"
+            )
 
-        def _replace(
-            m: re.Match, offsets: dict[int, str] = offsets, var_name: str = var_name
-        ) -> str:
-            off_val = _parse_numeric_token(m.group("off")) or 0
-            if m.group("sign") == "-":
-                off_val = -off_val
-            field_name = offsets.get(off_val)
-            if not field_name:
-                return m.group(0)
-            return f"{var_name}->{field_name}"
+            def _replace(
+                m: re.Match,
+                offsets: dict[int, str] = offsets,
+                var_name: str = var_name,
+            ) -> str:
+                off_val = _parse_numeric_token(m.group("off")) or 0
+                if m.group("sign") == "-":
+                    off_val = -off_val
+                field_name = offsets.get(off_val)
+                if not field_name:
+                    return m.group(0)
+                return f"{var_name}->{field_name}"
 
-        code = pattern.sub(_replace, code)
+            code = pattern.sub(_replace, code)
     return code
 
 
@@ -2349,7 +2365,8 @@ def _rewrite_typed_enum_literals(
     """Rewrite `base == N` / `base != N` into `base == SYMBOLIC_NAME` for known enum bindings.
 
     Only direct `==`/`!=` comparisons against the bare variable (or `base->field`) name are
-    covered; `switch (mode) { case 2: }` is an explicit fast-follow, not handled here.
+    covered here; `switch (mode) { case 2: }` is handled separately by
+    `_rewrite_typed_enum_switch_cases`.
     """
     if not code or not enum_literal_map:
         return code
@@ -2373,6 +2390,59 @@ def _rewrite_typed_enum_literals(
             return f"{var_expr} {m.group('op')} {name}"
 
         code = pattern.sub(_replace, code)
+    return code
+
+
+def _rewrite_typed_enum_switch_cases(
+    code: str, enum_literal_map: dict[str, dict[int, str]] | None
+) -> str:
+    """Rewrite `case N:` into `case SYMBOLIC_NAME:` inside `switch (base) { ... }` blocks.
+
+    Companion to `_rewrite_typed_enum_literals` for the `switch`/`case` shape that the
+    `==`/`!=` rewrite deliberately doesn't cover. Locates each `switch (var_expr) {`
+    for a known binding, balances braces to find the matching block, and rewrites only
+    the `case` labels inside that span whose literal is a known enum value — labels for
+    unrelated values (or in unrelated switch blocks) are left untouched.
+    """
+    if not code or not enum_literal_map:
+        return code
+    for var_expr, values in sorted(
+        enum_literal_map.items(), key=lambda item: (-len(item[0]), item[0])
+    ):
+        switch_re = re.compile(rf"switch\s*\(\s*{re.escape(var_expr)}\s*\)\s*\{{")
+        search_start = 0
+        while True:
+            m = switch_re.search(code, search_start)
+            if not m:
+                break
+            body_start = m.end()
+            depth = 1
+            i = body_start
+            while i < len(code) and depth > 0:
+                if code[i] == "{":
+                    depth += 1
+                elif code[i] == "}":
+                    depth -= 1
+                i += 1
+            if depth != 0:
+                break
+            body_end = i - 1
+            block = code[body_start:body_end]
+
+            def _replace_case(cm: re.Match, values: dict[int, str] = values) -> str:
+                lit = _parse_numeric_token(cm.group("lit"))
+                if lit is None:
+                    return cm.group(0)
+                name = values.get(lit)
+                if not name:
+                    return cm.group(0)
+                return f"case {name}:"
+
+            new_block = re.sub(
+                r"case\s+(?P<lit>-?0x[0-9a-fA-F]+|-?\d+)\s*:", _replace_case, block
+            )
+            code = code[:body_start] + new_block + code[body_end:]
+            search_start = body_start + len(new_block)
     return code
 
 
@@ -2474,6 +2544,7 @@ def _postprocess_code(
     # 3. Typed var bindings: pointer-arithmetic member access + symbolic enum literals
     code = _rewrite_typed_field_access(code, field_access_map)
     code = _rewrite_typed_enum_literals(code, enum_literal_map)
+    code = _rewrite_typed_enum_switch_cases(code, enum_literal_map)
 
     return code
 

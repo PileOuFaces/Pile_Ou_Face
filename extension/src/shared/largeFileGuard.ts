@@ -45,11 +45,11 @@ async function confirmOpenLargeTextFile(filePath, options: { fs?: any; vscode?: 
   if (confirmedLargePaths.has(filePath)) return true;
   const fileName = filePath.split(/[\\/]/).pop() || filePath;
   const choice = await vscode.window.showWarningMessage(
-    `${fileName} fait ${formatBytes(sizeBytes)} : l'ouvrir dans l'éditeur peut ralentir ou geler VS Code. Continuer ?`,
+    `${fileName} is ${formatBytes(sizeBytes)}: opening it in the editor may slow down or freeze VS Code. Continue?`,
     { modal: true },
-    'Ouvrir quand même'
+    'Open anyway'
   );
-  if (choice === 'Ouvrir quand même') {
+  if (choice === 'Open anyway') {
     confirmedLargePaths.add(filePath);
     return true;
   }

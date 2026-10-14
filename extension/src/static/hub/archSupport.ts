@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 /**
  * @file hub/archSupport.ts
  * @brief Utilitaires de lecture et d'interrogation de la matrice feature/arch.

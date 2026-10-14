@@ -1,5 +1,16 @@
 # Architecture de la partie statique
 
+## Architecture Auth et profils de déploiement
+
+La décision transversale concernant les artefacts SaaS, on-prem, OSS et
+air-gap, la résolution de l’endpoint, la découverte serveur et le
+cloisonnement des secrets est définie dans
+[ADR-001 — Profils de déploiement Auth](../architecture/ADR-001-auth-deployment-profiles.md).
+
+Cette décision s’applique au Host entier, pas uniquement aux backends
+statiques. Le contrat de découverte est fourni par le dépôt Auth ; le Host le
+valide avant toute utilisation de l’autorité de licence.
+
 ## Principe general
 
 La partie statique est construite comme une chaine d'analyse modulaire :

@@ -53,7 +53,7 @@ _log = get_logger(__name__)
 HOST_API_VERSION = 1
 DEFAULT_HOST_VERSION = "0.1.0"
 # Must stay in sync with window.PoF.version in extension/front/shared/state.js
-POF_VERSION = "1.0.0"
+POF_VERSION = "1.1.0"
 _DECRYPTED_PLUGIN_CACHE: dict[str, Path] = {}
 _DECRYPTED_PLUGIN_TEMPS: list[tempfile.TemporaryDirectory[str]] = []
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")

@@ -160,13 +160,16 @@ def extract_symbols(binary_path: str, defined_only: bool = True) -> list[dict]:
             if not sym.name or sym.name in seen:
                 continue
 
-            # Exclure les symboles STAB/debug (N_SO, N_OSO, N_FUN, etc.)
-            # LIEF peut retourner un enum ou un int selon la version — forcer int
-            raw_type = getattr(sym, "type", 0)
+            # LIEF's type is already masked with N_TYPE, losing the STAB bits.
+            # Read n_type directly before filtering debug records; evaluating
+            # sym.type for N_SO/N_OSO can also warn/raise in the Python binding.
             try:
+                raw_type = getattr(sym, "raw_type", None)
+                if raw_type is None:
+                    raw_type = sym.type
                 raw_int = int(raw_type)
             except (TypeError, ValueError):
-                raw_int = 0
+                continue
             if raw_int & 0xE0:  # bits STAB définis (N_SO=0x64, N_OSO=0x66, N_FUN=0x24…)
                 continue
             # Exclure les noms qui ressemblent à des chemins (symboles N_SO résiduels)
@@ -174,17 +177,17 @@ def extract_symbols(binary_path: str, defined_only: bool = True) -> list[dict]:
             if "/" in name or name.startswith("."):
                 continue
 
-            seen.add(name)
-
             # Déterminer le type Mach-O
+            macho_type = raw_int & 0x0E  # N_TYPE excludes N_EXT and N_PEXT.
             sym_type = "T"  # Par défaut fonction
-            if raw_int == 0:  # N_UNDF
+            if macho_type == 0:  # N_UNDF
                 if defined_only:
                     continue
                 sym_type = "U"
-            elif raw_int == 1:  # N_ABS
+            elif macho_type == 2:  # N_ABS
                 sym_type = "A"
 
+            seen.add(name)
             addr = f"0x{sym.value:x}"
             sym_size = sym.size if hasattr(sym, "size") and sym.size else None
             symbols.append(Symbol(name=name, addr=addr, type=sym_type, size=sym_size))

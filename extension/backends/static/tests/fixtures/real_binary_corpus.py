@@ -169,6 +169,16 @@ def default_corpus_specs() -> list[CorpusSpec]:
                 "aarch64-linux-gnu-gcc", "-O2", pie=True, stripped=False, arch="arm64"
             )
         )
+    cross_compilers = (
+        ("mips-linux-gnu-gcc", "mips32"),
+        ("powerpc-linux-gnu-gcc", "ppc32"),
+        ("riscv64-linux-gnu-gcc", "riscv64"),
+    )
+    for compiler, arch in cross_compilers:
+        if shutil.which(compiler) and compiler not in skip:
+            specs.append(
+                CorpusSpec(compiler, "-O2", pie=False, stripped=False, arch=arch)
+            )
     return specs
 
 

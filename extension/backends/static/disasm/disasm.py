@@ -10,9 +10,11 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import mmap
 import os
 import re
 import sys
+from collections import namedtuple
 from collections.abc import Callable
 from pathlib import Path
 
@@ -27,6 +29,10 @@ from backends.shared.utils import parse_addr as _addr_to_int
 from backends.static.annotations.typed_struct_refs import (
     build_typed_struct_index,
     collect_typed_struct_hints,
+)
+from backends.static.annotations.typed_var_bindings import (
+    build_typed_var_binding_map_by_func,
+    format_typed_var_binding,
 )
 from backends.static.binary.arch import (
     FEATURES,
@@ -165,6 +171,10 @@ _RISCV_PC_RELATIVE_MNEMONICS = {
     "bltz",
     "bne",
     "bnez",
+    "c.beqz",
+    "c.bnez",
+    "c.j",
+    "c.jal",
     "j",
     "jal",
     "tail",
@@ -176,7 +186,8 @@ def _parse_capstone_immediate(value: str) -> int | None:
     if not text:
         return None
     try:
-        return int(text, 16) if text.startswith("0x") else int(text)
+        unsigned = text.removeprefix("+").removeprefix("-")
+        return int(text, 16) if unsigned.startswith("0x") else int(text)
     except ValueError:
         return None
 
@@ -194,10 +205,25 @@ _DISASM_WINDOW_BYTES = 4 * 1024 * 1024
 # autres ISA supportées ici sont à taille fixe ≤ 8 octets).
 _DISASM_WINDOW_OVERLAP_BYTES = 32
 
+# Le blob brut (raw_arch) est mappé via mmap plutôt que chargé en RAM
+# (cf. _mmap_file_readonly) : les fonctions qui manipulent ce buffer doivent
+# donc accepter aussi bien `bytes` (section lief déjà matérialisée) qu'un
+# mmap paginé à la demande par l'OS.
+CodeBuffer = bytes | mmap.mmap
+
+# Cs.disasm() enveloppe chaque instruction décodée dans un objet CsInsn dont
+# le __init__ fait une copie profonde (copy_ctypes) de la struct C native par
+# instruction, en plus de l'allocation de l'objet Python — coût payé même
+# quand seuls address/size/mnemonic/op_str sont utilisés en aval (notre cas).
+# Cs.disasm_lite() lit les mêmes champs directement sur le tableau natif sans
+# copie ni wrapper ; les octets bruts ne sont plus exposés par Capstone mais
+# on les reconstruit par slice du buffer déjà en notre possession.
+_LiteInsn = namedtuple("_LiteInsn", "address size mnemonic op_str")
+
 
 def _iter_windowed_instructions(
     md,
-    code_bytes: bytes,
+    code_bytes: CodeBuffer,
     base_addr: int,
     *,
     window_bytes: int = _DISASM_WINDOW_BYTES,
@@ -220,12 +246,14 @@ def _iter_windowed_instructions(
         chunk = code_bytes[offset:read_end]
         soft_limit_addr = base_addr + offset + window_bytes
         reached_soft_limit = False
-        for instr in md.disasm(chunk, base_addr + offset):
-            if read_end < total and instr.address >= soft_limit_addr:
-                offset = instr.address - base_addr
+        for address, size, mnemonic, op_str in md.disasm_lite(
+            chunk, base_addr + offset
+        ):
+            if read_end < total and address >= soft_limit_addr:
+                offset = address - base_addr
                 reached_soft_limit = True
                 break
-            yield instr
+            yield _LiteInsn(address, size, mnemonic, op_str)
         if reached_soft_limit:
             continue
         if read_end >= total:
@@ -350,6 +378,23 @@ def _find_code_section(
     return None
 
 
+def _mmap_file_readonly(path: str) -> bytes | mmap.mmap:
+    """Lit un fichier en lecture seule via mmap plutôt qu'en RAM entière.
+
+    Le blob brut (mode raw_arch) peut être un firmware/shellcode de
+    plusieurs Go sans structure lief à parser : `read_bytes()` matérialisait
+    tout le fichier en mémoire avant même le fenêtrage Capstone. mmap laisse
+    l'OS paginer à la demande — seules les fenêtres réellement slicées par
+    `_iter_windowed_instructions` sont chargées. Le fd peut être refermé
+    juste après : POSIX garantit que le mapping reste valide indépendamment
+    du descripteur qui l'a créé.
+    """
+    if os.path.getsize(path) == 0:
+        return b""
+    with open(path, "rb") as f:
+        return mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+
+
 def _resolve_disasm_source(
     binary_path: str,
     *,
@@ -357,7 +402,7 @@ def _resolve_disasm_source(
     raw_arch: str | None = None,
     raw_base_addr: str | int | None = None,
     raw_endian: str | None = None,
-) -> tuple[bytes, int, int, int] | None:
+) -> tuple[CodeBuffer, int, int, int] | None:
     """Résout (code_bytes, base_addr, cs_arch, cs_mode) une seule fois.
 
     Extrait de disassemble_with_capstone/disassemble_raw_blob pour pouvoir
@@ -373,7 +418,7 @@ def _resolve_disasm_source(
         if not arch_mode:
             raise DisassemblyError(f"Unsupported raw architecture: {raw_arch}")
         try:
-            code_bytes = Path(binary_path).read_bytes()
+            code_bytes = _mmap_file_readonly(binary_path)
         except OSError as exc:
             raise BinaryParseError(f"Failed to read raw blob: {binary_path}") from exc
         try:
@@ -411,7 +456,7 @@ def _resolve_disasm_source(
 def _iter_raw_instruction_dicts(
     md,
     cs_arch: int,
-    code_bytes: bytes,
+    code_bytes: CodeBuffer,
     base_addr: int,
     *,
     progress_callback: Callable[[dict], None] | None = None,
@@ -426,7 +471,10 @@ def _iter_raw_instruction_dicts(
     total = max(total_code_bytes or len(code_bytes), 1)
     next_report_percent = 15
     for instr in _iter_windowed_instructions(md, code_bytes, base_addr):
-        bytes_hex = " ".join(f"{b:02x}" for b in instr.bytes)
+        insn_bytes = code_bytes[
+            instr.address - base_addr : instr.address - base_addr + instr.size
+        ]
+        bytes_hex = " ".join(f"{b:02x}" for b in insn_bytes)
         op_str = _normalize_capstone_operands(cs_arch, instr)
         text = f"{bytes_hex:<20} {instr.mnemonic:<8} {op_str}".strip()
         yield {
@@ -436,7 +484,7 @@ def _iter_raw_instruction_dicts(
             "mnemonic": instr.mnemonic,
             "operands": op_str,
         }
-        processed = min(total, max(0, (instr.address - base_addr) + len(instr.bytes)))
+        processed = min(total, max(0, (instr.address - base_addr) + instr.size))
         percent = 10 + int((processed / total) * 75)
         if percent >= next_report_percent:
             _emit_progress(
@@ -879,15 +927,22 @@ def _find_function_context(
     return None
 
 
-def _extract_stack_hints_from_frame(op_str: str, frame: dict | None) -> list[dict]:
+def _extract_stack_hints_from_frame(
+    op_str: str,
+    frame: dict | None,
+    typed_bindings: dict[str, dict] | None = None,
+) -> list[dict]:
     if not frame:
         return []
     hints = []
     seen: set[tuple[str, str, str]] = set()
+    arg_ordinal = 0
     for kind_name, kind_label in (("args", "arg"), ("vars", "var")):
         for entry in frame.get(kind_name, []) or []:
             location = str(entry.get("location") or "").strip()
             name = str(entry.get("name") or "").strip()
+            if kind_name == "args" and name:
+                arg_ordinal += 1
             if not location or not name:
                 continue
             if not _location_matches_text(location, op_str):
@@ -896,13 +951,23 @@ def _extract_stack_hints_from_frame(op_str: str, frame: dict | None) -> list[dic
             if key in seen:
                 continue
             seen.add(key)
-            hints.append(
-                {
-                    "kind": kind_label,
-                    "name": name,
-                    "location": location,
-                }
-            )
+            hint = {
+                "kind": kind_label,
+                "name": name,
+                "location": location,
+            }
+            if typed_bindings:
+                if kind_name == "args":
+                    identity = f"param:{arg_ordinal}"
+                else:
+                    offset = entry.get("offset")
+                    identity = f"local:{offset}" if isinstance(offset, int) else None
+                binding = typed_bindings.get(identity) if identity else None
+                if binding:
+                    type_str = format_typed_var_binding(binding)
+                    if type_str:
+                        hint["type"] = type_str
+            hints.append(hint)
     return hints
 
 
@@ -949,6 +1014,7 @@ def _load_disasm_context(
     functions: list[dict] = []
     stack_frames: dict[str, dict] = {}
     typed_struct_index = build_typed_struct_index(binary_path)
+    typed_var_binding_map = build_typed_var_binding_map_by_func(binary_path)
 
     resolved_cache = _resolve_cache_db_path(cache_db_path, binary_path)
 
@@ -1028,6 +1094,7 @@ def _load_disasm_context(
         "function_ranges": function_ranges,
         "stack_frames": stack_frames,
         "typed_struct_index": typed_struct_index,
+        "typed_var_binding_map": typed_var_binding_map,
     }
 
 
@@ -1161,6 +1228,7 @@ def _apply_labels(
     function_ranges: list[tuple[int, int | None, dict]] | None = None,
     stack_frames: dict[str, dict] | None = None,
     typed_struct_index: dict[str, object] | None = None,
+    typed_var_binding_map: dict[str, dict] | None = None,
 ) -> list[str]:
     """Return formatted ASM lines with function context, labels, comments and optional DWARF info."""
     output = []
@@ -1170,6 +1238,7 @@ def _apply_labels(
     comment_map = comment_map or {}
     function_ranges = function_ranges or []
     stack_frames = stack_frames or {}
+    typed_var_binding_map = typed_var_binding_map or {}
     emitted_function_banners: set[int] = set()
     for line in lines:
         try:
@@ -1226,11 +1295,14 @@ def _apply_labels(
         if current_function is not None:
             func_addr = _normalize_addr(current_function.get("addr", ""))
             stack_hints = _extract_stack_hints_from_frame(
-                op_str, stack_frames.get(func_addr)
+                op_str,
+                stack_frames.get(func_addr),
+                typed_var_binding_map.get(func_addr),
             )
             if stack_hints:
                 hint_str = ", ".join(
                     f"{hint['kind']} {hint['name']} @ {hint['location']}"
+                    + (f" ({hint['type']})" if hint.get("type") else "")
                     for hint in stack_hints
                 )
                 comment_parts.append(hint_str)
@@ -1269,6 +1341,7 @@ def _write_disasm_outputs(
     function_ranges: list[tuple[int, int | None, dict]] | None = None,
     stack_frames: dict[str, dict] | None = None,
     typed_struct_index: dict[str, object] | None = None,
+    typed_var_binding_map: dict[str, dict] | None = None,
     line_map: dict | None = None,
     progress_callback: Callable[[dict], None] | None = None,
     raw_profile: dict | None = None,
@@ -1278,6 +1351,7 @@ def _write_disasm_outputs(
     comment_map = comment_map or {}
     function_ranges = function_ranges or []
     stack_frames = stack_frames or {}
+    typed_var_binding_map = typed_var_binding_map or {}
 
     _emit_progress(
         progress_callback, "format", "Formatage du désassemblage", percent=90
@@ -1289,6 +1363,7 @@ def _write_disasm_outputs(
         or stack_frames
         or line_map
         or typed_struct_index
+        or typed_var_binding_map
     ):
         asm_output = _apply_labels(
             lines,
@@ -1298,6 +1373,7 @@ def _write_disasm_outputs(
             function_ranges=function_ranges,
             stack_frames=stack_frames,
             typed_struct_index=typed_struct_index,
+            typed_var_binding_map=typed_var_binding_map,
         )
     else:
         asm_output = [f"  {line['addr']}:  {line['text']}" for line in lines]
@@ -1350,6 +1426,7 @@ def _write_disasm_outputs(
         stack_hints = _extract_stack_hints_from_frame(
             line.get("operands", ""),
             stack_frames.get(function_addr) if function_addr else None,
+            typed_var_binding_map.get(function_addr) if function_addr else None,
         )
         typed_struct_hints = _extract_typed_struct_hints(
             line.get("text", ""), typed_struct_index
@@ -1433,6 +1510,7 @@ def _stream_write_disasm_outputs(
     function_ranges: list[tuple[int, int | None, dict]] | None = None,
     stack_frames: dict[str, dict] | None = None,
     typed_struct_index: dict[str, object] | None = None,
+    typed_var_binding_map: dict[str, dict] | None = None,
     line_map: dict | None = None,
     progress_callback: Callable[[dict], None] | None = None,
     raw_profile: dict | None = None,
@@ -1464,6 +1542,7 @@ def _stream_write_disasm_outputs(
     comment_map = comment_map or {}
     function_ranges = function_ranges or []
     stack_frames = stack_frames or {}
+    typed_var_binding_map = typed_var_binding_map or {}
 
     # --- Passe 1 : attribution CFG (vue globale nécessaire, structures
     # légères — cf. _build_cfg_attribution) ---
@@ -1570,11 +1649,14 @@ def _stream_write_disasm_outputs(
                         or ""
                     ).strip()
                     stack_hints = _extract_stack_hints_from_frame(
-                        op_str, stack_frames.get(function_addr)
+                        op_str,
+                        stack_frames.get(function_addr),
+                        typed_var_binding_map.get(function_addr),
                     )
                     if stack_hints:
                         hint_str = ", ".join(
                             f"{h['kind']} {h['name']} @ {h['location']}"
+                            + (f" ({h['type']})" if h.get("type") else "")
                             for h in stack_hints
                         )
                         comment_parts.append(hint_str)
@@ -1850,6 +1932,7 @@ def disassemble(
             function_ranges=context["function_ranges"],
             stack_frames=context["stack_frames"],
             typed_struct_index=context["typed_struct_index"],
+            typed_var_binding_map=context["typed_var_binding_map"],
             line_map=line_map,
             progress_callback=progress_callback,
             raw_profile=raw_profile,
@@ -1880,6 +1963,7 @@ def disassemble(
         function_ranges=context["function_ranges"],
         stack_frames=context["stack_frames"],
         typed_struct_index=context["typed_struct_index"],
+        typed_var_binding_map=context["typed_var_binding_map"],
         line_map=line_map,
         progress_callback=progress_callback,
         raw_profile=raw_profile,
@@ -2021,6 +2105,7 @@ def main() -> int:
                     function_ranges=context["function_ranges"],
                     stack_frames=context["stack_frames"],
                     typed_struct_index=context["typed_struct_index"],
+                    typed_var_binding_map=context["typed_var_binding_map"],
                     line_map=cached_line_map,
                     progress_callback=progress_callback,
                 )

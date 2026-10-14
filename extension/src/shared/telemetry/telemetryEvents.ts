@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
-
 const EVENT_NAMES = Object.freeze({
   EXTENSION_ACTIVATED: 'extension.activated',
   HUB_OPENED: 'hub.opened',

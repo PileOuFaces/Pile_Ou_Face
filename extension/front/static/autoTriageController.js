@@ -211,7 +211,7 @@
     cancelBtn?.addEventListener('click', () => {
       const path = currentBinaryPath();
       cancelRun(path);
-      if (helpEl) helpEl.textContent = 'Annulation demandée…';
+      if (helpEl) helpEl.textContent = 'Cancellation requested…';
     });
 
     bus.onMessage((event) => {
@@ -227,11 +227,11 @@
           const result = msg.result || {};
           if (result.completedAt) {
             const stats = result.stats || {};
-            setText('[data-auto-triage-result-title]', result.cancelled ? 'Analyse interrompue — reprise disponible' : 'Dernier auto-triage terminé');
-            setText('[data-auto-triage-result-meta]', `${new Date(result.completedAt).toLocaleString()} · ${stats.processed || 0} fonction(s) · ${stats.tokens_used || 0} tokens · ${result.provider}${result.model ? `@${result.model}` : ''}`);
+            setText('[data-auto-triage-result-title]', result.cancelled ? 'Analysis interrupted — resume available' : 'Latest auto-triage completed');
+            setText('[data-auto-triage-result-meta]', `${new Date(result.completedAt).toLocaleString()} · ${stats.processed || 0} function(s) · ${stats.tokens_used || 0} tokens · ${result.provider}${result.model ? `@${result.model}` : ''}`);
             if (!activeRuns.has(path)) {
-              setState(result.cancelled ? 'À reprendre' : 'Terminé', result.cancelled ? 'running' : 'done');
-              if (prepareBtn) prepareBtn.textContent = result.cancelled ? 'Reprendre l’auto-triage' : 'Relancer l’auto-triage';
+              setState(result.cancelled ? 'Resume required' : 'Completed', result.cancelled ? 'running' : 'done');
+              if (prepareBtn) prepareBtn.textContent = result.cancelled ? 'Resume auto-triage' : 'Run auto-triage again';
             }
           }
         }
@@ -263,7 +263,7 @@
         if (path && activeRuns.get(path) === msg?.requestId) {
           const ev = msg.event || {};
           const position = Math.min(Number(ev.total) || 0, (Number(ev.index) || 0) + 1);
-          if (prepareBtn && ev.type === 'function_start') prepareBtn.textContent = `Auto-triage en cours · ${position}/${ev.total}`;
+          if (prepareBtn && ev.type === 'function_start') prepareBtn.textContent = `Auto-triage in progress · ${position}/${ev.total}`;
           if (ev.type === 'selection_done') {
             setText('[data-auto-triage-model]', `${ev.provider}@${ev.model}`);
             setText('[data-auto-triage-budget]', budgetLabel(ev));
@@ -293,11 +293,11 @@
         bus.postMessage({ type: 'hubLoadAnnotations', binaryPath: msg.binaryPath });
         const currentPath = currentBinaryPath();
         if (msg.binaryPath === currentPath) {
-          lastRunError = msg.ok ? '' : String(msg.error || 'Échec de l’auto-triage.');
+          lastRunError = msg.ok ? '' : String(msg.error || 'Auto-triage failed.');
           lastRunErrorBinaryPath = msg.ok ? '' : msg.binaryPath;
           setReportButton(msg.ok ? msg.reportPath : '');
-          setState(msg.ok ? (msg.cancelled ? 'À reprendre' : 'Terminé') : 'Échec', msg.ok ? (msg.cancelled ? 'running' : 'done') : 'error');
-          if (prepareBtn) { prepareBtn.disabled = false; prepareBtn.textContent = msg.cancelled ? 'Reprendre l’auto-triage' : 'Relancer l’auto-triage'; }
+          setState(msg.ok ? (msg.cancelled ? 'Resume required' : 'Completed') : 'Failed', msg.ok ? (msg.cancelled ? 'running' : 'done') : 'error');
+          if (prepareBtn) { prepareBtn.disabled = false; prepareBtn.textContent = msg.cancelled ? 'Resume auto-triage' : 'Run auto-triage again'; }
           if (cancelBtn) cancelBtn.hidden = true;
           if (helpEl) helpEl.textContent = lastRunError;
           refreshReportButton();

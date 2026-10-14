@@ -116,7 +116,7 @@ describe('auto-triage controller behavior', () => {
       event: { type: 'function_start', index: 1, total: 4 },
     });
     expect(app.document.querySelector('[data-action="auto-triage"]').textContent)
-      .to.equal('Auto-triage en cours · 2/4');
+      .to.equal('Auto-triage in progress · 2/4');
 
     app.emit({
       type: 'hubAutoTriageEvent',
@@ -148,7 +148,7 @@ describe('auto-triage controller behavior', () => {
       reportPath: '/tmp/report.md',
     });
 
-    expect(app.document.querySelector('[data-auto-triage-state]').textContent).to.equal('Terminé');
+    expect(app.document.querySelector('[data-auto-triage-state]').textContent).to.equal('Completed');
     expect(app.document.querySelector('[data-auto-triage-result]').hidden).to.equal(false);
     expect(app.document.querySelector('[data-action="auto-triage-cancel"]').hidden).to.equal(true);
   });
@@ -176,9 +176,9 @@ describe('auto-triage controller behavior', () => {
       type: 'hubAutoTriageReportInfo', binaryPath: '/tmp/sample.bin', reportPath: '/tmp/cancelled.md',
       result: { completedAt: '2026-07-31T10:00:00Z', cancelled: true, provider: 'openai', model: 'gpt', stats: { processed: 2, tokens_used: 99 } },
     });
-    expect(app.document.querySelector('[data-auto-triage-state]').textContent).to.equal('À reprendre');
+    expect(app.document.querySelector('[data-auto-triage-state]').textContent).to.equal('Resume required');
     expect(app.document.querySelector('[data-auto-triage-result-title]').textContent)
-      .to.equal('Analyse interrompue — reprise disponible');
+      .to.equal('Analysis interrupted — resume available');
 
     app.document.querySelector('[data-action="auto-triage-open-report"]').click();
     app.document.querySelector('[data-action="auto-triage-export-report"]').click();
@@ -202,7 +202,7 @@ describe('auto-triage controller behavior', () => {
       type: 'hubAutoTriageDone', requestId: start.requestId, binaryPath: '/tmp/sample.bin',
       ok: false, error: 'provider offline',
     });
-    expect(app.document.querySelector('[data-auto-triage-state]').textContent).to.equal('Échec');
+    expect(app.document.querySelector('[data-auto-triage-state]').textContent).to.equal('Failed');
     expect(app.document.querySelector('[data-auto-triage-help]').textContent).to.equal('provider offline');
     expect(app.document.querySelector('[data-auto-triage-result]').hidden).to.equal(true);
 
@@ -282,6 +282,6 @@ describe('auto-triage controller behavior', () => {
     const start = app.messages.find((message) => message.type === 'hubAutoTriageStart');
     app.emit({ type: 'hubAutoTriageDone', binaryPath: '/tmp/sample.bin', requestId: start.requestId, ok: false });
     expect(app.document.querySelector('[data-auto-triage-help]').textContent)
-      .to.equal('Échec de l’auto-triage.');
+      .to.equal('Auto-triage failed.');
   });
 });

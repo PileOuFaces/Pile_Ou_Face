@@ -111,6 +111,7 @@ function focusAnnotationEditor(addr, annotation = null, options = {}) {
   const nameEl = document.getElementById('annotationName');
   if (nameEl) nameEl.value = entry?.name || '';
 }
+window.focusAnnotationEditor = focusAnnotationEditor;
 
 function renderAnnotationsList(annotations = window._annotations || {}) {
   const listEl = document.getElementById('annotationsList');
@@ -1501,7 +1502,18 @@ window.addEventListener('message', (event) => {
     if (!container) return;
     const info = msg.info || {};
     if (info.error) {
-      container.innerHTML = `<p class="hint error">${escapeHtml(info.error)}</p>`;
+      container.innerHTML = `
+        <div class="empty-state">
+          <p class="hint error">${escapeHtml(info.error)}</p>
+          <button type="button" class="btn btn-sm btn-primary" id="btnRetryBinaryInfo">Réessayer</button>
+        </div>`;
+      document.getElementById('btnRetryBinaryInfo')?.addEventListener('click', () => {
+        setStaticLoading('infoContent', 'Chargement infos…');
+        postBinaryAwareMessage('hubLoadInfo', {
+          binaryPath: getStaticBinaryPath(),
+          useCache: false,
+        });
+      });
     } else {
       window.lastBinaryArch = info.arch || '';
       updateTopBarBinaryDisplay(getStaticBinaryPath(), getCurrentBinaryMeta(), info);
@@ -2314,6 +2326,11 @@ window.addEventListener('message', (event) => {
     }
     return;
   }
+  if (msg.type === 'hubNaturalLanguageSearchDone') {
+    if (isStaleStaticBinaryResponse(msg, 'static-functions')) return;
+    renderNaturalLanguageFunctionSearch(msg);
+    return;
+  }
   if (msg.type === 'hubDecompilerList') {
     const newResult = msg.result || {};
     if (window._decompilerImageUpdates) {
@@ -2413,6 +2430,11 @@ window.addEventListener('message', (event) => {
     const autoKey = buildDecompileRequestKey(payload.binaryPath, '', payload.quality, payload.addr, payload.full, payload.provider, payload.funcName);
     pendingDecompileRequests.delete(autoKey);
     cacheDecompileResult(requestKey, payload);
+    // En mode auto, la requête part avec decompiler='' mais la réponse porte
+    // le backend concret sélectionné. Conserver aussi cet alias empêche un
+    // événement d'adresse retardé de relancer le même travail juste après la
+    // fin de la requête explicite.
+    if (autoKey !== requestKey) cacheDecompileResult(autoKey, payload);
     // Track best decompiler when this result is better
     const forced = decompileUiState.forcedDecompiler;
     if (msg.isBetter) {
@@ -2910,10 +2932,13 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (msg.type === 'hubSettings') {
-    _applySettings(msg.settings);
+    if (_applySettings(msg.settings, msg.requestId)) {
+      document.documentElement.dataset.hubSettingsReady = 'true';
+    }
     return;
   }
   if (msg.type === 'hubSettingsSaved') {
+    _settingsSaved(msg);
     return;
   }
   if (msg.type === 'hubScriptResult') {
@@ -3413,6 +3438,7 @@ window.addEventListener('message', (event) => {
         errEl.appendChild(ep);
       }
     }
+    document.documentElement.dataset.hubAiProvidersReady = 'true';
     return;
   }
   if (msg.type === 'hubAiProviderDefaultSaved') {

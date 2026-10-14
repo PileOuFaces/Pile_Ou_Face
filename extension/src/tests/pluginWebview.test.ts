@@ -60,7 +60,8 @@ describe('loadPluginWebviews', () => {
     expect(result.frames).to.have.length(1);
     expect(result.frames[0].pluginSlug).to.equal('my-plugin');
     expect(result.framesHtml).to.include('id="pof-plugin-frame-my-plugin"');
-    expect(result.framesHtml).to.include('sandbox="allow-scripts allow-same-origin"');
+    expect(result.framesHtml).to.include('sandbox="allow-scripts"');
+    expect(result.framesHtml).not.to.include('allow-same-origin');
     expect(result.framesHtml).to.include('__pof_plugin');   // bridge preamble present
     expect(result.framesHtml).to.include('myPanel');         // plugin HTML present
     expect(result.framesHtml).to.include('var x = 1');       // plugin script present
@@ -132,27 +133,27 @@ describe('loadPluginWebviews', () => {
   });
 
   it('loads installed plugin webviews from manifest.json and metadata extras', () => {
-    const dir = pluginDir('pof.cross-analysis-pro');
-    const extrasDir = path.join(dir, 'metadata', 'extras', 'plugins', 'cross-analysis-pro', 'webview');
+    const dir = pluginDir('vendor.analysis-demo');
+    const extrasDir = path.join(dir, 'metadata', 'extras', 'plugins', 'analysis-demo', 'webview');
     fs.mkdirSync(extrasDir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({
-      id: 'pof.cross-analysis-pro',
+      id: 'vendor.analysis-demo',
       ui: {
-        family: 'croisee',
+        family: 'analysis',
         tab_color: { bg: '#0d3a32', fg: '#63e6c6', border: '#248f77' },
       },
       entrypoints: { webview: { tab_html: 'webview/tab.html', scripts: ['webview/tab.js'] } },
     }));
     fs.writeFileSync(path.join(dir, 'metadata', 'build.json'), JSON.stringify({
-      slug: 'cross-analysis-pro',
+      slug: 'analysis-demo',
     }));
-    fs.writeFileSync(path.join(extrasDir, 'tab.html'), '<section id="panel-cross-analysis"></section>');
-    fs.writeFileSync(path.join(extrasDir, 'tab.js'), 'window.crossLoaded = true;');
+    fs.writeFileSync(path.join(extrasDir, 'tab.html'), '<section id="panel-analysis"></section>');
+    fs.writeFileSync(path.join(extrasDir, 'tab.js'), 'window.analysisLoaded = true;');
 
     const result = loadFromStorage();
-    expect(result.groupStyles).to.include('.group-tab.active[data-group="croisee"]');
-    expect(result.framesHtml).to.include('panel-cross-analysis');
-    expect(result.framesHtml).to.include('window.crossLoaded = true;');
+    expect(result.groupStyles).to.include('.group-tab.active[data-group="analysis"]');
+    expect(result.framesHtml).to.include('panel-analysis');
+    expect(result.framesHtml).to.include('window.analysisLoaded = true;');
   });
 
   it('skips missing webview files gracefully', () => {
@@ -169,6 +170,30 @@ describe('loadPluginWebviews', () => {
     const result = loadFromStorage();
     expect(result.frames).to.deep.equal([]);
     expect(result.framesHtml).to.equal('');
+  });
+
+  it('rejects plugin assets that escape the plugin directory', () => {
+    const dir = pluginDir('traversal-plugin');
+    fs.mkdirSync(dir, { recursive: true });
+    const outsideHtml = path.join(storageDir(), 'outside.html');
+    const outsideJs = path.join(storageDir(), 'outside.js');
+    fs.writeFileSync(outsideHtml, '<div>outside secret</div>');
+    fs.writeFileSync(outsideJs, 'window.outsideSecret = true;');
+    fs.writeFileSync(path.join(dir, 'plugin.json'), JSON.stringify({
+      id: 'pof.traversal-plugin',
+      ui: { family: 'malicious' },
+      entrypoints: {
+        webview: {
+          tab_html: path.relative(dir, outsideHtml),
+          scripts: [path.relative(dir, outsideJs)],
+        },
+      },
+    }));
+
+    const result = loadFromStorage();
+    expect(result.frames).to.deep.equal([]);
+    expect(result.framesHtml).not.to.include('outside secret');
+    expect(result.framesHtml).not.to.include('outsideSecret');
   });
 
   it('srcdoc hides .static-panel by default so only the active tab is shown inside the iframe', () => {

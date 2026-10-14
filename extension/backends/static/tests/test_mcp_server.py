@@ -557,6 +557,22 @@ class TestMcpServer(unittest.TestCase):
         resolved = mcp_impl._resolve_binary_path("sample_demo.elf")
         self.assertEqual(resolved, "/repo/examples/sample_demo.elf")
 
+    def test_iter_workspace_files_scans_workspace_root_not_extension_root(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            target = Path(tmp_dir) / "agent_project.bin"
+            target.write_bytes(b"\x00")
+            with patch.object(mcp_impl, "WORKSPACE_ROOT", tmp_dir):
+                paths = mcp_impl._iter_workspace_files()
+        self.assertIn(str(target), paths)
+
+    def test_find_files_reports_workspace_root_not_extension_root(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            (Path(tmp_dir) / "agent_project.bin").write_bytes(b"\x00")
+            with patch.object(mcp_impl, "WORKSPACE_ROOT", tmp_dir):
+                result = mcp_impl._find_files("agent_project.bin")
+        self.assertEqual(result["root"], tmp_dir)
+        self.assertEqual(result["count"], 1)
+
     @patch("backends.plugins.runtime.collect_runtime_state")
     @patch("backends.plugins.runtime.default_plugin_search_paths")
     def test_plugin_runtime_records_disables_workspace_discovery(

@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 /**
  * @file traceEnrichment.js
  * @brief Enrichissement statique minimal des adresses runtime.
@@ -226,7 +225,7 @@ const RELIABLE_BACKEND_ROLES = new Set(['buffer', 'local', 'argument', 'saved_bp
 
 function collectBackendResolvedOffsets(trace) {
   const resolved = new Set();
-  const analysisByStep = trace?.analysisByStep && typeof trace.analysisByStep === 'object'
+  const analysisByStep: Record<string, any> = trace?.analysisByStep && typeof trace.analysisByStep === 'object'
     ? trace.analysisByStep
     : {};
   Object.values(analysisByStep).forEach((analysis) => {
@@ -279,7 +278,7 @@ function addRange(ranges, entry, source = 'static') {
 
 function buildFunctionRanges(trace, symbols = []) {
   const ranges = [];
-  const analysisByStep = trace?.analysisByStep && typeof trace.analysisByStep === 'object'
+  const analysisByStep: Record<string, any> = trace?.analysisByStep && typeof trace.analysisByStep === 'object'
     ? trace.analysisByStep
     : {};
   Object.values(analysisByStep).forEach((analysis) => {
@@ -344,7 +343,13 @@ function lookupRuntimeAddress(address, { symbols = [], functionRanges = null } =
   const range = findFunctionRange(ranges, rip);
   const offset = range ? rip - range.start : null;
 
-  const result = { rip: formatAddress(rip) };
+  const result: {
+    rip: string | null;
+    functionName?: string;
+    functionOffset?: number;
+    symbol?: string;
+    stackHints?: any[];
+  } = { rip: formatAddress(rip) };
   if (range?.name) result.functionName = range.name;
   if (offset !== null) {
     const safeOffset = toSafeNumber(offset);
@@ -435,7 +440,7 @@ function buildTraceAddressEnrichment(trace, { symbols = [] } = {}) {
   const snapshots = Array.isArray(trace?.snapshots) ? trace.snapshots : [];
   const functionRanges = buildFunctionRanges(trace, symbols);
   const stackHints = detectDangerousLocalBufferHints(trace, { functionRanges });
-  const byStep = {};
+  const byStep: Record<string, any> = {};
 
   snapshots.forEach((snapshot, index) => {
     const step = Number(snapshot?.step) || index + 1;

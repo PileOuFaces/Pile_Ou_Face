@@ -29,12 +29,9 @@ logger = get_logger(__name__)
 
 def _with_line_numbers(lines: list[dict]) -> list[dict]:
     """Garantit un champ `line` pour toutes les instructions."""
-    result = []
     for idx, line in enumerate(lines, start=1):
-        copied = dict(line)
-        copied.setdefault("line", idx)
-        result.append(copied)
-    return result
+        line.setdefault("line", idx)
+    return lines
 
 
 def _ensure_disasm(cache: DisasmCache, binary_path: str, force: bool) -> list[dict]:

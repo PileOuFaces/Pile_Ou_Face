@@ -1,6 +1,31 @@
 // ── Settings ─────────────────────────────────────────────────────────────────
 let _settingsCache = null;
 let _settingsDebounce = null;
+let _settingsRequestId = 0;
+let _settingsSavePending = false;
+
+function _requestSettings() {
+  // A read while a local edit is waiting to be saved would fetch old values.
+  if (_settingsSavePending) return;
+  document.documentElement.dataset.hubSettingsReady = 'false';
+  vscode.postMessage({ type: 'hubGetSettings', requestId: ++_settingsRequestId });
+}
+
+function _settingsSaved(message) {
+  if (!message.ok || message.requestId !== _settingsRequestId) return;
+  _settingsSavePending = false;
+  document.documentElement.dataset.hubSettingsSavePending = 'false';
+  _requestSettings();
+}
+
+function _resetSettings() {
+  clearTimeout(_settingsDebounce);
+  _settingsDebounce = null;
+  _settingsSavePending = false;
+  document.documentElement.dataset.hubSettingsSavePending = 'false';
+  document.documentElement.dataset.hubSettingsReady = 'false';
+  vscode.postMessage({ type: 'hubResetSettings', requestId: ++_settingsRequestId });
+}
 
 function renderStaticFeatureSettings(settings = _settingsCache || {}) {
   const checklist = document.getElementById('staticFeatureChecklist');
@@ -70,7 +95,10 @@ function refreshStaticNavigationForSettings() {
   }
 }
 
-function _applySettings(settings) {
+function _applySettings(settings, requestId) {
+  // Opening Options can return a snapshot taken before the user's latest edit.
+  // Only the current request may replace the form, never a pending local save.
+  if (_settingsSavePending || requestId !== _settingsRequestId) return false;
   _settingsCache = settings;
   if (typeof applyGlobalAiGenerationSettings === 'function') {
     applyGlobalAiGenerationSettings(settings);
@@ -85,6 +113,9 @@ function _applySettings(settings) {
     if (el.type === 'checkbox') el.checked = settings[key] === true;
     else el.value = String(settings[key]);
   });
+  if (settings.lang && window.POFI18n?.setLocale) {
+    window.POFI18n.setLocale(settings.lang);
+  }
   renderStaticFeatureSettings(settings);
   syncStaticInterfaceModeControls(settings);
   if (settings.codeFontSize) {
@@ -101,6 +132,7 @@ function _applySettings(settings) {
     _renderDecompilerStatusList({ ..._decompilerAvailability, _meta: _decompilerMeta });
   }
   refreshStaticNavigationForSettings();
+  return true;
 }
 
 function _collectSettings() {
@@ -262,12 +294,16 @@ function _applyDecompilerLocalPathVisibility(key, visibility) {
 
 function _scheduleSave() {
   clearTimeout(_settingsDebounce);
+  const requestId = ++_settingsRequestId;
+  _settingsSavePending = true;
+  document.documentElement.dataset.hubSettingsSavePending = 'true';
   _settingsDebounce = setTimeout(() => {
+    _settingsDebounce = null;
     const settings = _collectSettings();
     _settingsCache = settings;
     syncStaticInterfaceModeControls(settings);
     refreshStaticNavigationForSettings();
-    vscode.postMessage({ type: 'hubSaveSettings', settings });
+    vscode.postMessage({ type: 'hubSaveSettings', settings, requestId });
     if (isStaticTabActive('decompile')) {
       vscode.postMessage({ type: 'hubListDecompilers', provider: _getConfiguredDecompilerProvider() });
       requestDecompileForCurrentSelection({ skipHistory: true, preserveStackEntry: true });
@@ -278,6 +314,10 @@ function _scheduleSave() {
 document.querySelectorAll('#panel-options [data-key]').forEach((el) => {
   el.addEventListener('change', _scheduleSave);
   el.addEventListener('input', _scheduleSave);
+});
+
+document.getElementById('settingLang')?.addEventListener('change', (event) => {
+  window.POFI18n?.setLocale(event.target.value);
 });
 
 document.querySelectorAll('[data-interface-mode]').forEach((btn) => {
@@ -396,7 +436,7 @@ document.getElementById('panel-options')?.addEventListener('change', (event) => 
 });
 
 document.getElementById('btnResetSettings')?.addEventListener('click', () => {
-  vscode.postMessage({ type: 'hubResetSettings' });
+  _resetSettings();
 });
 document.getElementById('btnPluginRefresh')?.addEventListener('click', () => {
   vscode.postMessage({ type: 'hubLoadPluginState' });
@@ -940,23 +980,30 @@ document.getElementById('btnDecompilerOpenConfig')?.addEventListener('click', ()
 // ── Actualisation automatique quand on ouvre le panneau Options ───────────────
 (function _hookOptionsPanel() {
   let _lastOptionsVisible = false;
+  const refreshOptionsState = () => {
+    const list = document.getElementById('decompilerStatusList');
+    if (list && (list.querySelector('.decompiler-status-loading') || list.children.length === 0)) {
+      vscode.postMessage({ type: 'hubListDecompilers', provider: _getConfiguredDecompilerProvider() });
+    }
+    vscode.postMessage({ type: 'hubLoadPluginState' });
+    vscode.postMessage({ type: 'hubAiProvidersGet' });
+  };
   const observer = new MutationObserver(() => {
     const panel = document.getElementById('panel-options');
     const isVisible = panel && !panel.classList.contains('hidden') && panel.style.display !== 'none';
     if (isVisible && !_lastOptionsVisible) {
-      // Vient d'être ouvert
-      const list = document.getElementById('decompilerStatusList');
-      if (list && (list.querySelector('.decompiler-status-loading') || list.children.length === 0)) {
-        vscode.postMessage({ type: 'hubListDecompilers', provider: _getConfiguredDecompilerProvider() });
-      }
-      vscode.postMessage({ type: 'hubLoadPluginState' });
-      vscode.postMessage({ type: 'hubAiProvidersGet' });
+      refreshOptionsState();
     }
     _lastOptionsVisible = !!isVisible;
   });
   // Observer le conteneur principal pour détecter les changements de visibilité
   const root = document.querySelector('.hub-panels') || document.body;
   observer.observe(root, { attributes: true, subtree: true, attributeFilter: ['class', 'style'] });
+  const initialPanel = document.getElementById('panel-options');
+  if (initialPanel && !initialPanel.classList.contains('hidden') && initialPanel.style.display !== 'none') {
+    _lastOptionsVisible = true;
+    refreshOptionsState();
+  }
 })();
 
 // ─── Fin gestionnaire décompilateurs ───────────────────────────────────────

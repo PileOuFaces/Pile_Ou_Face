@@ -1,6 +1,7 @@
 name: Large Real Corpus Loadtest
 
 on:
+  workflow_call:
   workflow_dispatch:
   schedule:
     - cron: '23 3 * * 1'
@@ -16,22 +17,33 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: [x86_64, arm64]
+        include:
+          - arch: x86_64
+            toolchain: build-essential binutils
+          - arch: arm64
+            toolchain: gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+          - arch: mips32
+            toolchain: gcc-mips-linux-gnu binutils-mips-linux-gnu
+          - arch: ppc32
+            toolchain: gcc-powerpc-linux-gnu binutils-powerpc-linux-gnu
+          - arch: riscv64
+            toolchain: gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.11'
           cache: pip
 
       - name: Install native and cross toolchains
         run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
           sudo apt-get update
-          sudo apt-get install -y build-essential binutils gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+          sudo apt-get install -y ${{ matrix.toolchain }}
           pip install -r extension/backends/requirements-ci.txt
 
       - name: Build 100 MiB compiled corpus
@@ -52,7 +64,7 @@ jobs:
 
       - name: Upload performance report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: large-real-corpus-${{ matrix.arch }}
           path: ${{ runner.temp }}/large-real-corpus-results/loadtest_*.json

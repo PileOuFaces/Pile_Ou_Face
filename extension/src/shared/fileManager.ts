@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 /**
  * @file fileManager.js
  * @brief Gestion centralisée des fichiers générés (storageDir/).
@@ -288,7 +287,7 @@ function purgeStaleCache(storageDir, root) {
 /**
  * Nettoie tout : artifacts + cache.
  */
-function cleanupAll(storageDir, options = {}) {
+function cleanupAll(storageDir, options: { artifactsOnly?: boolean; cacheOnly?: boolean; purgeStale?: boolean } = {}) {
   const { artifactsOnly = false, cacheOnly = false, purgeStale = false } = options;
   let removedArtifacts = 0;
   let removedCache = 0;
@@ -316,7 +315,7 @@ function cleanupAll(storageDir, options = {}) {
   return { removedArtifacts, removedCache, purgedStale };
 }
 
-function cleanupForBinary(storageDir, binaryPath, options = {}) {
+function cleanupForBinary(storageDir, binaryPath, options: { purgeStale?: boolean; root?: string } = {}) {
   const { purgeStale = true, root } = options;
   const removedArtifacts = cleanupArtifactsForBinary(storageDir, binaryPath);
   const removedCache = cleanupCacheEntriesForBinary(storageDir, binaryPath);

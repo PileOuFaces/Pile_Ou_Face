@@ -6,6 +6,10 @@
 }
 
 .account-section { margin-bottom: 24px; }
+.deployment-status dl { display: grid; gap: 8px; margin: 0 0 24px; }
+.deployment-status dl div { display: grid; grid-template-columns: minmax(110px, auto) 1fr; gap: 12px; }
+.deployment-status dt { opacity: 0.7; }
+.deployment-status dd { margin: 0; font-family: var(--vscode-editor-font-family, monospace); overflow-wrap: anywhere; }
 .hidden { display: none !important; }
 
 h2 { font-size: 1.1em; margin-bottom: 12px; }

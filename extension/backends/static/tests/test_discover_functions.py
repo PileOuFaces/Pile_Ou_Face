@@ -10,9 +10,11 @@ ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from backends.static.binary.arch import RISCV_ADAPTER
 from backends.static.disasm.discover_functions import (
     _addr_to_int,
     _estimate_function_bounds,
+    _is_call_instruction,
     _matches_prologue,
     _normalize_addr,
     discover_functions,
@@ -31,6 +33,11 @@ class TestHelpers(unittest.TestCase):
     def test_addr_to_int(self):
         self.assertEqual(_addr_to_int("0x401000"), 0x401000)
         self.assertEqual(_addr_to_int("401000"), 0x401000)
+
+    def test_riscv_jal_zero_is_not_a_call_seed(self):
+        adapters = (RISCV_ADAPTER,)
+        self.assertFalse(_is_call_instruction("jal", "zero, 0x402000", adapters))
+        self.assertTrue(_is_call_instruction("jal", "ra, 0x402000", adapters))
 
 
 class TestMatchesPrologue(unittest.TestCase):
@@ -475,6 +482,45 @@ class TestDiscoverFunctions(unittest.TestCase):
         self.assertEqual(entry["boundary_reason"], "coverage")
         self.assertIsNotNone(target)
         self.assertEqual(target["reason"], "call_target")
+
+    def test_arm32_full_descending_and_single_lr_save_start_functions(self):
+        for prologue, reason in (
+            ("stmfd sp!, {r4, lr}", "stmfd sp"),
+            ("stmdb.w r13!, {r4, r14}", "stmdb sp"),
+            ("push.w {r4, r14}", "push lr"),
+            ("str lr, [sp, #-4]!", "str lr preindex"),
+        ):
+            with self.subTest(prologue=prologue):
+                lines = [
+                    {
+                        "addr": "0x710000",
+                        "text": prologue,
+                        "mnemonic": prologue.split()[0],
+                        "line": 1,
+                    },
+                    {
+                        "addr": "0x710004",
+                        "text": "mov r0, r1",
+                        "mnemonic": "mov",
+                        "line": 2,
+                    },
+                    {
+                        "addr": "0x710008",
+                        "text": "bx lr",
+                        "mnemonic": "bx",
+                        "operands": "lr",
+                        "line": 3,
+                    },
+                ]
+
+                result = discover_functions(lines, set())
+                entry = next(
+                    (item for item in result if item["addr"] == "0x710000"), None
+                )
+
+                self.assertIsNotNone(entry)
+                self.assertEqual(entry["reason"], reason)
+                self.assertEqual(entry["kind"], "function")
 
 
 class TestDiscoveryMetrics(unittest.TestCase):

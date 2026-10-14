@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 /**
  * @file commands.js
  * @brief Commandes VS Code liées au mode statique (désassemblage, xrefs, sidebar).
@@ -86,12 +85,12 @@ function registerStaticCommands(context, deps, providers) {
   const askAiAboutDisasm = vscode.commands.registerCommand('pileOuFace.askAiAboutDisasm', async () => {
     const editor = vscode.window.activeTextEditor;
     if (!editor?.document?.uri?.fsPath?.match(/\.asm$/i)) {
-      vscode.window.showWarningMessage('Ouvrez un fichier de désassemblage (.asm).');
+      vscode.window.showWarningMessage('Open a disassembly file (.asm).');
       return;
     }
     const contextData = getDisasmSelectionContext(editor.document, editor.selection);
     if (!contextData.instructionText || !contextData.addr) {
-      vscode.window.showWarningMessage('Placez le curseur sur une instruction du désassemblage.');
+      vscode.window.showWarningMessage('Place the cursor on a disassembly instruction.');
       return;
     }
     const docPath = editor.document.uri.fsPath;
@@ -116,7 +115,7 @@ function registerStaticCommands(context, deps, providers) {
     }
     if (!binaryPath) {
       const picked = await vscode.window.showOpenDialog({
-        title: 'Choisir le binaire à trianger',
+        title: 'Choose the binary to triage',
         canSelectMany: false,
         openLabel: 'Auto-triage IA',
       });
@@ -132,30 +131,30 @@ function registerStaticCommands(context, deps, providers) {
   const exportDisasm = vscode.commands.registerCommand('pileOuFace.exportDisasm', async () => {
     const editor = vscode.window.activeTextEditor;
     if (!editor || !editor.document) {
-      vscode.window.showWarningMessage('Ouvrez un fichier de désassemblage (.asm) pour l\'exporter.');
+      vscode.window.showWarningMessage('Open a disassembly file (.asm) to export it.');
       return;
     }
     const doc = editor.document;
     const uri = doc.uri;
     if (!uri.fsPath.match(/\.(asm|disasm\.asm)$/)) {
-      vscode.window.showWarningMessage('Le fichier actuel n\'est pas un désassemblage (.asm).');
+      vscode.window.showWarningMessage('The current file is not a disassembly file (.asm).');
       return;
     }
     const defaultName = path.basename(uri.fsPath, path.extname(uri.fsPath))
       .replace(/\.disasm$/, '') + '.disasm.txt';
     const defaultPath = path.join(path.dirname(uri.fsPath), defaultName);
     const saveUri = await vscode.window.showSaveDialog({
-      title: 'Exporter le désassemblage',
+      title: 'Export the disassembly',
       defaultUri: vscode.Uri.file(defaultPath),
-      filters: { 'Texte': ['txt'], 'Tous': ['*'] }
+      filters: { 'Text': ['txt'], 'All files': ['*'] }
     });
     if (!saveUri) return;
     try {
       const text = doc.getText();
       await fs.promises.writeFile(saveUri.fsPath, text, 'utf8');
-      vscode.window.showInformationMessage(`Exporté: ${path.basename(saveUri.fsPath)}`);
+      vscode.window.showInformationMessage(`Exported: ${path.basename(saveUri.fsPath)}`);
     } catch (err) {
-      vscode.window.showErrorMessage(`Export échoué: ${err.message}`);
+      vscode.window.showErrorMessage(`Export failed: ${err.message}`);
     }
   });
   subs.push(exportDisasm);
@@ -175,7 +174,7 @@ function registerStaticCommands(context, deps, providers) {
       addr = m ? (m[1].startsWith('0x') ? m[1] : `0x${m[1]}`) : '';
     }
     if (!addr) {
-      vscode.window.showWarningMessage('Placez le curseur sur une adresse.');
+      vscode.window.showWarningMessage('Place the cursor on an address.');
       return;
     }
     if (!root) return;
@@ -184,7 +183,7 @@ function registerStaticCommands(context, deps, providers) {
     const baseName = path.basename(docPath, '.asm').replace(/\.disasm/, '');
     const mappingPath = path.join(path.dirname(docPath), `${baseName}.disasm.mapping.json`);
     if (!fs.existsSync(mappingPath)) {
-      vscode.window.showErrorMessage('Fichier de mapping introuvable. Ouvrez d\'abord le désassemblage.');
+      vscode.window.showErrorMessage('Mapping file not found. Open the disassembly first.');
       return;
     }
     try {
@@ -192,7 +191,7 @@ function registerStaticCommands(context, deps, providers) {
       const xrefsArgs = [getXrefsScript(r), '--mapping', mappingPath, '--addr', addr, '--mode', 'to'];
       if (binaryPath) xrefsArgs.push('--binary', binaryPath);
       const backendRoot = getExtensionPath() || r;
-      const out = await new Promise((resolve, reject) => {
+      const out = await new Promise<string>((resolve, reject) => {
         cp.execFile(pythonExe, xrefsArgs, { encoding: 'utf8', cwd: r, maxBuffer: 4 * 1024 * 1024, timeout: 30000, env: { ...process.env, PYTHONPATH: backendRoot } }, (err, stdout) => {
           if (err) reject(err); else resolve(stdout);
         });
@@ -200,7 +199,7 @@ function registerStaticCommands(context, deps, providers) {
       const data = JSON.parse(out);
       const refs = data.refs || [];
       if (refs.length === 0) {
-        vscode.window.showInformationMessage(`Aucune référence vers ${addr}`);
+        vscode.window.showInformationMessage(`No references to ${addr}`);
         return;
       }
       const items = refs.map(rr => {
@@ -212,7 +211,7 @@ function registerStaticCommands(context, deps, providers) {
           ref: rr,
         };
       });
-      const chosen = await vscode.window.showQuickPick(items, { title: `Références vers ${addr}`, matchOnDescription: true });
+      const chosen = await vscode.window.showQuickPick(items, { title: `References to ${addr}`, matchOnDescription: true });
       if (chosen && chosen.ref.from_line) {
         const range = new vscode.Range(chosen.ref.from_line - 1, 0, chosen.ref.from_line - 1, 1000);
         editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
@@ -232,7 +231,7 @@ function registerStaticCommands(context, deps, providers) {
     const lineText = line.text;
     const addrMatch = lineText.match(/^\s*([0-9a-fA-F]+):/);
     if (!addrMatch) {
-      vscode.window.showWarningMessage('Placez le curseur sur une ligne d\'instruction (format: addr: ...).');
+      vscode.window.showWarningMessage('Place the cursor on an instruction line (format: addr: ...).');
       return;
     }
     const addr = addrMatch[1].startsWith('0x') ? addrMatch[1] : `0x${addrMatch[1]}`;
@@ -242,7 +241,7 @@ function registerStaticCommands(context, deps, providers) {
     const baseName = path.basename(docPath, '.asm').replace(/\.disasm/, '');
     const mappingPath = path.join(path.dirname(docPath), `${baseName}.disasm.mapping.json`);
     if (!fs.existsSync(mappingPath)) {
-      vscode.window.showErrorMessage('Fichier de mapping introuvable.');
+      vscode.window.showErrorMessage('Mapping file not found.');
       return;
     }
     try {
@@ -250,7 +249,7 @@ function registerStaticCommands(context, deps, providers) {
       const xrefsArgs = [getXrefsScript(r), '--mapping', mappingPath, '--addr', addr, '--mode', 'from'];
       if (binaryPath) xrefsArgs.push('--binary', binaryPath);
       const backendRoot = getExtensionPath() || r;
-      const out = await new Promise((resolve, reject) => {
+      const out = await new Promise<string>((resolve, reject) => {
         cp.execFile(pythonExe, xrefsArgs, { encoding: 'utf8', cwd: r, maxBuffer: 4 * 1024 * 1024, timeout: 30000, env: { ...process.env, PYTHONPATH: backendRoot } }, (err, stdout) => {
           if (err) reject(err); else resolve(stdout);
         });
@@ -258,10 +257,10 @@ function registerStaticCommands(context, deps, providers) {
       const data = JSON.parse(out);
       const targets = data.targets || [];
       if (targets.length === 0) {
-        vscode.window.showInformationMessage(`L'instruction à ${addr} ne référence aucune adresse.`);
+        vscode.window.showInformationMessage(`The instruction at ${addr} does not reference any address.`);
         return;
       }
-      vscode.window.showInformationMessage(`Références depuis ${addr}: ${targets.join(', ')}`);
+      vscode.window.showInformationMessage(`References from ${addr}: ${targets.join(', ')}`);
     } catch (err) {
       vscode.window.showErrorMessage(`Xrefs: ${err.message}`);
     }
@@ -269,7 +268,7 @@ function registerStaticCommands(context, deps, providers) {
   subs.push(xrefsFrom);
 
   const sidebarRefresh = vscode.commands.registerCommand('pileOuFace.sidebarRefresh', async () => {
-    const binaryPath = await vscode.window.showInputBox({ prompt: 'Chemin du binaire', placeHolder: 'examples/stack3.elf' });
+    const binaryPath = await vscode.window.showInputBox({ prompt: 'Binary path', placeHolder: 'examples/stack3.elf' });
     if (binaryPath && refreshSidebar) {
       refreshSidebar(binaryPath);
       recordRuntimeEvent('host_effect', 'pileOuFace.sidebarRefresh', { source: 'staticCommands', effect: 'sidebar.refresh', binaryPath: path.basename(binaryPath) });
@@ -277,11 +276,114 @@ function registerStaticCommands(context, deps, providers) {
   });
   subs.push(sidebarRefresh);
 
+  const importFromGhidra = vscode.commands.registerCommand('pileOuFace.importFromGhidra', async () => {
+    const exportUris = await vscode.window.showOpenDialog({
+      title: 'Choose the canonical Ghidra export',
+      canSelectMany: false,
+      openLabel: 'Choose the export',
+      filters: { 'Export Pile ou Face': ['json'] },
+    });
+    const importPath = exportUris?.[0]?.fsPath || '';
+    if (!importPath) return;
+    const binaryUris = await vscode.window.showOpenDialog({
+      title: 'Choose the matching binary',
+      canSelectMany: false,
+      openLabel: 'Import Ghidra data',
+    });
+    const binaryPath = binaryUris?.[0]?.fsPath || '';
+    if (!binaryPath) return;
+    const extensionRoot = getExtensionPath() || root;
+    const scriptPath = path.join(extensionRoot, 'backends', 'static', 'annotations', 'canonical_import.py');
+    const args = [scriptPath, '--binary', binaryPath, '--input', importPath];
+    if (storageDir) args.push('--workspace-root', storageDir);
+    try {
+      const stdout = await new Promise((resolve, reject) => {
+        cp.execFile(pythonExe, args, {
+          encoding: 'utf8',
+          cwd: root || extensionRoot,
+          maxBuffer: 4 * 1024 * 1024,
+          timeout: 60000,
+          env: { ...process.env, PYTHONPATH: extensionRoot },
+        }, (err, out) => {
+          if (err) reject(Object.assign(err, { stdout: out }));
+          else resolve(out);
+        });
+      });
+      const result = JSON.parse(String(stdout).trim());
+      if (result.error) throw new Error(result.error);
+      if (refreshSidebar) refreshSidebar(binaryPath);
+      vscode.window.showInformationMessage(
+        `Ghidra import complete: ${result.imported} imported, ${result.skipped} skipped, ${result.conflicts} conflict(s).`
+      );
+    } catch (err) {
+      let detail = err?.message || String(err);
+      try {
+        const failure = JSON.parse(String(err?.stdout || '').trim());
+        if (failure.error) detail = failure.error;
+      } catch (_) { /* conserver le diagnostic du processus */ }
+      vscode.window.showErrorMessage(`Ghidra import failed: ${detail}`);
+    }
+  });
+  subs.push(importFromGhidra);
+
+  const importFromIda = vscode.commands.registerCommand('pileOuFace.importFromIda', async () => {
+    const sourceUris = await vscode.window.showOpenDialog({
+      title: 'Choose an IDAPython export or IDA database',
+      canSelectMany: false,
+      openLabel: 'Choose the IDA source',
+      filters: { 'IDA data': ['json', 'idb', 'i64'] },
+    });
+    const sourcePath = sourceUris?.[0]?.fsPath || '';
+    if (!sourcePath) return;
+    const binaryUris = await vscode.window.showOpenDialog({
+      title: 'Choose the matching binary',
+      canSelectMany: false,
+      openLabel: 'Import IDA data',
+    });
+    const binaryPath = binaryUris?.[0]?.fsPath || '';
+    if (!binaryPath) return;
+    const extensionRoot = getExtensionPath() || root;
+    const directIdb = /\.(?:idb|i64)$/i.test(sourcePath);
+    const scriptName = directIdb ? 'idb_import.py' : 'canonical_import.py';
+    const scriptPath = path.join(extensionRoot, 'backends', 'static', 'annotations', scriptName);
+    const inputFlag = directIdb ? '--idb' : '--input';
+    const args = [scriptPath, '--binary', binaryPath, inputFlag, sourcePath];
+    if (storageDir) args.push('--workspace-root', storageDir);
+    try {
+      const stdout = await new Promise((resolve, reject) => {
+        cp.execFile(pythonExe, args, {
+          encoding: 'utf8',
+          cwd: root || extensionRoot,
+          maxBuffer: 4 * 1024 * 1024,
+          timeout: 60000,
+          env: { ...process.env, PYTHONPATH: extensionRoot },
+        }, (err, out) => {
+          if (err) reject(Object.assign(err, { stdout: out }));
+          else resolve(out);
+        });
+      });
+      const result = JSON.parse(String(stdout).trim());
+      if (result.error) throw new Error(result.error);
+      if (refreshSidebar) refreshSidebar(binaryPath);
+      vscode.window.showInformationMessage(
+        `IDA import complete: ${result.imported} imported, ${result.skipped} skipped, ${result.conflicts} conflict(s).`
+      );
+    } catch (err) {
+      let detail = err?.message || String(err);
+      try {
+        const failure = JSON.parse(String(err?.stdout || '').trim());
+        if (failure.error) detail = failure.error;
+      } catch (_) { /* conserver le diagnostic du processus */ }
+      vscode.window.showErrorMessage(`IDA import failed: ${detail}`);
+    }
+  });
+  subs.push(importFromIda);
+
   const goToSymbolInDisasm = vscode.commands.registerCommand('pileOuFace.goToSymbolInDisasm', async (addr, binaryPath) => {
     if (!addr || !root) return;
     const absPath = path.isAbsolute(binaryPath) ? binaryPath : path.join(root, binaryPath);
     if (!fs.existsSync(absPath)) {
-      vscode.window.showErrorMessage('Binaire introuvable.');
+      vscode.window.showErrorMessage('Binary not found.');
       return;
     }
     const tempDir = storageDir || ensureTempDir(root);
@@ -325,7 +427,7 @@ function registerStaticCommands(context, deps, providers) {
     if (!sectionName || !binaryPath || !root) return;
     const absPath = path.isAbsolute(binaryPath) ? binaryPath : path.join(root, binaryPath);
     if (!fs.existsSync(absPath)) {
-      vscode.window.showErrorMessage('Binaire introuvable.');
+      vscode.window.showErrorMessage('Binary not found.');
       return;
     }
     const tempDir = storageDir || ensureTempDir(root);

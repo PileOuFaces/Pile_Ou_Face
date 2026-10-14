@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from backends.shared.log import configure_logging, get_logger
 from backends.shared.utils import normalize_addr as _normalize_addr
 from backends.static.binary.arch import (
+    ARM32_CONDITION_SUFFIXES,
     ArchAdapter,
     detect_binary_arch_from_path,
     get_feature_support,
@@ -123,6 +124,116 @@ def _get_mnemonic(text: str) -> str:
     return parts[0].lower() if parts else ""
 
 
+def _is_arm32_pc_indexed_load(text: str) -> bool:
+    """Return whether *text* is an ARM32 absolute jump-table dispatch."""
+    mnemonic = _get_mnemonic(text)
+    widthless = mnemonic.removesuffix(".w").removesuffix(".n")
+    base = widthless
+    for suffix in ARM32_CONDITION_SUFFIXES:
+        if widthless.endswith(suffix):
+            base = widthless[: -len(suffix)]
+            break
+    if base != "ldr":
+        return False
+    match = re.search(
+        rf"\b{re.escape(mnemonic)}\b\s+(?:pc|r15)\s*,\s*\[([^\]]+)\]",
+        str(text or ""),
+        re.IGNORECASE,
+    )
+    if not match:
+        return False
+    expr = match.group(1).replace(" ", "").lower()
+    return expr.count(",") >= 2 and "lsl#2" in expr
+
+
+def _is_conditional_arm32_pc_indexed_load(text: str) -> bool:
+    if not _is_arm32_pc_indexed_load(text):
+        return False
+    mnemonic = _get_mnemonic(text).removesuffix(".w").removesuffix(".n")
+    return any(mnemonic == f"ldr{suffix}" for suffix in ARM32_CONDITION_SUFFIXES)
+
+
+def _match_arm32_literal_pc_load(text: str) -> tuple[int, bool] | None:
+    """Match an ARM32/Thumb veneer that loads the next PC from a literal pool."""
+    mnemonic = _get_mnemonic(text)
+    widthless = mnemonic.removesuffix(".w").removesuffix(".n")
+    base = widthless
+    conditional = False
+    for suffix in ARM32_CONDITION_SUFFIXES:
+        if widthless.endswith(suffix):
+            base = widthless[: -len(suffix)]
+            conditional = True
+            break
+    if base != "ldr":
+        return None
+    match = re.search(
+        rf"\b{re.escape(mnemonic)}\b\s+(?:pc|r15)\s*,\s*"
+        r"\[(?:pc|r15)(?:\s*,\s*#?\s*([-+]?(?:0x[0-9a-f]+|\d+)))?\]\s*$",
+        str(text or ""),
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return int(match.group(1) or "0", 0), conditional
+
+
+def _resolve_arm32_literal_pc_load(line: dict, binary, arch_info) -> str | None:
+    """Resolve an ARM32/Thumb literal veneer target when it points to code."""
+    if binary is None or arch_info is None or arch_info.key != "arm32":
+        return None
+    matched = _match_arm32_literal_pc_load(str(line.get("text", "") or ""))
+    if matched is None:
+        return None
+    offset, _ = matched
+    instruction_addr = _parse_int_literal(str(line.get("addr", "") or ""))
+    if instruction_addr is None:
+        return None
+    is_thumb = arch_info.raw_name == "thumb" or arch_info.machine == "thumb"
+    pc_base = (instruction_addr + 4) & ~3 if is_thumb else instruction_addr + 8
+    try:
+        raw_pointer = bytes(
+            binary.get_content_from_virtual_address(pc_base + offset, 4)
+        )
+    except Exception:
+        return None
+    if len(raw_pointer) != 4:
+        return None
+    target = int.from_bytes(raw_pointer, byteorder=arch_info.endian) & ~1
+    return (
+        _normalize_addr(hex(target))
+        if target and _is_valid_code_addr(target, binary)
+        else None
+    )
+
+
+def _is_arm32_add_pc_switch(text: str) -> bool:
+    """Return whether *text* dispatches through an inline ARM32 branch table."""
+    mnemonic = _get_mnemonic(text)
+    widthless = mnemonic.removesuffix(".w").removesuffix(".n")
+    base = widthless
+    for suffix in ARM32_CONDITION_SUFFIXES:
+        if widthless.endswith(suffix):
+            base = widthless[: -len(suffix)]
+            break
+    if base != "add":
+        return False
+    return bool(
+        re.search(
+            rf"\b{re.escape(mnemonic)}\b\s+(?:pc|r15)\s*,\s*(?:pc|r15)\s*,"
+            r"\s*(?:r\d+|ip|lr)\s*,\s*lsl\s+#?2\b",
+            str(text or ""),
+            re.IGNORECASE,
+        )
+    )
+
+
+def _is_conditional_arm32_add_pc_switch(text: str) -> bool:
+    if not _is_arm32_add_pc_switch(text):
+        return False
+    mnemonic = _get_mnemonic(text).removesuffix(".w").removesuffix(".n")
+    return any(mnemonic == f"add{suffix}" for suffix in ARM32_CONDITION_SUFFIXES)
+
+
 def _is_branch(
     text: str,
     adapters: tuple[ArchAdapter, ...] | None = None,
@@ -130,15 +241,24 @@ def _is_branch(
     """(is_branch, is_call, target_addr).
     Supporte x86/x64 (call, jmp, ret) et ARM64 (bl, blr, b, br, ret).
     """
+    if (
+        _is_arm32_pc_indexed_load(text)
+        or _match_arm32_literal_pc_load(text) is not None
+        or _is_arm32_add_pc_switch(text)
+    ):
+        return True, False, None
+
     mnem = _get_mnemonic(text)
     operands = re.split(
         rf"\b{re.escape(mnem)}\b", str(text or ""), maxsplit=1, flags=re.IGNORECASE
     )
     op_str = operands[1] if len(operands) == 2 else ""
     for adapter in adapters or tuple(iter_supported_adapters()):
+        if adapter.is_conditional_return_instruction(mnem, op_str):
+            return True, False, None
         if adapter.is_return_instruction(mnem, op_str):
             return True, False, None
-        kind = adapter.classify_code_ref_mnemonic(mnem)
+        kind = adapter.classify_code_ref_instruction(mnem, op_str)
         if kind == "ret":
             return True, False, None
         if kind == "call":
@@ -148,6 +268,18 @@ def _is_branch(
             target = _extract_jump_target(text)
             return True, False, target
     return False, False, None
+
+
+def _has_mips_delay_slot(text: str, detected_arch_info) -> bool:
+    """Return whether a classic MIPS control transfer executes the next insn."""
+    family = (getattr(detected_arch_info, "family", None) or "").lower()
+    if family != "mips":
+        return False
+    mnem = _get_mnemonic(text)
+    if mnem == "eret":
+        return False
+    adapter = getattr(detected_arch_info, "adapter", None)
+    return bool(adapter and adapter.classify_code_ref_mnemonic(mnem) is not None)
 
 
 def _is_jump_table(text: str) -> bool:
@@ -160,6 +292,9 @@ def _is_jump_table(text: str) -> bool:
     """
     text_lower = text.lower()
     mnem = _get_mnemonic(text)
+
+    if _is_arm32_pc_indexed_load(text) or _is_arm32_add_pc_switch(text):
+        return True
 
     if mnem == "jmp":
         # Détection de sauts indirects: présence de crochets [...] = accès mémoire
@@ -179,8 +314,11 @@ def _is_jump_table(text: str) -> bool:
             return True
 
     # ARM64/MIPS/RISC-V/PPC: branchement via registre / compteur
-    elif mnem in {"br", "bctr", "bcctr"}:
+    elif mnem in {"br", "bctr", "bcctr", "tbb", "tbh"}:
         return True
+    elif mnem == "bx":
+        jump_reg = _extract_register_jump_target(text)
+        return jump_reg not in {None, "lr", "r14"}
     elif mnem == "jr":
         jump_reg = _extract_register_jump_target(text)
         return jump_reg not in {None, "ra", "lr"}
@@ -214,6 +352,21 @@ def _detect_switch_max_case(block_lines: list[dict]) -> int | None:
         if mnem in RET_MNEMONICS or mnem in ARM64_RET_MNEMONICS:
             break
     return None
+
+
+def _resolve_arm32_add_pc_switch(block_lines: list[dict]) -> list[str]:
+    """Resolve inline ARM32 ``add pc, pc, index, lsl #2`` branch entries."""
+    if not block_lines or not _is_arm32_add_pc_switch(block_lines[-1].get("text", "")):
+        return []
+    branch_addr = _parse_int_literal(str(block_lines[-1].get("addr", "")))
+    entry_count = _detect_switch_max_case(block_lines)
+    if branch_addr is None or entry_count is None:
+        return []
+    architectural_pc = branch_addr + 8
+    return [
+        _normalize_addr(hex(architectural_pc + case_idx * 4))
+        for case_idx in range(entry_count)
+    ]
 
 
 def _append_incoming_switch_case(
@@ -276,7 +429,7 @@ def _binary_is_64bit(binary) -> bool:
 
 def _extract_register_jump_target(text: str) -> str | None:
     mnem = _get_mnemonic(text)
-    if mnem not in {"jmp", "br", "jr", "jalr", "bctr", "bcctr"}:
+    if mnem not in {"jmp", "br", "bx", "jr", "jalr", "bctr", "bcctr"}:
         return None
     if "[" in text:
         return None
@@ -574,7 +727,9 @@ def _resolve_register_jump_table(
     if not binary_path or parsed_binary is None or not block_lines:
         return [], None
 
-    jump_reg = _extract_register_jump_target(block_lines[-1].get("text", ""))
+    final_text = str(block_lines[-1].get("text", "") or "")
+    direct_arm32_load = _is_arm32_pc_indexed_load(final_text)
+    jump_reg = "pc" if direct_arm32_load else _extract_register_jump_target(final_text)
     if not jump_reg:
         return [], None
 
@@ -590,7 +745,9 @@ def _resolve_register_jump_table(
             return [], None
 
     relative_base_reg = None
-    load_search_end = len(block_lines) - 2
+    load_search_end = (
+        len(block_lines) - 1 if direct_arm32_load else len(block_lines) - 2
+    )
     for idx in range(len(block_lines) - 2, -1, -1):
         text = str(block_lines[idx].get("text", "") or "")
         add_mnem = _get_mnemonic(text)
@@ -629,6 +786,11 @@ def _resolve_register_jump_table(
     base_reg = None
     for idx in range(load_search_end, -1, -1):
         text = str(block_lines[idx].get("text", "") or "")
+        if direct_arm32_load and idx == len(block_lines) - 1:
+            mnemonic = _get_mnemonic(text)
+            text = re.sub(
+                rf"\b{re.escape(mnemonic)}\b", "ldr", text, count=1, flags=re.I
+            )
         match = re.search(
             r"\b(?:movsxd|mov)\b\s+([a-z0-9$]+)\s*,\s*(?:[a-z]+\s+ptr\s+)?\[(.+)\]",
             text,
@@ -790,6 +952,51 @@ def _read_bytes_at(binary, vaddr: int, size: int) -> bytes:
     except Exception:
         pass
     return b""
+
+
+def _resolve_thumb_table_branch(
+    block_lines: list[dict],
+    parsed_binary,
+    detected_arch_info,
+) -> list[str]:
+    """Résout les cibles relatives d'un switch Thumb ``TBB``/``TBH``.
+
+    Le PC architectural pointe quatre octets après l'instruction et est aligné
+    sur quatre octets. Chaque entrée encode ensuite la moitié du déplacement
+    jusqu'à la cible.
+    """
+    if parsed_binary is None or not block_lines:
+        return []
+
+    branch = block_lines[-1]
+    mnemonic = _get_mnemonic(str(branch.get("text", "") or ""))
+    if mnemonic not in {"tbb", "tbh"}:
+        return []
+
+    branch_addr = _parse_int_literal(branch.get("addr"))
+    max_entries = _detect_switch_max_case(block_lines)
+    if branch_addr is None or max_entries is None or max_entries <= 0:
+        return []
+
+    entry_size = 1 if mnemonic == "tbb" else 2
+    table_addr = (branch_addr + 4) & ~3
+    raw = _read_bytes_at(parsed_binary, table_addr, max_entries * entry_size)
+    if len(raw) < max_entries * entry_size:
+        return []
+
+    endian = str(getattr(detected_arch_info, "endian", "little") or "little").lower()
+    byteorder = "big" if endian.startswith("big") else "little"
+    targets: list[str] = []
+    for index in range(max_entries):
+        start = index * entry_size
+        displacement = int.from_bytes(raw[start : start + entry_size], byteorder)
+        target_int = table_addr + (displacement * 2)
+        if not _is_valid_code_addr(target_int, parsed_binary):
+            continue
+        target = _normalize_addr(hex(target_int))
+        if target not in targets:
+            targets.append(target)
+    return targets
 
 
 def _section_is_exec(sec, binary) -> bool:
@@ -1030,11 +1237,20 @@ def build_cfg(
         else (get_adapter_for_arch_key(arch_hint) if arch_hint else adapters[0])
     )
     support = get_feature_support(support_adapter, "cfg")
+    # Parser le binaire une seule fois pour les cibles indirectes et jump tables.
+    _parsed_binary = None
+    if lief and binary_path:
+        with contextlib.suppress(Exception):
+            _parsed_binary = lief.parse(binary_path)
+
     branch_targets = set()
     # Pour chaque instruction de branchement, enregistrer la cible
     for line in lines:
         text = line.get("text", "")
         _, _, target = _is_branch(text, adapters=adapters)
+        target = target or _resolve_arm32_literal_pc_load(
+            line, _parsed_binary, detected_arch_info
+        )
         if target:
             branch_targets.add(target)
 
@@ -1058,16 +1274,12 @@ def build_cfg(
 
     for i, line in enumerate(lines):
         addr = _normalize_addr(line["addr"])
-        is_br, _, _ = _is_branch(line.get("text", ""), adapters=adapters)
-        if is_br and i + 1 < len(lines):
-            next_addr = _normalize_addr(lines[i + 1]["addr"])
+        text = line.get("text", "")
+        is_br, _, _ = _is_branch(text, adapters=adapters)
+        next_index = i + (2 if _has_mips_delay_slot(text, detected_arch_info) else 1)
+        if is_br and next_index < len(lines):
+            next_addr = _normalize_addr(lines[next_index]["addr"])
             block_starts.add(next_addr)
-
-    # Parser le binaire une seule fois pour les jump tables
-    _parsed_binary = None
-    if lief and binary_path:
-        with contextlib.suppress(Exception):
-            _parsed_binary = lief.parse(binary_path)
 
     # Construire les blocs
     blocks = []
@@ -1094,15 +1306,33 @@ def build_cfg(
             block_lines.append(ln)
             text = ln.get("text", "")
             is_br, is_c, target = _is_branch(text, adapters=adapters)
+            target = target or _resolve_arm32_literal_pc_load(
+                ln, _parsed_binary, detected_arch_info
+            )
             if is_br:
+                has_delay_slot = _has_mips_delay_slot(text, detected_arch_info)
                 if target:
                     successors.append(target)
 
                 # Jump table : détecter et extraire les cibles
                 _switch_entries: list[str] = []
                 if _is_jump_table(text):
+                    if _is_arm32_add_pc_switch(text):
+                        _switch_entries = _resolve_arm32_add_pc_switch(block_lines)
+                        for entry in _switch_entries:
+                            if entry not in successors:
+                                successors.append(entry)
+                    elif _get_mnemonic(text) in {"tbb", "tbh"}:
+                        _switch_entries = _resolve_thumb_table_branch(
+                            block_lines,
+                            _parsed_binary,
+                            detected_arch_info,
+                        )
+                        for entry in _switch_entries:
+                            if entry not in successors:
+                                successors.append(entry)
                     table_base = _extract_jump_table_base(text)
-                    if table_base:
+                    if table_base and not _switch_entries:
                         # Convertir en adresse absolue si c'est un offset RIP-relative
                         # (heuristique simple : si < 0x10000, c'est probablement un offset)
                         base_int = int(table_base, 16)
@@ -1154,7 +1384,10 @@ def build_cfg(
                             for entry in _switch_entries:
                                 if entry not in successors:
                                     successors.append(entry)
-                    if not _switch_entries:
+                    if not _switch_entries and _get_mnemonic(text) not in {
+                        "tbb",
+                        "tbh",
+                    }:
                         _switch_entries, _ = _resolve_register_jump_table(
                             block_lines,
                             binary_path=binary_path,
@@ -1210,19 +1443,35 @@ def build_cfg(
                 )
                 op_str = operands[1] if len(operands) == 2 else ""
                 for adapter in adapters:
+                    if adapter.is_conditional_return_instruction(mnem, op_str):
+                        branch_kind = "jcc"
+                        break
                     if adapter.is_return_instruction(mnem, op_str):
                         branch_kind = "ret"
                         break
-                    branch_kind = adapter.classify_code_ref_mnemonic(mnem)
+                    branch_kind = adapter.classify_code_ref_instruction(mnem, op_str)
                     if branch_kind:
                         break
+                literal_pc_load = _match_arm32_literal_pc_load(text)
+                if literal_pc_load is not None:
+                    branch_kind = "jcc" if literal_pc_load[1] else "jmp"
                 if _block_switch_entries:
-                    branch_kind = "jmp"
-                if branch_kind not in {"jmp", "ret"} and i + 1 < len(lines):
-                    next_a = _normalize_addr(lines[i + 1]["addr"])
+                    branch_kind = (
+                        "jcc"
+                        if _is_conditional_arm32_pc_indexed_load(text)
+                        or _is_conditional_arm32_add_pc_switch(text)
+                        else "jmp"
+                    )
+                fallthrough_index = i + (2 if has_delay_slot else 1)
+                if branch_kind not in {"jmp", "ret"} and fallthrough_index < len(lines):
+                    next_a = _normalize_addr(lines[fallthrough_index]["addr"])
                     if next_a not in successors:
                         successors.append(next_a)
-                i += 1
+                if has_delay_slot and i + 1 < len(lines):
+                    block_lines.append(lines[i + 1])
+                    i += 2
+                else:
+                    i += 1
                 break
             i += 1
         # Ne pas re-incrémenter ici : la boucle interne a déjà positionné i

@@ -1,4 +1,3 @@
-// @ts-nocheck
 const { expect } = require("chai");
 const proxyquire = require("proxyquire").noCallThru();
 const sinon = require("sinon");
@@ -39,6 +38,15 @@ describe("auth service loopback fallback", () => {
   it("retries loopback auth on ::1 when localhost resolves to the wrong server", async () => {
     const { AuthService } = proxyquire("../shared/authService", {
       vscode: {},
+      "./authDiscovery": {
+        discoverAuthServer: async (origin) => ({
+          origin,
+          issuer: origin,
+          lease_audience: "pof-plugin-runtime",
+          deployment_id: "loopback-test",
+          jwks_uri: `${origin}/auth/jwks`,
+        }),
+      },
     });
     AuthService._instance = null;
 
@@ -113,6 +121,13 @@ function makeAuthService({
   };
 
   const svc = mod.AuthService.getInstance(secrets, "http://localhost:8000", { pluginSearchDirs });
+  svc._serverIdentity = {
+    origin: "http://localhost:8000",
+    issuer: "http://localhost:8000",
+    lease_audience: "pof-plugin-runtime",
+    deployment_id: "unit-test-deployment",
+    jwks_uri: "http://localhost:8000/auth/jwks",
+  };
 
   // Stub _postJson pour contrôler la réponse réseau
   if (refreshThrows) {
@@ -400,8 +415,9 @@ describe("AuthService._syncLicenseLeases()", () => {
         const lease = signLease(
           {
             protocol_version: 1,
-            iss: "pof-auth",
+            iss: "http://localhost:8000",
             aud: "pof-plugin-runtime",
+            deployment_id: "unit-test-deployment",
             jti: "123e4567-e89b-42d3-a456-426614174000",
             sub: "user-test",
             org_id: null,
@@ -569,5 +585,107 @@ describe("AuthService.getContentKeys() — signed lease validity", () => {
     global.fetch = originalFetch;
 
     expect(store["pof.auth.leaseExpiresAt"]).to.equal(undefined);
+  });
+});
+
+describe("AuthService SecretStorage server isolation", () => {
+  function createSecrets(initial = {}) {
+    const store = { ...initial };
+    return {
+      store,
+      secrets: {
+        async get(key) { return store[key]; },
+        async store(key, value) { store[key] = value; },
+        async delete(key) { delete store[key]; },
+      },
+    };
+  }
+
+  function isolatedService(secrets, origin = "https://auth-a.example") {
+    const { AuthService } = proxyquire("../shared/authService", {
+      vscode: {},
+      "./authDiscovery": {
+        discoverAuthServer: async (serverOrigin) => ({
+          origin: serverOrigin,
+          issuer: serverOrigin,
+          lease_audience: "pof-plugin-runtime",
+          deployment_id: serverOrigin.includes("auth-a") ? "deployment-a" : "deployment-b",
+          jwks_uri: `${serverOrigin}/auth/jwks`,
+        }),
+      },
+    });
+    AuthService._instance = null;
+    return new AuthService(secrets, origin, { deploymentProfile: "OSS_DEVELOPMENT" });
+  }
+
+  it("purges unbound legacy secrets after the server identity is verified", async () => {
+    const { secrets, store } = createSecrets({
+      "pof.auth.accessToken": "legacy-token",
+      "pof.auth.refreshToken": "legacy-refresh",
+    });
+    const svc = isolatedService(secrets);
+
+    await svc._ensureServerIdentity("https://auth-a.example");
+
+    const binding = JSON.parse(store["pof.auth.serverBinding.v1"]);
+    expect(binding).to.include({
+      profile: "OSS_DEVELOPMENT",
+      deploymentId: "deployment-a",
+      origin: "https://auth-a.example",
+    });
+    expect(store["pof.auth.accessToken"]).to.equal(undefined);
+    expect(store[`${binding.namespace}.accessToken`]).to.equal(undefined);
+    expect(await svc.isAuthenticated()).to.equal(false);
+  });
+
+  it("reports the configured deployment before discovery", () => {
+    const { secrets } = createSecrets();
+    const svc = isolatedService(secrets, "https://auth-a.example/");
+
+    expect(svc.getDeploymentStatus("configured-deployment")).to.deep.equal({
+      profile: "OSS_DEVELOPMENT",
+      origin: "https://auth-a.example",
+      deploymentId: "configured-deployment",
+      verified: false,
+    });
+  });
+
+  it("reports the verified server identity after discovery", async () => {
+    const { secrets } = createSecrets();
+    const svc = isolatedService(secrets);
+
+    await svc._ensureServerIdentity("https://auth-a.example");
+
+    expect(svc.getDeploymentStatus("configured-deployment")).to.deep.equal({
+      profile: "OSS_DEVELOPMENT",
+      origin: "https://auth-a.example",
+      deploymentId: "deployment-a",
+      verified: true,
+    });
+  });
+
+  it("purges the old namespace when the verified server identity changes", async () => {
+    const { secrets, store } = createSecrets();
+    const svc = isolatedService(secrets);
+    await svc._ensureServerIdentity("https://auth-a.example");
+    await svc.secrets.store("pof.auth.accessToken", "server-a-token");
+    await svc.secrets.store("pof.auth.devicePrivateKey", "server-a-private-key");
+    const oldBinding = JSON.parse(store["pof.auth.serverBinding.v1"]);
+
+    svc.serverUrl = "https://auth-b.example";
+    await svc._ensureServerIdentity("https://auth-b.example");
+
+    const nextBinding = JSON.parse(store["pof.auth.serverBinding.v1"]);
+    expect(nextBinding.deploymentId).to.equal("deployment-b");
+    expect(nextBinding.namespace).to.not.equal(oldBinding.namespace);
+    expect(store[`${oldBinding.namespace}.accessToken`]).to.equal(undefined);
+    expect(store[`${oldBinding.namespace}.devicePrivateKey`]).to.equal(undefined);
+    expect(await svc.isAuthenticated()).to.equal(false);
+  });
+
+  afterEach(() => {
+    sinon.restore();
+    const mod = require("../shared/authService");
+    mod.AuthService._instance = null;
   });
 });

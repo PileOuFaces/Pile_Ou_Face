@@ -1,14 +1,16 @@
 {
   "mcpServers": {
     "pile-ou-face": {
-      "command": "python3",
+      "type": "stdio",
+      "command": "/opt/homebrew/opt/python@3.14/bin/python3.14",
       "args": [
-        "backends/mcp/server.py",
+        "/Users/leoteissier/Projets/Pile_Ou_Face/Pile_Ou_Face/extension/backends/mcp/server.py",
         "--transport",
         "stdio"
       ],
       "env": {
-        "PYTHONUNBUFFERED": "1"
+        "PYTHONUNBUFFERED": "1",
+        "POF_MCP_WORKSPACE_ROOT": "/Users/leoteissier/Projets/Pile_Ou_Face/Pile_Ou_Face"
       }
     },
     "gitnexus": {

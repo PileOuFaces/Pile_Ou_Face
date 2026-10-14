@@ -5,6 +5,7 @@ const { EventEmitter } = require('events');
 const fs = require('fs');
 const path = require('path');
 const { PassThrough, Writable } = require('stream');
+const { URL } = require('url');
 const Mocha = require('mocha');
 const vscode = require('vscode');
 const {
@@ -15,6 +16,7 @@ const {
 const {
   HubPage,
   captureUiFailure,
+  captureUiScreenshot,
   connectToHubWebview,
 } = require('./vscode-ui-driver');
 
@@ -23,6 +25,27 @@ const E2E_AUDIT_MOCHA_TIMEOUT_MS = 120000;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function captureDocumentationScreenshot(target, name) {
+  const outputDir = process.env.POF_E2E_DOC_SCREENSHOTS_DIR;
+  if (!outputDir) return '';
+  await vscode.commands.executeCommand('workbench.action.closePanel');
+  await vscode.commands.executeCommand('workbench.action.closeAuxiliaryBar');
+  await vscode.commands.executeCommand('workbench.action.closeSidebar');
+  await vscode.commands.executeCommand('notifications.clearAll');
+  await target.evaluate(`document.querySelector('#pof-toast-container')?.replaceChildren()`);
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const ready = await target.evaluate(`(() => {
+      const progress = document.querySelector('#pof-task-progress');
+      return !progress || progress.hidden;
+    })()`);
+    if (ready) break;
+    await sleep(100);
+  }
+  await sleep(300);
+  return captureUiScreenshot(target, outputDir, name);
 }
 
 function findAuditFiles(root) {
@@ -70,8 +93,9 @@ async function waitForAuditEvents(userDataDir, predicate, timeoutMs = 15000) {
     if (predicate(allEvents, lastFiles.join(','))) return { filePath: lastFiles.join(','), events: allEvents };
     await sleep(250);
   }
-  const names = lastEvents.map((event) => `${event.kind}:${event.name}`).join(', ');
-  throw new Error(`Timed out waiting for runtime audit events. files=${lastFiles.join(', ') || '<none>'} events=${names || '<none>'}`);
+  const recentEvents = lastEvents.slice(-30);
+  const names = recentEvents.map((event) => `${event.kind}:${event.name}`).join(', ');
+  throw new Error(`Timed out waiting for runtime audit events. files=${lastFiles.join(', ') || '<none>'} eventCount=${lastEvents.length} recentEvents=${names || '<none>'}`);
 }
 
 function hasEvent(events, kind, name) {
@@ -417,6 +441,10 @@ function isSymbolsScript(args) {
   return Array.isArray(args) && args.some((arg) => String(arg || '').endsWith(path.join('backends', 'static', 'binary', 'symbols.py')));
 }
 
+function isHeadersScript(args) {
+  return Array.isArray(args) && args.some((arg) => String(arg || '').endsWith(path.join('backends', 'static', 'binary', 'headers.py')));
+}
+
 function createMockProviderList() {
   return JSON.stringify({
     providers: [{ name: 'openai', configured: true, model: 'e2e-model' }],
@@ -481,9 +509,95 @@ function jsonResponse(body, status = 200) {
   };
 }
 
+function readExternalPluginContract() {
+  const contractPath = String(process.env.POF_E2E_PLUGIN_CONTRACT_PATH || '').trim();
+  if (!contractPath) return null;
+  assert.ok(fs.existsSync(contractPath), `external plugin E2E contract must exist: ${contractPath}`);
+  const contract = JSON.parse(fs.readFileSync(contractPath, 'utf8'));
+  assert.ok([1, 2].includes(contract.schema_version), 'external plugin E2E contract schema_version must be 1 or 2');
+  for (const key of ['plugin_id', 'display_name', 'plugin_slug']) {
+    assert.ok(String(contract[key] || '').trim(), `external plugin E2E contract requires ${key}`);
+  }
+  const legacySteps = [
+    { operation: 'open_tab', group: contract.tab?.group, id: contract.tab?.id },
+    { operation: 'plugin_click', selector: contract.action?.selector },
+    { operation: 'plugin_wait', selector: contract.result?.selector, text: contract.result?.text },
+  ];
+  const steps = contract.schema_version === 1 ? legacySteps : contract.steps;
+  assert.ok(Array.isArray(steps) && steps.length > 0, 'external plugin E2E contract requires steps');
+  const operations = new Set(['open_tab', 'plugin_click', 'plugin_select', 'plugin_wait', 'host_wait', 'reload_hub']);
+  for (const [index, step] of steps.entries()) {
+    assert.ok(operations.has(step?.operation), `external plugin E2E step ${index} has an unsupported operation`);
+    if (step.operation === 'open_tab') {
+      assert.ok(String(step.group || '').trim(), `external plugin E2E step ${index} requires group`);
+      assert.ok(String(step.id || '').trim(), `external plugin E2E step ${index} requires id`);
+    } else if (step.operation !== 'reload_hub') {
+      assert.ok(String(step.selector || '').trim(), `external plugin E2E step ${index} requires selector`);
+    }
+    if (step.operation === 'plugin_select') {
+      assert.ok(Object.hasOwn(step, 'value'), `external plugin E2E step ${index} requires value`);
+    }
+  }
+  const bundlePath = path.resolve(String(process.env.POF_E2E_PLUGIN_BUNDLE || ''));
+  const fixturePath = path.resolve(String(process.env.POF_E2E_PLUGIN_FIXTURE || ''));
+  assert.ok(fs.existsSync(bundlePath), `external plugin bundle must exist: ${bundlePath}`);
+  assert.ok(fs.existsSync(fixturePath), `external plugin fixture must exist: ${fixturePath}`);
+  return { ...contract, steps, bundlePath, fixturePath };
+}
+
+async function waitForPluginContextValue(target, expression, predicate, timeoutMs = 30000, description = 'plugin context value') {
+  const deadline = Date.now() + timeoutMs;
+  let lastValue;
+  const contextIds = target.executionContextIds.length ? target.executionContextIds : [target.contextId];
+  while (Date.now() < deadline) {
+    for (const contextId of contextIds) {
+      try {
+        lastValue = await target.evaluate(expression, contextId);
+        if (predicate(lastValue)) return { contextId, value: lastValue };
+      } catch { /* Contexts can disappear while the webview reloads. */ }
+    }
+    await sleep(100);
+  }
+  throw new Error(`Timed out waiting for ${description}; last=${JSON.stringify(lastValue)}`);
+}
+
+async function waitForPluginTabLoader(target, pluginSlug, tabId, timeoutMs = 30000) {
+  const deadline = Date.now() + timeoutMs;
+  const expression = `Boolean(window.PluginIframeRouter?.hasTabLoader(${JSON.stringify(pluginSlug)}, ${JSON.stringify(tabId)}))`;
+  while (Date.now() < deadline) {
+    if (await target.evaluate(expression)) return;
+    await sleep(100);
+  }
+  throw new Error(`Timed out waiting for plugin tab loader registration: ${pluginSlug}/${tabId}`);
+}
+
+function documentAssertionExpression(step) {
+  return `(() => {
+    const elements = Array.from(document.querySelectorAll(${JSON.stringify(step.selector)}));
+    const element = elements[0];
+    return {
+      count: elements.length,
+      text: element?.textContent || '',
+      value: element && 'value' in element ? String(element.value) : '',
+      checked: Boolean(element?.checked),
+      disabled: Boolean(element?.disabled),
+    };
+  })()`;
+}
+
+function matchesDocumentAssertion(value, step) {
+  if (!value || value.count < Number(step.count_min || 1)) return false;
+  if (Object.hasOwn(step, 'text') && !String(value.text).includes(String(step.text))) return false;
+  if (Object.hasOwn(step, 'value') && value.value !== String(step.value)) return false;
+  if (Object.hasOwn(step, 'checked') && value.checked !== Boolean(step.checked)) return false;
+  if (Object.hasOwn(step, 'disabled') && value.disabled !== Boolean(step.disabled)) return false;
+  return true;
+}
+
 async function run() {
   const mocha = new Mocha({ ui: 'bdd', color: true, timeout: E2E_AUDIT_MOCHA_TIMEOUT_MS });
   const suite = Mocha.Suite.create(mocha.suite, 'runtime usage audit e2e');
+  const externalPlugin = readExternalPluginContract();
 
   suite.addTest(new Mocha.Test('creates audit JSONL and records hub startup events', async () => {
     const userDataDir = process.env.POF_E2E_USER_DATA_DIR;
@@ -520,14 +634,17 @@ async function run() {
       const hub = new HubPage(target);
 
       await hub.openPanel('dashboard');
-      await hub.topBarBinaryName().waitForText('Choisir un fichier', 30000);
-      await hub.autoTriageBinary().waitForText('Aucun binaire', 30000);
+      const locale = await target.evaluate('document.documentElement.lang');
+      const english = String(locale || '').toLowerCase() !== 'fr';
+      await hub.topBarBinaryName().waitForText(english ? 'Choose a file' : 'Choisir un fichier', 30000);
+      await hub.autoTriageBinary().waitForText(english ? 'No binary' : 'Aucun binaire', 30000);
       assert.equal(await hub.autoTriageButton().isEnabled(), false, 'auto-triage must stay disabled without a binary');
+      await captureDocumentationScreenshot(target, '01-empty-workspace');
 
       await hub.dashboardStaticAction().click();
       await hub.expectActive(hub.panel('static'), 'static panel opened from the empty dashboard');
       await hub.topBarBinaryMenu().waitFor({ state: 'visible' });
-      await hub.currentBinaryName().waitForText('Aucun fichier sélectionné', 30000);
+      await hub.currentBinaryName().waitForText(english ? 'No file selected' : 'Aucun fichier sélectionné', 30000);
       await hub.disassemblyBinarySummary().waitForText('Aucun fichier', 30000);
       assert.equal(await hub.decompileAugmentButton().isEnabled(), false, 'AI augmentation must stay disabled without decompiled code');
     } catch (error) {
@@ -535,6 +652,116 @@ async function run() {
         target,
         process.env.POF_E2E_ARTIFACTS_DIR,
         'hub-empty-workspace',
+      );
+      error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
+      throw error;
+    } finally {
+      target?.close();
+    }
+  }));
+
+  suite.addTest(new Mocha.Test('configures cloud and Ollama providers through the real UI', async () => {
+    let target = null;
+    let openAiConfigured = false;
+    let openAiModel = '';
+    let openAiKey = '';
+    let ollamaModel = 'llama-e2e';
+    let defaultProvider = 'ollama';
+    const originalExecFile = childProcess.execFile;
+    const providerState = () => ({
+      providers: [
+        {
+          name: 'openai',
+          configured: openAiConfigured,
+          valid: openAiConfigured,
+          model: openAiModel,
+          models: ['gpt-e2e', 'gpt-e2e-mini'],
+        },
+        {
+          name: 'ollama',
+          configured: true,
+          valid: true,
+          model: ollamaModel,
+          models: ['llama-e2e', 'qwen-e2e'],
+          base_url: 'http://127.0.0.1:11434',
+        },
+      ],
+      default_provider: defaultProvider,
+    });
+    try {
+      await withChildProcessMocks({
+        execFile: (file, args = [], options = {}, callback = undefined) => {
+          if (!isAiProviderScript(args)) {
+            return originalExecFile.call(childProcess, file, args, options, callback);
+          }
+          const cb = typeof options === 'function' ? options : callback;
+          const proc = new EventEmitter();
+          proc.stdin = {
+            write(value) { openAiKey = String(value || '').trim(); },
+            end() {},
+          };
+          if (args.includes('set-default')) {
+            defaultProvider = String(args[args.indexOf('--provider') + 1] || '');
+            process.nextTick(() => cb?.(null, JSON.stringify({ ok: true, default_provider: defaultProvider }), ''));
+            return proc;
+          }
+          if (args.includes('set')) {
+            const provider = String(args[args.indexOf('--provider') + 1] || '');
+            const model = String(args[args.indexOf('--model') + 1] || '');
+            if (provider === 'openai') {
+              openAiConfigured = true;
+              openAiModel = model;
+            } else if (provider === 'ollama') {
+              ollamaModel = model;
+            }
+            process.nextTick(() => cb?.(null, JSON.stringify({ ok: true }), ''));
+            return proc;
+          }
+          process.nextTick(() => cb?.(null, JSON.stringify(providerState()), ''));
+          return proc;
+        },
+      }, async () => {
+        await vscode.commands.executeCommand('pileOuFace.goToAddress');
+        target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+        const hub = new HubPage(target);
+        const locale = await target.evaluate('document.documentElement.lang');
+        const english = String(locale || '').toLowerCase() !== 'fr';
+
+        await hub.openPanel('options');
+        // The hub can finish a real provider request before this scenario installs
+        // its child-process mock. Refresh under the mock and wait for its sentinel
+        // model so assertions cannot consume stale provider state.
+        await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+          type: 'hubAiProvidersGet',
+        });
+        await target.locator('html').waitForAttribute('data-hub-ai-providers-ready', 'true', 30000);
+        await hub.aiProviderModel('openai').waitForText('gpt-e2e-mini', 30000);
+        // A late initial settings payload may restore the previously persisted panel.
+        // Force a complete transition after readiness before asserting visibility.
+        await hub.openPanel('dashboard');
+        await hub.openPanel('options');
+        await hub.aiProviderCard('openai').waitFor({ state: 'visible', timeout: 30000 });
+        await hub.aiProviderStatus('openai').waitForText(english ? 'Not configured' : 'Non configuré', 30000);
+        await hub.aiProviderKey('openai').fill('e2e-cloud-key');
+        await hub.aiProviderModel('openai').fill('gpt-e2e-mini');
+        await hub.aiProviderSaveButton('openai').click();
+        await hub.aiProviderStatus('openai').waitForText(english ? 'Ready' : 'Prêt', 30000);
+        assert.equal(openAiKey, 'e2e-cloud-key', 'the API key entered through the UI must reach stdin');
+        assert.equal(openAiModel, 'gpt-e2e-mini', 'the cloud model selected through the UI must be persisted');
+
+        await hub.aiProviderModel('ollama').fill('qwen-e2e');
+        await hub.aiProviderSaveButton('ollama').click();
+        await hub.aiProviderModel('ollama').waitForValue('qwen-e2e', 30000);
+        assert.equal(ollamaModel, 'qwen-e2e', 'the Ollama model selected through the UI must be persisted');
+
+        await hub.setAiDefaultProvider('openai');
+        assert.equal(defaultProvider, 'openai', 'the automatic provider must change from the real select control');
+      });
+    } catch (error) {
+      const artifacts = await captureUiFailure(
+        target,
+        process.env.POF_E2E_ARTIFACTS_DIR,
+        'hub-ai-provider-settings',
       );
       error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
       throw error;
@@ -553,10 +780,8 @@ async function run() {
       await vscode.commands.executeCommand('pileOuFace.goToAddress');
       target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
       hub = new HubPage(target);
-      await hub.openPanel('options');
-
       const savesBeforeSimpleMode = countCurrentAuditEvents(userDataDir, isSettingsSave);
-      await hub.interfaceModeButton('simple').click();
+      await hub.selectInterfaceMode('simple');
       await hub.interfaceModeInput().waitForValue('simple', 30000);
       await hub.interfaceModeButton('simple').waitForAttribute('aria-pressed', 'true', 30000);
       await hub.staticFeaturePicker().waitForAttribute('class', 'is-disabled', 30000);
@@ -579,7 +804,7 @@ async function run() {
       await hub.interfaceModeButton('simple').waitForAttribute('aria-pressed', 'true', 30000);
 
       const savesBeforeRestore = countCurrentAuditEvents(userDataDir, isSettingsSave);
-      await hub.interfaceModeButton('advanced').clickDom();
+      await hub.selectInterfaceMode('advanced');
       await hub.interfaceModeInput().waitForValue('advanced', 30000);
       await hub.staticFeaturesAllButton().waitForEnabled(30000);
       await hub.staticFeaturesAllButton().clickDom();
@@ -616,7 +841,7 @@ async function run() {
     }
   }));
 
-  suite.addTest(new Mocha.Test('retries auto-triage from the real confirmation UI without reopening the modal', async () => {
+  suite.addTest(new Mocha.Test('recovers from an auto-triage provider timeout through the real UI', async () => {
     const userDataDir = process.env.POF_E2E_USER_DATA_DIR;
     assert.ok(userDataDir, 'POF_E2E_USER_DATA_DIR is required');
     const [fixture] = readFixtureSpecs();
@@ -656,11 +881,24 @@ async function run() {
           proc.stderr = new PassThrough();
           proc.kill = () => true;
           reportPath = String(args[args.indexOf('--report-out') + 1] || '');
+          const cancelFlagPath = String(args[args.indexOf('--cancel-flag-path') + 1] || '');
           process.nextTick(() => {
             if (attempt === 1) {
-              proc.stderr.end('provider offline');
+              proc.stderr.end('Timeout provider après 30 s');
               proc.stdout.end();
               proc.emit('close', 1);
+              return;
+            }
+            if (attempt === 2) {
+              const poll = setInterval(() => {
+                if (!cancelFlagPath || !fs.existsSync(cancelFlagPath)) return;
+                clearInterval(poll);
+                fs.writeFileSync(reportPath, '# Rapport auto-triage E2E interrompu\n', 'utf8');
+                proc.stdout.write(`${JSON.stringify({ type: 'cancelled' })}\n`);
+                proc.stdout.end();
+                proc.stderr.end();
+                proc.emit('close', 0);
+              }, 10);
               return;
             }
             fs.writeFileSync(reportPath, '# Rapport auto-triage E2E\n', 'utf8');
@@ -692,25 +930,35 @@ async function run() {
         await hub.autoTriageModal().waitFor({ state: 'visible' });
         assert.equal(await hub.autoTriageModal().getAttribute('hidden'), null, 'confirmation modal must be open');
         await hub.autoTriageConfirmButton().click();
-        await hub.autoTriageState().waitForText('Échec', 30000);
-        await hub.autoTriageHelp().waitForText('provider offline', 30000);
-        assert.equal(await hub.autoTriageModal().getAttribute('hidden'), '', 'confirmation modal must close after the failed run starts');
-        assert.equal(await hub.autoTriageButton().isEnabled(), true, 'retry must be available after a provider error');
+        await hub.autoTriageState().waitForText('Failed', 30000);
+        await hub.autoTriageHelp().waitForText('Timeout provider après 30 s', 30000);
+        assert.equal(await hub.autoTriageModal().getAttribute('hidden'), '', 'confirmation modal must close after the timed-out run starts');
+        assert.equal(await hub.autoTriageButton().isEnabled(), true, 'retry must be available after a provider timeout');
 
         await hub.autoTriageButton().click();
         await hub.autoTriageModal().waitFor({ state: 'visible' });
         await hub.autoTriageConfirmButton().click();
-        await hub.autoTriageState().waitForText('Terminé', 30000);
+        await hub.autoTriageCancelButton().waitFor({ state: 'visible' });
+        await hub.autoTriageCancelButton().click();
+        await hub.autoTriageState().waitForText('Resume required', 30000);
+        await hub.autoTriageResultTitle().waitForText('Analysis interrupted — resume available', 30000);
+        await hub.autoTriageCancelButton().waitFor({ state: 'hidden', timeout: 30000 });
+        assert.equal(await hub.autoTriageButton().isEnabled(), true, 'resume must be available after cancellation');
+
+        await hub.autoTriageButton().click();
+        await hub.autoTriageModal().waitFor({ state: 'visible' });
+        await hub.autoTriageConfirmButton().click();
+        await hub.autoTriageState().waitForText('Completed', 30000);
         await hub.autoTriageResult().waitFor({ state: 'visible' });
-        await hub.autoTriageResultTitle().waitForText('Dernier auto-triage terminé', 30000);
+        await hub.autoTriageResultTitle().waitForText('Latest auto-triage completed', 30000);
         assert.equal(await hub.autoTriageModal().getAttribute('hidden'), '', 'confirmation modal must stay closed after success');
-        assert.equal(attempt, 2, 'one failed run and one successful retry must execute');
+        assert.equal(attempt, 3, 'one timeout, one cancelled run and one successful resume must execute');
       });
     } catch (error) {
       const artifacts = await captureUiFailure(
         target,
         process.env.POF_E2E_ARTIFACTS_DIR,
-        'hub-auto-triage-retry',
+        'hub-auto-triage-timeout-retry',
       );
       error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
       throw error;
@@ -722,28 +970,43 @@ async function run() {
     }
   }));
 
-  suite.addTest(new Mocha.Test('accepts global decompile augmentation and restores it from cache through the real UI', async () => {
+  suite.addTest(new Mocha.Test('accepts function and global decompile augmentation and restores both caches through the real UI', async () => {
     const [fixture] = readFixtureSpecs();
     assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
     const functionAddr = String(fixture.entry || '0x400078');
     const rawCode = 'int main(void) { return 0; }';
     const functionCode = 'int main(void) { /* function retry succeeded */ return 0; }';
-    const augmentedCode = 'int main(void) { /* validated by E2E */ return 0; }';
+    const globalAugmentedCode = 'int main(void) { /* global validated by E2E */ return 0; }';
+    const functionAugmentedCode = 'int main(void) { /* function validated by E2E */ return 0; }';
     let target = null;
-    let accepted = false;
     let suggestCalls = 0;
     let functionDecompileAttempts = 0;
+    let functionDecompileSuccesses = 0;
+    let allowFunctionDecompileSuccess = false;
+    const acceptedAugmentations = new Set();
+    const augmentationResults = new Map();
     const originalExecFile = childProcess.execFile;
-    const augmentationResult = () => ({
-      ok: true,
-      found: accepted,
-      cached: accepted,
-      cache_key: 'e2e-decompile-augmentation',
-      raw_code: rawCode,
-      augmented_code: augmentedCode,
-      accepted_ids: accepted ? ['summary'] : [],
-      proposal: { summary: 'Nom et commentaire proposés par le test E2E' },
-    });
+    const augmentationResult = (input = {}) => {
+      const sourceCode = String(input.code || rawCode);
+      const cacheKey = `e2e-decompile-augmentation:${input.addr || functionAddr}:${sourceCode}`;
+      const accepted = acceptedAugmentations.has(cacheKey);
+      const result = {
+        ok: true,
+        found: accepted,
+        cached: accepted,
+        cache_key: cacheKey,
+        raw_code: sourceCode,
+        augmented_code: sourceCode === functionCode ? functionAugmentedCode : globalAugmentedCode,
+        accepted_ids: accepted ? ['summary'] : [],
+        proposal: {
+          summary: sourceCode === functionCode
+            ? 'Proposition fonction prête pour le test E2E'
+            : 'Proposition globale prête pour le test E2E',
+        },
+      };
+      augmentationResults.set(cacheKey, result);
+      return result;
+    };
     try {
       await withChildProcessMocks({
         execFile: (file, args = [], options = {}, callback = undefined) => {
@@ -757,9 +1020,21 @@ async function run() {
             const proc = new EventEmitter();
             const action = String(args[args.indexOf('--action') + 1] || '');
             process.nextTick(() => {
+              const inputPath = String(args[args.indexOf('--input') + 1] || '');
+              const input = JSON.parse(fs.readFileSync(inputPath, 'utf8'));
               if (action === 'suggest') suggestCalls += 1;
-              if (action === 'accept') accepted = true;
-              cb?.(null, JSON.stringify(augmentationResult()), '');
+              if (action === 'accept') {
+                acceptedAugmentations.add(input.cache_key);
+                const proposed = augmentationResults.get(input.cache_key) || augmentationResult();
+                cb?.(null, JSON.stringify({
+                  ...proposed,
+                  found: true,
+                  cached: true,
+                  accepted_ids: input.selected_ids,
+                }), '');
+                return;
+              }
+              cb?.(null, JSON.stringify(augmentationResult(input)), '');
             });
             return proc;
           }
@@ -778,15 +1053,16 @@ async function run() {
               result = createMockDecompilerList();
             } else if (args.includes('--addr')) {
               functionDecompileAttempts += 1;
-              result = JSON.stringify(functionDecompileAttempts === 1
-                ? { ok: false, error: 'fixture decompiler unavailable', error_type: 'tool_error' }
-                : {
+              if (allowFunctionDecompileSuccess) functionDecompileSuccesses += 1;
+              result = JSON.stringify(allowFunctionDecompileSuccess
+                ? {
                   ok: true,
                   addr: functionAddr,
                   name: 'main',
                   code: functionCode,
                   score: 100,
-                });
+                }
+                : { ok: false, error: 'fixture decompiler unavailable', error_type: 'tool_error' });
             } else {
               result = JSON.stringify({
                 ok: true,
@@ -823,21 +1099,22 @@ async function run() {
         await hub.decompileFunctionSelect().fill(functionAddr);
         await hub.decompileContent().waitForText('Erreur du décompilateur — vérifiez les logs', 30000);
         assert.equal(await hub.decompileFunctionSelect().inputValue(), functionAddr, 'the failed function selection must stay selected');
+        const attemptsBeforeRetry = functionDecompileAttempts;
+        allowFunctionDecompileSuccess = true;
         await hub.decompileRebuildButton().clickDom();
         await hub.decompileOutput().waitForText('function retry succeeded', 30000);
-        assert.equal(functionDecompileAttempts, 2, 'one failed function run and one successful retry must execute');
+        await captureDocumentationScreenshot(target, '08-decompiler');
+        assert.ok(functionDecompileAttempts > attemptsBeforeRetry, 'the explicit retry must execute a new function run');
+        assert.equal(functionDecompileSuccesses, 1, 'the explicit retry must produce exactly one successful function run');
 
-        await hub.decompileFunctionSelect().fill('');
-        await hub.decompileOutput().waitForText(rawCode, 30000);
-
-        await hub.decompileAugmentButton().click();
+        await hub.decompileAugmentButton().clickDom();
         await hub.decompileAugmentReview().waitFor({ state: 'visible', timeout: 30000 });
-        await hub.decompileAugmentSuggestions().waitForText('Nom et commentaire proposés', 30000);
-        await hub.decompileAugmentAcceptButton().click();
-        await hub.decompileAugmentStatus().waitForText('Version IA appliquée et enregistrée dans le cache.', 30000);
-        await hub.decompileOutput().waitForText('validated by E2E', 30000);
-        assert.equal(await hub.decompileAugmentReview().getAttribute('hidden'), '', 'review must close after acceptance');
-        assert.equal(suggestCalls, 1, 'the provider suggestion must run exactly once');
+        await hub.decompileAugmentSuggestions().waitForText('Proposition fonction prête', 30000);
+        await hub.decompileAugmentAcceptButton().clickDom();
+        await hub.decompileOutput().waitForText('function validated by E2E', 30000);
+        await hub.decompileAugmentStatus().waitForText('Version IA', 30000);
+        assert.equal(await hub.decompileFunctionSelect().inputValue(), functionAddr, 'function augmentation must preserve the selected function');
+        assert.equal(suggestCalls, 1, 'function augmentation must call the provider exactly once');
 
         target.close();
         target = null;
@@ -847,9 +1124,42 @@ async function run() {
         hub = new HubPage(target);
         await hub.openPanel('static');
         await hub.openStaticTab('code', 'decompile');
-        await hub.decompileOutput().waitForText('validated by E2E', 30000);
+        await hub.decompileOutput().waitForText(rawCode, 30000);
+        assert.equal(await hub.decompileFunctionSelect().inputValue(), '', 'reopening the hub must restore global decompile mode');
+
+        await hub.decompileFunctionSelect().fill(functionAddr);
+        await hub.decompileOutput().waitForText('function validated by E2E', 30000);
         await hub.decompileAugmentStatus().waitForText('Version IA acceptée restaurée depuis le cache.', 30000);
-        assert.equal(suggestCalls, 1, 'restoring the accepted cache must not call the provider again');
+        assert.equal(suggestCalls, 1, 'restoring the function cache must not call the provider again');
+
+        await hub.decompileFunctionSelect().fill('');
+        await hub.decompileOutput().waitForText(rawCode, 30000);
+
+        await hub.decompileAugmentButton().clickDom();
+        await hub.decompileAugmentReview().waitFor({ state: 'visible', timeout: 30000 });
+        await hub.decompileAugmentSuggestions().waitForText('Proposition globale prête', 30000);
+        await hub.decompileAugmentAcceptButton().clickDom();
+        await hub.decompileOutput().waitForText('global validated by E2E', 30000);
+        const acceptedStatus = await hub.decompileAugmentStatus().waitForText('Version IA', 30000);
+        assert.ok(
+          acceptedStatus.includes('appliquée et enregistrée dans le cache')
+            || acceptedStatus.includes('acceptée restaurée depuis le cache'),
+          `augmentation acceptance must expose a durable success status, got: ${acceptedStatus}`
+        );
+        assert.equal(await hub.decompileAugmentReview().getAttribute('hidden'), '', 'review must close after acceptance');
+        assert.equal(suggestCalls, 2, 'function and global augmentation must each call the provider once');
+
+        target.close();
+        target = null;
+        await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+        await vscode.commands.executeCommand('pileOuFace.goToAddress');
+        target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+        hub = new HubPage(target);
+        await hub.openPanel('static');
+        await hub.openStaticTab('code', 'decompile');
+        await hub.decompileOutput().waitForText('global validated by E2E', 30000);
+        await hub.decompileAugmentStatus().waitForText('Version IA acceptée restaurée depuis le cache.', 30000);
+        assert.equal(suggestCalls, 2, 'restoring accepted caches must not call the provider again');
       });
     } catch (error) {
       const artifacts = await captureUiFailure(
@@ -864,7 +1174,7 @@ async function run() {
     }
   }));
 
-  suite.addTest(new Mocha.Test('installs and authorizes a plugin, then runs scripts through the real UI', async () => {
+  suite.addTest(new Mocha.Test('refuses then authorizes a plugin, and runs scripts through the real UI', async () => {
     const [fixture] = readFixtureSpecs();
     assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
     const pluginBundlePath = path.join(path.dirname(fixture.path), 'e2e-safe-plugin.pofplug');
@@ -872,6 +1182,7 @@ async function run() {
     let installed = false;
     let consented = false;
     let consentCalls = 0;
+    let refusalCalls = 0;
     let pluginInvocations = 0;
     let scriptAttempts = 0;
     const originalExecFile = childProcess.execFile;
@@ -921,6 +1232,12 @@ async function run() {
               process.nextTick(() => cb?.(null, JSON.stringify({ ok: true }), ''));
               return proc;
             }
+            if (args.includes('consent-revoke')) {
+              refusalCalls += 1;
+              consented = false;
+              process.nextTick(() => cb?.(null, JSON.stringify({ ok: true }), ''));
+              return proc;
+            }
             if (args.includes('invoke-feature')) pluginInvocations += 1;
             process.nextTick(() => cb?.(null, pluginRuntimeResult(), ''));
             return proc;
@@ -952,6 +1269,10 @@ async function run() {
             consentCalls += 1;
             consented = true;
           }
+          if (args.includes('consent-revoke')) {
+            refusalCalls += 1;
+            consented = false;
+          }
           if (args.includes('invoke-feature')) pluginInvocations += 1;
           const proc = new EventEmitter();
           proc.stdin = new PassThrough();
@@ -959,7 +1280,7 @@ async function run() {
           proc.stderr = new PassThrough();
           proc.kill = () => true;
           process.nextTick(() => {
-            proc.stdout.end(args.includes('consent-grant')
+            proc.stdout.end(args.includes('consent-grant') || args.includes('consent-revoke')
               ? JSON.stringify({ ok: true })
               : pluginRuntimeResult());
             proc.stderr.end();
@@ -985,6 +1306,12 @@ async function run() {
         assert.equal(consentCalls, 0, 'a newly installed plugin must not be authorized implicitly');
         assert.equal(pluginInvocations, 0, 'a plugin awaiting consent must not execute');
 
+        await hub.pluginConsentRefuseButton().click();
+        await hub.pluginConsentRefuseButton().waitForEnabled(30000);
+        assert.equal(refusalCalls, 1, 'refusal must be triggered once from the real UI');
+        assert.equal(consentCalls, 0, 'refusing must not authorize the plugin');
+        assert.equal(pluginInvocations, 0, 'refusing consent must not execute the plugin');
+
         await hub.pluginConsentButton().click();
         await hub.pluginStateList().waitForText('e2e.inspect', 30000);
         assert.equal(consentCalls, 1, 'authorization must be triggered once from the real UI');
@@ -995,6 +1322,7 @@ async function run() {
         await hub.scriptRunButton().click();
         await hub.scriptStatus().waitForText('✓', 30000);
         await hub.scriptOutput().waitForText('script fixture succeeded', 30000);
+        await captureDocumentationScreenshot(target, '06-scripting');
 
         await hub.scriptEditor().fill('raise RuntimeError("fixture")');
         await hub.scriptRunButton().click();
@@ -1013,6 +1341,129 @@ async function run() {
     } finally {
       target?.close();
       try { fs.rmSync(pluginBundlePath, { force: true }); } catch { /* Best-effort fixture cleanup. */ }
+    }
+  }));
+
+  if (externalPlugin) suite.addTest(new Mocha.Test('installs and exercises an external plugin contract through its real webview', async () => {
+    const userDataDir = process.env.POF_E2E_USER_DATA_DIR;
+    let target = null;
+    let pluginTarget = null;
+    try {
+      await withWindowMocks({
+        showOpenDialog: async () => [vscode.Uri.file(externalPlugin.bundlePath)],
+      }, async () => {
+        await vscode.commands.executeCommand('pileOuFace.goToAddress');
+        target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+        let hub = new HubPage(target);
+        await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+          type: 'hubUseBinaryPath',
+          binaryPath: externalPlugin.fixturePath,
+        });
+        await hub.binaryPath().waitForValue(path.basename(externalPlugin.fixturePath), 30000);
+
+        await hub.openPanel('options');
+        await hub.pluginInstallButton().click();
+        await hub.toastContainer().waitForText('Plugin installé', 30000);
+        await hub.pluginStateList().waitForText(externalPlugin.display_name, 30000);
+        const requiresConsent = await target.evaluate(
+          'Boolean(document.querySelector("#pluginStateList .plugin-consent-grant"))',
+        );
+        if (requiresConsent) await hub.pluginConsentButton().click();
+        await hub.pluginStateList().waitForText('active', 30000);
+
+        const reloadHub = async () => {
+          pluginTarget?.close();
+          pluginTarget = null;
+          target?.close();
+          target = null;
+          await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+          await vscode.commands.executeCommand('pileOuFace.goToAddress');
+          target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+          hub = new HubPage(target);
+          await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+            type: 'hubUseBinaryPath',
+            binaryPath: externalPlugin.fixturePath,
+          });
+          await hub.binaryPath().waitForValue(path.basename(externalPlugin.fixturePath), 30000);
+        };
+        await reloadHub();
+
+        for (const [index, step] of externalPlugin.steps.entries()) {
+          if (step.operation === 'reload_hub') {
+            await reloadHub();
+            continue;
+          }
+          if (step.operation === 'open_tab') {
+            pluginTarget?.close();
+            pluginTarget = null;
+            // Plugin tabs and their tab loaders are registered by scripts inside
+            // the sandboxed iframe. Wait for those scripts to finish before the
+            // tab change can dispatch its first load request.
+            const pluginDocument = await connectToHubWebview(
+              process.env.POF_E2E_CDP_ENDPOINT,
+              30000,
+              `[data-plugin-scope="${externalPlugin.plugin_slug}"]:not(iframe)`,
+              { requireHubSettingsReady: false, requireDocumentComplete: true },
+            );
+            pluginDocument.close();
+            await waitForPluginTabLoader(target, externalPlugin.plugin_slug, step.id);
+            await hub.openPanel('static');
+            await hub.openStaticTab(step.group, step.id);
+            const frameIsActive = await target.evaluate(`Boolean(document.querySelector(${JSON.stringify(`iframe.plugin-iframe.active[data-plugin-slug="${externalPlugin.plugin_slug}"]`)}))`);
+            assert.equal(frameIsActive, true, `external plugin step ${index} must activate its sandboxed frame`);
+            continue;
+          }
+          const isPluginStep = step.operation.startsWith('plugin_');
+          const stepTarget = isPluginStep
+            ? await connectToHubWebview(
+              process.env.POF_E2E_CDP_ENDPOINT,
+              30000,
+              `[data-plugin-scope="${externalPlugin.plugin_slug}"]:not(iframe)`,
+              { requireHubSettingsReady: false },
+            )
+            : target;
+          if (isPluginStep) {
+            pluginTarget?.close();
+            pluginTarget = stepTarget;
+          }
+          const assertion = documentAssertionExpression(step);
+          const { contextId } = await waitForPluginContextValue(
+            stepTarget,
+            assertion,
+            (value) => matchesDocumentAssertion(value, step),
+            Number(step.timeout_ms || 60000),
+            `${step.operation} step ${index} (${step.selector})`,
+          );
+          if (step.operation.endsWith('_click')) {
+            await stepTarget.evaluate(`document.querySelector(${JSON.stringify(step.selector)})?.click()`, contextId);
+          } else if (step.operation === 'plugin_select') {
+            await stepTarget.evaluate(`(() => {
+              const element = document.querySelector(${JSON.stringify(step.selector)});
+              if (!element) throw new Error('external plugin select is unavailable');
+              element.value = ${JSON.stringify(String(step.value))};
+              element.dispatchEvent(new Event('change', { bubbles: true }));
+            })()`, contextId);
+          }
+        }
+        const { events } = await waitForAuditEvents(userDataDir, (candidateEvents) => (
+          candidateEvents.some((event) => event.kind === 'webview_post_message'
+            && event.name === 'hubPluginResult'
+            && Array.isArray(event.keys)
+            && event.keys.includes('feature'))
+        ), 60000);
+        assert.ok(events.length > 0, 'external plugin invocation must be recorded by the runtime audit');
+      });
+    } catch (error) {
+      const artifacts = await captureUiFailure(
+        target,
+        process.env.POF_E2E_ARTIFACTS_DIR,
+        'external-plugin-contract',
+      );
+      error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
+      throw error;
+    } finally {
+      pluginTarget?.close();
+      target?.close();
     }
   }));
 
@@ -1037,25 +1488,30 @@ async function run() {
 
       await hub.openTypeManager();
       await hub.typeEditorSource().fill('struct E2EUiType { int x; int y; };');
-      await hub.typeEditorSaveButton().click();
-      await sleep(250);
-      if (!String(await hub.typeEditorStatus().textContent() || '').trim()) {
-        await hub.typeEditorSaveButton().clickDom();
-      }
+      await hub.typeEditorSaveButton().clickDom();
       await hub.typeEditorStatus().waitForText('sauvegardé(s)', 30000);
       await hub.typeEditorCatalog().waitForText('E2EUiType', 30000);
 
       await hub.typeEditorCloseButton().clickDom();
+      const sectionOptions = await hub.typedDataSection().waitForText('.', 30000);
+      const sectionName = String(sectionOptions || '').match(/\.[A-Za-z0-9_.-]+/)?.[0];
+      assert.ok(sectionName, 'typed data must expose at least one binary section');
+      await hub.typedDataSection().fill(sectionName);
+      await hub.typedDataStructSelect().waitForText('E2EUiType', 30000);
+      await hub.typedDataStructSelect().fill('E2EUiType');
+      await hub.typedDataStructOffset().fill('0x0');
+      await hub.applyTypedStruct('struct E2EUiType @ +0x0');
+      await hub.typedDataContent().waitForText('E2EUiType', 30000);
+      await hub.typedDataContent().waitForText('x', 30000);
+      await hub.typedDataContent().waitForText('y', 30000);
+      await captureDocumentationScreenshot(target, '07-typed-data');
+
       await hub.openTypeManager();
       await hub.typeEditorCatalog().waitForText('E2EUiType', 30000);
 
       const invalidSource = 'struct E2EInvalidType { int; };';
       await hub.typeEditorSource().fill(invalidSource);
-      await hub.typeEditorSaveButton().click();
-      await sleep(250);
-      if (!String(await hub.typeEditorStatus().textContent() || '').trim()) {
-        await hub.typeEditorSaveButton().clickDom();
-      }
+      await hub.typeEditorSaveButton().clickDom();
       await hub.typeEditorStatus().waitForText('Type manquant', 30000);
       await hub.typeEditor().waitFor({ state: 'visible' });
       assert.equal(await hub.typeEditorSource().inputValue(), invalidSource);
@@ -1087,8 +1543,105 @@ async function run() {
     }
   }));
 
-  suite.addTest(new Mocha.Test('restores the selected binary and visible analysis after reopening the hub', async () => {
+  suite.addTest(new Mocha.Test('shows a binary analysis backend error and succeeds after a UI retry', async () => {
     const [fixture] = readFixtureSpecs();
+    assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
+    const retryFixturePath = path.join(
+      process.env.POF_E2E_ARTIFACTS_DIR,
+      `analysis-retry-${path.basename(fixture.path)}`,
+    );
+    fs.copyFileSync(fixture.path, retryFixturePath);
+    let target = null;
+    let headerAttempts = 0;
+    let failHeadersUntilRetry = false;
+    let failedHeaderAttempts = 0;
+    const originalExecFile = childProcess.execFile;
+    try {
+      await withChildProcessMocks({
+        execFile: (file, args = [], options = {}, callback = undefined) => {
+          if (!isHeadersScript(args)) {
+            return originalExecFile.call(childProcess, file, args, options, callback);
+          }
+          const cb = typeof options === 'function' ? options : callback;
+          const proc = new EventEmitter();
+          headerAttempts += 1;
+          process.nextTick(() => {
+            if (failHeadersUntilRetry) {
+              failedHeaderAttempts += 1;
+              cb?.(new Error('Analyse backend temporairement indisponible'), '', 'backend unavailable');
+              return;
+            }
+            cb?.(null, JSON.stringify({
+              format: 'ELF',
+              machine: 'Advanced Micro Devices X86-64',
+              entry: String(fixture.entry || '0x400078'),
+              type: 'EXEC',
+              bits: 64,
+              endianness: 'Little endian',
+              stripped: 'No',
+              arch: 'i386:x86-64',
+              interp: '—',
+            }), '');
+          });
+          return proc;
+        },
+      }, async () => {
+        await vscode.commands.executeCommand('pileOuFace.goToAddress');
+        target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+        const hub = new HubPage(target);
+
+        await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+          type: 'hubUseBinaryPath',
+          binaryPath: retryFixturePath,
+        });
+        await hub.binaryPath().waitForValue(path.basename(retryFixturePath), 30000);
+        await hub.openPanel('static');
+        await hub.openStaticTab('data', 'info');
+
+        const attemptsBeforeForcedFailure = headerAttempts;
+        failHeadersUntilRetry = true;
+        await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+          type: 'hubLoadInfo',
+          binaryPath: retryFixturePath,
+          useCache: false,
+        });
+        await hub.binaryInfo().waitForText('Analyse backend temporairement indisponible', 30000);
+        await hub.binaryInfoRetryButton().waitFor({ state: 'visible', timeout: 30000 });
+        assert.ok(failedHeaderAttempts > 0, 'the backend mock must fail until the user requests a retry');
+        failHeadersUntilRetry = false;
+        await hub.binaryInfoRetryButton().clickDom();
+
+        const recoveredInfo = await hub.binaryInfo().waitForText('Entry point', 30000);
+        assert.match(recoveredInfo, /ELF/);
+        assert.ok(
+          headerAttempts >= attemptsBeforeForcedFailure + failedHeaderAttempts + 1,
+          'the explicit UI retry must execute another backend request',
+        );
+      });
+    } catch (error) {
+      const artifacts = await captureUiFailure(
+        target,
+        process.env.POF_E2E_ARTIFACTS_DIR,
+        'hub-analysis-error-retry',
+      );
+      error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
+      throw error;
+    } finally {
+      target?.close();
+      try {
+        fs.unlinkSync(retryFixturePath);
+      } catch {
+        // The temporary fixture may already be absent after a failed host teardown.
+      }
+    }
+  }));
+
+  suite.addTest(new Mocha.Test('restores the selected binary and visible analysis after reopening the hub', async () => {
+    const fixtures = readFixtureSpecs();
+    const docsMode = String(process.env.POF_E2E_UI_ONLY || '').toLowerCase();
+    const fixture = docsMode === 'docs-graphs'
+      ? fixtures.find((candidate) => candidate.kind === 'real-compiled' && candidate.opt === '-O0')
+      : fixtures[0];
     assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
     const binaryName = path.basename(fixture.path);
     let target = null;
@@ -1128,15 +1681,38 @@ async function run() {
         const visibleInfo = await hub.binaryInfo().waitForText('Entry point', 30000);
         assert.match(visibleInfo, /Format/);
         assert.match(visibleInfo, /Bits/);
+        await captureDocumentationScreenshot(target, '02-binary-information');
 
         await hub.openStaticTab('data', 'sections');
-        const visibleSections = await hub.binarySections().waitForText('.text', 30000);
+        const codeSectionName = fixture.kind === 'real-compiled' && process.platform === 'darwin'
+          ? '__text'
+          : '.text';
+        const visibleSections = await hub.binarySections().waitForText(codeSectionName, 30000);
         assert.match(visibleSections, /section\(s\)/);
+        await captureDocumentationScreenshot(target, '04-sections');
 
         await hub.openStaticTab('code', 'discovered');
-        const visibleFunctionCount = await hub.binaryFunctionsCount().waitForText('fonction', 30000);
-        assert.match(visibleFunctionCount, /\d+ fonction/);
+        const visibleFunctionCount = await hub.binaryFunctionsCount().waitForText('function', 30000);
+        assert.match(visibleFunctionCount, /\d+ function/);
         await hub.binaryFunctions().waitFor({ state: 'visible', timeout: 30000 });
+        await captureDocumentationScreenshot(target, '05-functions');
+
+        if (process.env.POF_E2E_DOC_SCREENSHOTS_DIR && docsMode === 'docs-graphs') {
+          await hub.openStaticTab('data', 'symbols');
+          await target.locator('#symbolsContent').waitForText('entry_e2e', 30000);
+          await captureDocumentationScreenshot(target, '09-symbols');
+
+          await hub.openStaticTab('data', 'strings');
+          await target.locator('#stringsContent .data-table').waitFor({ state: 'visible', timeout: 30000 });
+          await target.locator('#stringsContent').waitForText('chaîne(s)', 30000);
+          await captureDocumentationScreenshot(target, '10-strings');
+
+          await hub.openStaticTab('code', 'hex');
+          await target.locator('#hexContent .hex-table').waitFor({ state: 'visible', timeout: 30000 });
+          await target.locator('#hexRenderStatus').waitForText('lignes', 30000);
+          await captureDocumentationScreenshot(target, '11-hex-view');
+          await hub.openStaticTab('code', 'discovered');
+        }
 
         const functionExportPath = path.join(
           process.env.POF_E2E_ARTIFACTS_DIR,
@@ -1159,6 +1735,62 @@ async function run() {
         await hub.firstFunctionDisasmButton().click();
         await hub.expectActive(hub.subTab('disasm'), 'disassembly opened from the function list');
         await hub.goToAddressInput().waitForValue(String(fixture.entry || '0x400078'), 30000);
+        await captureDocumentationScreenshot(target, '03-disassembly');
+
+        if (process.env.POF_E2E_DOC_SCREENSHOTS_DIR && docsMode === 'docs-graphs') {
+          await vscode.commands.executeCommand('pileOuFace.goToAddress');
+          await hub.openStaticTab('code', 'cfg');
+          await target.locator('#cfgContent .cfg-table-view .data-table').waitFor({ state: 'attached', timeout: 30000 });
+          await target.locator('input[name="cfgView"][value="graph"]').clickDom();
+          await target.locator('#cfgContent .cfg-graph-view .cfg-svg').waitFor({ state: 'visible', timeout: 30000 });
+          await captureDocumentationScreenshot(target, '12-cfg');
+
+          await hub.openStaticTab('code', 'callgraph');
+          await target.locator('#callgraphContent .cfg-graph-view .cfg-svg').waitFor({ state: 'visible', timeout: 30000 });
+          await target.locator('#callgraphContent').waitForText('fonction(s)', 30000);
+          await captureDocumentationScreenshot(target, '13-call-graph');
+        }
+
+        if (process.env.POF_E2E_DOC_SCREENSHOTS_DIR && docsMode === 'docs-epic-final') {
+          await vscode.commands.executeCommand('pileOuFace.goToAddress');
+          await hub.openStaticTab('code', 'stack');
+          await target.locator('#stackFrameSize').waitForText('Frame:', 30000);
+          await captureDocumentationScreenshot(target, '14-stack-frame');
+
+          await hub.openStaticTab('data', 'imports');
+          await target.locator('#importsContent').waitForText('Score de suspicion', 30000);
+          await target.locator('#exportsContent').waitForText('Exports', 30000);
+          await captureDocumentationScreenshot(target, '15-imports-exports');
+
+          await hub.openStaticTab('data', 'recherche');
+          await target.locator('#searchBinaryPattern').fill('ELF');
+          await target.locator('#btnSearchBinary').clickDom();
+          await target.locator('#searchResultsContainer').waitFor({ state: 'visible', timeout: 30000 });
+          await target.locator('#searchResultsCount').waitForText('résultat', 30000);
+          await captureDocumentationScreenshot(target, '16-search');
+
+          await hub.openStaticTab('data', 'exceptions');
+          await target.locator('#exceptionsContent').waitForText('gestionnaire', 30000);
+          await captureDocumentationScreenshot(target, '18-exception-handlers');
+
+          const peFixture = fixtures.find((candidate) => candidate.kind === 'synthetic-pe');
+          assert.ok(peFixture?.path && fs.existsSync(peFixture.path), 'PE UI fixture binary must exist');
+          await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+            type: 'hubUseBinaryPath',
+            binaryPath: peFixture.path,
+          });
+          await hub.binaryPath().waitForValue(path.basename(peFixture.path), 30000);
+          await hub.openPanel('static');
+          await hub.openStaticTab('data', 'pe_resources');
+          await target.locator('#peResourcesContent').waitFor({ state: 'visible', timeout: 30000 });
+          await captureDocumentationScreenshot(target, '17-pe-resources');
+
+          await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+            type: 'hubUseBinaryPath',
+            binaryPath: fixture.path,
+          });
+          await hub.binaryPath().waitForValue(binaryName, 30000);
+        }
 
         target.close();
         target = null;
@@ -1288,8 +1920,8 @@ async function run() {
       await waitForNextDisasm(disasmResponses);
       await hub.entryPointButton().clickDom();
       await hub.annotationAddress().waitForAttribute('data-addr', '0x', 30000);
-      await hub.annotationName().fill('e2e_binary_a');
-      await hub.annotationComment().fill('Annotation isolée du premier binaire');
+      await hub.annotationComment().fillAndWait('Annotation isolée du premier binaire', 30000);
+      await hub.annotationName().fillAndWait('e2e_binary_a', 30000);
       await hub.annotationSubmitButton().clickDom();
       await hub.annotationsList().waitForText('e2e_binary_a', 30000);
 
@@ -1303,15 +1935,16 @@ async function run() {
       await hub.annotationsList().waitForText('Aucune annotation.', 30000);
       await hub.entryPointButton().clickDom();
       await hub.annotationAddress().waitForAttribute('data-addr', '0x', 30000);
-      await hub.annotationName().fill('e2e_binary_b');
-      await hub.annotationComment().fill('Annotation isolée du second binaire');
+      await hub.annotationComment().fillAndWait('Annotation isolée du second binaire', 30000);
+      await hub.annotationName().fillAndWait('e2e_binary_b', 30000);
       await hub.annotationSubmitButton().clickDom();
       await hub.annotationsList().waitForText('e2e_binary_b', 30000);
 
       disasmResponses = countDisasmResponses();
-      await hub.topBarBinaryButton().clickDom();
-      await hub.topBarBinaryMenu().waitFor({ state: 'visible', timeout: 30000 });
-      await hub.recentBinaryButton(binaryAName).clickDom();
+      const recentBinaryA = hub.recentBinaryButton(fixtureA.path);
+      await recentBinaryA.waitFor({ state: 'attached', timeout: 30000 });
+      await hub.openTopBarBinaryMenu(30000);
+      await recentBinaryA.clickDom();
       await hub.binaryPath().waitForValue(binaryAName, 30000);
       await waitForNextDisasm(disasmResponses);
       await hub.annotationsList().waitForText('e2e_binary_a', 30000);
@@ -1330,9 +1963,10 @@ async function run() {
       await hub.annotationsList().waitForText('e2e_binary_a', 30000);
 
       disasmResponses = countDisasmResponses();
-      await hub.topBarBinaryButton().clickDom();
-      await hub.topBarBinaryMenu().waitFor({ state: 'visible', timeout: 30000 });
-      await hub.recentBinaryButton(binaryBName).clickDom();
+      const recentBinaryB = hub.recentBinaryButton(fixtureB.path);
+      await recentBinaryB.waitFor({ state: 'attached', timeout: 30000 });
+      await hub.openTopBarBinaryMenu(30000);
+      await recentBinaryB.clickDom();
       await hub.binaryPath().waitForValue(binaryBName, 30000);
       await waitForNextDisasm(disasmResponses);
       await hub.annotationsList().waitForText('e2e_binary_b', 30000);
@@ -1353,13 +1987,108 @@ async function run() {
     }
   }));
 
-  suite.addTest(new Mocha.Test('navigates incoming and outgoing xrefs through the real UI', async () => {
+  suite.addTest(new Mocha.Test('uses the IDA keymap through real webview keyboard events without stealing input', async () => {
+    let target = null;
+    const keymapConfig = vscode.workspace.getConfiguration('pileOuFace');
+    try {
+      const [fixture] = readFixtureSpecs();
+      assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
+      await keymapConfig.update('keymap', 'ida', vscode.ConfigurationTarget.Global);
+      await vscode.commands.executeCommand('pileOuFace.goToAddress');
+      target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
+      const hub = new HubPage(target);
+      await vscode.commands.executeCommand('pileOuFace.e2eDispatchHubMessage', {
+        type: 'hubUseBinaryPath',
+        binaryPath: fixture.path,
+      });
+      await hub.binaryPath().waitForValue(path.basename(fixture.path), 30000);
+      await hub.openPanel('static');
+      await hub.openStaticTab('code', 'disasm');
+      await hub.entryPointButton().clickDom();
+      await hub.annotationAddress().waitForAttribute('data-addr', '0x', 30000);
+
+      const waitForFocus = async (id, timeoutMs = 5000) => {
+        const startedAt = Date.now();
+        while (Date.now() - startedAt < timeoutMs) {
+          if (await target.evaluate(`document.activeElement?.id === ${JSON.stringify(id)}`)) return;
+          await sleep(50);
+        }
+        throw new Error(`Timed out waiting for keyboard focus on #${id}`);
+      };
+
+      const dispatchWebviewKey = (key, selector = '') => target.evaluate(`(() => {
+        const event = new KeyboardEvent('keydown', {
+          key: ${JSON.stringify(key)},
+          bubbles: true,
+          cancelable: true,
+        });
+        const dispatchTarget = ${JSON.stringify(selector)}
+          ? document.querySelector(${JSON.stringify(selector)})
+          : document.body;
+        if (!dispatchTarget) throw new Error('Keyboard dispatch target not found');
+        return dispatchTarget.dispatchEvent(event);
+      })()`);
+
+      const keymapReadyAt = Date.now();
+      while (!await target.evaluate('window.POFIdaKeymap?.isEnabled?.() === true')) {
+        if (Date.now() - keymapReadyAt >= 10000) {
+          throw new Error('Timed out waiting for the IDA keymap configuration in the webview');
+        }
+        await sleep(50);
+      }
+
+      await target.evaluate('document.activeElement?.blur()');
+      assert.equal(await dispatchWebviewKey('n'), false, 'IDA rename shortcut must consume N');
+      await waitForFocus('annotationName');
+      await hub.annotationName().fill('ida_guard');
+      assert.equal(await dispatchWebviewKey('x', '#annotationName'), true, 'IDA shortcuts must not consume keys inside an input');
+      await hub.annotationName().waitForValue('ida_guard', 5000);
+
+      await target.evaluate('document.activeElement?.blur()');
+      assert.equal(await dispatchWebviewKey('g'), false, 'IDA goto shortcut must consume G');
+      await waitForFocus('goToAddrInput');
+      await target.evaluate('document.activeElement?.blur()');
+      assert.equal(
+        await target.evaluate("window.POFIdaKeymap?.runAction?.('x') === true"),
+        true,
+        'IDA xrefs action must route through the real hub navigation API',
+      );
+      await hub.xrefsResult().waitForText('Analyse des références croisées', 5000);
+
+      await hub.openStaticTab('code', 'decompile');
+      await target.evaluate('document.activeElement?.blur()');
+      assert.equal(await dispatchWebviewKey(';'), false, 'IDA comment shortcut must consume semicolon');
+      await waitForFocus('annotationComment');
+      assert.match(String(await hub.subTab('disasm').getAttribute('class') || ''), /\bactive\b/);
+
+      await hub.openPanel('dashboard');
+      await target.evaluate('document.activeElement?.blur()');
+      assert.equal(await dispatchWebviewKey('g'), true, 'IDA shortcuts must stay inert outside analysis views');
+      assert.notEqual(await target.evaluate('document.activeElement?.id || ""'), 'goToAddrInput');
+    } catch (error) {
+      const artifacts = await captureUiFailure(
+        target,
+        process.env.POF_E2E_ARTIFACTS_DIR,
+        'hub-ida-keymap',
+      );
+      error.message = `${error.message}${artifacts.length ? `\nUI artifacts: ${artifacts.join(', ')}` : ''}`;
+      throw error;
+    } finally {
+      await keymapConfig.update('keymap', 'default', vscode.ConfigurationTarget.Global);
+      target?.close();
+    }
+  }));
+
+  suite.addTest(new Mocha.Test('shows loading, empty, error and success xrefs states through the real UI', async () => {
     const [fixture] = readFixtureSpecs();
     assert.ok(fixture?.path && fs.existsSync(fixture.path), 'UI fixture binary must exist');
     const targetAddr = String(fixture.entry || '0x400078');
     const sourceAddr = '0x400080';
+    const emptyAddr = '0xdead0001';
+    const errorAddr = '0xdead0002';
     let target = null;
     const xrefsModes = [];
+    let pendingEmptyXrefs = null;
     const originalExecFile = childProcess.execFile;
     try {
       await withChildProcessMocks({
@@ -1370,7 +2099,16 @@ async function run() {
           const cb = typeof options === 'function' ? options : callback;
           const proc = new EventEmitter();
           const mode = String(args[args.indexOf('--mode') + 1] || 'to');
+          const addr = String(args[args.indexOf('--addr') + 1] || '').toLowerCase();
           xrefsModes.push(mode);
+          if (addr === emptyAddr) {
+            pendingEmptyXrefs = () => cb?.(null, JSON.stringify({ refs: [], targets: [] }), '');
+            return proc;
+          }
+          if (addr === errorAddr) {
+            process.nextTick(() => cb?.(new Error('Xrefs temporairement indisponibles'), '', 'xrefs unavailable'));
+            return proc;
+          }
           const payload = mode === 'from'
             ? { refs: [], targets: [targetAddr] }
             : {
@@ -1398,6 +2136,22 @@ async function run() {
         await hub.openPanel('static');
         await hub.openStaticTab('code', 'disasm');
 
+        await hub.goToAddressInput().fill(emptyAddr);
+        await hub.xrefsMode().fill('from');
+        await hub.xrefsButton().clickDom();
+        await hub.xrefsResult().waitForText('Analyse des références croisées', 30000);
+        const pendingStartedAt = Date.now();
+        while (!pendingEmptyXrefs && Date.now() - pendingStartedAt < 5000) {
+          await sleep(10);
+        }
+        assert.ok(pendingEmptyXrefs, 'the loading state must be observed before resolving the backend request');
+        pendingEmptyXrefs();
+        await hub.xrefsResult().waitForText('ne référence aucune adresse', 30000);
+
+        await hub.goToAddressInput().fill(errorAddr);
+        await hub.xrefsButton().clickDom();
+        await hub.xrefsResult().waitForText('Xrefs temporairement indisponibles', 30000);
+
         await hub.goToAddressInput().fill(targetAddr);
         await hub.xrefsMode().fill('to');
         await hub.xrefsButton().clickDom();
@@ -1414,7 +2168,7 @@ async function run() {
         await hub.xrefsResult().waitForText(`Références depuis ${sourceAddr}`, 30000);
         await hub.xrefsResult().waitForText(targetAddr, 30000);
         assert.ok(xrefsModes.includes('to'), 'an incoming xrefs lookup must execute');
-        assert.ok(xrefsModes.includes('from'), 'an outgoing xrefs lookup must execute');
+        assert.ok(xrefsModes.includes('from'), 'empty, error and successful outgoing xrefs lookups must execute');
       });
     } catch (error) {
       const artifacts = await captureUiFailure(
@@ -1662,16 +2416,16 @@ async function run() {
         const entries = Array.isArray(items) ? items : [];
         if (title.includes('mode')) return entries.find((item) => item.value === 'local') || entries[0];
         if (title.includes('provider')) return entries.find((item) => item.value === 'local') || entries[0];
-        if (title.includes('finaliser')) return entries.find((item) => item.value === 'save') || entries[0];
+        if (title.includes('finish')) return entries.find((item) => item.value === 'save') || entries[0];
         return entries[0];
       },
       showInputBox: async (options = {}) => {
         const prompt = `${options.title || ''} ${options.prompt || ''}`.toLowerCase();
-        if (prompt.includes('binaire')) return fixture.path;
-        if (prompt.includes('identifiant')) return 'e2e-tool';
-        if (prompt.includes('nom affich')) return 'E2E Tool';
-        if (prompt.includes('commande locale')) return `"${fakeDecompilerPython}" "${fakeDecompilerPath}" --binary {binary} --addr {addr}`;
-        if (prompt.includes('binaire complet')) return '';
+        if (prompt.includes('local command')) return `"${fakeDecompilerPython}" "${fakeDecompilerPath}" --binary {binary} --addr {addr}`;
+        if (prompt.includes('whole binary')) return '';
+        if (prompt.includes('identifier')) return 'e2e-tool';
+        if (prompt.includes('display name')) return 'E2E Tool';
+        if (prompt.includes('binary')) return fixture.path;
         return '0x40';
       },
       showSaveDialog: async () => vscode.Uri.file(exportPath),
@@ -1682,7 +2436,7 @@ async function run() {
         return items[0];
       },
       showWarningMessage: async (message, ...items) => {
-        if (String(message || '').includes('Supprimer')) return items.find((item) => item === 'Supprimer') || 'Supprimer';
+        if (String(message || '').includes('Delete')) return items.find((item) => item === 'Delete') || 'Delete';
         return items.find((item) => item === 'OK') || undefined;
       },
       withProgress: async (_options, task) => task(
@@ -1890,7 +2644,10 @@ async function run() {
       { type: 'hubOllamaPrompt', requestId: 'e2e-ollama-prompt', model: 'e2e-ollama-model', prompt: 'hello' },
       { type: 'hubOpenPluginDirectory', scope: 'workspace' },
       { type: 'hubResetSettings' },
-      { type: 'hubSaveSettings', settings: { interfaceMode: 'advanced', lang: 'fr' } },
+      {
+        type: 'hubSaveSettings',
+        settings: { interfaceMode: 'advanced', lang: 'fr', authServerUrl: 'http://127.0.0.1:8791' },
+      },
       { type: 'pof.auth.login', email: 'e2e@example.invalid', password: 'e2e-password' },
       { type: 'pof.auth.logout' },
       { type: 'requestDynamicTraceHistory' },
@@ -1944,6 +2701,18 @@ async function run() {
         await withGlobalMocks({
           fetch: async (url, options = {}) => {
             const value = String(url || '');
+            if (value.includes('/.well-known/pile-ou-face-auth/v1')) {
+              const origin = new URL(value).origin;
+              return jsonResponse({
+                protocol_version: '1',
+                deployment_id: 'e2e-runtime-audit',
+                issuer: origin,
+                audience: 'pile-ou-face-host',
+                lease_audience: 'pof-plugin-runtime',
+                jwks_uri: `${origin}/auth/jwks`,
+                capabilities: ['auth', 'online-standard-licensing'],
+              });
+            }
             if (value.includes('/auth/login')) {
               return jsonResponse({
                 access_token: 'e2e-access-token',
@@ -2062,12 +2831,13 @@ async function run() {
                 auditDelta: summarizeAuditDelta(auditEventsBefore, readCurrentAuditEvents(userDataDir)),
               });
             } catch (error) {
+              const detail = error && error.message ? error.message : String(error);
               stopPerf({
                 ok: false,
-                error: String(error && error.message ? error.message : error),
+                error: detail,
                 auditDelta: summarizeAuditDelta(auditEventsBefore, readCurrentAuditEvents(userDataDir)),
               });
-              throw error;
+              throw new Error(`Backend hub handler ${message.type} failed: ${detail}`, { cause: error });
             }
           }
         }));
@@ -2075,8 +2845,29 @@ async function run() {
     });
   }));
 
-  if (['1', 'true', 'yes'].includes(String(process.env.POF_E2E_UI_ONLY || '').toLowerCase())) {
-    mocha.grep(/real webview controls|real confirmation UI|restores it from cache through the real UI|restores the selected binary and visible analysis|incoming and outgoing xrefs through the real UI/);
+  const uiOnly = String(process.env.POF_E2E_UI_ONLY || '').toLowerCase();
+  if (uiOnly === 'ida') {
+    mocha.grep(/IDA keymap through real webview keyboard events/);
+  } else if (uiOnly === 'annotations-isolation') {
+    mocha.grep(/isolates annotations when switching between recent binaries/);
+  } else if (uiOnly === 'docs-features') {
+    mocha.grep(/refuses then authorizes a plugin|drives the hub through real webview controls/);
+  } else if (uiOnly === 'docs-analysis') {
+    mocha.grep(/accepts function and global decompile augmentation|restores the selected binary and visible analysis/);
+  } else if (uiOnly === 'docs-decompiler') {
+    mocha.grep(/accepts function and global decompile augmentation/);
+  } else if (uiOnly === 'docs-symbols') {
+    mocha.grep(/restores the selected binary and visible analysis/);
+  } else if (uiOnly === 'docs-strings-hex') {
+    mocha.grep(/restores the selected binary and visible analysis/);
+  } else if (uiOnly === 'docs-graphs') {
+    mocha.grep(/restores the selected binary and visible analysis/);
+  } else if (uiOnly === 'docs-epic-final') {
+    mocha.grep(/restores the selected binary and visible analysis/);
+  } else if (uiOnly === 'external-plugin') {
+    mocha.grep(/external plugin contract/);
+  } else if (['1', 'true', 'yes'].includes(uiOnly)) {
+    mocha.grep(/real webview controls|real confirmation UI|restores both caches through the real UI|binary analysis backend error|restores the selected binary and visible analysis|loading, empty, error and success xrefs states through the real UI|IDA keymap through real webview keyboard events/);
   }
 
   return new Promise((resolve, reject) => {

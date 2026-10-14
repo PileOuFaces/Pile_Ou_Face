@@ -1,0 +1,55 @@
+name: Fonctionnalité
+description: Proposer une fonctionnalité avec des critères d'acceptation observables depuis l'interface.
+title: "[Feature] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: Merci de décrire le besoin du point de vue utilisateur et les résultats visibles attendus.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problème utilisateur
+      description: Quel problème concret cette fonctionnalité doit-elle résoudre ?
+    validations:
+      required: true
+
+  - type: textarea
+    id: journey
+    attributes:
+      label: Parcours utilisateur
+      description: Décrire les actions réalisées depuis l'interface, du point de départ au résultat.
+      placeholder: "Étant donné…, quand l'utilisateur…, alors…"
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Critères d'acceptation UI observables
+      description: Lister des résultats vérifiables visuellement, y compris les états chargement, vide, succès, erreur ou récupération pertinents.
+      placeholder: |
+        - [ ] Le contrôle … est visible et activable lorsque …
+        - [ ] Après l'action …, l'interface affiche …
+        - [ ] En cas d'erreur …, l'utilisateur peut …
+    validations:
+      required: true
+
+  - type: dropdown
+    id: e2e-impact
+    attributes:
+      label: Décision de couverture E2E
+      description: Comment ce parcours devra-t-il être protégé contre les régressions ?
+      options:
+        - Ajouter un nouveau scénario E2E UI
+        - Mettre à jour un scénario E2E UI existant
+        - Documenter une couverture de niveau inférieur et l'exception E2E
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Contexte complémentaire
+      description: Maquettes, contraintes, dépendances ou liens utiles.

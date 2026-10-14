@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
-
 const { validateTelemetryEvent } = require('./telemetrySchema');
 
 const TELEMETRY_SCHEMA_VERSION = 1;

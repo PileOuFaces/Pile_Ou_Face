@@ -16,10 +16,14 @@ if str(ROOT) not in sys.path:
 
 from backends.shared.exceptions import BinaryNotFoundError
 from backends.static.disasm.disasm import (
+    _DISASM_WINDOW_BYTES,
     _augment_context_with_discovered_functions,
     _iter_windowed_instructions,
+    _mmap_file_readonly,
+    _normalize_capstone_operands,
     _write_disasm_outputs,
     disassemble,
+    disassemble_raw_blob,
     disassemble_with_capstone,
 )
 from backends.static.disasm.mapping_db import query_window
@@ -43,6 +47,19 @@ def _db_lines(out_map):
 
 class TestDisassembleWithCapstone(unittest.TestCase):
     """Tests de disassemble_with_capstone."""
+
+    @unittest.skipUnless(_LIEF_AVAILABLE, "lief/capstone not installed")
+    def test_riscv_negative_hex_target_is_normalized_to_virtual_address(self):
+        instruction = mock.Mock(
+            address=0x104D8,
+            mnemonic="jal",
+            op_str="-0x18",
+        )
+
+        self.assertEqual(
+            _normalize_capstone_operands(_capstone.CS_ARCH_RISCV, instruction),
+            "0x104c0",
+        )
 
     def test_nonexistent_binary_raises(self):
         """Binaire inexistant lève BinaryNotFoundError."""
@@ -300,6 +317,44 @@ class TestDisassemble(unittest.TestCase):
             self.assertEqual(mapping["arch"]["key"], "x86_64")
             self.assertEqual(mapping["arch"]["support"]["cfg"]["level"], "full")
 
+    def test_mmap_file_readonly_matches_read_bytes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "blob.bin"
+            content = bytes.fromhex("554889e5c3") * 1000
+            path.write_bytes(content)
+            mapped = _mmap_file_readonly(str(path))
+            self.assertEqual(bytes(mapped), content)
+            self.assertEqual(len(mapped), len(content))
+            self.assertEqual(mapped[10:20], content[10:20])
+
+    def test_mmap_file_readonly_empty_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "empty.bin"
+            path.write_bytes(b"")
+            self.assertEqual(_mmap_file_readonly(str(path)), b"")
+
+    def test_raw_blob_empty_file_returns_no_instructions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "empty.bin"
+            path.write_bytes(b"")
+            lines = disassemble_raw_blob(str(path), raw_arch="i386:x86-64")
+            self.assertEqual(lines, [])
+
+    def test_raw_blob_mmap_backed_source_spans_multiple_windows(self):
+        # `mov eax, 1` (5 bytes), repeated past several window boundaries, to
+        # confirm the mmap-backed buffer decodes identically to an in-memory
+        # bytes buffer across _iter_windowed_instructions' soft-limit logic.
+        instr = bytes.fromhex("b801000000")
+        count = (_DISASM_WINDOW_BYTES // len(instr)) * 2 + 3
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "big.bin"
+            path.write_bytes(instr * count)
+            lines = disassemble_raw_blob(str(path), raw_arch="i386:x86-64")
+            self.assertEqual(len(lines), count)
+            self.assertTrue(all(line["mnemonic"] == "mov" for line in lines))
+            addrs = [int(line["addr"], 16) for line in lines]
+            self.assertTrue(all(b - a == len(instr) for a, b in zip(addrs, addrs[1:])))
+
 
 class TestDisasmEnrichmentFormatting(unittest.TestCase):
     def test_write_outputs_include_function_banner_comment_and_stack_hints(self):
@@ -409,6 +464,78 @@ class TestDisasmEnrichmentFormatting(unittest.TestCase):
             self.assertIn("arg arg_rdi @ rdi", asm)
             self.assertEqual(saved_lines[0]["stack_hints"][0]["name"], "arg_rdi")
             self.assertEqual(saved_lines[0]["stack_hints"][0]["kind"], "arg")
+
+    def test_write_outputs_include_typed_var_binding_hints(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out_asm = Path(tmp) / "out.asm"
+            out_map = Path(tmp) / "out.json"
+            lines = [
+                {
+                    "addr": "0x401000",
+                    "text": "89 c7                mov      edi, eax",
+                    "bytes": "89 c7",
+                    "mnemonic": "mov",
+                    "operands": "edi, eax",
+                },
+                {
+                    "addr": "0x401002",
+                    "text": "48 89 44 24 18       mov      qword ptr [rsp + 0x18], rax",
+                    "bytes": "48 89 44 24 18",
+                    "mnemonic": "mov",
+                    "operands": "qword ptr [rsp + 0x18], rax",
+                },
+            ]
+            mapping = _write_disasm_outputs(
+                lines,
+                "/tmp/fake.bin",
+                str(out_asm),
+                str(out_map),
+                function_ranges=[
+                    (
+                        0x401000,
+                        0x401010,
+                        {"addr": "0x401000", "name": "entry_main", "size": 0x10},
+                    )
+                ],
+                stack_frames={
+                    "0x401000": {
+                        "args": [
+                            {"name": "arg_rdi", "location": "rdi", "source": "abi"}
+                        ],
+                        "vars": [
+                            {
+                                "name": "saved_tmp",
+                                "location": "[rsp+0x18]",
+                                "source": "auto",
+                                "offset": 0x18,
+                            }
+                        ],
+                    }
+                },
+                typed_var_binding_map={
+                    "0x401000": {
+                        "param:1": {
+                            "type_name": "Widget",
+                            "type_kind": "struct",
+                            "pointer_level": 1,
+                        },
+                        "local:24": {
+                            "type_name": "Mode",
+                            "type_kind": "enum",
+                            "pointer_level": 0,
+                        },
+                    }
+                },
+            )
+            del mapping
+
+            asm = out_asm.read_text(encoding="utf-8")
+            saved_lines = _db_lines(out_map)
+
+            self.assertIn("arg arg_rdi @ rdi (Widget *)", asm)
+            self.assertIn("var saved_tmp @ [rsp+0x18] (Mode)", asm)
+            self.assertEqual(saved_lines[0]["stack_hints"][0]["type"], "Widget *")
+            self.assertEqual(saved_lines[1]["stack_hints"][0]["type"], "Mode")
 
     def test_generic_macho_header_symbol_falls_back_to_discovered_functions(self):
         lines = [
@@ -638,7 +765,18 @@ class TestWindowedDisassembly(unittest.TestCase):
         # Fenêtre volontairement minuscule (plus petite qu'un pattern complet)
         # pour forcer de nombreuses frontières mid-instruction.
         windowed = [
-            (instr.address, instr.mnemonic, instr.op_str, bytes(instr.bytes))
+            (
+                instr.address,
+                instr.mnemonic,
+                instr.op_str,
+                bytes(
+                    code_bytes[
+                        instr.address - base_addr : instr.address
+                        - base_addr
+                        + instr.size
+                    ]
+                ),
+            )
             for instr in _iter_windowed_instructions(
                 md_windowed, code_bytes, base_addr, window_bytes=7, overlap_bytes=32
             )
@@ -659,7 +797,18 @@ class TestWindowedDisassembly(unittest.TestCase):
 
         md_windowed, _ = self._make_disassembler()
         windowed = [
-            (instr.address, instr.mnemonic, instr.op_str, bytes(instr.bytes))
+            (
+                instr.address,
+                instr.mnemonic,
+                instr.op_str,
+                bytes(
+                    code_bytes[
+                        instr.address - base_addr : instr.address
+                        - base_addr
+                        + instr.size
+                    ]
+                ),
+            )
             for instr in _iter_windowed_instructions(
                 md_windowed, code_bytes, base_addr, window_bytes=3, overlap_bytes=16
             )
@@ -680,7 +829,18 @@ class TestWindowedDisassembly(unittest.TestCase):
 
         md_windowed, _ = self._make_disassembler()
         windowed = [
-            (instr.address, instr.mnemonic, instr.op_str, bytes(instr.bytes))
+            (
+                instr.address,
+                instr.mnemonic,
+                instr.op_str,
+                bytes(
+                    code_bytes[
+                        instr.address - base_addr : instr.address
+                        - base_addr
+                        + instr.size
+                    ]
+                ),
+            )
             for instr in _iter_windowed_instructions(
                 md_windowed, code_bytes, base_addr, window_bytes=6, overlap_bytes=32
             )
@@ -865,6 +1025,7 @@ class TestDisassembleStreamingPath(unittest.TestCase):
                 ],
                 "stack_frames": {},
                 "typed_struct_index": None,
+                "typed_var_binding_map": {},
             }
 
             out_asm_stream = tmp_path / "stream.asm"

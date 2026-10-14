@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
-
 const { durationBucket } = require('../shared/telemetry/telemetry');
 const { EVENT_NAMES, ENUMS } = require('../shared/telemetry/telemetryEvents');
 
 const FAILURE_CATEGORIES = new Set(ENUMS.errorCategory);
 
 function createRunTraceTelemetry({
-  telemetry,
+  telemetry = null,
   arch = 'unknown',
   payloadMode = 'builder',
   target = 'auto',

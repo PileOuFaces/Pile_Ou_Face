@@ -1,0 +1,6 @@
+name: Host CodeQL configuration
+
+paths-ignore:
+  # These are intentionally vulnerable positive fixtures for repository-owned Semgrep rules.
+  - security/semgrep/host-security.js
+  - security/semgrep/host-security.py

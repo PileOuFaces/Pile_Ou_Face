@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 const { expect } = require('chai');
 const sinon = require('sinon');
 const { createLoaders } = require('../static/hub/loaders');
@@ -322,6 +321,28 @@ describe('loaders — hubLoadStrings', () => {
 
     const args = runPythonJsonViaFile.firstCall.args[1];
     expect(args).to.not.include('--section');
+  });
+
+  it('bounds cached string extraction to 5000 results', async () => {
+    const { panel } = makePanel();
+    const { logChannel } = makeLogChannel();
+    const runPythonJsonViaFile = sinon.stub().resolves([]);
+    const readCache = sinon.stub().returns(null);
+
+    const loaders = createLoaders({
+      panel, analysisCtx: makeAnalysisCtx(), root: '/root', storageDir: '/storage',
+      runPythonJson: sinon.stub(), runPythonJsonViaFile,
+      logChannel, fs: {}, path: require('path'),
+      readCache, writeCache: sinon.stub(),
+      getStringsScript: () => '/scripts/strings.py', getSectionsScript: () => '', getXrefsScript: () => '',
+    });
+
+    await loaders.hubLoadStrings({ binaryPath: '/repo/demo.bin', minLen: '4', encoding: 'utf-8' });
+
+    const args = runPythonJsonViaFile.firstCall.args[1];
+    const maxResultsIdx = args.indexOf('--max-results');
+    expect(args[maxResultsIdx + 1]).to.equal('5000');
+    expect(readCache.firstCall.args[3]).to.include({ maxResults: 5000 });
   });
 
   it('always extracts with BASE_MIN_LEN=4 regardless of requested minLen', async () => {
@@ -738,7 +759,7 @@ describe('loaders — hubLoadXrefs', () => {
     expect(posted[0].mode).to.equal('to');
   });
 
-  it('posts empty xrefs and logs when compute throws', async () => {
+  it('posts a visible xrefs error and logs when compute throws', async () => {
     const { panel, posted } = makePanel();
     const { logChannel, lines } = makeLogChannel();
     const runPythonJson = sinon.stub().rejects(new Error('xrefs error'));
@@ -755,6 +776,7 @@ describe('loaders — hubLoadXrefs', () => {
     await loaders.hubLoadXrefs({ addr: '0x401000', binaryPath: '/repo/demo.bin', mode: 'from' });
 
     expect(posted[0].refs).to.deep.equal([]);
+    expect(posted[0].error).to.equal('xrefs error');
     expect(lines.some((l) => l.includes('[Xrefs]'))).to.equal(true);
   });
 });

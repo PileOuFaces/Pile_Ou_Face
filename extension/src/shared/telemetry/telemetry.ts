@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
-
 const { sanitizeTelemetryEvent } = require('./telemetrySanitizer');
 const { createTelemetryTransport } = require('./telemetryTransport');
 
@@ -33,7 +31,7 @@ function createLogger(vscode, activeTransport) {
   }
 }
 
-function createTelemetryService({ vscode, context = null, endpoint = '', transport = null } = {}) {
+function createTelemetryService({ vscode = null, context = null, endpoint = '', transport = null } = {}) {
   const activeTransport = transport || createTelemetryTransport({ endpoint });
   const subscriptions = [];
   let disposed = false;

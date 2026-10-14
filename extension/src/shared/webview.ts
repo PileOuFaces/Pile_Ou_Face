@@ -30,12 +30,32 @@ function _derivePluginSlug(pluginDir, manifest) {
 function _resolvePluginAssetPath(pluginDir, manifest, relativeAssetPath) {
   const relPath = String(relativeAssetPath || '').trim();
   if (!relPath) return '';
-  const directPath = path.join(pluginDir, relPath);
-  if (fs.existsSync(directPath)) return directPath;
+
+  const resolveContainedPath = (...segments) => {
+    try {
+      const realPluginDir = fs.realpathSync(pluginDir);
+      const candidatePath = path.resolve(realPluginDir, ...segments);
+      const relativePath = path.relative(realPluginDir, candidatePath);
+      if (relativePath === '..' || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)) {
+        return '';
+      }
+      if (!fs.existsSync(candidatePath)) return '';
+
+      const realCandidatePath = fs.realpathSync(candidatePath);
+      const realRelativePath = path.relative(realPluginDir, realCandidatePath);
+      if (realRelativePath === '..' || realRelativePath.startsWith(`..${path.sep}`) || path.isAbsolute(realRelativePath)) {
+        return '';
+      }
+      return realCandidatePath;
+    } catch (_) {
+      return '';
+    }
+  };
+
+  const directPath = resolveContainedPath(relPath);
+  if (directPath) return directPath;
   const slug = _derivePluginSlug(pluginDir, manifest);
-  const extrasPath = path.join(pluginDir, 'metadata', 'extras', 'plugins', slug, relPath);
-  if (fs.existsSync(extrasPath)) return extrasPath;
-  return '';
+  return resolveContainedPath('metadata', 'extras', 'plugins', slug, relPath);
 }
 
 function _escapeHtmlAttr(value) {
@@ -229,7 +249,7 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
     });
   }
   window.PoF = {
-    version: null,
+    version: '1.1.0',
     // Synchronous: mirrors the __binaryPath broadcast already cached locally,
     // no round-trip needed (and plugin code written pre-iframe expects a string, not a Promise).
     getBinaryPath:       function () { return window._pofCurrentBinaryPath || ''; },
@@ -287,8 +307,8 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
   window.PREMIUM_TAB_FAMILY = window.PREMIUM_TAB_FAMILY || {};
   window.GROUP_LABELS = window.GROUP_LABELS || {};
   // Mirror the host's registerPluginTabs(): populate label/family lookups for
-  // every tab across all plugins, so cross-plugin display code (e.g. cross-analysis
-  // showing "source: audit") doesn't need direct access to the host's own state.
+  // every tab across all plugins, so cross-plugin display code can use manifest
+  // metadata without direct access to the host's own state.
   window.addEventListener('message', function (e) {
     if (!e.data || !e.data.__pof_host) return;
     var msg = e.data.payload;
@@ -312,10 +332,9 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
   window.functionListCache = window.functionListCache || [];
   window.functionsUiState = window.functionsUiState || { selectedAddr: '' };
 
-  // ── Code-navigation helpers (mirrors vulnerability-audit-pro/webview/tab.ts) ──
-  // These plugins used to share one global scope with vulnerability-audit-pro
-  // before iframe isolation; provided here so every plugin can resolve addresses
-  // without duplicating this logic. Address caches are always empty in an
+  // ── Generic code-navigation helpers exposed by the host bridge ──
+  // Provided here so every plugin can resolve addresses without duplicating
+  // host integration logic. Address caches are always empty in an
   // isolated iframe, so these gracefully return '' / false instead of crashing.
   function _isExecutableSection(section) {
     if (!section || typeof section !== 'object') return false;
@@ -1002,7 +1021,7 @@ function loadPluginWebviews(options: { storageDir?: string; globalDir?: string; 
 
   const framesHtml = frames.map((f) => {
     const escapedSrcdoc = _escapeHtmlAttr(f.srcdoc);
-    return `<iframe id="${f.frameId}" data-plugin-id="${_escapeHtmlAttr(f.pluginId)}" data-plugin-slug="${_escapeHtmlAttr(f.pluginSlug)}" class="plugin-iframe static-panel" sandbox="allow-scripts allow-same-origin" srcdoc="${escapedSrcdoc}"></iframe>`;
+    return `<iframe id="${f.frameId}" data-plugin-id="${_escapeHtmlAttr(f.pluginId)}" data-plugin-slug="${_escapeHtmlAttr(f.pluginSlug)}" class="plugin-iframe static-panel" sandbox="allow-scripts" srcdoc="${escapedSrcdoc}"></iframe>`;
   }).join('\n');
 
   return { groupStyles: groupStyles.trim(), frames, framesHtml: framesHtml.trim() };
@@ -1053,6 +1072,7 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', global
 
   const scriptUri              = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'hub.js'));
   // shared modules
+  const sharedI18nUri         = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'i18n.js'));
   const sharedRawTabCapabilitiesUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'rawTabCapabilities.js'));
   const sharedStateUri         = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'state.js'));
   const sharedBinaryUri        = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'binary.js'));
@@ -1069,6 +1089,7 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', global
   const sharedMessagesUri      = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'messages.js'));
   const sharedSettingsUri      = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'settings.js'));
   const sharedAnnotationsUri   = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'annotations.js'));
+  const sharedIdaKeymapUri     = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'idaKeymap.js'));
   const sharedAccountUri       = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'account.js'));
   // static modules
   const staticPayloadUri       = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'static', 'payload.js'));
@@ -1139,6 +1160,8 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', global
 
   return html
     .replace(/{{scriptUri}}/g, scriptUri.toString())
+    .replace(/{{sharedI18nUri}}/g, sharedI18nUri.toString())
+    .replace(/{{locale}}/g, String(vscode.env?.language || '').toLowerCase().startsWith('fr') ? 'fr' : 'en')
     // shared modules
     .replace(/{{sharedRawTabCapabilitiesUri}}/g, sharedRawTabCapabilitiesUri.toString())
     .replace(/{{sharedStateUri}}/g, sharedStateUri.toString())
@@ -1156,6 +1179,7 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', global
     .replace(/{{sharedMessagesUri}}/g, sharedMessagesUri.toString())
     .replace(/{{sharedSettingsUri}}/g, sharedSettingsUri.toString())
     .replace(/{{sharedAnnotationsUri}}/g, sharedAnnotationsUri.toString())
+    .replace(/{{sharedIdaKeymapUri}}/g, sharedIdaKeymapUri.toString())
     .replace(/{{sharedAccountUri}}/g, sharedAccountUri.toString())
     // static modules
     .replace(/{{staticPayloadUri}}/g, staticPayloadUri.toString())

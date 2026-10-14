@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 /**
  * @file logger.ts
  * @brief Logique pure du logger à niveaux (extension). Pas de dépendance vscode

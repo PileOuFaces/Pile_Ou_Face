@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """MCP server for Pile ou Face.
 
-Transport: stdio (JSON-RPC 2.0 with Content-Length framing).
+Transport: stdio (JSON-RPC 2.0, NDJSON — one JSON message per line).
+Content-Length framing is accepted on read for legacy compatibility, but
+all responses are written as NDJSON.
 """
 
 from __future__ import annotations
@@ -23,6 +25,14 @@ from typing import Any
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
+
+# WORKSPACE_ROOT is the project the calling agent is working in (standalone MCP
+# usage, e.g. Claude Code/Codex on an arbitrary repo). It defaults to the cwd the
+# server was launched from, overridable so a setup CLI can pin it explicitly.
+# ROOT above stays scoped to the extension's own install dir (imports, caches).
+WORKSPACE_ROOT = os.path.abspath(
+    os.environ.get("POF_MCP_WORKSPACE_ROOT") or os.getcwd()
+)
 
 from backends.mcp.ai_provider import (
     call_provider,
@@ -878,7 +888,7 @@ def _cache_db_from_args(args: dict[str, Any]) -> str:
 
 def _iter_workspace_files() -> list[str]:
     paths: list[str] = []
-    for dirpath, dirnames, filenames in os.walk(ROOT):
+    for dirpath, dirnames, filenames in os.walk(WORKSPACE_ROOT):
         dirnames[:] = [d for d in dirnames if d not in SEARCH_SKIP_DIRS]
         for filename in filenames:
             paths.append(os.path.join(dirpath, filename))
@@ -895,7 +905,7 @@ def _find_files(query: str, limit: int = 20) -> dict[str, Any]:
 
     matches: list[tuple[str, str, str]] = []
     for abs_path in _iter_workspace_files():
-        rel_path = os.path.relpath(abs_path, ROOT).replace(os.sep, "/")
+        rel_path = os.path.relpath(abs_path, WORKSPACE_ROOT).replace(os.sep, "/")
         name = os.path.basename(abs_path)
         if wildcard:
             ok = fnmatch.fnmatch(rel_path, q) or fnmatch.fnmatch(name, q)
@@ -927,7 +937,7 @@ def _find_files(query: str, limit: int = 20) -> dict[str, Any]:
         "query": q,
         "count": total,
         "truncated": total > len(limited),
-        "root": ROOT,
+        "root": WORKSPACE_ROOT,
         "results": [
             {"path": abs_path, "relative_path": rel_path}
             for abs_path, rel_path, _ in limited
@@ -1028,7 +1038,7 @@ def _resolve_binary_path(raw_value: str) -> str:
         direct_candidates.append(value)
     else:
         direct_candidates.append(os.path.abspath(value))
-        direct_candidates.append(os.path.abspath(os.path.join(ROOT, value)))
+        direct_candidates.append(os.path.abspath(os.path.join(WORKSPACE_ROOT, value)))
 
     for candidate in direct_candidates:
         if os.path.isfile(candidate):
@@ -1949,9 +1959,11 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _read_message(stdin: Any) -> dict[str, Any] | None:
-    """Read one framed JSON-RPC message from stdin.
+    """Read one JSON-RPC message from stdin.
 
-    MCP stdio framing uses HTTP-like headers:
+    NDJSON (one JSON object per line) is the canonical format written by
+    this server and by real MCP clients. For legacy compatibility, LSP-style
+    Content-Length framing is also accepted on read:
         Content-Length: N
 
         {json payload}
@@ -2004,10 +2016,9 @@ def _read_message(stdin: Any) -> dict[str, Any] | None:
 
 
 def _write_message(stdout: Any, message: dict[str, Any]) -> None:
-    body = json.dumps(message, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
-    headers = f"Content-Length: {len(body)}\r\n\r\n".encode("ascii")
-    stdout.write(headers)
-    stdout.write(body)
+    """Write one JSON-RPC message to stdout as a single NDJSON line."""
+    line = json.dumps(message, ensure_ascii=True, separators=(",", ":")) + "\n"
+    stdout.write(line.encode("utf-8"))
     stdout.flush()
 
 

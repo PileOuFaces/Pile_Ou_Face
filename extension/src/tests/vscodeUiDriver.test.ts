@@ -46,6 +46,20 @@ class FakeSocket {
 }
 
 describe('VS Code UI E2E driver', () => {
+  it('dispatches physical key down and key up events through CDP', async () => {
+    const socket = new FakeSocket();
+    const target = new CdpTarget(socket);
+    await target.pressKey('x');
+    const requests = socket.sent.map((payload) => JSON.parse(payload));
+    assert.deepEqual(requests.map((request) => request.method), [
+      'Input.dispatchKeyEvent',
+      'Input.dispatchKeyEvent',
+    ]);
+    assert.equal(requests[0].params.type, 'keyDown');
+    assert.equal(requests[0].params.code, 'KeyX');
+    assert.equal(requests[1].params.type, 'keyUp');
+  });
+
   it('builds escaped DOM expressions for selectors', () => {
     const locator = new CdpLocator({}, 'button[data-label="quoted"]');
     const expression = locator.expression('return Boolean(el);');
@@ -124,6 +138,7 @@ describe('VS Code UI E2E driver', () => {
     hub.pluginInstallButton();
     hub.pluginStateList();
     hub.pluginConsentButton();
+    hub.pluginConsentRefuseButton();
     hub.toastContainer();
     hub.scriptEditor();
     hub.scriptRunButton();
@@ -134,11 +149,64 @@ describe('VS Code UI E2E driver', () => {
       '#btnPluginAdd',
       '#pluginStateList',
       '#pluginStateList .plugin-consent-grant',
+      '#pluginStateList .plugin-consent-refuse',
       '#pof-toast-container',
       '#scriptEditor',
       '#btnRunScript',
       '#scriptStatus',
       '#scriptOutput',
+    ]);
+  });
+
+  it('exposes natural-language function search through stable selectors', () => {
+    const selectors: string[] = [];
+    const target = {
+      locator(selector: string) {
+        selectors.push(selector);
+        return { selector };
+      },
+    };
+    const hub = new HubPage(target);
+
+    hub.naturalLanguageSearchInput();
+    hub.naturalLanguageSearchButton();
+    hub.naturalLanguageSearchStatus();
+    hub.naturalLanguageSearchResults();
+
+    assert.deepEqual(selectors, [
+      '#functionsNlSearchInput',
+      '#btnFunctionsNlSearch',
+      '#functionsNlSearchStatus',
+      '#functionsNlSearchResults',
+    ]);
+  });
+
+  it('exposes cloud and Ollama provider settings through stable selectors', () => {
+    const selectors: string[] = [];
+    const target = {
+      locator(selector: string) {
+        selectors.push(selector);
+        return { selector };
+      },
+    };
+    const hub = new HubPage(target);
+
+    hub.aiProviderCard('openai');
+    hub.aiProviderKey('openai');
+    hub.aiProviderModel('openai');
+    hub.aiProviderSaveButton('openai');
+    hub.aiProviderStatus('openai');
+    hub.aiProviderModel('ollama');
+    hub.aiDefaultProvider();
+
+    assert.deepEqual(selectors, [
+      '#aiProvidersState [data-provider="openai"]',
+      '#aiProvidersState [data-provider="openai"] [data-role="key"]',
+      '#aiProvidersState [data-provider="openai"] [data-role="model"]',
+      '#aiProvidersState [data-provider="openai"] .ai-provider-actions button',
+      '#aiProvidersState [data-provider="openai"] .ai-provider-card-status',
+      '#aiProvidersState [data-provider="ollama"] [data-role="model"]',
+      '#aiDefaultProvider',
     ]);
   });
 
@@ -178,21 +246,46 @@ describe('VS Code UI E2E driver', () => {
 
     const hub = new HubPage(target);
     hub.binaryInfo();
+    hub.binaryInfoRetryButton();
     hub.binarySections();
     hub.binaryFunctions();
     hub.binaryFunctionsCount();
 
     assert.deepEqual(selectors, [
       '#infoContent',
+      '#btnRetryBinaryInfo',
       '#sectionsContent',
       '#functionsContent',
       '#functionsCount',
     ]);
   });
 
+  it('retries the binary menu when the reopened webview drops the first click', async () => {
+    let clicks = 0;
+    const target = {
+      locator(selector: string) {
+        if (selector === '#topBarBinaryButton') {
+          return {
+            async clickDom() { clicks += 1; },
+          };
+        }
+        assert.equal(selector, '#topBarBinaryMenu');
+        return {
+          async waitFor() {
+            if (clicks < 2) throw new Error('menu is still closed');
+          },
+        };
+      },
+    };
+
+    await new HubPage(target).openTopBarBinaryMenu(1000);
+
+    assert.equal(clicks, 2);
+  });
+
   it('falls back to a DOM click when Electron ignores panel navigation coordinates', async () => {
     const calls: string[] = [];
-    let navigationWaits = 0;
+    let panelWaits = 0;
     const target = {
       locator(selector: string) {
         return {
@@ -200,8 +293,8 @@ describe('VS Code UI E2E driver', () => {
           async clickDom() { calls.push(`dom:${selector}`); },
           async waitFor() {},
           async waitForAttribute() {
-            if (selector.includes('icon-nav-item') && navigationWaits++ === 0) {
-              throw new Error('physical click ignored');
+            if (selector === '#panel-options' && panelWaits++ < 2) {
+              throw new Error('navigation remained active but panel did not open');
             }
           },
         };
@@ -212,6 +305,7 @@ describe('VS Code UI E2E driver', () => {
 
     assert.deepEqual(calls, [
       'physical:.icon-nav-item[data-panel="options"]',
+      'dom:.icon-nav-item[data-panel="options"]',
       'dom:.icon-nav-item[data-panel="options"]',
     ]);
   });
@@ -228,6 +322,63 @@ describe('VS Code UI E2E driver', () => {
     await new HubPage({}).expectActive(locator, 'delayed panel', 750);
 
     assert.deepEqual(calls, ['attached', 'class:active:750']);
+  });
+
+  it('waits for the settings save acknowledgement before accepting the selected mode', async () => {
+    const calls: string[] = [];
+    const hub = new HubPage({
+      locator(selector: string) {
+        calls.push(`locator:${selector}`);
+        return {
+          async waitForAttribute(name: string, value: string) {
+            calls.push(`wait:${name}:${value}`);
+          },
+        };
+      },
+    });
+    hub.openPanel = async (panelId: string) => { calls.push(`open-${panelId}`); };
+    hub.interfaceModeButton = () => ({
+      async waitFor({ state, timeout }: { state: string; timeout: number }) {
+        calls.push(`button:${state}:${timeout}`);
+      },
+      async clickDom() { calls.push('click-simple'); },
+      async waitForAttribute(name: string, value: string) { calls.push(`button:${name}:${value}`); },
+    });
+    hub.interfaceModeInput = () => ({
+      async waitForValue(value: string) { calls.push(`input:${value}`); },
+    });
+
+    await hub.selectInterfaceMode('simple');
+
+    assert.deepEqual(calls, [
+      'locator:html', 'wait:data-hub-settings-ready:true', 'open-dashboard', 'open-options',
+      'locator:html', 'wait:data-hub-settings-ready:true', 'button:visible:15000', 'click-simple',
+      'locator:html', 'wait:data-hub-settings-save-pending:false',
+      'locator:html', 'wait:data-hub-settings-ready:true',
+      'input:simple', 'button:aria-pressed:true',
+    ]);
+  });
+
+  it('retries an idempotent typed struct preview after a dropped response', async () => {
+    const calls: string[] = [];
+    let statusAttempts = 0;
+    const hub = new HubPage({});
+    hub.typedDataApplyStructButton = () => ({
+      async clickDom() { calls.push('apply'); },
+    });
+    hub.typedDataStructStatus = () => ({
+      async waitForText(value: string, timeout: number) {
+        calls.push(`status:${value}:${timeout}`);
+        if (statusAttempts++ === 0) throw new Error('webview refreshed');
+      },
+    });
+
+    await hub.applyTypedStruct('struct E2EUiType @ +0x0');
+
+    assert.deepEqual(calls, [
+      'apply', 'status:struct E2EUiType @ +0x0:10000',
+      'apply', 'status:struct E2EUiType @ +0x0:10000',
+    ]);
   });
 
   it('uses CDP to inspect, fill and physically click a DOM control', async () => {
@@ -256,6 +407,7 @@ describe('VS Code UI E2E driver', () => {
     assert.equal(await locator.waitForAttribute('class', 'active', 50), 'btn active');
     await locator.waitForEnabled(50);
     await locator.fill('nouvelle valeur');
+    await locator.fillAndWait('true', 500);
     await locator.click();
     await locator.clickDom();
 
@@ -265,6 +417,27 @@ describe('VS Code UI E2E driver', () => {
     assert.ok(scrollIndex >= 0, 'the target is scrolled into view');
     assert.ok(coordinatesIndex > scrollIndex, 'click coordinates use the updated layout');
     assert.ok(evaluations.some((expression) => expression.includes('el.click()')));
+  });
+
+  it('retries filling an input replaced by an asynchronous render', async () => {
+    let value = '';
+    let fillAttempts = 0;
+    const target = {
+      async evaluate(expression: string) {
+        if (expression.includes('getComputedStyle')) return true;
+        if (expression.includes("String(el.value)")) return value;
+        if (expression.includes("el.dispatchEvent(new Event('input'")) {
+          fillAttempts += 1;
+          value = fillAttempts === 1 ? '' : 'stable value';
+          return true;
+        }
+        return true;
+      },
+    };
+    const locator = new CdpLocator(target, '#rerendered-input');
+
+    assert.equal(await locator.fillAndWait('stable value', 1000), 'stable value');
+    assert.equal(fillAttempts, 2);
   });
 
   it('reports disabled controls and inactive UI states', async () => {
@@ -383,6 +556,12 @@ describe('VS Code UI E2E driver', () => {
     assert.equal(hub.typeEditorStatus().selector, '#pof-typed-struct-popup .typed-data-struct-editor-status');
     assert.equal(hub.typeEditorSaveButton().selector, '#pof-typed-struct-popup [data-action="save-types"]');
     assert.equal(hub.typeEditorCloseButton().selector, '#pof-typed-struct-popup .typed-data-struct-editor-actions .btn:first-child');
+    assert.equal(hub.typedDataSection().selector, '#typedDataSection');
+    assert.equal(hub.typedDataStructSelect().selector, '#typedDataStructSelect');
+    assert.equal(hub.typedDataStructOffset().selector, '#typedDataStructOffset');
+    assert.equal(hub.typedDataApplyStructButton().selector, '#btnTypedApplyStruct');
+    assert.equal(hub.typedDataStructStatus().selector, '#typedDataStructStatus');
+    assert.equal(hub.typedDataContent().selector, '#typedDataContent');
     assert.equal(hub.topBarBinaryName().selector, '#topBarBinaryName');
     assert.equal(hub.topBarBinaryMenu().selector, '#topBarBinaryMenu');
     assert.equal(hub.currentBinaryName().selector, '#topBarCurrentBinaryName');
@@ -391,6 +570,7 @@ describe('VS Code UI E2E driver', () => {
     assert.equal(hub.autoTriageButton().selector, '[data-action="auto-triage"]');
     assert.equal(hub.autoTriageModal().selector, '[data-auto-triage-modal]');
     assert.equal(hub.autoTriageConfirmButton().selector, '[data-action="auto-triage-confirm"]');
+    assert.equal(hub.autoTriageCancelButton().selector, '[data-action="auto-triage-cancel"]');
     assert.equal(hub.autoTriageState().selector, '[data-auto-triage-state]');
     assert.equal(hub.autoTriageHelp().selector, '[data-auto-triage-help]');
     assert.equal(hub.autoTriageResult().selector, '[data-auto-triage-result]');
@@ -400,6 +580,11 @@ describe('VS Code UI E2E driver', () => {
     assert.equal(
       hub.recentBinaryButton('fixture.elf').selector,
       '#topBarRecentList > .top-bar-menu-item[title="fixture.elf"]',
+    );
+    assert.equal(
+      hub.recentBinaryButton('/tmp/e2e/fixture.elf').selector,
+      '#topBarRecentList > .top-bar-menu-item[title="/tmp/e2e/fixture.elf"], '
+        + '#topBarRecentList > .top-bar-menu-item[title="fixture.elf"]',
     );
     assert.equal(hub.firstFunctionDisasmButton().selector, '#functionsContent .functions-row-action[data-view="disasm"]');
     assert.equal(hub.functionDossierButton().selector, '#functionsDetails .functions-export-action');
@@ -432,6 +617,10 @@ describe('VS Code UI E2E driver', () => {
     const originalWebSocket = globalThis.WebSocket;
     const sockets: FakeSocket[] = [];
     const socketUrls: string[] = [];
+    let readinessChecks = 0;
+    let documentCompleteChecks = 0;
+    let runtimeEvaluations = 0;
+    let pluginDocumentProbe = '';
     globalThis.fetch = (async (url: string) => ({
       json: async () => url.endsWith('/json/version')
         ? { webSocketDebuggerUrl: 'ws://local/browser' }
@@ -461,7 +650,23 @@ describe('VS Code UI E2E driver', () => {
               id: request.id,
               result: request.method === 'Target.attachToTarget'
                 ? { sessionId: 'hub-session' }
-                : { result: { value: true } },
+                : {
+                  result: {
+                    value: request.method === 'Runtime.evaluate'
+                      ? (() => {
+                        runtimeEvaluations += 1;
+                        const bypassHubReadiness = request.params.expression.includes('!false || globalThis.document.documentElement?.dataset.hubSettingsReady');
+                        const requiresDocumentComplete = request.params.expression.includes('!true || globalThis.document.readyState');
+                        if (bypassHubReadiness) pluginDocumentProbe = request.params.expression;
+                        return {
+                          documentFound: true,
+                          ready: (!requiresDocumentComplete || ++documentCompleteChecks > 1)
+                            && (bypassHubReadiness || ++readinessChecks > 1),
+                        };
+                      })()
+                      : true,
+                  },
+                },
             }),
           }));
         };
@@ -470,12 +675,36 @@ describe('VS Code UI E2E driver', () => {
       }
     } as any;
     try {
-      const target = await connectToHubWebview('http://127.0.0.1:9222', 100);
+      const target = await connectToHubWebview('http://127.0.0.1:9222', 1000);
       assert.ok(target instanceof CdpTarget);
       assert.equal(target.sessionId, 'hub-session');
-      assert.deepEqual(socketUrls, ['ws://local/browser']);
+      assert.ok(readinessChecks > 1, 'waits for the Hub webview readiness signal');
+      const pluginTarget = await connectToHubWebview(
+        'http://127.0.0.1:9222',
+        1000,
+        '[data-plugin-scope="vulnerability-audit-pro"]:not(iframe)',
+        { requireHubSettingsReady: false },
+      );
+      assert.ok(pluginTarget instanceof CdpTarget);
+      assert.equal(readinessChecks, 2, 'plugin webviews do not check the Hub readiness signal');
+      assert.equal(runtimeEvaluations, 3, 'the plugin document is accepted as soon as it is found');
+      assert.ok(pluginDocumentProbe.includes('querySelector("[data-plugin-scope=\\\"vulnerability-audit-pro\\\"]:not(iframe)")'), 'plugin target discovery uses the stable plugin scope marker inside the plugin document');
+      const readyPluginTarget = await connectToHubWebview(
+        'http://127.0.0.1:9222',
+        1000,
+        '[data-plugin-scope="vulnerability-audit-pro"]:not(iframe)',
+        { requireHubSettingsReady: false, requireDocumentComplete: true },
+      );
+      assert.ok(readyPluginTarget instanceof CdpTarget);
+      assert.ok(documentCompleteChecks > 1, 'waits for plugin scripts to finish before returning the document');
+      assert.ok(runtimeEvaluations > 3);
+      assert.deepEqual(socketUrls, ['ws://local/browser', 'ws://local/browser', 'ws://local/browser']);
       target.close();
+      pluginTarget.close();
+      readyPluginTarget.close();
       assert.equal(sockets[0].closed, true);
+      assert.equal(sockets[1].closed, true);
+      assert.equal(sockets[2].closed, true);
     } finally {
       globalThis.fetch = originalFetch;
       globalThis.WebSocket = originalWebSocket;

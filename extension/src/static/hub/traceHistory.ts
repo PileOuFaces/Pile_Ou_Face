@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 
 const { EVENT_NAMES } = require('../../shared/telemetry/telemetryEvents');
 
@@ -258,7 +257,7 @@ function createTraceHistory({
     openDynamicTraceHistory: async (message) => {
       const requestedTracePath = String(message.tracePath || '').trim();
       if (!isManagedDynamicTracePath(requestedTracePath) || !fs.existsSync(requestedTracePath)) {
-        vscode.window.showErrorMessage('Trace historique introuvable.');
+        vscode.window.showErrorMessage('Historical trace not found.');
         postDynamicTraceHistory();
         return;
       }

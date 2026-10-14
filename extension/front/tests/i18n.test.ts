@@ -1,0 +1,213 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+import { expect } from 'chai';
+import fs from 'fs';
+import { JSDOM, VirtualConsole } from 'jsdom';
+import path from 'path';
+
+const i18n = require('../shared/i18n.js');
+
+describe('webview i18n', () => {
+  it('resolves French variants and falls back to English', () => {
+    expect(i18n.resolveLocale('fr-FR')).to.equal('fr');
+    expect(i18n.resolveLocale('FR-ca')).to.equal('fr');
+    expect(i18n.resolveLocale('en-US')).to.equal('en');
+    expect(i18n.resolveLocale('de')).to.equal('en');
+    expect(i18n.resolveLocale('')).to.equal('en');
+  });
+
+  it('keeps French and translates known English catalog entries', () => {
+    expect(i18n.translate('Analyse statique', 'fr')).to.equal('Analyse statique');
+    expect(i18n.translate('Analyse statique', 'en')).to.equal('Static analysis');
+    expect(i18n.translate('0x401000', 'en')).to.equal('0x401000');
+    expect(i18n.translate('Fonction: malware_entry_point', 'en')).to.equal('Function: malware_entry_point');
+    expect(i18n.translate('Adresse active 0x8049170', 'en')).to.equal('Active address 0x8049170');
+  });
+
+  it('localizes text and accessible attributes without changing ids or values', () => {
+    const dom = new JSDOM(`<!doctype html><html lang="en"><body>
+      <button id="run" value="technical" title="Rafraîchir les modèles">Analyse statique</button>
+      <input id="query" value="user data" placeholder="Rechercher…" aria-label="Rechercher une conversation">
+    </body></html>`);
+    i18n.localizeDocument(dom.window.document, 'en');
+    const button = dom.window.document.getElementById('run') as HTMLButtonElement;
+    const input = dom.window.document.getElementById('query') as HTMLInputElement;
+    expect(button.textContent).to.equal('Static analysis');
+    expect(button.title).to.equal('Refresh models');
+    expect(button.id).to.equal('run');
+    expect(button.value).to.equal('technical');
+    expect(input.placeholder).to.equal('Search…');
+    expect(input.getAttribute('aria-label')).to.equal('Search conversations');
+    expect(input.value).to.equal('user data');
+  });
+
+  it('switches the same document between English and French', () => {
+    const dom = new JSDOM(`<!doctype html><html lang="fr"><body>
+      <section><h2>Confort de lecture</h2><label title="Rafraîchir">Langue</label></section>
+    </body></html>`);
+    const document = dom.window.document;
+
+    i18n.setLocale('en', document);
+    expect(document.querySelector('h2')?.textContent).to.equal('Reading comfort');
+    expect(document.querySelector('label')?.textContent).to.equal('Language');
+    expect(document.querySelector('label')?.title).to.equal('Refresh');
+
+    i18n.setLocale('fr', document);
+    expect(document.querySelector('h2')?.textContent).to.equal('Confort de lecture');
+    expect(document.querySelector('label')?.textContent).to.equal('Langue');
+    expect(document.querySelector('label')?.title).to.equal('Rafraîchir');
+  });
+
+  it('localizes runtime labels added after the webview has loaded', async () => {
+    const dom = new JSDOM('<!doctype html><html lang="en"><body><main id="content"></main></body></html>', {
+      pretendToBeVisual: true,
+    });
+    i18n.observeDocument(dom.window.document, 'en');
+
+    const labels = [
+      'IA · à vérifier',
+      'Valider IA',
+      'Rejeter IA',
+      'Modifier',
+      'Aucun bookmark. Ctrl+B dans le désassemblage.',
+      'Utilise Go, les raccourcis ou le sélecteur de symbole pour te déplacer rapidement dans le binaire.',
+      'Actualiser',
+      'Purge obsolète',
+      'Tout nettoyer',
+    ];
+    const content = dom.window.document.getElementById('content') as HTMLElement;
+    labels.forEach((label) => {
+      const element = dom.window.document.createElement('button');
+      element.textContent = label;
+      content.appendChild(element);
+    });
+    await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+
+    expect([...content.children].map((element) => element.textContent)).to.deep.equal([
+      'AI · needs review',
+      'Approve AI',
+      'Reject AI',
+      'Edit',
+      'No bookmarks. Press Ctrl+B in the disassembly.',
+      'Use Go, keyboard shortcuts, or the symbol selector to move quickly through the binary.',
+      'Refresh',
+      'Purge stale entries',
+      'Clean all',
+    ]);
+  });
+
+  it('catalogs dynamic analysis labels emitted by JavaScript controllers', () => {
+    const labels = {
+      'Auto-triage en cours': 'Auto-triage in progress',
+      'Recherche…': 'Searching…',
+      'Chargement sections…': 'Loading sections…',
+      'Chargement infos…': 'Loading information…',
+      'Chargement symboles…': 'Loading symbols…',
+      'Chargement strings…': 'Loading strings…',
+      'Chargement des strings…': 'Loading strings…',
+      'Chargement CFG…': 'Loading CFG…',
+      'Chargement call graph…': 'Loading call graph…',
+      'Chargement exports…': 'Loading exports…',
+      "Chargement gestionnaires d'exceptions…": 'Loading exception handlers…',
+      'Code source détecté — analyse enrichie activée.': 'Source code detected — enriched analysis enabled.',
+      'Recherche impossible.': 'Search failed.',
+      'Confiance de découverte': 'Discovery confidence',
+      'Prévisualisation du type…': 'Previewing type…',
+    };
+
+    Object.entries(labels).forEach(([source, expected]) => {
+      expect(i18n.translate(source, 'en')).to.equal(expected);
+    });
+
+    expect(i18n.translate('39 fonctions · 0 chaude(s) · page 1/1', 'en'))
+      .to.equal('39 functions · 0 hot · page 1/1');
+    expect(i18n.translate('2 fonction(s) pertinente(s) parmi 39 candidates.', 'en'))
+      .to.equal('2 function(s) relevant among 39 candidates.');
+  });
+
+  it('localizes the Options and Account panels', () => {
+    const extensionRoot = path.resolve(__dirname, '../..');
+    const panelSources = ['panel-options.html', 'panel-account.html']
+      .map((name) => fs.readFileSync(path.join(extensionRoot, 'front/shared', name), 'utf8'))
+      .join('\n');
+    const dom = new JSDOM(`<!doctype html><html lang="fr"><body>${panelSources}</body></html>`, {
+      virtualConsole: new VirtualConsole(),
+    });
+
+    i18n.setLocale('en', dom.window.document);
+    const content = dom.window.document.body.textContent || '';
+    expect(content).to.include('Account');
+    expect(content).to.include('Available decompilers');
+    expect(content).to.include('Global generation settings');
+    expect(content).to.include('Reading comfort');
+    expect(content).to.include('Reset settings');
+    expect(content).not.to.match(/Compte|Décompilateurs disponibles|Paramètres de génération globaux|Confort de lecture|Remettre les réglages à zéro/);
+  });
+
+  it('localizes the main static-analysis journeys', () => {
+    const extensionRoot = path.resolve(__dirname, '../..');
+    const panel = fs.readFileSync(path.join(extensionRoot, 'front/static/panel-static.html'), 'utf8');
+    const dom = new JSDOM(`<!doctype html><html lang="fr"><body>${panel}</body></html>`);
+
+    i18n.setLocale('en', dom.window.document);
+    const content = dom.window.document.body.textContent || '';
+    expect(content).to.include('Open disassembly');
+    expect(content).to.include('Who calls what?');
+    expect(content).to.include('Quick context');
+    expect(content).to.include('Search using natural language');
+    expect(content).to.include('AI review');
+    expect(content).to.include('Persisted patches');
+    expect(content).to.include('Manage types');
+    expect(content).not.to.match(/Ouvrir le désassemblage|Qui appelle quoi|Contexte rapide|Chercher en langage naturel|Revue IA|Patches persistés|Gérer les types/);
+  });
+
+  it('localizes the dynamic-analysis and tools journeys', () => {
+    const extensionRoot = path.resolve(__dirname, '../..');
+    const panelFiles = [
+      path.join(extensionRoot, 'front/dynamic/panel-dynamic.html'),
+      path.join(extensionRoot, 'front/dynamic/graphical-stack.html'),
+      path.join(extensionRoot, 'front/shared/panel-outils.html'),
+    ];
+    const content = panelFiles.map((file) => {
+      const dom = new JSDOM(fs.readFileSync(file, 'utf8'));
+      i18n.setLocale('en', dom.window.document);
+      return dom.window.document.body.textContent || '';
+    }).join('\n');
+    expect(content).to.include('Optional C source code');
+    expect(content).to.include('Payload preview');
+    expect(content).to.include('History');
+    expect(content).to.include('Guided explanation');
+    expect(content).to.include('Offset calculator');
+    expect(content).to.include('Exploit Assistant');
+    expect(content).to.include('Generated workspace');
+    expect(content).not.to.match(/Code source C optionnel|Aperçu du payload|Historique des traces|Lecture pedagogique|Calculette d'offset|Assistant Exploit|Espace de travail généré/);
+  });
+
+  it('localizes the remaining shell and plugin guidance without touching technical paths', () => {
+    const extensionRoot = path.resolve(__dirname, '../..');
+    const panelSources = [
+      path.join(extensionRoot, 'front/hub.html'),
+      path.join(extensionRoot, 'front/shared/panel-options.html'),
+    ].map((file) => fs.readFileSync(file, 'utf8')).join('\n');
+    const dom = new JSDOM(`<!doctype html><html lang="fr"><body>${panelSources}</body></html>`, {
+      virtualConsole: new VirtualConsole(),
+    });
+
+    i18n.setLocale('en', dom.window.document);
+    const content = dom.window.document.body.textContent || '';
+    expect(dom.window.document.getElementById('exploitNotesFab')?.getAttribute('title')).to.equal('Open exploit notes');
+    expect(content).to.include('Plugins installed through this interface are stored in');
+    expect(content).to.include('No license file is required.');
+    expect(content).to.include('~/.pile-ou-face/plugins/');
+    expect(content).not.to.match(/Les plugins installés via cette interface|Aucun fichier de licence requis/);
+  });
+
+  it('keeps the default and French VS Code manifest catalogs in sync', () => {
+    const extensionRoot = path.resolve(__dirname, '../..');
+    const manifest = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'package.json'), 'utf8'));
+    const english = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'package.nls.json'), 'utf8'));
+    const french = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'package.nls.fr.json'), 'utf8'));
+    const referenced = new Set(JSON.stringify(manifest).match(/%([^%]+)%/g)?.map((item) => item.slice(1, -1)) || []);
+    expect([...referenced].sort()).to.deep.equal(Object.keys(english).sort());
+    expect(Object.keys(french).sort()).to.deep.equal(Object.keys(english).sort());
+  });
+});

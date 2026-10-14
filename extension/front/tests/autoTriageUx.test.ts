@@ -47,7 +47,7 @@ describe("auto-triage UX contracts", () => {
     expect(dashboardSource).to.include('role="dialog"');
     expect(dashboardSource).to.include("auto-triage-confirm");
     expect(controllerSource).to.include("openPreflight");
-    expect(controllerSource).to.include("Reprendre l’auto-triage");
+    expect(controllerSource).to.include('Resume auto-triage');
     expect(controllerSource).to.include("hubAutoTriagePreflight");
   });
 

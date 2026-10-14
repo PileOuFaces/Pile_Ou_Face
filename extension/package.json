@@ -55,84 +55,109 @@
       },
       {
         "command": "pileOuFace.sidebarRefresh",
-        "title": "Charger un binaire"
+        "title": "%command.loadBinary%"
       },
       {
         "command": "pileOuFace.calculator",
-        "title": "Calculette"
+        "title": "%command.calculator%"
       },
       {
         "command": "pileOuFace.xrefsTo",
-        "title": "Références vers cette adresse"
+        "title": "%command.xrefsTo%"
       },
       {
         "command": "pileOuFace.xrefsFrom",
-        "title": "Références depuis cette adresse"
+        "title": "%command.xrefsFrom%"
       },
       {
         "command": "pileOuFace.askAiAboutDisasm",
-        "title": "Demander à l’IA d’expliquer cette instruction",
+        "title": "%command.askAiAboutDisasm%",
         "category": "Pile ou Face"
       },
       {
         "command": "pileOuFace.autoTriage",
-        "title": "Pile ou Face: Auto-triage IA",
+        "title": "%command.autoTriage%",
+        "category": "Pile ou Face"
+      },
+      {
+        "command": "pileOuFace.importFromGhidra",
+        "title": "%command.importFromGhidra%",
+        "category": "Pile ou Face"
+      },
+      {
+        "command": "pileOuFace.importFromIda",
+        "title": "%command.importFromIda%",
         "category": "Pile ou Face"
       },
       {
         "command": "pileOuFace.goToSymbolInDisasm",
-        "title": "Aller au symbole"
+        "title": "%command.goToSymbol%"
       },
       {
         "command": "pileOuFace.exportDisasm",
-        "title": "Exporter le désassemblage"
+        "title": "%command.exportDisasm%"
       },
       {
         "command": "pileOuFace.disasmSection",
-        "title": "Désassembler la section"
+        "title": "%command.disasmSection%"
       },
       {
         "command": "pileOuFace.goToAddress",
-        "title": "Aller à l'adresse"
+        "title": "%command.goToAddress%"
       },
       {
         "command": "pileOuFace.decompilerAdd",
-        "title": "Pile ou Face: Ajouter un décompilateur",
+        "title": "%command.decompilerAdd%",
         "category": "Pile ou Face"
       },
       {
         "command": "pileOuFace.decompilerEdit",
-        "title": "Pile ou Face: Modifier un décompilateur custom",
+        "title": "%command.decompilerEdit%",
         "category": "Pile ou Face"
       },
       {
         "command": "pileOuFace.decompilerRemove",
-        "title": "Pile ou Face: Supprimer un décompilateur custom",
+        "title": "%command.decompilerRemove%",
         "category": "Pile ou Face"
       },
       {
         "command": "pileOuFace.decompilerList",
-        "title": "Pile ou Face: Lister les décompilateurs",
+        "title": "%command.decompilerList%",
         "category": "Pile ou Face"
       },
       {
         "command": "pileOuFace.decompilerTest",
-        "title": "Pile ou Face: Tester un décompilateur",
+        "title": "%command.decompilerTest%",
         "category": "Pile ou Face"
       },
       {
         "command": "pileOuFace.decompilerOpenConfig",
-        "title": "Pile ou Face: Ouvrir la config des décompilateurs",
+        "title": "%command.decompilerOpenConfig%",
         "category": "Pile ou Face"
       },
       {
         "command": "pileOuFace.showLogs",
-        "title": "Pile ou Face: Afficher les logs",
+        "title": "%command.showLogs%",
         "category": "Pile ou Face"
       },
       {
         "command": "pileOuFace.perfSnapshot",
-        "title": "Pile ou Face: Snapshot performance",
+        "title": "%command.perfSnapshot%",
+        "category": "Pile ou Face"
+      },
+      {
+        "command": "pileOuFace.mcpOpenAgentsPanel",
+        "title": "%command.mcpOpenAgentsPanel%",
+        "category": "Pile ou Face"
+      },
+      {
+        "command": "pileOuFace.mcpDoctor",
+        "title": "%command.mcpDoctor%",
+        "category": "Pile ou Face"
+      },
+      {
+        "command": "pileOuFace.mcpRollback",
+        "title": "%command.mcpRollback%",
         "category": "Pile ou Face"
       }
     ],
@@ -182,6 +207,14 @@
         {
           "command": "pileOuFace.exportDisasm",
           "when": "editorTextFocus"
+        },
+        {
+          "command": "pileOuFace.importFromGhidra",
+          "when": "true"
+        },
+        {
+          "command": "pileOuFace.importFromIda",
+          "when": "true"
         },
         {
           "command": "pileOuFace.xrefsTo",
@@ -268,7 +301,7 @@
         "pileOuFace.authServerUrl": {
           "type": "string",
           "default": "",
-          "description": "URL du serveur d'authentification Pile Ou Face"
+          "description": "%config.authServerUrl%"
         },
         "pileOuFace.logLevel": {
           "type": "string",
@@ -279,12 +312,25 @@
             "error"
           ],
           "default": "warning",
-          "description": "Niveau de log de l'extension et des backends Python qu'elle lance (propagé via BINHOST_LOG_LEVEL)."
+          "description": "%config.logLevel%"
+        },
+        "pileOuFace.keymap": {
+          "type": "string",
+          "enum": [
+            "default",
+            "ida"
+          ],
+          "enumDescriptions": [
+            "%config.keymap.default%",
+            "%config.keymap.ida%"
+          ],
+          "default": "default",
+          "description": "%config.keymap%"
         },
         "pileOuFace.perfDiagnostics": {
           "type": "boolean",
           "default": false,
-          "description": "Active les snapshots de diagnostic performance webview/extension host dans les logs Pile ou Face. Désactivé par défaut pour les versions publiées."
+          "description": "%config.perfDiagnostics%"
         },
         "pileOuFace.autoTriage.enabled": {
           "type": "boolean",
@@ -292,40 +338,40 @@
           "tags": [
             "usesOnlineServices"
           ],
-          "description": "Lance automatiquement l'auto-triage IA (nommage/commentaires de fonctions par un LLM) juste après un désassemblage réussi. Désactivé par défaut : le code du binaire n'est envoyé au provider IA qu'après consentement explicite, désassemblage manuel via la commande « Pile ou Face: Auto-triage IA » ou activation de ce réglage."
+          "description": "%config.autoTriage.enabled%"
         },
         "pileOuFace.autoTriage.model": {
           "type": "string",
           "default": "",
-          "description": "Modèle IA dédié à l'auto-triage (nommage/commentaires de fonctions), distinct du modèle utilisé dans l'onglet Assistant — utile pour choisir un modèle plus petit/rapide pour ce traitement en masse. Format : nom de modèle Ollama (ex. « qwen2.5-coder:7b ») ou « provider@modèle » pour un fournisseur cloud. Laisser vide pour réutiliser le modèle configuré pour le chat."
+          "description": "%config.autoTriage.model%"
         },
         "pileOuFace.autoTriage.maxFunctions": {
           "type": "integer",
           "default": 200,
           "minimum": 1,
           "maximum": 1000,
-          "description": "Nombre maximal de fonctions analysées par un auto-triage."
+          "description": "%config.autoTriage.maxFunctions%"
         },
         "pileOuFace.autoTriage.maxSeconds": {
           "type": "integer",
           "default": 600,
           "minimum": 30,
           "maximum": 7200,
-          "description": "Durée maximale en secondes d'un auto-triage, contrôlée entre deux fonctions."
+          "description": "%config.autoTriage.maxSeconds%"
         },
         "pileOuFace.autoTriage.maxTokensPerRequest": {
           "type": "integer",
           "default": 2048,
           "minimum": 128,
           "maximum": 32768,
-          "description": "Nombre maximal de tokens générés par réponse IA pendant l'auto-triage."
+          "description": "%config.autoTriage.maxTokensPerRequest%"
         },
         "pileOuFace.autoTriage.maxTotalTokens": {
           "type": "integer",
           "default": 100000,
           "minimum": 1024,
           "maximum": 1000000,
-          "description": "Budget maximal de tokens comptabilisés sur l'ensemble d'un auto-triage, résumé inclus."
+          "description": "%config.autoTriage.maxTotalTokens%"
         },
         "pileOuFace.telemetry.enabled": {
           "type": "boolean",
@@ -335,12 +381,12 @@
             "telemetry",
             "usesOnlineServices"
           ],
-          "description": "Autorise les métriques d’usage agrégées de Pile ou Face lorsque la télémétrie VS Code est également activée. Aucun contenu analysé n’est envoyé."
+          "description": "%config.telemetry.enabled%"
         },
         "pileOuFace.runtimeUsageAudit": {
           "type": "boolean",
           "default": false,
-          "description": "Active l'audit runtime des commandes, messages webview et subprocess Python dans storageDir/audit-runtime-usage.jsonl. Désactivé par défaut."
+          "description": "%config.runtimeUsageAudit%"
         }
       }
     }
@@ -351,14 +397,19 @@
     "build": "npm run typecheck && node esbuild.js",
     "build:watch": "node esbuild.js --watch",
     "package": "npm run typecheck && node esbuild.js --production",
+    "profile:check:official": "node scripts/prepare-deployment-profile.js OFFICIAL_SAAS --check",
+    "profile:prepare:official": "node scripts/prepare-deployment-profile.js OFFICIAL_SAAS",
+    "profile:verify": "node scripts/verify-deployment-profile.js",
     "test:bundle": "npm run package && tsx scripts/smoke-bundle.ts",
     "test:e2e:audit": "node scripts/e2e/run-runtime-audit.js",
     "test:e2e:audit:coverage": "node scripts/e2e/runtime-audit-feature-coverage.js",
     "test:e2e:audit:workflow": "node scripts/e2e/runtime-audit-workflow-report.js",
+    "test:e2e:mcp": "python3 scripts/e2e/mcp-stdio-smoke.py",
     "test:e2e:auth-licensing": "tsx scripts/e2e/authLicensingInteropE2E.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "eslint .",
+    "lint": "eslint . && npm run lint:i18n",
     "lint:fix": "eslint . --fix",
+    "lint:i18n": "node scripts/check-i18n-coverage.js",
     "test": "tsx node_modules/.bin/_mocha '{front/tests,src/tests}/**/*.test.ts' --ignore 'front/tests/hubPayloadCore.test.ts' --require src/tests/setup.ts --exit",
     "test:watch": "tsx node_modules/.bin/_mocha '{front/tests,src/tests}/**/*.test.ts' --watch --ignore 'front/tests/hubPayloadCore.test.ts' --require src/tests/setup.ts",
     "test:coverage": "c8 tsx node_modules/.bin/_mocha '{front/tests,src/tests}/**/*.test.ts' --ignore 'front/tests/hubPayloadCore.test.ts' --require src/tests/setup.ts --exit",

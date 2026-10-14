@@ -386,9 +386,13 @@ class TestDynamicDiagnostics(unittest.TestCase):
             [{"addr": "0x401000"}, {"addr": "0x401100"}],
             crash=crash,
         )
-        runtime = next(diag for diag in diagnostics if diag["kind"] == "runtime_crash")
-        self.assertIsNone(runtime.get("slot"))
-        self.assertEqual(runtime["after"], "0x0")
+        null_deref = next(
+            diag
+            for diag in diagnostics
+            if diag["kind"] == "null_pointer_dereference"
+        )
+        self.assertIsNone(null_deref.get("slot"))
+        self.assertEqual(null_deref["after"], "0x0")
 
     def test_invalid_pointer_read_is_not_attributed_to_saved_bp(self):
         analysis = _base_analysis()

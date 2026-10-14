@@ -37,6 +37,11 @@ function deliverHostMessage(win: any, payload: unknown) {
 }
 
 describe('PLUGIN_BRIDGE_PREAMBLE', () => {
+  it('exposes the current PoF 1.1 contract version', () => {
+    const { win } = makeBridgeWindow();
+    expect(win.PoF.version).to.equal('1.1.0');
+  });
+
   describe('state stubs', () => {
     it('defines tabDataCache as an empty object', () => {
       const { win } = makeBridgeWindow();
@@ -272,7 +277,7 @@ describe('PLUGIN_BRIDGE_PREAMBLE', () => {
     });
   });
 
-  describe('code-navigation helpers (ported from vulnerability-audit-pro, shared across plugins)', () => {
+  describe('generic code-navigation helpers shared across plugins', () => {
     it('isCodeNavigationAddress is false with empty caches and no address', () => {
       const { win } = makeBridgeWindow();
       expect(win.isCodeNavigationAddress('')).to.equal(false);

@@ -30,17 +30,17 @@ function registerSharedCommands(context, deps) {
     }
 
     const separator = typeof vscode.QuickPickItemKind?.Separator === 'number'
-      ? { kind: vscode.QuickPickItemKind.Separator, label: 'Récents' }
-      : { label: '────────── Récents', action: '__separator__' };
+      ? { kind: vscode.QuickPickItemKind.Separator, label: 'Recent' }
+      : { label: '────────── Recent', action: '__separator__' };
     const items = [
       {
-        label: 'Choisir un fichier à analyser',
-        description: 'Binaire natif ou blob brut',
+        label: 'Choose a file to analyze',
+        description: 'Native binary or raw blob',
         action: 'pick',
       },
       {
-        label: 'Ouvrir le hub',
-        description: 'Sans changer la sélection courante',
+        label: 'Open the hub',
+        description: 'Without changing the current selection',
         action: 'hub',
       },
       separator,
@@ -58,7 +58,7 @@ function registerSharedCommands(context, deps) {
 
     const picked = await vscode.window.showQuickPick(items, {
       title: 'Pile ou Face',
-      placeHolder: 'Choisissez votre point d’entrée',
+      placeHolder: 'Choose your entry point',
       matchOnDescription: true,
       matchOnDetail: true,
     });
@@ -96,8 +96,8 @@ function registerSharedCommands(context, deps) {
 
   const calculator = vscode.commands.registerCommand('pileOuFace.calculator', async () => {
     const input = await vscode.window.showInputBox({
-      prompt: 'Valeur (hex: 0x40, dec: 64, offset: -64 ou -0x40)',
-      placeHolder: '0x40 ou 64 ou -64',
+      prompt: 'Value (hex: 0x40, decimal: 64, offset: -64 or -0x40)',
+      placeHolder: '0x40 or 64 or -64',
       value: '0x40'
     });
     if (!input) return;
@@ -110,7 +110,7 @@ function registerSharedCommands(context, deps) {
     } else if (/^0x[0-9a-fA-F]+$/.test(trimmed) || /^[0-9a-fA-F]+h?$/i.test(trimmed)) {
       n = parseInt(trimmed.replace(/^0x|h$/gi, ''), 16);
     } else {
-      vscode.window.showWarningMessage('Format: décimal (64), hex (0x40), ou offset (-64, -0x40)');
+      vscode.window.showWarningMessage('Format: decimal (64), hexadecimal (0x40), or offset (-64, -0x40)');
       return;
     }
     const hexUnsigned = (n >>> 0).toString(16);
@@ -118,7 +118,7 @@ function registerSharedCommands(context, deps) {
     const decSigned = n > 0x7fffffff ? n - 0x100000000 : n;
     const panel = vscode.window.createWebviewPanel(
       'pileOuFaceCalc',
-      'Calculette d\'offset',
+      'Offset calculator',
       vscode.ViewColumn.Beside,
       { enableScripts: false }
     );
@@ -128,11 +128,11 @@ function registerSharedCommands(context, deps) {
       .label{color:#888;font-size:12px;}
       .value{font-family:monospace;color:#4ec9b0;font-size:16px;}
     </style></head><body>
-      <h3>Résultat pour ${escapeHtml(trimmed)}</h3>
-      <div class="row"><span class="label">Décimal:</span><br><span class="value">${n}</span></div>
-      <div class="row"><span class="label">Décimal (signé 32b si applicable):</span><br><span class="value">${decSigned}</span></div>
-      <div class="row"><span class="label">Hex (non signé):</span><br><span class="value">0x${hexUnsigned}</span></div>
-      <div class="row"><span class="label">Hex (signé 32b si négatif):</span><br><span class="value">0x${hexSigned}</span></div>
+      <h3>Result for ${escapeHtml(trimmed)}</h3>
+      <div class="row"><span class="label">Decimal:</span><br><span class="value">${n}</span></div>
+      <div class="row"><span class="label">Decimal (signed 32-bit when applicable):</span><br><span class="value">${decSigned}</span></div>
+      <div class="row"><span class="label">Hex (unsigned):</span><br><span class="value">0x${hexUnsigned}</span></div>
+      <div class="row"><span class="label">Hex (signed 32-bit when negative):</span><br><span class="value">0x${hexSigned}</span></div>
     </body></html>`;
   });
   subs.push(calculator);

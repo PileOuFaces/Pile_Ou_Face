@@ -14,11 +14,16 @@ on:
       - 'extension/**'
       - 'tooling/loadtest/**'
       - '.github/workflows/ci.yml'
+      - '.github/workflows/large-real-corpus-loadtest.yml'
       - '.github/workflows/publish.yml'
       - '.github/workflows/tripartite-scheduled.yml'
+      - 'security/**'
+      - 'tooling/security_baseline.py'
+      - 'tooling/tests/test_security_baseline.py'
 
 permissions:
   contents: read
+  pull-requests: read
 
 # Un nouveau push (ou une nouvelle synchro de PR) annule le run précédent
 # encore en cours sur la même ref — sans ça, chaque commit successif laisse
@@ -28,6 +33,48 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  security-baseline:
+    name: Security baseline policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+      - name: Validate inventory and suppressions
+        run: python3 -m tooling.security_baseline
+
+  # La campagne 100 MiB est coûteuse : elle ne tourne sur develops que lorsque
+  # le runtime, le corpus ou ses budgets changent.
+  large-real-corpus-changes:
+    name: Detect large corpus changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      relevant: ${{ steps.filter.outputs.relevant }}
+    steps:
+      - name: Detect relevant paths
+        id: filter
+        uses: dorny/paths-filter@15192bc058cc28a13dbf6cde61f19e18988b7af6
+        with:
+          filters: |
+            relevant:
+              - 'extension/backends/static/**'
+              - 'extension/backends/requirements.txt'
+              - 'extension/backends/requirements-ci.txt'
+              - 'tooling/loadtest/**'
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/large-real-corpus-loadtest.yml'
+
+  large-real-corpus:
+    name: Large real corpus gate
+    needs: large-real-corpus-changes
+    if: github.base_ref == 'develops' && needs.large-real-corpus-changes.outputs.relevant == 'true'
+    uses: ./.github/workflows/large-real-corpus-loadtest.yml
+
   # ══════════════════════════════════════════════════════════════
   # 🔎 Lint — PRs (une seule fois, ubuntu uniquement)
   # ══════════════════════════════════════════════════════════════
@@ -38,10 +85,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -76,17 +123,17 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: ${{ matrix.node }}
           cache: 'npm'
           cache-dependency-path: extension/package-lock.json
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -122,7 +169,7 @@ jobs:
           cat .pile-ou-face/test-artifacts/coverage-summary.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload coverage reports
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
           name: coverage-${{ matrix.os }}-node-${{ matrix.node }}
@@ -132,6 +179,70 @@ jobs:
             extension/coverage/
             extension/.pile-ou-face/test-artifacts/coverage-summary.md
           if-no-files-found: warn
+
+  # Chaque profil est préparé, vérifié et empaqueté dans un VSIX distinct.
+  # La matrice empêche qu'un profil commercial, OSS ou hors-ligne ne dérive
+  # silencieusement de son identité et de sa politique d'endpoint.
+  deployment-profile-artifacts:
+    name: Deployment artifact / ${{ matrix.profile }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: OFFICIAL_SAAS
+            artifact: official-saas
+            deployment_id: official-saas
+            auth_url: https://auth.pileouface.dev
+          - profile: MANAGED_ON_PREM
+            artifact: managed-on-prem
+            deployment_id: ci-managed-on-prem
+            auth_url: https://auth.on-prem.example
+          - profile: OSS_DEVELOPMENT
+            artifact: oss-development
+            deployment_id: oss-development
+            auth_url: ''
+          - profile: AIRGAP_ENTERPRISE
+            artifact: airgap-enterprise
+            deployment_id: ci-airgap-enterprise
+            auth_url: ''
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '22.x'
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./extension
+        run: npm ci
+
+      - name: Prepare and verify deployment profile
+        working-directory: ./extension
+        env:
+          POF_DEPLOYMENT_ID: ${{ matrix.deployment_id }}
+          POF_AUTH_PROVIDER_URL: ${{ matrix.auth_url }}
+        run: |
+          node scripts/prepare-deployment-profile.js "${{ matrix.profile }}"
+          npm run profile:verify -- "${{ matrix.profile }}"
+
+      - name: Package isolated VSIX
+        working-directory: ./extension
+        run: npx vsce package --out "pile-ou-face-${{ matrix.artifact }}.vsix"
+
+      - name: Upload deployment artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pile-ou-face-${{ matrix.artifact }}-${{ github.sha }}
+          path: extension/pile-ou-face-${{ matrix.artifact }}.vsix
+          if-no-files-found: error
+          retention-days: 7
 
   # ══════════════════════════════════════════════════════════════
   # 🪟 Auth Licensing Windows Unit Tests — PRs uniquement, filtré par chemin
@@ -161,11 +272,11 @@ jobs:
 
       - name: Checkout
         if: steps.filter.outputs.relevant == 'true'
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
 
       - name: Setup Node.js
         if: steps.filter.outputs.relevant == 'true'
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: '22.x'
           cache: 'npm'
@@ -211,11 +322,11 @@ jobs:
 
       - name: Checkout
         if: steps.filter.outputs.relevant == 'true'
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
 
       - name: Setup Python
         if: steps.filter.outputs.relevant == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -223,6 +334,7 @@ jobs:
       - name: Install x86_64 test toolchain
         if: steps.filter.outputs.relevant == 'true'
         run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
           sudo apt-get update
           sudo apt-get install -y build-essential binutils
 
@@ -243,10 +355,10 @@ jobs:
             -q
 
   # ══════════════════════════════════════════════════════════════
-  # 🧬 Corpus réel ARM64 — PRs uniquement, ubuntu seulement
+  # 🧬 Corpus réel multi-architecture — PRs uniquement, ubuntu seulement
   # ══════════════════════════════════════════════════════════════
   real-corpus-arm64:
-    name: Real Corpus ARM64
+    name: Real Corpus Multi-Arch
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -262,29 +374,36 @@ jobs:
 
       - name: Checkout
         if: steps.filter.outputs.relevant == 'true'
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
 
       - name: Setup Python
         if: steps.filter.outputs.relevant == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Install ARM64 corpus toolchain
+      - name: Install multi-architecture corpus toolchains
         if: steps.filter.outputs.relevant == 'true'
         run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
           sudo apt-get update
           sudo apt-get install -y \
             build-essential \
             gcc-aarch64-linux-gnu \
-            binutils-aarch64-linux-gnu
+            binutils-aarch64-linux-gnu \
+            gcc-mips-linux-gnu \
+            binutils-mips-linux-gnu \
+            gcc-powerpc-linux-gnu \
+            binutils-powerpc-linux-gnu \
+            gcc-riscv64-linux-gnu \
+            binutils-riscv64-linux-gnu
 
       - name: Install Python dependencies
         if: steps.filter.outputs.relevant == 'true'
         run: pip install -r extension/backends/requirements-ci.txt
 
-      - name: Run real binary corpus with ARM64
+      - name: Run real binary corpus across architectures
         if: steps.filter.outputs.relevant == 'true'
         working-directory: ./extension
         env:
@@ -297,7 +416,7 @@ jobs:
 
       - name: Upload corpus metrics
         if: steps.filter.outputs.relevant == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: real-binary-corpus-metrics
           path: extension/.pile-ou-face/test-artifacts/real_binary_corpus_metrics.json
@@ -317,23 +436,24 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: '22.x'
           cache: 'npm'
           cache-dependency-path: extension/package-lock.json
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.11'
           cache: 'pip'
 
       - name: Install corpus toolchain
         run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
           sudo apt-get update
           sudo apt-get install -y \
             build-essential \
@@ -364,14 +484,23 @@ jobs:
           POF_E2E_BUDGET_SCENARIO_DURATION_WARN_MS: "4000"
           POF_E2E_BUDGET_SCENARIO_DURATION_FAIL_MS: "10000"
           POF_E2E_BUDGET_BACKEND_SCENARIO_TOTAL_WARN_MS: "1500"
-          POF_E2E_BUDGET_BACKEND_SCENARIO_TOTAL_FAIL_MS: "4000"
-          POF_E2E_BUDGET_BACKEND_GLOBAL_TOTAL_WARN_MS: "12000"
-          POF_E2E_BUDGET_BACKEND_GLOBAL_TOTAL_FAIL_MS: "30000"
+          # Two expected static-analysis calls can each approach 3 s on a
+          # shared runner; keep the aggregate gate above that normal variance.
+          POF_E2E_BUDGET_BACKEND_SCENARIO_TOTAL_FAIL_MS: "6000"
+          # The UI audit now exercises six more annotation backend calls. Keep
+          # slow-runner variance visible without failing below the expanded
+          # suite's measured worst case (37.2 s on 79 calls).
+          POF_E2E_BUDGET_BACKEND_GLOBAL_TOTAL_WARN_MS: "30000"
+          POF_E2E_BUDGET_BACKEND_GLOBAL_TOTAL_FAIL_MS: "45000"
         run: xvfb-run -a npm run test:e2e:audit
+
+      - name: Run MCP stdio E2E smoke
+        working-directory: ./extension
+        run: npm run test:e2e:mcp
 
       - name: Upload audit reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: e2e-runtime-audit-reports
           path: |
@@ -408,11 +537,11 @@ jobs:
 
       - name: Checkout
         if: steps.filter.outputs.relevant == 'true'
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
 
       - name: Setup Node.js
         if: steps.filter.outputs.relevant == 'true'
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: '20.x'
           cache: 'npm'
@@ -420,7 +549,7 @@ jobs:
 
       - name: Setup Python
         if: steps.filter.outputs.relevant == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -510,11 +639,6 @@ jobs:
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: PileOuFaces/Pile_ou_Face_auth
-          # `develops` est la branche de dev active de ce repo (voir CLAUDE.md
-          # racine du workspace) — `main` (défaut du checkout sans `ref:`) est
-          # la branche production, mise à jour seulement lors d'une release.
-          # Sans ce `ref:`, ce job teste une version de l'auth potentiellement
-          # bien en retard sur ce qui est réellement mergé.
           ref: develops
           token: ${{ secrets.CROSS_REPO_READONLY_PAT }}
           path: pof-auth-sibling
@@ -562,6 +686,12 @@ jobs:
         env:
           AUTH_REPO_PATH: ${{ github.workspace }}/pof-auth-sibling
           PLUGINS_REPO_PATH: ${{ github.workspace }}/pof-plugins-sibling
+          AUTH_PUBLIC_URL: http://127.0.0.1:8791
+          AUTH_ISSUER: http://127.0.0.1:8791
+          AUTH_AUDIENCE: pile-ou-face-host
+          PLUGIN_LEASE_AUDIENCE: pof-plugin-runtime
+          DEPLOYMENT_ID: ci-tripartite-auth
+          AUTH_CAPABILITIES: auth,online-standard-licensing
         run: npm run test:e2e:auth-licensing
 
   # ══════════════════════════════════════════════════════════════
@@ -574,16 +704,17 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.11'
           cache: 'pip'
 
       - name: Install toolchain and Python dependencies
         run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
           sudo apt-get update
           sudo apt-get install -y build-essential binutils
           pip install -r extension/backends/requirements-ci.txt
@@ -597,7 +728,7 @@ jobs:
 
       - name: Upload loadtest report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: backend-loadtest-report
           path: ${{ runner.temp }}/backend-loadtest/loadtest_*.json
@@ -609,7 +740,7 @@ jobs:
   ci-success:
     name: CI Success
     if: always()
-    needs: [lint, full-test, dynamic-unicorn, real-corpus-arm64, e2e-runtime-audit, backend-loadtest, security-scan, auth-licensing-e2e, auth-licensing-windows]
+    needs: [security-baseline, lint, full-test, dynamic-unicorn, real-corpus-arm64, e2e-runtime-audit, backend-loadtest, security-scan, auth-licensing-e2e, auth-licensing-windows, large-real-corpus-changes, large-real-corpus]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -617,6 +748,7 @@ jobs:
         shell: bash
         run: |
           LINT="${{ needs.lint.result }}"
+          SECURITY_BASELINE="${{ needs.security-baseline.result }}"
           FULL="${{ needs.full-test.result }}"
           DYNAMIC_UNICORN="${{ needs.dynamic-unicorn.result }}"
           REAL_CORPUS="${{ needs.real-corpus-arm64.result }}"
@@ -625,8 +757,11 @@ jobs:
           SECURITY="${{ needs.security-scan.result }}"
           AUTH_LICENSING_E2E="${{ needs.auth-licensing-e2e.result }}"
           AUTH_LICENSING_WINDOWS="${{ needs.auth-licensing-windows.result }}"
+          LARGE_CORPUS_CHANGES="${{ needs.large-real-corpus-changes.result }}"
+          LARGE_CORPUS="${{ needs.large-real-corpus.result }}"
 
           echo "Lint       : $LINT"
+          echo "Sec policy : $SECURITY_BASELINE"
           echo "Full test  : $FULL"
           echo "Unicorn    : $DYNAMIC_UNICORN"
           echo "Corpus ARM : $REAL_CORPUS"
@@ -635,6 +770,8 @@ jobs:
           echo "Security   : $SECURITY"
           echo "Auth Win   : $AUTH_LICENSING_WINDOWS"
           echo "Auth E2E   : $AUTH_LICENSING_E2E"
+          echo "Corpus filter: $LARGE_CORPUS_CHANGES"
+          echo "Large corpus : $LARGE_CORPUS"
 
           fail_if_bad() {
             if [[ "$1" == "failure" || "$1" == "cancelled" || "$1" == "skipped" ]]; then
@@ -643,6 +780,7 @@ jobs:
           }
 
           fail_if_bad "$LINT" "Lint"
+          fail_if_bad "$SECURITY_BASELINE" "Security Baseline Policy"
           fail_if_bad "$FULL" "Full test"
           fail_if_bad "$DYNAMIC_UNICORN" "Dynamic Unicorn Regression"
           fail_if_bad "$REAL_CORPUS" "Real Corpus ARM64"
@@ -650,5 +788,9 @@ jobs:
           fail_if_bad "$BACKEND_LOADTEST" "Backend Performance Budgets"
           fail_if_bad "$AUTH_LICENSING_E2E" "Auth Licensing Interop E2E"
           fail_if_bad "$AUTH_LICENSING_WINDOWS" "Auth Licensing Windows Unit Tests"
+          fail_if_bad "$LARGE_CORPUS_CHANGES" "Large Corpus Path Filter"
+          if [[ "$LARGE_CORPUS" == "failure" || "$LARGE_CORPUS" == "cancelled" ]]; then
+            echo "❌ Large Real Corpus failed" && exit 1
+          fi
           # security-scan est informatif uniquement (continue-on-error sur tous ses steps)
-          echo "✅ PR checks passed (lint=$LINT, full=$FULL, unicorn=$DYNAMIC_UNICORN, real-corpus-arm64=$REAL_CORPUS, e2e-audit=$E2E_AUDIT, backend-loadtest=$BACKEND_LOADTEST, security=$SECURITY, auth-licensing-e2e=$AUTH_LICENSING_E2E, auth-licensing-windows=$AUTH_LICENSING_WINDOWS)"
+          echo "✅ PR checks passed (lint=$LINT, full=$FULL, unicorn=$DYNAMIC_UNICORN, real-corpus-arm64=$REAL_CORPUS, e2e-audit=$E2E_AUDIT, backend-loadtest=$BACKEND_LOADTEST, security=$SECURITY, auth-licensing-e2e=$AUTH_LICENSING_E2E, auth-licensing-windows=$AUTH_LICENSING_WINDOWS, large-corpus=$LARGE_CORPUS)"

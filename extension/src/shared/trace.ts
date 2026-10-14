@@ -349,7 +349,7 @@ function normalizeTraceData(data, jsonPath = '') {
 function resolveOutputJsonPath(storageDir?) {
   const folders = vscode.workspace.workspaceFolders;
   if (!folders || folders.length === 0) {
-    vscode.window.showErrorMessage('Aucun workspace ouvert.');
+    vscode.window.showErrorMessage('No workspace is open.');
     return null;
   }
   const root = resolveProjectRoot(folders[0].uri.fsPath);
@@ -370,7 +370,7 @@ function loadTraceFromWorkspace() {
   const jsonPath = resolveOutputJsonPath();
   if (!jsonPath) return { snapshots: [], risks: [], meta: {} };
   if (!fs.existsSync(jsonPath)) {
-    vscode.window.showErrorMessage(`output.json introuvable (${jsonPath}).`);
+    vscode.window.showErrorMessage(`output.json was not found (${jsonPath}).`);
     return { snapshots: [], risks: [], meta: {} };
   }
   try {
@@ -378,10 +378,10 @@ function loadTraceFromWorkspace() {
     const data = JSON.parse(raw);
     if (Array.isArray(data)) return normalizeTraceData(data, jsonPath);
     if (data && Array.isArray(data.snapshots)) return normalizeTraceData(data, jsonPath);
-    vscode.window.showErrorMessage('output.json doit contenir { snapshots, risks }.');
+    vscode.window.showErrorMessage('output.json must contain { snapshots, risks }.');
     return { snapshots: [], risks: [], meta: {} };
   } catch (err) {
-    vscode.window.showErrorMessage('Erreur lecture output.json.');
+    vscode.window.showErrorMessage('Failed to read output.json.');
     return { snapshots: [], risks: [], meta: {} };
   }
 }

@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<!-- Connect Agents — MCP setup/doctor/rollback panel -->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; img-src {{cspSource}}; script-src {{cspSource}}; style-src {{cspSource}} 'unsafe-inline';">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Connect Agents (MCP)</title>
+  <style>
+    body { font-family: var(--vscode-font-family); padding: 16px; font-size: 13px; color: var(--vscode-foreground); }
+    h2 { font-size: 15px; margin: 0 0 12px; }
+    .row { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
+    label { color: var(--vscode-descriptionForeground); font-size: 12px; }
+    select, button, input {
+      font-family: inherit; font-size: 13px; padding: 4px 8px;
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: 1px solid var(--vscode-widget-border); border-radius: 3px;
+    }
+    button { background: var(--vscode-button-background); color: var(--vscode-button-foreground); cursor: pointer; }
+    button:hover { background: var(--vscode-button-hoverBackground); }
+    button:disabled { opacity: 0.5; cursor: default; }
+    #status { margin: 10px 0; font-size: 12px; }
+    #status.ok { color: var(--vscode-terminal-ansiGreen); }
+    #status.error { color: var(--vscode-errorForeground); }
+    pre {
+      background: var(--vscode-textCodeBlock-background); padding: 10px; border-radius: 4px;
+      overflow: auto; max-height: 60vh; white-space: pre-wrap; word-break: break-word;
+    }
+  </style>
+</head>
+<body>
+  <h2>Connect Agents (MCP)</h2>
+  <div class="row">
+    <label for="agentSelect">Agent</label>
+    <select id="agentSelect">
+      <option value="claude">Claude Code</option>
+      <option value="codex">Codex</option>
+      <option value="all">All known agents</option>
+    </select>
+    <label for="scopeSelect">Scope</label>
+    <select id="scopeSelect">
+      <option value="project">Project</option>
+      <option value="user">User</option>
+    </select>
+  </div>
+  <div class="row">
+    <button id="btnPreview">Preview (dry-run)</button>
+    <button id="btnApply">Apply</button>
+    <button id="btnRollback">Rollback</button>
+    <button id="btnDoctor">Run Doctor</button>
+  </div>
+  <div id="status"></div>
+  <pre id="output">Pick an agent, then Preview, Apply, Rollback, or run the Doctor handshake.</pre>
+  <script src="{{messageBusUri}}"></script>
+  <script src="{{scriptUri}}"></script>
+</body>
+</html>

@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 /**
  * @file hub.js
  * @brief Hub principal (UI MOSCOW) et gestion des messages webview.
@@ -89,9 +88,9 @@ const {
 const AUTH_STRICT_LICENSE_ENV = 'BINHOST_DISABLE_LICENSE_FALLBACK';
 const AUTH_CONTENT_KEYS_STDIN_ENV = 'BINHOST_CONTENT_KEYS_STDIN';
 
-function summarizeWebviewPostMessageForAudit(message) {
+function summarizeWebviewPostMessageForAudit(message: Record<string, any>) {
   if (!message || typeof message !== 'object') return {};
-  const summary = {
+  const summary: Record<string, any> = {
     source: 'hub',
     keys: Object.keys(message).filter((key) => key !== 'type').slice(0, 20),
   };
@@ -209,10 +208,28 @@ function createHub(config) {
       return false;
     }
   };
+  const idaKeymapEnabled = () => {
+    try {
+      return vscode.workspace.getConfiguration?.('pileOuFace')?.get?.('keymap', 'default') === 'ida';
+    } catch (_) {
+      return false;
+    }
+  };
+  const postKeymapConfig = () => {
+    if (hubPanelRef && !hubPanelRef.disposed) {
+      hubPanelRef.webview.postMessage({ type: 'hubKeymapConfig', keymap: idaKeymapEnabled() ? 'ida' : 'default' });
+    }
+  };
+
+  if (typeof vscode.workspace.onDidChangeConfiguration === 'function') {
+    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration('pileOuFace.keymap')) postKeymapConfig();
+    }));
+  }
 
   context.subscriptions.push(vscode.commands.registerCommand('pileOuFace.perfSnapshot', () => {
     if (!perfDiagnosticsEnabled()) {
-      vscode.window.showInformationMessage('Diagnostics performance Pile ou Face désactivés. Activez pileOuFace.perfDiagnostics pour capturer un snapshot.');
+      vscode.window.showInformationMessage('Pile ou Face performance diagnostics are disabled. Enable pileOuFace.perfDiagnostics to capture a snapshot.');
       return;
     }
     const mem = process.memoryUsage();
@@ -232,7 +249,7 @@ function createHub(config) {
     }
     logChannel.show(true);
   }));
-  context.subscriptions.push(vscode.commands.registerCommand('pileOuFace.e2eDispatchHubMessage', async (message = {}) => {
+  context.subscriptions.push(vscode.commands.registerCommand('pileOuFace.e2eDispatchHubMessage', async (message: Record<string, any> = {}) => {
     if (!getRuntimeAuditState().enabled) throw new Error('pileOuFace.e2eDispatchHubMessage requires runtime audit to be enabled');
     if (!hubPanelRef || hubPanelRef.disposed || !hubHandlersRef || !hubDispatchRef) {
       throw new Error('pileOuFace.e2eDispatchHubMessage requires an open hub panel');
@@ -257,19 +274,23 @@ function createHub(config) {
     throw new Error(`No E2E-dispatchable hub handler for ${message.type}`);
   }));
 
-  return function openHub(initialPanel = 'dashboard', options = {}) {
+  return function openHub(initialPanel = 'dashboard', options: Record<string, any> = {}) {
     if (options.aiPrompt) pendingAiPrompt = String(options.aiPrompt);
     if (options.autoTriageBinary) pendingAutoTriageBinary = String(options.autoTriageBinary);
     const folders = vscode.workspace.workspaceFolders;
     if (!folders || folders.length === 0) {
-      vscode.window.showErrorMessage('Aucun workspace ouvert.');
+      vscode.window.showErrorMessage('No workspace is open.');
       return null;
     }
     const workspaceRoot = folders[0].uri.fsPath;
     const root = resolveProjectRoot(folders[0].uri.fsPath);
     const backendRoot = getExtensionPath() || root;
     const pythonExe = detectPythonExecutable(root);
-    const pythonEnv = buildRuntimeEnv(root, storageDir);
+    const pythonEnv = buildRuntimeEnv(
+      root,
+      storageDir,
+      globalDir ? { POF_GLOBAL_STORAGE_DIR: globalDir } : {},
+    );
     const getAuthServerUrl = () => {
       try {
         const authConfig = vscode.workspace.getConfiguration('pileOuFace').inspect('authServerUrl');
@@ -347,7 +368,7 @@ function createHub(config) {
             // Process may already have exited.
           }
           const wrapped = new Error(`Timeout plugin runtime après ${timeout} ms`);
-          wrapped.stderr = err;
+          (wrapped as Error & { stderr?: string }).stderr = err;
           finish(reject, wrapped);
         }, timeout);
         proc.stdout?.on('data', (chunk) => {
@@ -365,20 +386,20 @@ function createHub(config) {
           err += chunk.toString('utf8');
         });
         proc.on('error', (error) => {
-          error.stderr = err;
+          (error as Error & { stderr?: string }).stderr = err;
           finish(reject, error);
         });
         proc.on('close', (code) => {
           if (code) {
             const wrapped = new Error(err || `Plugin runtime exited with code ${code}`);
-            wrapped.stderr = err;
+            (wrapped as Error & { stderr?: string }).stderr = err;
             finish(reject, wrapped);
             return;
           }
           finish(resolve, out);
         });
       });
-      return JSON.parse(stdout || '{}');
+      return JSON.parse(String(stdout || '{}'));
     };
     const runHubStartupAction = async (handlers) => {
       if (!handlers) return;
@@ -402,6 +423,7 @@ function createHub(config) {
       });
       hubPanelRef.reveal(vscode.ViewColumn.Beside);
       hubPanelRef.webview.postMessage({ type: 'hubPerfDiagnosticsConfig', enabled: perfDiagnosticsEnabled() });
+      postKeymapConfig();
       hubPanelRef.webview.postMessage({ type: 'showPanel', panel: initialPanel, focusGoToAddr: options.focusGoToAddr });
       if (pendingAiPrompt) {
         hubPanelRef.webview.postMessage({ type: 'hubPrefillAiPrompt', prompt: pendingAiPrompt });
@@ -460,7 +482,7 @@ function createHub(config) {
     // ── Watcher decompilers.json — actualisation automatique du panneau ─────────
     const _refreshDecompilerList = async () => {
       try {
-        const { stdout } = await new Promise((resolve, reject) => {
+        const { stdout } = await new Promise<{ stdout: string }>((resolve, reject) => {
           cp.execFile(
             pythonExe,
             [path.join(backendRoot, 'backends/static/decompile/decompile.py'), '--list', '--provider', 'auto'],
@@ -636,8 +658,8 @@ function createHub(config) {
           });
           if (err) {
             const wrapped = err instanceof Error ? err : new Error(String(err || 'Commande Python échouée.'));
-            wrapped.stderr = stderr;
-            wrapped.stdout = stdout;
+            (wrapped as Error & { stderr?: string; stdout?: string }).stderr = stderr;
+            (wrapped as Error & { stderr?: string; stdout?: string }).stdout = stdout;
             reject(wrapped);
             return;
           }
@@ -645,8 +667,8 @@ function createHub(config) {
             resolve(JSON.parse(stdout || fallback));
           } catch (parseErr) {
             const wrapped = parseErr instanceof Error ? parseErr : new Error(String(parseErr || 'JSON invalide.'));
-            wrapped.stderr = stderr;
-            wrapped.stdout = stdout;
+            (wrapped as Error & { stderr?: string; stdout?: string }).stderr = stderr;
+            (wrapped as Error & { stderr?: string; stdout?: string }).stdout = stdout;
             reject(wrapped);
           }
         }
@@ -674,8 +696,8 @@ function createHub(config) {
           });
           if (err) {
             const wrapped = err instanceof Error ? err : new Error(String(err || 'Commande Python échouée.'));
-            wrapped.stderr = stderr;
-            wrapped.stdout = stdout;
+            (wrapped as Error & { stderr?: string; stdout?: string }).stderr = stderr;
+            (wrapped as Error & { stderr?: string; stdout?: string }).stdout = stdout;
             reject(wrapped);
             return;
           }
@@ -938,6 +960,7 @@ function createHub(config) {
       clearDynamicTraceHistory: traceHistoryHandlers.clearDynamicTraceHistory,
       hubReady: () => {
         panel.webview.postMessage({ type: 'hubPerfDiagnosticsConfig', enabled: perfDiagnosticsEnabled() });
+        postKeymapConfig();
         if (pendingAiPrompt) {
           panel.webview.postMessage({ type: 'hubPrefillAiPrompt', prompt: pendingAiPrompt });
           pendingAiPrompt = '';
@@ -980,7 +1003,7 @@ function createHub(config) {
         }
         return cleaned.toLowerCase();
       };
-      const hexContainsNullByte = (hex) => (String(hex || '').match(/../g) || []).includes('00');
+      const hexContainsNullByte = (hex) => (String(hex || '').match(/../g) || [] as string[]).includes('00');
       const hexToLatin1String = (hex) => Buffer.from(hex, 'hex').toString('latin1');
       const normalizeTraceInputMeta = (input, fallbackMode = 'payload_builder') => {
         const source = input && typeof input === 'object' ? input : {};
@@ -1112,7 +1135,7 @@ function createHub(config) {
       const loadBinarySymbols = async (binaryPath, { includeAll = false } = {}) => {
         const args = ['--binary', binaryPath];
         if (includeAll) args.push('--all');
-        const rawSymbols = await runPythonJson(getSymbolsScript(root), args).catch(() => []);
+        const rawSymbols: any = await runPythonJson(getSymbolsScript(root), args).catch(() => []);
         return Array.isArray(rawSymbols) ? rawSymbols : (rawSymbols.symbols || []);
       };
       const buildRunTraceInit = async (forcedBinaryPath = '', preset = null, forcedSourcePath = '', payloadTargetMode = 'auto') => {
@@ -1153,7 +1176,7 @@ function createHub(config) {
           };
         }
 
-        const info = await loadBinaryHeaders(absoluteBinaryPath).catch(() => ({}));
+        const info: any = await loadBinaryHeaders(absoluteBinaryPath).catch(() => ({}));
         const symbols = await loadBinarySymbols(absoluteBinaryPath);
         const inputSymbols = await loadBinarySymbols(absoluteBinaryPath, { includeAll: true });
         const sameBinaryTrace = (() => {
@@ -1342,7 +1365,7 @@ function createHub(config) {
           }
           if (useExistingBinary && !binaryPath) {
             runTelemetry.fail('invalid_input');
-            vscode.window.showErrorMessage('Chemin binaire requis.');
+            vscode.window.showErrorMessage('A binary path is required.');
             return;
           }
           if (!useExistingBinary && !sourcePath) {
@@ -1424,7 +1447,7 @@ function createHub(config) {
           }
           if (injectArgv && payloadHex && hexContainsNullByte(payloadHex)) {
             runTelemetry.fail('invalid_input');
-            vscode.window.showErrorMessage('Payload invalide pour argv[1]: contient un octet NUL. Utilisez stdin ou Fichier.');
+            vscode.window.showErrorMessage('Invalid argv[1] payload: it contains a NUL byte. Use stdin or File instead.');
             return;
           }
           logChannel.appendLine(`[payload] runTrace mode=${stagedInputFile ? 'file' : inputMeta.mode} target=${payloadTarget} inject=${injectPayload} size=${payloadHex ? payloadHex.length / 2 : payloadString.length} hex=${payloadHex ? payloadHex.slice(0, 160) : ''}`);

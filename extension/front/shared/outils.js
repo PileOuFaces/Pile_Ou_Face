@@ -1438,7 +1438,8 @@ function updateDisasmSessionSummary() {
     hintEl.textContent = 'Choisis un binaire puis ouvre le désassemblage pour démarrer la session.';
   } else if (summary.addr && summary.functionName) {
     const historyHint = _navHistory.length > 1 ? ` Fil actuel: ${Math.min(_navIndex + 1, _navHistory.length)}/${_navHistory.length}.` : '';
-    hintEl.textContent = `Tu es positionné sur ${summary.functionName} à ${summary.addr}. Les actions essentielles restent visibles, le reste peut se replier.${historyHint}`;
+    const positionPreposition = window.POFI18n?.resolveLocale(document.documentElement.lang) === 'fr' ? 'à' : 'at';
+    hintEl.textContent = `Tu es positionné sur ${summary.functionName} ${positionPreposition} ${summary.addr}. Les actions essentielles restent visibles, le reste peut se replier.${historyHint}`;
   } else if (summary.addr) {
     const historyHint = _navHistory.length > 1 ? ` Fil actuel: ${Math.min(_navIndex + 1, _navHistory.length)}/${_navHistory.length}.` : '';
     hintEl.textContent = `Adresse active ${summary.addr}. Tu peux naviguer, annoter ou lancer les xrefs depuis ici.${historyHint}`;
@@ -1559,6 +1560,15 @@ function resetGraphDerivedState() {
   if (functionsCount) functionsCount.textContent = '';
   const functionsSearch = document.getElementById('functionsSearch');
   if (functionsSearch) functionsSearch.value = '';
+  const functionsNlSearchInput = document.getElementById('functionsNlSearchInput');
+  if (functionsNlSearchInput) functionsNlSearchInput.value = '';
+  const functionsNlSearchStatus = document.getElementById('functionsNlSearchStatus');
+  if (functionsNlSearchStatus) functionsNlSearchStatus.textContent = 'Les preuves de l’index local sont classées par le provider IA configuré.';
+  const functionsNlSearchResults = document.getElementById('functionsNlSearchResults');
+  if (functionsNlSearchResults) {
+    functionsNlSearchResults.innerHTML = '';
+    functionsNlSearchResults.hidden = true;
+  }
   const functionsFilterPills = document.getElementById('functionsFilterPills');
   if (functionsFilterPills) {
     functionsFilterPills.querySelectorAll('[data-functions-filter]').forEach((button) => {

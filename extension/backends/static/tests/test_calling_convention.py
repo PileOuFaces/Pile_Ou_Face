@@ -4,13 +4,17 @@ import os
 import subprocess
 import sys
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "../../.."))
 sys.path.insert(0, ROOT)
 from backends.static.binary.arch import get_raw_arch_info
 from backends.static.disasm.calling_convention import (
+    _AAPCS32_VFP_ARG_REGISTERS,
+    _AAPCS64_FLOAT_ARG_REGISTERS,
     _analyze_function,
+    _arm32_float_abi,
     _known_abi_convention,
 )
 from backends.static.tests.util import compile_minimal_elf
@@ -48,6 +52,80 @@ import unittest
 
 
 class TestCallingConvention(unittest.TestCase):
+    @unittest.skipUnless(_CAPSTONE_AVAILABLE, "capstone not installed")
+    def test_arm64_convention_distinguishes_platform_abis(self):
+        info = get_raw_arch_info("arm64")
+        self.assertIsNotNone(info)
+
+        class Binary:
+            def get_content_from_virtual_address(self, addr, size):
+                return None
+
+        expected = {
+            "elf": "AAPCS64",
+            "macho": "Apple ARM64 (Darwin PCS)",
+            "pe": "Windows ARM64",
+            "raw": "AAPCS64 (platform unknown)",
+        }
+        for format_kind, convention in expected.items():
+            with self.subTest(format_kind=format_kind):
+                result = _analyze_function(
+                    Binary(), object(), replace(info, format_kind=format_kind), 0x1000
+                )
+                self.assertEqual(result["convention"], convention)
+                self.assertEqual(
+                    result["float_arg_registers"],
+                    list(_AAPCS64_FLOAT_ARG_REGISTERS),
+                )
+                self.assertEqual(result["arg_registers"], list(info.arg_registers))
+
+    def test_arm32_float_abi_reads_elf_processor_flags(self):
+        class Header:
+            processor_flag = 0
+
+        class Binary:
+            header = Header()
+
+        binary = Binary()
+        for flags, expected in ((0x200, "soft"), (0x400, "hard"), (0, None)):
+            with self.subTest(flags=flags):
+                binary.header.processor_flag = flags
+                self.assertEqual(_arm32_float_abi(binary), expected)
+
+        binary.header.processor_flag = 0x600
+        self.assertIsNone(_arm32_float_abi(binary))
+        self.assertIsNone(_arm32_float_abi(object()))
+
+    @unittest.skipUnless(_CAPSTONE_AVAILABLE, "capstone not installed")
+    def test_arm32_convention_reports_soft_and_hard_float_abis(self):
+        info = get_raw_arch_info("arm")
+        self.assertIsNotNone(info)
+
+        class Header:
+            processor_flag = 0x400
+
+        class Binary:
+            header = Header()
+
+            def get_content_from_virtual_address(self, addr, size):
+                return None
+
+        binary = Binary()
+        hard = _analyze_function(binary, object(), info, 0x1000)
+        self.assertEqual(hard["convention"], "AAPCS32 hard-float")
+        self.assertEqual(hard["float_arg_registers"], list(_AAPCS32_VFP_ARG_REGISTERS))
+        self.assertGreaterEqual(hard["confidence"], 0.8)
+
+        binary.header.processor_flag = 0x200
+        soft = _analyze_function(binary, object(), info, 0x1000)
+        self.assertEqual(soft["convention"], "AAPCS32 soft-float")
+        self.assertEqual(soft["float_arg_registers"], [])
+
+        binary.header.processor_flag = 0
+        unknown = _analyze_function(binary, object(), info, 0x1000)
+        self.assertEqual(unknown["convention"], "AAPCS32 (float ABI unknown)")
+        self.assertEqual(unknown["float_arg_registers"], [])
+
     def test_output_shape(self):
         with tempfile.TemporaryDirectory() as tmp:
             binary = compile_minimal_elf(Path(tmp))
@@ -143,6 +221,35 @@ class TestCallingConvention(unittest.TestCase):
 
         self.assertIsNone(result["convention"])
         self.assertEqual(result["source"], "heuristic")
+
+    def test_thumb_tagged_function_address_is_normalized_for_disassembly(self):
+        info = get_raw_arch_info("thumb")
+        self.assertIsNotNone(info)
+
+        class Binary:
+            calls = []
+
+            def get_content_from_virtual_address(self, addr, size):
+                self.calls.append((addr, size))
+                return b"\x00\xbf\x70\x47"
+
+        class Disassembler:
+            detail = False
+            calls = []
+
+            def disasm(self, code, addr):
+                self.calls.append((code, addr))
+                return [object()]
+
+        binary = Binary()
+        disassembler = Disassembler()
+        result = _analyze_function(binary, disassembler, info, 0x1001)
+
+        self.assertEqual(binary.calls, [(0x1000, 128)])
+        self.assertEqual(disassembler.calls, [(b"\x00\xbf\x70\x47", 0x1000)])
+        self.assertTrue(disassembler.detail)
+        self.assertEqual(result["convention"], "AAPCS32 (float ABI unknown)")
+        self.assertEqual(result["source"], "abi")
 
 
 if __name__ == "__main__":

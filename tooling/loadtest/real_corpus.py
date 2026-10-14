@@ -27,6 +27,9 @@ def _toolchain(arch: str) -> tuple[str, str]:
     names = {
         "x86_64": ("gcc", "objcopy"),
         "arm64": ("aarch64-linux-gnu-gcc", "aarch64-linux-gnu-objcopy"),
+        "mips32": ("mips-linux-gnu-gcc", "mips-linux-gnu-objcopy"),
+        "ppc32": ("powerpc-linux-gnu-gcc", "powerpc-linux-gnu-objcopy"),
+        "riscv64": ("riscv64-linux-gnu-gcc", "riscv64-linux-gnu-objcopy"),
     }
     compiler_name, objcopy_name = names[arch]
     compiler = shutil.which(compiler_name)
@@ -124,7 +127,11 @@ def build_large_real_corpus(output: Path, arch: str, size_mib: int) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Construit un corpus ELF loadtest")
-    parser.add_argument("--arch", choices=("x86_64", "arm64"), required=True)
+    parser.add_argument(
+        "--arch",
+        choices=("x86_64", "arm64", "mips32", "ppc32", "riscv64"),
+        required=True,
+    )
     parser.add_argument("--size-mib", type=int, default=100)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)

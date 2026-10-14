@@ -81,6 +81,23 @@ class CdpTarget {
     return new CdpLocator(this, selector);
   }
 
+  async pressKey(key) {
+    const value = String(key || '');
+    const lower = value.toLowerCase();
+    const keyCode = lower === ';' ? 186 : (lower.length === 1 ? lower.toUpperCase().charCodeAt(0) : 0);
+    const code = lower === ';' ? 'Semicolon' : (lower.length === 1 ? `Key${lower.toUpperCase()}` : value);
+    const params = {
+      key: value,
+      code,
+      text: value.length === 1 ? value : '',
+      unmodifiedText: value.length === 1 ? value : '',
+      windowsVirtualKeyCode: keyCode,
+      nativeVirtualKeyCode: keyCode,
+    };
+    await this.send('Input.dispatchKeyEvent', { type: 'keyDown', ...params });
+    await this.send('Input.dispatchKeyEvent', { type: 'keyUp', ...params, text: '', unmodifiedText: '' });
+  }
+
   close() {
     this.socket.close();
   }
@@ -180,6 +197,23 @@ class CdpLocator {
     if (!filled) throw new Error(`Element cannot be filled: ${this.selector}`);
   }
 
+  async fillAndWait(value, timeout = DEFAULT_TIMEOUT_MS) {
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+      await this.fill(value);
+      let stable = true;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        if (!String(await this.inputValue() || '').includes(value)) {
+          stable = false;
+          break;
+        }
+      }
+      if (stable) return value;
+    }
+    throw new Error(`Timed out filling ${this.selector} with ${JSON.stringify(value)}`);
+  }
+
   async click() {
     await this.waitFor({ state: 'visible' });
     const scrolled = await this.target.evaluate(this.expression(`
@@ -227,12 +261,19 @@ async function openSocket(url, timeoutMs) {
   });
 }
 
-async function connectToHubWebview(endpoint, timeoutMs = DEFAULT_TIMEOUT_MS) {
+async function connectToHubWebview(
+  endpoint,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  documentSelector = '#panel-dashboard',
+  { requireHubSettingsReady = true, requireDocumentComplete = false } = {},
+) {
   if (!endpoint) throw new Error('POF_E2E_CDP_ENDPOINT is required for UI E2E');
   const deadline = Date.now() + timeoutMs;
   let targetSummary = '';
   let lastError = '';
-  while (Date.now() < deadline) {
+  let attempted = false;
+  while (!attempted || Date.now() < deadline) {
+    attempted = true;
     try {
       const response = await globalThis.fetch(`${endpoint}/json/list`);
       const targets = await response.json();
@@ -262,14 +303,32 @@ async function connectToHubWebview(endpoint, timeoutMs = DEFAULT_TIMEOUT_MS) {
           await target.send('Runtime.enable');
           const contexts = target.executionContextIds.length ? target.executionContextIds : [null];
           for (const contextId of contexts) {
-            try {
-              if (await target.evaluate('Boolean(globalThis.document?.querySelector("#panel-dashboard"))', contextId)) {
-                target.contextId = contextId;
-                return target;
+            let documentFound = false;
+            while (Date.now() < deadline) {
+              try {
+                const state = await target.evaluate(`(() => {
+                  const documentFound = Boolean(globalThis.document?.querySelector(${JSON.stringify(documentSelector)}));
+                  return {
+                    documentFound,
+                    ready: documentFound
+                      && (!${requireDocumentComplete} || globalThis.document.readyState === 'complete')
+                      && (!${requireHubSettingsReady} || globalThis.document.documentElement?.dataset.hubSettingsReady === 'true'),
+                  };
+                })()`, contextId);
+                if (state?.ready) {
+                  target.contextId = contextId;
+                  target.endpoint = endpoint;
+                  return target;
+                }
+                if (!state?.documentFound) break;
+                documentFound = true;
+              } catch (error) {
+                lastError = error instanceof Error ? error.message : String(error);
+                break;
               }
-            } catch (error) {
-              lastError = error instanceof Error ? error.message : String(error);
+              await new Promise((resolve) => setTimeout(resolve, Math.min(100, Math.max(0, deadline - Date.now()))));
             }
+            if (documentFound) lastError = 'Hub document was present but had not reported initialization complete';
           }
         } catch (error) {
           lastError = error instanceof Error ? error.message : String(error);
@@ -279,9 +338,11 @@ async function connectToHubWebview(endpoint, timeoutMs = DEFAULT_TIMEOUT_MS) {
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
     }
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    if (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, Math.min(100, Math.max(0, deadline - Date.now()))));
+    }
   }
-  throw new Error(`Pile ou Face hub webview was not found through CDP. Targets: ${targetSummary || '<none>'}. Last error: ${lastError || '<none>'}`);
+  throw new Error(`Initialized CDP Hub document matching ${documentSelector} was not found. Targets: ${targetSummary || '<none>'}. Last error: ${lastError || '<none>'}`);
 }
 
 class HubPage {
@@ -321,8 +382,36 @@ class HubPage {
     return this.target.locator('#topBarBinaryMenu');
   }
 
+  async openTopBarBinaryMenu(timeout = DEFAULT_TIMEOUT_MS) {
+    const button = this.topBarBinaryButton();
+    const menu = this.topBarBinaryMenu();
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+      try {
+        await menu.waitFor({ state: 'visible', timeout: 1 });
+        return;
+      } catch {
+        // The menu is still closed.
+      }
+      await button.clickDom();
+      try {
+        await menu.waitFor({ state: 'visible', timeout: 750 });
+        return;
+      } catch {
+        // A freshly reopened webview can expose the button before its listener
+        // is mounted. Retry until the menu itself confirms the interaction.
+      }
+    }
+    await menu.waitFor({ state: 'visible', timeout: 1 });
+  }
+
   recentBinaryButton(binaryPath) {
-    return this.target.locator(`#topBarRecentList > .top-bar-menu-item[title=${JSON.stringify(String(binaryPath))}]`);
+    const requestedPath = String(binaryPath);
+    const candidates = [...new Set([requestedPath, path.basename(requestedPath)])];
+    const selector = candidates
+      .map((candidate) => `#topBarRecentList > .top-bar-menu-item[title=${JSON.stringify(candidate)}]`)
+      .join(', ');
+    return this.target.locator(selector);
   }
 
   currentBinaryName() {
@@ -331,6 +420,10 @@ class HubPage {
 
   binaryInfo() {
     return this.target.locator('#infoContent');
+  }
+
+  binaryInfoRetryButton() {
+    return this.target.locator('#btnRetryBinaryInfo');
   }
 
   binarySections() {
@@ -393,6 +486,10 @@ class HubPage {
     return this.target.locator('[data-action="auto-triage-confirm"]');
   }
 
+  autoTriageCancelButton() {
+    return this.target.locator('[data-action="auto-triage-cancel"]');
+  }
+
   autoTriageState() {
     return this.target.locator('[data-auto-triage-state]');
   }
@@ -409,8 +506,65 @@ class HubPage {
     return this.target.locator('[data-auto-triage-result-title]');
   }
 
+  aiProviderCard(provider) {
+    return this.target.locator(`#aiProvidersState [data-provider="${provider}"]`);
+  }
+
+  aiProviderKey(provider) {
+    return this.target.locator(`#aiProvidersState [data-provider="${provider}"] [data-role="key"]`);
+  }
+
+  aiProviderModel(provider) {
+    return this.target.locator(`#aiProvidersState [data-provider="${provider}"] [data-role="model"]`);
+  }
+
+  aiProviderSaveButton(provider) {
+    return this.target.locator(`#aiProvidersState [data-provider="${provider}"] .ai-provider-actions button`);
+  }
+
+  aiProviderStatus(provider) {
+    return this.target.locator(`#aiProvidersState [data-provider="${provider}"] .ai-provider-card-status`);
+  }
+
+  aiDefaultProvider() {
+    return this.target.locator('#aiDefaultProvider');
+  }
+
+  async setAiDefaultProvider(provider) {
+    const select = this.aiDefaultProvider();
+    const savedTitle = `Provider automatique enregistré : ${provider}`;
+    const deadline = Date.now() + DEFAULT_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      try {
+        await this.openPanel('options');
+        await select.fill(provider);
+        await select.waitForAttribute('title', savedTitle, 750);
+        return;
+      } catch {
+        // Hub initialization can rerender settings after the first interaction.
+      }
+    }
+    await select.waitForAttribute('title', savedTitle, 1);
+  }
+
   disassemblyBinarySummary() {
     return this.target.locator('#disasmSummaryBinary');
+  }
+
+  naturalLanguageSearchInput() {
+    return this.target.locator('#functionsNlSearchInput');
+  }
+
+  naturalLanguageSearchButton() {
+    return this.target.locator('#btnFunctionsNlSearch');
+  }
+
+  naturalLanguageSearchStatus() {
+    return this.target.locator('#functionsNlSearchStatus');
+  }
+
+  naturalLanguageSearchResults() {
+    return this.target.locator('#functionsNlSearchResults');
   }
 
   decompileAugmentButton() {
@@ -461,6 +615,10 @@ class HubPage {
     return this.target.locator('#pluginStateList .plugin-consent-grant');
   }
 
+  pluginConsentRefuseButton() {
+    return this.target.locator('#pluginStateList .plugin-consent-refuse');
+  }
+
   toastContainer() {
     return this.target.locator('#pof-toast-container');
   }
@@ -483,6 +641,27 @@ class HubPage {
 
   interfaceModeButton(mode) {
     return this.target.locator(`[data-interface-mode="${mode}"]`);
+  }
+
+  async selectInterfaceMode(mode) {
+    const button = this.interfaceModeButton(mode);
+    const input = this.interfaceModeInput();
+    await this.target.locator('html').waitForAttribute('data-hub-settings-ready', 'true', DEFAULT_TIMEOUT_MS);
+    // Re-establish a known panel state before opening Options. A previous
+    // analysis flow can restore Static while the hub settings request settles.
+    await this.openPanel('dashboard');
+    await this.openPanel('options');
+    await this.target.locator('html').waitForAttribute('data-hub-settings-ready', 'true', DEFAULT_TIMEOUT_MS);
+    await button.waitFor({ state: 'visible', timeout: DEFAULT_TIMEOUT_MS });
+    await button.clickDom();
+    // Observe the host's persistence acknowledgement, not an arbitrary delay or
+    // the optimistic state of the controls, before the caller can reload.
+    await this.target.locator('html').waitForAttribute('data-hub-settings-save-pending', 'false', DEFAULT_TIMEOUT_MS);
+    await this.target.locator('html').waitForAttribute('data-hub-settings-ready', 'true', DEFAULT_TIMEOUT_MS);
+    await Promise.all([
+      input.waitForValue(mode, DEFAULT_TIMEOUT_MS),
+      button.waitForAttribute('aria-pressed', 'true', DEFAULT_TIMEOUT_MS),
+    ]);
   }
 
   interfaceModeInput() {
@@ -523,6 +702,45 @@ class HubPage {
 
   typeEditorCloseButton() {
     return this.target.locator('#pof-typed-struct-popup .typed-data-struct-editor-actions .btn:first-child');
+  }
+
+  typedDataSection() {
+    return this.target.locator('#typedDataSection');
+  }
+
+  typedDataStructSelect() {
+    return this.target.locator('#typedDataStructSelect');
+  }
+
+  typedDataStructOffset() {
+    return this.target.locator('#typedDataStructOffset');
+  }
+
+  typedDataApplyStructButton() {
+    return this.target.locator('#btnTypedApplyStruct');
+  }
+
+  async applyTypedStruct(expectedStatus) {
+    const button = this.typedDataApplyStructButton();
+    const status = this.typedDataStructStatus();
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await button.clickDom();
+      try {
+        await status.waitForText(expectedStatus, 10000);
+        return;
+      } catch {
+        // Retry the idempotent preview request if a webview refresh dropped it.
+      }
+    }
+    await status.waitForText(expectedStatus, 1);
+  }
+
+  typedDataStructStatus() {
+    return this.target.locator('#typedDataStructStatus');
+  }
+
+  typedDataContent() {
+    return this.target.locator('#typedDataContent');
   }
 
   entryPointButton() {
@@ -588,21 +806,56 @@ class HubPage {
 
   async openPanel(panelId) {
     const navigation = this.panelNav(panelId);
+    const panel = this.panel(panelId);
+    const deadline = Date.now() + DEFAULT_TIMEOUT_MS;
     await navigation.click();
-    try {
-      await navigation.waitForAttribute('class', 'active', 500);
-    } catch {
+    while (Date.now() < deadline) {
+      try {
+        await Promise.all([
+          navigation.waitForAttribute('class', 'active', 500),
+          panel.waitForAttribute('class', 'active', 500),
+        ]);
+        return;
+      } catch {
+        // The DOM can be visible before the webview listeners finish mounting.
+        // Retry the real navigation control until both observable states agree.
+      }
       await navigation.clickDom();
     }
-    await this.expectActive(this.panel(panelId), `panel ${panelId}`);
-    await this.expectActive(navigation, `navigation ${panelId}`);
+    await this.expectActive(panel, `panel ${panelId}`, 1);
   }
 
   async openStaticTab(groupId, tabId) {
-    await this.group(groupId).click();
-    await this.expectActive(this.group(groupId), `group ${groupId}`);
-    await this.subTab(tabId).click();
-    await this.expectActive(this.subTab(tabId), `sub-tab ${tabId}`);
+    const group = this.group(groupId);
+    const subTab = this.subTab(tabId);
+    await group.click();
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        await Promise.all([
+          group.waitForAttribute('class', 'active', 750),
+          subTab.waitFor({ state: 'visible', timeout: 750 }),
+        ]);
+        break;
+      } catch {
+        if (attempt === 0) {
+          // A previous journey may persist simple mode or a reduced feature set.
+          // Restore the complete static workspace before retrying this journey.
+          await this.selectInterfaceMode('advanced');
+          await this.staticFeaturesAllButton().waitForEnabled();
+          await this.staticFeaturesAllButton().clickDom();
+          await this.openPanel('static');
+        }
+      }
+      await group.clickDom();
+    }
+    await subTab.waitFor({ state: 'visible', timeout: 1 });
+    await subTab.click();
+    try {
+      await subTab.waitForAttribute('class', 'active', 500);
+    } catch {
+      await subTab.clickDom();
+    }
+    await this.expectActive(subTab, `sub-tab ${tabId}`);
   }
 
   async openTypeManager() {
@@ -634,10 +887,34 @@ async function captureUiFailure(target, artifactsDir, testName) {
   return written;
 }
 
+async function captureUiScreenshot(target, outputDir, name) {
+  if (!target || !outputDir) return '';
+  fs.mkdirSync(outputDir, { recursive: true });
+  const safeName = String(name || 'ui').replace(/[^a-z0-9_-]+/gi, '-').toLowerCase();
+  const screenshotPath = path.join(outputDir, `${safeName}.png`);
+  const response = await globalThis.fetch(`${target.endpoint}/json/list`);
+  const targets = await response.json();
+  const page = targets.find((candidate) => candidate.type === 'page' && candidate.webSocketDebuggerUrl);
+  if (!page) throw new Error('Top-level VS Code page was not found through CDP');
+  const socket = await openSocket(page.webSocketDebuggerUrl, DEFAULT_TIMEOUT_MS);
+  const pageTarget = new CdpTarget(socket);
+  try {
+    const screenshot = await pageTarget.send('Page.captureScreenshot', {
+      format: 'png',
+      captureBeyondViewport: false,
+    });
+    fs.writeFileSync(screenshotPath, Buffer.from(screenshot.data, 'base64'));
+  } finally {
+    pageTarget.close();
+  }
+  return screenshotPath;
+}
+
 module.exports = {
   CdpLocator,
   CdpTarget,
   HubPage,
   captureUiFailure,
+  captureUiScreenshot,
   connectToHubWebview,
 };

@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 
 const { logDebug, logWarning } = require('../../shared/utils');
 const { getFunctionInstrCounts } = require('../../shared/mappingStore');
@@ -349,16 +348,16 @@ function createGraphRenderers({
       if (!svg) return;
       const defaultPath = path.join(storageDir, 'cfg_export.svg');
       vscode.window.showSaveDialog({
-        title: 'Exporter le graphe CFG en SVG',
+        title: 'Export the CFG graph as SVG',
         defaultUri: vscode.Uri.file(defaultPath),
-        filters: { 'SVG': ['svg'], 'Tous': ['*'] }
+        filters: { 'SVG': ['svg'], 'All files': ['*'] }
       }).then(async (saveUri) => {
         if (!saveUri) return;
         try {
           await fs.promises.writeFile(saveUri.fsPath, svg, 'utf8');
-          vscode.window.showInformationMessage(`CFG exporté: ${path.basename(saveUri.fsPath)}`);
+          vscode.window.showInformationMessage(`CFG exported: ${path.basename(saveUri.fsPath)}`);
         } catch (err) {
-          vscode.window.showErrorMessage(`Export échoué: ${err.message}`);
+          vscode.window.showErrorMessage(`Export failed: ${err.message}`);
         }
       });
     },
