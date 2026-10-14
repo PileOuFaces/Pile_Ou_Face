@@ -1509,7 +1509,10 @@ function createHub(config) {
           writeTraceJson(isolatedJsonPath, trace);
           traceHistoryHandlers.setActiveDynamicTracePath(isolatedJsonPath);
           writeTraceJson(canonicalJsonPath, trace);
-          await traceHistoryHandlers.postDynamicTraceReady(trace, { binaryPath, tracePath: isolatedJsonPath });
+          await traceHistoryHandlers.postDynamicTraceReady(trace, {
+            binaryPath: toWebviewPath(binaryOutPath),
+            tracePath: isolatedJsonPath,
+          });
           telemetry?.trackEvent?.(EVENT_NAMES.VISUALIZER_OPENED, {
             origin: 'fresh_run', surface: 'embedded',
           });

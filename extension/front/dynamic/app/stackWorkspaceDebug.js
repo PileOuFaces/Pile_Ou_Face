@@ -56,10 +56,27 @@ export function buildDetailPayload({
   if (slotValue) rows.push({ label: 'Valeur du slot', value: slotValue });
 
   const pointerValue = pickPointerValue(primaryObservation, entry?.size);
-  const pointedEntry = pointerValue ? resolvePointedEntry(pointerValue, allEntries, entry) : null;
-  const pointedObservation = !pointedEntry && pointerValue
-    ? resolvePointedObservation(pointerValue, allObservations, entry)
-    : null;
+  const pointerRelation = primaryObservation?.pointerRelation ?? null;
+  const hasBackendRelation = Boolean(clean(pointerRelation?.status));
+  const relationResolved = pointerRelation?.status === 'resolved';
+  const pointedEntry = relationResolved
+    ? (Array.isArray(allEntries) ? allEntries : []).find((candidate) => (
+        candidate !== entry
+        && (
+          (Array.isArray(candidate?.observations) ? candidate.observations : [])
+            .some((observation) => clean(observation?.key) === clean(pointerRelation?.targetSlotKey))
+          || clean(candidate?.start) === clean(pointerRelation?.targetAddress)
+        )
+      )) || null
+    : (!hasBackendRelation && pointerValue ? resolvePointedEntry(pointerValue, allEntries, entry) : null);
+  const pointedObservation = !pointedEntry && relationResolved
+    ? (Array.isArray(allObservations) ? allObservations : []).find((observation) => (
+        clean(observation?.key) === clean(pointerRelation?.targetSlotKey)
+        || clean(observation?.start) === clean(pointerRelation?.targetAddress)
+      )) || null
+    : (!pointedEntry && !hasBackendRelation && pointerValue
+        ? resolvePointedObservation(pointerValue, allObservations, entry)
+        : null);
   const pointerLike = Boolean(pointerValue && (
     clean(primaryObservation?.pointerKind)
     || pointedEntry
@@ -85,6 +102,8 @@ export function buildDetailPayload({
     });
     const pointedText = firstNonEmpty(pickAscii([pointedObservation]), clean(pointedObservation.displayValue));
     if (pointedText) rows.push({ label: 'Texte pointe', value: pointedText });
+  } else if (relationResolved && clean(pointerRelation?.targetLabel)) {
+    rows.push({ label: 'Memoire pointee', value: clean(pointerRelation.targetLabel) });
   }
 
   const slotText = !pointerLike ? pickAscii(observations) : '';
@@ -251,7 +270,11 @@ export function toDebugItemSummaries(entries) {
       }
       return String(left.name || '').localeCompare(String(right.name || ''));
     })
-    .map(({ rawOffset, ...entry }) => entry);
+    .map((item) => {
+      const entry = { ...item };
+      delete entry.rawOffset;
+      return entry;
+    });
 }
 
 export function toDebugLogicalArgumentSummaries(entries) {

@@ -709,6 +709,95 @@ describe('hub runTrace isolation', () => {
     expect(writtenTrace.meta.input.previewHex).to.equal('41424344');
   });
 
+  it('routes generated payload bytes through every forced injection target', async () => {
+    existsSyncStub.withArgs('/repo/examples/rootme1.elf').returns(true);
+
+    sinon.stub(cp, 'execFile').callsFake((_cmd, args, _opts, callback) => {
+      const script = String(args?.[0] || '');
+      if (script.includes('headers')) {
+        callback(null, JSON.stringify({ format: 'ELF', bits: 64, type: 'EXEC' }));
+        return;
+      }
+      if (script.includes('symbols')) {
+        callback(null, JSON.stringify([{ name: 'main' }]));
+        return;
+      }
+      callback(null, '{}');
+    });
+
+    const capturedRuns = [];
+    runCommand.callsFake(async (_command, args) => {
+      capturedRuns.push(args);
+      outputPaths.add(args[args.indexOf('--output') + 1]);
+    });
+    readTraceJson.callsFake((targetPath) => ({
+      snapshots: [{ step: 1, func: 'main' }],
+      risks: [],
+      meta: { output_path: targetPath }
+    }));
+
+    const openHub = createHub({
+      context: {
+        extensionUri: {},
+        subscriptions: [],
+        workspaceState: { get: () => ({}), update: async () => {} },
+        globalState: { get: () => ({}), update: async () => {} }
+      },
+      logChannel: { appendLine: () => {}, append: () => {} },
+      getTempDir: () => '/tmp/pof',
+      ensureTempDir: () => '/tmp/pof',
+      runCommand,
+      detectPythonExecutable: () => '/usr/bin/python3',
+      ensureStaticAsm,
+      readTraceJson,
+      writeTraceJson,
+      setViewMode: () => {},
+      payloadToHex: () => '',
+      parseStdinExpression: () => '',
+      check32BitToolchain: () => ({ ok: true }),
+      openVisualizerWebview
+    });
+
+    openHub();
+
+    for (const targetMode of ['argv1', 'both']) {
+      await onMessage({
+        type: 'runTrace',
+        config: {
+          traceMode: 'dynamic',
+          useExistingBinary: true,
+          binaryPath: 'examples/rootme1.elf',
+          payloadExpr: '\\x41\\x01\\x42\\xff',
+          payloadTargetMode: targetMode,
+          injectPayload: true,
+          input: {
+            mode: 'payload_builder',
+            targetMode,
+            payloadBytesHex: '410142ff',
+            sourceFields: { input: 'binary fixture' },
+            generatedSnippet: 'payload = b"A\\x01B\\xff"',
+            size: 4,
+            previewHex: '410142ff',
+            previewAscii: 'A.B.',
+            warnings: []
+          }
+        }
+      });
+    }
+
+    const argvOnly = capturedRuns[0];
+    expect(argvOnly).to.include('--argv1-hex');
+    expect(argvOnly[argvOnly.indexOf('--argv1-hex') + 1]).to.equal('410142ff');
+    expect(argvOnly).to.not.include('--stdin-hex');
+
+    const both = capturedRuns[1];
+    expect(both[both.indexOf('--argv1-hex') + 1]).to.equal('410142ff');
+    expect(both[both.indexOf('--stdin-hex') + 1]).to.equal('410142ff');
+
+    const writtenTargets = writeTraceJson.getCalls().map((call) => call.args[1].meta.payload_target);
+    expect([...new Set(writtenTargets)]).to.deep.equal(['argv1', 'both']);
+  });
+
   it('accepts payload_builder mode and keeps builder metadata', async () => {
     existsSyncStub.withArgs('/repo/examples/rootme1.elf').returns(true);
 
@@ -961,7 +1050,7 @@ describe('hub runTrace isolation', () => {
     expect(writtenTrace.meta.input.file.guestPath).to.equal('/tmp/pof-input.txt');
   });
 
-  it('lists and deletes historical trace artifacts without touching output.json', async () => {
+  it('lists and deletes plain or compressed historical trace artifacts without touching output.json', async () => {
     const openHub = createHub({
       context: {
         extensionUri: {},
@@ -989,10 +1078,13 @@ describe('hub runTrace isolation', () => {
     outputPaths.add('/tmp/pof/output.run-1-a.disasm.asm');
     outputPaths.add('/tmp/pof/output.run-2-b.json');
     outputPaths.add('/tmp/pof/output.run-2-b.disasm.asm');
+    outputPaths.add('/tmp/pof/output.run-3-c.json.gz');
+    outputPaths.add('/tmp/pof/output.run-3-c.disasm.asm');
     outputPaths.add('/tmp/pof/output.json');
     readdirSyncStub.returns([
       'output.run-1-a.json',
       'output.run-2-b.json',
+      'output.run-3-c.json.gz',
       'output.json'
     ]);
     statSyncStub.callsFake((targetPath) => ({
@@ -1003,7 +1095,7 @@ describe('hub runTrace isolation', () => {
       risks: [],
       meta: {
         output_path: targetPath,
-        trace_run_id: targetPath.includes('run-2-') ? 2 : 1,
+        trace_run_id: targetPath.includes('run-3-') ? 3 : (targetPath.includes('run-2-') ? 2 : 1),
         binary: '/repo/examples/stack3_strcpy..elf',
         argv1: targetPath.includes('run-2-') ? 'BBBB' : 'AAAA',
         start_symbol: 'main'
@@ -1019,12 +1111,12 @@ describe('hub runTrace isolation', () => {
       .find((message) => message?.type === 'dynamicTraceHistory');
 
     expect(historyMessage).to.not.equal(undefined);
-    expect(historyMessage.items.map((item) => item.runId)).to.deep.equal([2, 1]);
+    expect(historyMessage.items.map((item) => item.runId)).to.deep.equal([3, 2, 1]);
 
-    await onMessage({ type: 'deleteDynamicTraceHistory', tracePath: '/tmp/pof/output.run-2-b.json' });
+    await onMessage({ type: 'deleteDynamicTraceHistory', tracePath: '/tmp/pof/output.run-3-c.json.gz' });
 
-    expect(unlinkSyncStub.calledWithExactly('/tmp/pof/output.run-2-b.json')).to.equal(true);
-    expect(unlinkSyncStub.calledWithExactly('/tmp/pof/output.run-2-b.disasm.asm')).to.equal(true);
+    expect(unlinkSyncStub.calledWithExactly('/tmp/pof/output.run-3-c.json.gz')).to.equal(true);
+    expect(unlinkSyncStub.calledWithExactly('/tmp/pof/output.run-3-c.disasm.asm')).to.equal(true);
     expect(unlinkSyncStub.neverCalledWith('/tmp/pof/output.json')).to.equal(true);
   });
 
@@ -1034,7 +1126,7 @@ describe('hub runTrace isolation', () => {
     // false and the handler falls through to re-sending dynamicTraceReady.
     const revealCurrentTrace = sinon.stub().returns(false);
     openVisualizerWebview = Object.assign(sinon.spy(), { revealCurrentTrace });
-    const tracePath = '/tmp/pof/output.run-1-a.json';
+    const tracePath = '/tmp/pof/output.run-1-a.json.gz';
     const openHub = createHub({
       context: {
         extensionUri: {},
@@ -1060,7 +1152,7 @@ describe('hub runTrace isolation', () => {
 
     outputPaths.add(tracePath);
     outputPaths.add('/tmp/pof/output.run-1-a.disasm.asm');
-    readdirSyncStub.returns(['output.run-1-a.json']);
+    readdirSyncStub.returns(['output.run-1-a.json.gz']);
     readTraceJson.callsFake((targetPath) => ({
       snapshots: [{ step: 1, func: 'main' }],
       risks: [],
@@ -1069,6 +1161,7 @@ describe('hub runTrace isolation', () => {
         trace_run_id: 1,
         view_mode: 'dynamic',
         binary: '/repo/examples/stack3_strcpy..elf',
+        binary_metadata: { format: 'ELF' },
         start_symbol: 'main'
       }
     }));
@@ -1087,7 +1180,10 @@ describe('hub runTrace isolation', () => {
       .map((call) => call.args[0])
       .filter((message) => message?.type === 'hubSetBinaryPath');
     expect(setBinaryMessages).to.have.length(1);
-    expect(setBinaryMessages[0].binaryPath).to.equal('examples/stack3_strcpy..elf');
+    expect(setBinaryMessages[0]).to.deep.include({
+      binaryPath: 'examples/stack3_strcpy..elf',
+      binaryMeta: { format: 'ELF' }
+    });
 
     const readyMessages = panel.webview.postMessage.getCalls()
       .map((call) => call.args[0])
@@ -1096,6 +1192,9 @@ describe('hub runTrace isolation', () => {
     expect(readyMessages[0].tracePath).to.equal(tracePath);
     expect(readyMessages[0].binaryPath).to.equal('examples/stack3_strcpy..elf');
     expect(readyMessages[0].traceRunId).to.equal('1');
+    const firstMessages = panel.webview.postMessage.getCalls().map((call) => call.args[0]);
+    expect(firstMessages.findIndex((message) => message?.type === 'dynamicTraceReady'))
+      .to.be.greaterThan(firstMessages.findIndex((message) => message?.type === 'hubSetBinaryPath'));
 
     readTraceJson.resetHistory();
     writeTraceJson.resetHistory();
@@ -1124,6 +1223,17 @@ describe('hub runTrace isolation', () => {
     const revealCurrentTrace = sinon.stub().returns(true);
     openVisualizerWebview = Object.assign(sinon.spy(), { revealCurrentTrace });
     const tracePath = '/tmp/pof/output.run-1-a.json';
+    const trace = {
+      snapshots: [{ step: 1, func: 'main' }],
+      risks: [],
+      meta: {
+        output_path: tracePath,
+        trace_run_id: 1,
+        view_mode: 'static',
+        binary: '/repo/examples/stack3_strcpy..elf',
+        start_symbol: 'main'
+      }
+    };
     const openHub = createHub({
       context: {
         extensionUri: {},
@@ -1150,22 +1260,12 @@ describe('hub runTrace isolation', () => {
     outputPaths.add(tracePath);
     outputPaths.add('/tmp/pof/output.run-1-a.disasm.asm');
     readdirSyncStub.returns(['output.run-1-a.json']);
-    readTraceJson.callsFake((targetPath) => ({
-      snapshots: [{ step: 1, func: 'main' }],
-      risks: [],
-      meta: {
-        output_path: targetPath,
-        trace_run_id: 1,
-        view_mode: 'static',
-        binary: '/repo/examples/stack3_strcpy..elf',
-        start_symbol: 'main'
-      }
-    }));
+    readTraceJson.withArgs(tracePath).returns(trace);
 
     openHub();
 
     await onMessage({ type: 'openDynamicTraceHistory', tracePath });
-    expect(openVisualizerWebview.calledOnce).to.equal(true);
+    expect(openVisualizerWebview.calledOnceWithExactly(trace)).to.equal(true);
     expect(readTraceJson.calledWithExactly(tracePath)).to.equal(true);
     expect(writeTraceJson.calledOnce).to.equal(true);
     const readyMessages = panel.webview.postMessage.getCalls()

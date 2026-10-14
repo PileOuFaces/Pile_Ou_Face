@@ -364,9 +364,13 @@ def _guess_crash_slot(
             )
 
     saved_bp_slot = _analysis_slot(analysis, "saved_bp")
-    if saved_bp_slot is not None and (
-        instruction.startswith("leave")
-        or crash_type in {"unmapped_read", "unmapped_write"}
+    # A generic data read/write fault says nothing about the frame pointer.
+    # Only a failing epilogue with independent control-slot corruption
+    # evidence can attribute the crash to saved BP.
+    if (
+        saved_bp_slot is not None
+        and instruction.startswith("leave")
+        and _has_control_corruption_evidence(analysis, None)
     ):
         saved_bp_value = _parse_int(
             _slot_value_text(saved_bp_slot, analysis, "saved_bp")
@@ -486,6 +490,13 @@ def _build_crash_report(
         # a successful protection as "control_hijack" (the instruction
         # pointer at the call site still sits inside known code).
         classification = "stack_chk_fail"
+    elif crash_type in {
+        "unmapped_read",
+        "unmapped_write",
+    } and not instruction_text.lower().startswith(("ret", "jmp", "call", "leave")):
+        # A bad data pointer is a genuine runtime crash, but not evidence of
+        # stack/control-flow corruption.
+        classification = "runtime_crash"
     else:
         classification = _classify_crash(
             fault_addr=fault_address,

@@ -344,6 +344,134 @@ class TestDynamicDiagnostics(unittest.TestCase):
         self.assertEqual(runtime["instructionAddress"], "0x401010")
         self.assertEqual(runtime["probableSource"], "stdin")
 
+    def test_null_dereference_is_not_attributed_to_saved_bp(self):
+        analysis = _base_analysis()
+        snap = _snapshot(
+            step=1,
+            instr="mov eax, dword ptr [rax]",
+            mnemonic="mov",
+            after_rip="0x401012",
+        )
+        raw_crash = {
+            "type": "unmapped_read",
+            "step": 1,
+            "instructionAddress": "0x401010",
+            "instructionText": "mov eax, dword ptr [rax]",
+            "registers": {
+                "rip": "0x401010",
+                "rsp": "0x7fffffffdf80",
+                "rbp": "0x7fffffffe000",
+                "rax": "0x0",
+            },
+            "rip": "0x401010",
+            "faultAddress": "0x0",
+            "memoryAccess": "read",
+            "reason": "Lecture sur une adresse non mappee pendant l'execution.",
+        }
+
+        crash = _build_crash_report(
+            raw_crash,
+            [snap],
+            {"1": analysis},
+            {"arch_bits": 64, "word_size": 8},
+            [{"addr": "0x401000"}, {"addr": "0x401100"}],
+        )
+
+        self.assertEqual(crash["classification"], "runtime_crash")
+        self.assertIsNone(crash["suspectOverwrittenSlot"])
+        diagnostics = build_diagnostics(
+            [snap],
+            {"1": analysis},
+            {"arch_bits": 64, "word_size": 8},
+            [{"addr": "0x401000"}, {"addr": "0x401100"}],
+            crash=crash,
+        )
+        runtime = next(diag for diag in diagnostics if diag["kind"] == "runtime_crash")
+        self.assertIsNone(runtime.get("slot"))
+        self.assertEqual(runtime["after"], "0x0")
+
+    def test_invalid_pointer_read_is_not_attributed_to_saved_bp(self):
+        analysis = _base_analysis()
+        snap = _snapshot(
+            step=1,
+            instr="mov eax, dword ptr [rax]",
+            mnemonic="mov",
+            after_rip="0x401012",
+        )
+        crash = _build_crash_report(
+            {
+                "type": "unmapped_read",
+                "step": 1,
+                "instructionAddress": "0x401010",
+                "instructionText": "mov eax, dword ptr [rax]",
+                "registers": {
+                    "rip": "0x401010",
+                    "rsp": "0x7fffffffdf80",
+                    "rbp": "0x7fffffffe000",
+                    "rax": "0xdeadbeef",
+                },
+                "rip": "0x401010",
+                "faultAddress": "0xdeadbeef",
+                "memoryAccess": "read",
+                "reason": "Lecture sur une adresse non mappee pendant l'execution.",
+            },
+            [snap],
+            {"1": analysis},
+            {"arch_bits": 64, "word_size": 8},
+            [{"addr": "0x401000"}, {"addr": "0x401100"}],
+        )
+
+        self.assertEqual(crash["classification"], "runtime_crash")
+        self.assertIsNone(crash["suspectOverwrittenSlot"])
+
+    def test_leave_fault_keeps_saved_bp_slot_when_corruption_has_evidence(self):
+        analysis = _base_analysis()
+        analysis["frame"]["slots"][1].update(
+            {
+                "valueHex": "0x4242424242424242",
+                "bytesHex": _hex_bytes(b"B" * 8),
+                "recentWrite": True,
+                "changed": True,
+                "flags": ["corrupted"],
+            }
+        )
+        analysis["delta"]["writes"] = [
+            {
+                "addr": "0x7fffffffe000",
+                "size": 8,
+                "bytes": _hex_bytes(b"B" * 8),
+                "source": "external",
+            }
+        ]
+        snap = _snapshot(step=1, instr="leave", mnemonic="leave", after_rip="0x401012")
+        crash = _build_crash_report(
+            {
+                "type": "unmapped_read",
+                "step": 1,
+                "instructionAddress": "0x401010",
+                "instructionText": "leave",
+                "registers": {
+                    "rip": "0x401010",
+                    "rsp": "0x7fffffffdf80",
+                    "rbp": "0x4242424242424242",
+                },
+                "rip": "0x401010",
+                "faultAddress": "0x4242424242424242",
+                "reason": "Lecture sur une adresse non mappee pendant l'execution.",
+            },
+            [snap],
+            {"1": analysis},
+            {
+                "arch_bits": 64,
+                "word_size": 8,
+                "payload_hex": _hex_bytes(b"B" * 8),
+                "payload_target": "stdin",
+            },
+            [{"addr": "0x401000"}, {"addr": "0x401100"}],
+        )
+
+        self.assertEqual(crash["suspectOverwrittenSlot"]["kind"], "saved_bp")
+
     def test_control_slots_without_current_write_do_not_raise_corruption(self):
         analysis = _base_analysis("0x0")
         analysis["frame"]["slots"][2].update(

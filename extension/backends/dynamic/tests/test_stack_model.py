@@ -6,6 +6,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(ROOT) not in sys.path:
@@ -13,6 +14,7 @@ if str(ROOT) not in sys.path:
 
 from backends.dynamic.pipeline.stack_model import (
     StaticTraceResolver,
+    _code_pointer_interpretation,
     _guess_buffer_region,
     _overflow_summary,
     build_dynamic_analysis,
@@ -695,6 +697,28 @@ class TestResolveFunction(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result["name"], "challenge")
 
+    def test_function_entry_resolution_rejects_interior_code_address(self):
+        resolver = self._make_resolver(self.META_PIE)
+
+        self.assertEqual(resolver.resolve_function_entry(0x401D4D)["name"], "main")
+        self.assertIsNone(resolver.resolve_function_entry(0x401D4E))
+
+    def test_code_pointer_interpretation_distinguishes_function_and_return(self):
+        resolver = self._make_resolver(self.META_PIE)
+
+        function_kind, target = _code_pointer_interpretation(
+            "local", 0x401AAE, "code", resolver
+        )
+        return_kind, return_target = _code_pointer_interpretation(
+            "return_address", 0x401D60, "code", resolver
+        )
+
+        self.assertEqual(function_kind, "function")
+        self.assertEqual(target["name"], "win")
+        self.assertEqual(target["source"], "static_symbol")
+        self.assertEqual(return_kind, "return_address")
+        self.assertIsNone(return_target)
+
     def test_fini_with_no_end_does_not_swallow_main(self):
         """_fini (end=None) must never be returned for addresses in main."""
         resolver = self._make_resolver(self.META_PIE)
@@ -761,6 +785,40 @@ class TestResolveFunction(unittest.TestCase):
                 "_fini",
                 f"step {step_key}: function.name is '_fini', expected 'main' or None",
             )
+
+
+class TestGlobalPointerKind(unittest.TestCase):
+    SECTIONS = [
+        {"name": ".text", "type": "TEXT", "vma": "0x1000", "size": 0x200},
+        {"name": ".data", "type": "DATA", "vma": "0x3000", "size": 0x80},
+        {"name": ".bss", "type": "BSS", "vma": "0x3080", "size": 0x100},
+        {"name": ".rodata", "type": "RODATA", "vma": "0x4000", "size": 0x80},
+    ]
+
+    def _resolver(self, base: str) -> StaticTraceResolver:
+        with patch(
+            "backends.dynamic.pipeline.stack_model.extract_sections",
+            return_value=self.SECTIONS,
+        ):
+            return StaticTraceResolver(
+                "/fake/binary",
+                {"base": base, "stack_base": "0x7fff0000", "stack_size": 0x10000},
+                [{"addr": "0x401000"}, {"addr": "0x401200"}],
+            )
+
+    def test_non_pie_data_and_bss_addresses_are_global_pointers(self):
+        resolver = self._resolver("0x0")
+        self.assertEqual(resolver.pointer_kind(0x3000), "global")
+        self.assertEqual(resolver.pointer_kind(0x317F), "global")
+
+    def test_pie_data_address_is_rebased_before_section_lookup(self):
+        resolver = self._resolver("0x400000")
+        self.assertEqual(resolver.pointer_kind(0x403020), "global")
+        self.assertIsNone(resolver.pointer_kind(0x3020))
+
+    def test_rodata_is_not_classified_as_mutable_global_storage(self):
+        resolver = self._resolver("0x0")
+        self.assertIsNone(resolver.pointer_kind(0x4010))
 
 
 if __name__ == "__main__":

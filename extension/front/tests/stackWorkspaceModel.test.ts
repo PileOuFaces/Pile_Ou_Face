@@ -1796,6 +1796,15 @@ describe('stackWorkspaceModel', () => {
           displayValue: '0x7fffffffded0',
           rawValue: '0x7fffffffded0',
           pointerKind: 'stack',
+          pointerRelation: {
+            status: 'resolved',
+            scope: 'active_frame',
+            depth: 1,
+            targetAddress: '0x7fffffffded0',
+            targetSlotKey: 'buffer-target',
+            targetLabel: 'buffer_0',
+            confidence: 0.9
+          },
           source: 'auto'
         },
         {
@@ -2165,6 +2174,54 @@ describe('stackWorkspaceModel', () => {
     expect(labels).to.include('Memoire pointee');
     expect(labels).to.include('Texte pointe');
     expect(labels).to.not.include('Texte du slot');
+  });
+
+  it('does not recreate a backend-rejected pointer relation from matching addresses', () => {
+    const workspace = buildStackWorkspaceModel({
+      slots: [
+        {
+          key: 'pointer',
+          technicalLabel: 'p',
+          semanticRole: 'local',
+          size: 8,
+          offsetFromBp: -16,
+          addressLabel: '0x1010',
+          displayValue: '0x1000',
+          pointerKind: 'stack',
+          pointerRelation: {
+            status: 'unresolved',
+            targetAddress: '0x1000',
+            reason: 'untrusted_target'
+          },
+          source: 'static'
+        },
+        {
+          key: 'weak-target',
+          technicalLabel: 'unknown',
+          semanticRole: 'unknown',
+          size: 8,
+          offsetFromBp: -32,
+          addressLabel: '0x1000',
+          displayValue: 'AAAA',
+          source: 'heuristic'
+        }
+      ],
+      snapshots: [{ step: 1, func: 'main' }],
+      currentStep: 1,
+      selectedFunction: 'main',
+      selectedSlotKey: 'main:rbp:local:-16:8:frame',
+      snapshot: { func: 'main' },
+      analysis: {
+        frame: { basePointer: '0x1020', stackPointer: '0x0', frameSize: 32 },
+        control: {}
+      },
+      meta: { arch_bits: 64 }
+    });
+
+    const labels = workspace.detailModel.rows.map((row) => row.label);
+    expect(labels).to.include('Pointeur');
+    expect(labels).to.not.include('Memoire pointee');
+    expect(labels).to.not.include('Texte pointe');
   });
 
   it('does not present a raw scalar payload suffix as a pointer and keeps the byte-oriented hex view', () => {
