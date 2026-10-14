@@ -85,6 +85,70 @@ class TestInstallClaudeCode(unittest.TestCase):
                 config = json.load(fh)
         self.assertEqual(len(config["mcpServers"]), 1)
 
+    def test_preserves_manually_added_env_key_on_rerun(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            setup_cli.install_claude_code(tmp_dir, "project")
+            path = setup_cli._claude_config_path("project", tmp_dir)
+            with open(path, encoding="utf-8") as fh:
+                config = json.load(fh)
+            config["mcpServers"][setup_cli.SERVER_ID]["env"]["MY_CUSTOM_KEY"] = "kept"
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(config, fh)
+
+            setup_cli.install_claude_code(tmp_dir, "project")
+            with open(path, encoding="utf-8") as fh:
+                config = json.load(fh)
+        entry_env = config["mcpServers"][setup_cli.SERVER_ID]["env"]
+        self.assertEqual(entry_env["MY_CUSTOM_KEY"], "kept")
+        self.assertEqual(entry_env["POF_MCP_WORKSPACE_ROOT"], tmp_dir)
+
+    def test_rejects_malformed_existing_config(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = os.path.join(tmp_dir, ".mcp.json")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("{not valid json")
+
+            with self.assertRaises(setup_cli.MalformedConfigError):
+                setup_cli.install_claude_code(tmp_dir, "project")
+
+            # The malformed file must be left untouched: no write, no backup.
+            with open(path, encoding="utf-8") as fh:
+                self.assertEqual(fh.read(), "{not valid json")
+            self.assertFalse(os.path.isfile(path + ".bak"))
+
+    def test_backup_keeps_pristine_snapshot_and_stores_drift_as_recovery(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = os.path.join(tmp_dir, ".mcp.json")
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"mcpServers": {}, "marker": "first"}, fh)
+
+            setup_cli.install_claude_code(tmp_dir, "project")
+            with open(path + ".bak", encoding="utf-8") as fh:
+                first_bak = json.load(fh)
+            self.assertEqual(first_bak["marker"], "first")
+
+            # Simulate a manual edit between runs, then rerun: the pristine
+            # .bak must stay as-is, and the drifted bytes must be preserved
+            # separately rather than discarded.
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"mcpServers": {}, "marker": "manually-edited"}, fh)
+
+            setup_cli.install_claude_code(tmp_dir, "project")
+
+            with open(path + ".bak", encoding="utf-8") as fh:
+                bak_after = json.load(fh)
+            self.assertEqual(bak_after["marker"], "first")
+
+            recovery_files = [
+                name
+                for name in os.listdir(tmp_dir)
+                if name.startswith(".mcp.json.recovery.")
+            ]
+            self.assertEqual(len(recovery_files), 1)
+            with open(os.path.join(tmp_dir, recovery_files[0]), encoding="utf-8") as fh:
+                recovery_content = json.load(fh)
+            self.assertEqual(recovery_content["marker"], "manually-edited")
+
 
 class TestInstallCodex(unittest.TestCase):
     def _codex_home(self, tmp_dir: str) -> str:
@@ -143,6 +207,46 @@ class TestInstallCodex(unittest.TestCase):
             with open(codex_path, encoding="utf-8") as fh:
                 text = fh.read()
         self.assertEqual(text.count("[mcp_servers."), 1)
+
+    def test_preserves_manually_added_env_key_on_rerun(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            codex_path = self._codex_home(tmp_dir)
+            with unittest.mock.patch(
+                "os.path.expanduser",
+                side_effect=lambda p: (
+                    codex_path if p == "~/.codex/config.toml" else os.path.expanduser(p)
+                ),
+            ):
+                setup_cli.install_codex(tmp_dir)
+                with open(codex_path, encoding="utf-8") as fh:
+                    text = fh.read()
+                text = text.replace("}\n", ', MY_CUSTOM_KEY = "kept" }\n', 1)
+                with open(codex_path, "w", encoding="utf-8") as fh:
+                    fh.write(text)
+
+                setup_cli.install_codex(tmp_dir)
+            with open(codex_path, encoding="utf-8") as fh:
+                text = fh.read()
+        self.assertIn('MY_CUSTOM_KEY = "kept"', text)
+
+    def test_rejects_malformed_existing_config(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            codex_path = self._codex_home(tmp_dir)
+            with open(codex_path, "w", encoding="utf-8") as fh:
+                fh.write("[not valid toml")
+
+            with unittest.mock.patch(
+                "os.path.expanduser",
+                side_effect=lambda p: (
+                    codex_path if p == "~/.codex/config.toml" else os.path.expanduser(p)
+                ),
+            ):
+                with self.assertRaises(setup_cli.MalformedConfigError):
+                    setup_cli.install_codex(tmp_dir)
+
+            with open(codex_path, encoding="utf-8") as fh:
+                self.assertEqual(fh.read(), "[not valid toml")
+            self.assertFalse(os.path.isfile(codex_path + ".bak"))
 
 
 class TestResolvePythonInterpreter(unittest.TestCase):
@@ -257,6 +361,37 @@ class TestRunDoctor(unittest.TestCase):
             diagnosis = setup_cli.run_doctor(tmp_dir)
         self.assertFalse(diagnosis["handshake_ok"])
         self.assertIsNotNone(diagnosis["error"])
+
+    def test_reports_malformed_claude_config_without_blocking_handshake(self):
+        with (
+            tempfile.TemporaryDirectory() as tmp_dir,
+            _patch_resolved_interpreter(sys.executable),
+        ):
+            path = os.path.join(tmp_dir, ".mcp.json")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("{not valid json")
+
+            diagnosis = setup_cli.run_doctor(tmp_dir, scope="project")
+        self.assertTrue(diagnosis["handshake_ok"])
+        self.assertIsNotNone(diagnosis["claude_config_error"])
+        self.assertIn(path, diagnosis["claude_config_error"])
+
+    def test_reports_no_config_errors_when_configs_are_absent(self):
+        with (
+            tempfile.TemporaryDirectory() as tmp_dir,
+            _patch_resolved_interpreter(sys.executable),
+            unittest.mock.patch(
+                "os.path.expanduser",
+                side_effect=lambda p: (
+                    os.path.join(tmp_dir, "codex-config.toml")
+                    if p == "~/.codex/config.toml"
+                    else os.path.expanduser(p)
+                ),
+            ),
+        ):
+            diagnosis = setup_cli.run_doctor(tmp_dir, scope="project")
+        self.assertIsNone(diagnosis["claude_config_error"])
+        self.assertIsNone(diagnosis["codex_config_error"])
 
 
 if __name__ == "__main__":
