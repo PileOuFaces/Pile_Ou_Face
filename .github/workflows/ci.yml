@@ -49,6 +49,9 @@ jobs:
     outputs:
       relevant: ${{ steps.filter.outputs.relevant }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+
       - name: Detect relevant paths
         id: filter
         uses: dorny/paths-filter@15192bc058cc28a13dbf6cde61f19e18988b7af6
@@ -252,6 +255,9 @@ jobs:
     timeout-minutes: 10
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+
       - name: Detect relevant changes
         id: filter
         uses: dorny/paths-filter@6852f92c20ea7fd3b0c25de3b5112db3a98da050 # v3
@@ -262,10 +268,6 @@ jobs:
               - 'extension/src/shared/deviceLicensing.ts'
               - 'extension/src/tests/authService.test.ts'
               - 'extension/src/tests/deviceLicensing.test.ts'
-
-      - name: Checkout
-        if: steps.filter.outputs.relevant == 'true'
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
 
       - name: Setup Node.js
         if: steps.filter.outputs.relevant == 'true'
@@ -304,6 +306,9 @@ jobs:
     timeout-minutes: 15
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+
       - name: Detect relevant changes
         id: filter
         uses: dorny/paths-filter@6852f92c20ea7fd3b0c25de3b5112db3a98da050 # v3
@@ -312,10 +317,6 @@ jobs:
             relevant:
               - 'extension/backends/dynamic/**'
               - 'extension/backends/requirements-ci.txt'
-
-      - name: Checkout
-        if: steps.filter.outputs.relevant == 'true'
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
 
       - name: Setup Python
         if: steps.filter.outputs.relevant == 'true'
@@ -356,6 +357,9 @@ jobs:
     timeout-minutes: 15
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+
       - name: Detect relevant changes
         id: filter
         uses: dorny/paths-filter@6852f92c20ea7fd3b0c25de3b5112db3a98da050 # v3
@@ -364,10 +368,6 @@ jobs:
             relevant:
               - 'extension/backends/static/**'
               - 'extension/backends/requirements-ci.txt'
-
-      - name: Checkout
-        if: steps.filter.outputs.relevant == 'true'
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
 
       - name: Setup Python
         if: steps.filter.outputs.relevant == 'true'
@@ -517,6 +517,9 @@ jobs:
     steps:
       # security-scan audite les dépendances installées, pas le code — inutile
       # de le relancer si aucun manifeste de dépendances n'a bougé.
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+
       - name: Detect relevant changes
         id: filter
         uses: dorny/paths-filter@6852f92c20ea7fd3b0c25de3b5112db3a98da050 # v3
@@ -527,10 +530,6 @@ jobs:
               - 'extension/package-lock.json'
               - 'extension/backends/requirements-ci.txt'
               - 'extension/backends/**/requirements*.txt'
-
-      - name: Checkout
-        if: steps.filter.outputs.relevant == 'true'
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
 
       - name: Setup Node.js
         if: steps.filter.outputs.relevant == 'true'
