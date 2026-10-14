@@ -387,9 +387,7 @@ class TestDynamicDiagnostics(unittest.TestCase):
             crash=crash,
         )
         null_deref = next(
-            diag
-            for diag in diagnostics
-            if diag["kind"] == "null_pointer_dereference"
+            diag for diag in diagnostics if diag["kind"] == "null_pointer_dereference"
         )
         self.assertIsNone(null_deref.get("slot"))
         self.assertEqual(null_deref["after"], "0x0")
