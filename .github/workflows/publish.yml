@@ -56,7 +56,6 @@ jobs:
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
           TAG: ${{ github.ref_name }}
-          POF_AUTH_PROVIDER_URL: https://auth.pileouface.dev
         run: |
           if [[ "$TAG" == *"-pre"* || "$TAG" == *"-beta"* || "$TAG" == *"-rc"* ]]; then
             npx vsce publish --packagePath release/pile-ou-face.vsix --pre-release --pat "$VSCE_PAT"
@@ -122,10 +121,8 @@ jobs:
         if: github.event_name == 'push' || inputs.openvsx_mode == 'package'
         working-directory: extension
         env:
-          POF_AUTH_PROVIDER_URL: https://auth.pileouface.dev
           TAG: ${{ github.ref_name }}
         run: |
-          npm run configure:official
           if [[ "$TAG" == *"-pre"* || "$TAG" == *"-beta"* || "$TAG" == *"-rc"* ]]; then
             npx vsce package --pre-release --out pile-ou-face.vsix
           else

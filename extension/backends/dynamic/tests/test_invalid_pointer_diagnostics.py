@@ -130,7 +130,7 @@ class TestInvalidPointerDiagnostics(unittest.TestCase):
     def test_null_read_is_diagnosed_correctly_not_as_saved_bp_corruption(self):
         """RED before the fix: suspectOverwrittenSlot is fabricated as
         saved_bp, and classification is downgraded to emulator_stop/info
-        even though this is a genuine, fatal NULL dereference."""
+        even though this is a genuine NULL dereference."""
         source = """
             #include <stddef.h>
             int main(void) {
@@ -150,7 +150,7 @@ class TestInvalidPointerDiagnostics(unittest.TestCase):
             crash.get("suspectOverwrittenSlot"),
             f"no evidence ties this crash to saved_bp: {crash.get('suspectOverwrittenSlot')}",
         )
-        self.assertEqual(crash.get("classification"), "fatal_crash")
+        self.assertEqual(crash.get("classification"), "runtime_crash")
 
         diagnostics = result.get("diagnostics") or []
         kinds = {diag.get("kind") for diag in diagnostics}
@@ -207,11 +207,11 @@ class TestInvalidPointerDiagnostics(unittest.TestCase):
             crash.get("suspectOverwrittenSlot"),
             "an address unrelated to saved_bp must not be blamed on it",
         )
-        self.assertEqual(crash.get("classification"), "fatal_crash")
+        self.assertEqual(crash.get("classification"), "runtime_crash")
         diagnostics = result.get("diagnostics") or []
         kinds = {diag.get("kind") for diag in diagnostics}
         self.assertNotIn("null_pointer_dereference", kinds)
-        self.assertIn("fatal_crash", kinds)
+        self.assertIn("runtime_crash", kinds)
 
     # ------------------------------------------------------------------
     # Test 4 -- NULL write (PoC D): read/write distinction preserved

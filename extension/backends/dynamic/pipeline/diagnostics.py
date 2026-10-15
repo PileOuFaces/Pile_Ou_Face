@@ -451,7 +451,7 @@ def _diagnose_crash(
             or None
         )
         message = f"Adresse de retour detournee vers une zone executable ({ret_target or 'adresse inconnue'})"
-    elif classification == "fatal_crash":
+    elif classification in ("fatal_crash", "runtime_crash"):
         # Pedagogical specialization (#300), additive only: a plain data
         # access (never unmapped_fetch -- control-flow crashes keep the
         # generic fatal_crash message) whose faulting address is *exactly*
@@ -475,11 +475,16 @@ def _diagnose_crash(
                 else "Lecture memoire invalide via une adresse NULL (0x0)."
             )
         else:
-            kind = "fatal_crash"
+            kind = classification
             severity = "error"
-            confidence = 0.96
+            confidence = 0.96 if classification == "fatal_crash" else 0.88
             ret_target = None
-            message = str(crash.get("reason") or "Crash fatal Unicorn.").strip()
+            default_message = (
+                "Crash fatal Unicorn."
+                if classification == "fatal_crash"
+                else "Crash runtime Unicorn."
+            )
+            message = str(crash.get("reason") or default_message).strip()
     elif classification == "stack_chk_fail":
         # The program's own stack protector detected a corrupted canary and
         # called __stack_chk_fail -- direct evidence, not a heuristic guess.

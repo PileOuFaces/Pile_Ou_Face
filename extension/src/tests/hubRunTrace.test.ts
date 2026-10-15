@@ -1126,7 +1126,7 @@ describe('hub runTrace isolation', () => {
     // false and the handler falls through to re-sending dynamicTraceReady.
     const revealCurrentTrace = sinon.stub().returns(false);
     openVisualizerWebview = Object.assign(sinon.spy(), { revealCurrentTrace });
-    const tracePath = '/tmp/pof/output.run-1-a.json';
+    const tracePath = '/tmp/pof/output.run-1-a.json.gz';
     const openHub = createHub({
       context: {
         extensionUri: {},
@@ -1152,7 +1152,7 @@ describe('hub runTrace isolation', () => {
 
     outputPaths.add(tracePath);
     outputPaths.add('/tmp/pof/output.run-1-a.disasm.asm');
-    readdirSyncStub.returns(['output.run-1-a.json']);
+    readdirSyncStub.returns(['output.run-1-a.json.gz']);
     readTraceJson.callsFake((targetPath) => ({
       snapshots: [{ step: 1, func: 'main' }],
       risks: [],
@@ -1161,6 +1161,7 @@ describe('hub runTrace isolation', () => {
         trace_run_id: 1,
         view_mode: 'dynamic',
         binary: '/repo/examples/stack3_strcpy..elf',
+        binary_metadata: { format: 'ELF' },
         start_symbol: 'main'
       }
     }));
@@ -1179,7 +1180,10 @@ describe('hub runTrace isolation', () => {
       .map((call) => call.args[0])
       .filter((message) => message?.type === 'hubSetBinaryPath');
     expect(setBinaryMessages).to.have.length(1);
-    expect(setBinaryMessages[0].binaryPath).to.equal('examples/stack3_strcpy..elf');
+    expect(setBinaryMessages[0]).to.deep.include({
+      binaryPath: 'examples/stack3_strcpy..elf',
+      binaryMeta: { format: 'ELF' }
+    });
 
     const readyMessages = panel.webview.postMessage.getCalls()
       .map((call) => call.args[0])
@@ -1188,6 +1192,9 @@ describe('hub runTrace isolation', () => {
     expect(readyMessages[0].tracePath).to.equal(tracePath);
     expect(readyMessages[0].binaryPath).to.equal('examples/stack3_strcpy..elf');
     expect(readyMessages[0].traceRunId).to.equal('1');
+    const firstMessages = panel.webview.postMessage.getCalls().map((call) => call.args[0]);
+    expect(firstMessages.findIndex((message) => message?.type === 'dynamicTraceReady'))
+      .to.be.greaterThan(firstMessages.findIndex((message) => message?.type === 'hubSetBinaryPath'));
 
     readTraceJson.resetHistory();
     writeTraceJson.resetHistory();
@@ -1216,6 +1223,17 @@ describe('hub runTrace isolation', () => {
     const revealCurrentTrace = sinon.stub().returns(true);
     openVisualizerWebview = Object.assign(sinon.spy(), { revealCurrentTrace });
     const tracePath = '/tmp/pof/output.run-1-a.json';
+    const trace = {
+      snapshots: [{ step: 1, func: 'main' }],
+      risks: [],
+      meta: {
+        output_path: tracePath,
+        trace_run_id: 1,
+        view_mode: 'static',
+        binary: '/repo/examples/stack3_strcpy..elf',
+        start_symbol: 'main'
+      }
+    };
     const openHub = createHub({
       context: {
         extensionUri: {},
@@ -1242,22 +1260,12 @@ describe('hub runTrace isolation', () => {
     outputPaths.add(tracePath);
     outputPaths.add('/tmp/pof/output.run-1-a.disasm.asm');
     readdirSyncStub.returns(['output.run-1-a.json']);
-    readTraceJson.callsFake((targetPath) => ({
-      snapshots: [{ step: 1, func: 'main' }],
-      risks: [],
-      meta: {
-        output_path: targetPath,
-        trace_run_id: 1,
-        view_mode: 'static',
-        binary: '/repo/examples/stack3_strcpy..elf',
-        start_symbol: 'main'
-      }
-    }));
+    readTraceJson.withArgs(tracePath).returns(trace);
 
     openHub();
 
     await onMessage({ type: 'openDynamicTraceHistory', tracePath });
-    expect(openVisualizerWebview.calledOnce).to.equal(true);
+    expect(openVisualizerWebview.calledOnceWithExactly(trace)).to.equal(true);
     expect(readTraceJson.calledWithExactly(tracePath)).to.equal(true);
     expect(writeTraceJson.calledOnce).to.equal(true);
     const readyMessages = panel.webview.postMessage.getCalls()
