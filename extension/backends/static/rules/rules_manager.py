@@ -13,6 +13,7 @@ CLI:
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -21,7 +22,6 @@ from typing import Any
 class RulesManager:
     """Gère les règles custom YARA et CAPA par projet et au niveau global."""
 
-    _POF_DIR = ".pile-ou-face"
     _PROJECT_SCOPE = "project"
     _GLOBAL_SCOPE = "global"
 
@@ -29,8 +29,11 @@ class RulesManager:
         self, project_root: str, global_config_path: str | None = None
     ) -> None:
         self._root = Path(project_root)
-        self._project_rules_dir = self._root / self._POF_DIR / "rules"
-        self._project_config = self._root / self._POF_DIR / "rules-config.json"
+        project_storage = Path(
+            os.environ.get("POF_STORAGE_DIR", "").strip() or self._root
+        )
+        self._project_rules_dir = project_storage / "rules"
+        self._project_config = project_storage / "rules-config.json"
         self._global_config = Path(global_config_path) if global_config_path else None
         self._global_root = self._global_config.parent if self._global_config else None
         self._global_rules_dir = (
@@ -158,7 +161,7 @@ class RulesManager:
         rule_type: str,
         scope: str = _PROJECT_SCOPE,
     ) -> str:
-        """Crée un fichier dans .pile-ou-face/rules/{type}/. Retourne rule_id."""
+        """Crée un fichier dans le stockage des règles projet/global. Retourne rule_id."""
         if rule_type not in ("yara", "capa"):
             raise ValueError(f"Type inconnu : {rule_type!r} (attendu: yara ou capa)")
         if scope not in (self._PROJECT_SCOPE, self._GLOBAL_SCOPE):

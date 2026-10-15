@@ -8,7 +8,7 @@ ne doit hériter d'aucun lien vers notre infrastructure commerciale.
 
 > Le host open-source ne contient **aucun endpoint, branding ou télémétrie**
 > spécifique à la société. Il embarque des **clients de protocoles ouverts**
-> (entitlement/licence, collaboration) qui, **par défaut, ne se connectent
+> (entitlement/licence, collaboration, télémétrie) qui, **par défaut, ne se connectent
 > nulle part**. Les serveurs et le contenu premium (plugins chiffrés, SaaS
 > collaboratif hébergé) vivent dans des dépôts privés et se vendent séparément.
 
@@ -44,7 +44,16 @@ configure la nôtre.
 - Le **serveur** vit dans le dépôt privé `Pile_ou_Face_server`.
 - Le **client** dans le host parle un **protocole ouvert**, lit son URL via
   `productConfig.collabProviderUrl` (vide en OSS), reste dormant tant qu'aucune
-  URL n'est configurée, et n'embarque aucune télémétrie.
+  URL n'est configurée, et n'embarque aucune télémétrie propre au SaaS.
+
+### Télémétrie d'usage
+
+- Le client lit uniquement `productConfig.telemetryProviderUrl`, vide dans
+  `product.default.json`. Sans overlay de build, aucun logger ni trafic distant
+  de télémétrie n'est créé.
+- Le protocole est provider-agnostique et n'envoie que le registre fermé décrit
+  dans `docs/privacy/telemetry.md`. Il ne contient aucun endpoint, secret,
+  identifiant persistant ou branding propre à la société.
 
 ## Le test décisif
 

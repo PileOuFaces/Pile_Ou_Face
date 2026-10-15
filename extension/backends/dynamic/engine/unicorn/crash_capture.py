@@ -6,6 +6,11 @@ from .memory_mapping import _hex_opt, _read_register_dump, _read_snapshot_regist
 
 def _build_crash_reason(kind: str, error: str, instruction_text: str = "") -> str:
     instr = str(instruction_text or "").strip().lower()
+    if kind == "stack_chk_fail":
+        return (
+            "Le protecteur de pile (stack canary) a detecte une corruption "
+            "et a declenche __stack_chk_fail avant le retour de la fonction."
+        )
     if kind == "unmapped_read":
         return "Lecture sur une adresse non mappee pendant l'execution."
     if kind == "unmapped_write":

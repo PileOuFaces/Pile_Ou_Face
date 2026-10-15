@@ -48,44 +48,41 @@ class TestComputeSha256(unittest.TestCase):
 
 
 class TestDefaultCachePath(unittest.TestCase):
-    def test_uses_workspace_cache_dir_when_available(self):
+    def test_uses_storage_dir_cache_dir_when_available(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            (root / ".pile-ou-face").mkdir()
+            storage_dir = root / "storage"
             examples_dir = root / "examples"
             examples_dir.mkdir()
             binary_path = examples_dir / "demo.elf"
             binary_path.write_bytes(b"\x7fELF" + b"\x00" * 32)
 
-            cache_path = Path(default_cache_path(str(binary_path)))
+            with mock.patch.dict("os.environ", {"POF_STORAGE_DIR": str(storage_dir)}):
+                cache_path = Path(default_cache_path(str(binary_path)))
 
             self.assertTrue(str(cache_path).endswith(".pfdb"))
-            self.assertEqual(
-                cache_path.parent, (root / ".pile-ou-face" / "pfdb").resolve()
-            )
+            self.assertEqual(cache_path.parent, (storage_dir / "pfdb").resolve())
             self.assertNotIn("/examples/.pfdb/", str(cache_path))
+            self.assertFalse((root / ".pile-ou-face").exists())
 
-    def test_falls_back_to_local_pof_dir_when_workspace_cache_missing(self):
+    def test_without_storage_env_uses_local_pfdb_dir(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             binary_path = root / "demo.elf"
             binary_path.write_bytes(b"\x7fELF" + b"\x00" * 32)
 
-            with mock.patch(
-                "backends.static.cache.cache._find_pof_dir", return_value=None
-            ):
+            with mock.patch.dict("os.environ", {"POF_STORAGE_DIR": ""}):
                 cache_path = Path(default_cache_path(str(binary_path)))
 
             self.assertTrue(str(cache_path).endswith(".pfdb"))
-            self.assertEqual(
-                cache_path.parent, (root / ".pile-ou-face" / "pfdb").resolve()
-            )
+            self.assertEqual(cache_path.parent, (root / "pfdb").resolve())
             self.assertTrue(cache_path.parent.exists())
+            self.assertFalse((root / ".pile-ou-face").exists())
 
     def test_uses_unique_cache_name_per_binary_path(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            (root / ".pile-ou-face").mkdir()
+            storage_dir = root / "storage"
             left = root / "a"
             right = root / "b"
             left.mkdir()
@@ -95,8 +92,9 @@ class TestDefaultCachePath(unittest.TestCase):
             binary_a.write_bytes(b"\x7fELF" + b"\x00" * 32)
             binary_b.write_bytes(b"\x7fELF" + b"\x01" * 32)
 
-            cache_a = default_cache_path(str(binary_a))
-            cache_b = default_cache_path(str(binary_b))
+            with mock.patch.dict("os.environ", {"POF_STORAGE_DIR": str(storage_dir)}):
+                cache_a = default_cache_path(str(binary_a))
+                cache_b = default_cache_path(str(binary_b))
 
             self.assertNotEqual(cache_a, cache_b)
 
@@ -295,74 +293,17 @@ class TestDisasmCacheStrings(unittest.TestCase):
         self.assertEqual(result[0]["value"], "hello")
         self.assertEqual(result[0]["length"], 5)
 
-
-class TestDisasmCacheAnnotations(unittest.TestCase):
-    """Tests pour save_annotation / get_annotations / delete_annotation."""
-
-    def setUp(self):
-        self._bin_file = tempfile.NamedTemporaryFile(delete=False, suffix=".elf")
-        self._bin_file.write(b"\x7fELF" + b"\x00" * 60)
-        self._bin_file.flush()
-        self._binary_path = self._bin_file.name
-        self._db_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pfdb")
-        self._db_path = self._db_file.name
-        self._db_file.close()
-
-    def tearDown(self):
-        self._bin_file.close()
-        Path(self._binary_path).unlink(missing_ok=True)
-        Path(self._db_path).unlink(missing_ok=True)
-
-    def test_no_annotations_returns_empty(self):
+    def test_get_strings_for_addresses_loads_only_requested_rows(self):
         with DisasmCache(self._db_path) as cache:
-            result = cache.get_annotations(self._binary_path)
-        self.assertEqual(result, [])
-
-    def test_save_and_get_annotation(self):
-        with DisasmCache(self._db_path) as cache:
-            cache.save_annotation(
-                self._binary_path, "0x401000", "comment", "entry point"
+            cache.save_strings(self._binary_path, self.SAMPLE_STRINGS)
+            result = cache.get_strings_for_addresses(
+                self._binary_path, {"0x402010", "0x404000"}
             )
-            result = cache.get_annotations(self._binary_path)
+        self.assertIsNotNone(result)
+        assert result is not None
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["addr"], "0x401000")
-        self.assertEqual(result[0]["kind"], "comment")
-        self.assertEqual(result[0]["value"], "entry point")
-
-    def test_filter_by_addr(self):
-        with DisasmCache(self._db_path) as cache:
-            cache.save_annotation(self._binary_path, "0x401000", "comment", "A")
-            cache.save_annotation(self._binary_path, "0x401010", "comment", "B")
-            result = cache.get_annotations(self._binary_path, addr="0x401000")
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["value"], "A")
-
-    def test_replace_annotation_same_kind(self):
-        with DisasmCache(self._db_path) as cache:
-            cache.save_annotation(self._binary_path, "0x401000", "rename", "old_name")
-            cache.save_annotation(self._binary_path, "0x401000", "rename", "new_name")
-            result = cache.get_annotations(self._binary_path, addr="0x401000")
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["value"], "new_name")
-
-    def test_delete_annotation(self):
-        with DisasmCache(self._db_path) as cache:
-            cache.save_annotation(self._binary_path, "0x401000", "comment", "test")
-            deleted = cache.delete_annotation(
-                self._binary_path, "0x401000", kind="comment"
-            )
-            result = cache.get_annotations(self._binary_path)
-        self.assertEqual(deleted, 1)
-        self.assertEqual(result, [])
-
-    def test_delete_all_annotations_for_addr(self):
-        with DisasmCache(self._db_path) as cache:
-            cache.save_annotation(self._binary_path, "0x401000", "comment", "c")
-            cache.save_annotation(self._binary_path, "0x401000", "rename", "r")
-            deleted = cache.delete_annotation(self._binary_path, "0x401000")
-            result = cache.get_annotations(self._binary_path, addr="0x401000")
-        self.assertEqual(deleted, 2)
-        self.assertEqual(result, [])
+        self.assertEqual(result[0]["addr"], "0x402010")
+        self.assertEqual(result[0]["value"], "world")
 
 
 class TestDisasmCacheAnalysisArtifacts(unittest.TestCase):

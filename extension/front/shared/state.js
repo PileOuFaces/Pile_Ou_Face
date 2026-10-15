@@ -168,16 +168,18 @@ function _normalizeOllamaConversationMessages(raw) {
     .slice(-OLLAMA_CHAT_MAX_MESSAGES);
 }
 
-function _loadStoredOllamaConversation() {
-  return _normalizeOllamaConversationMessages(_loadStorage().ollamaConversation);
-}
-
 let ollamaUiState = {
   models: [],
   lastModel: _loadStorage().ollamaModel || '',
+  // True only once the user explicitly picks a model in a chat dropdown this
+  // session. lastModel above gets auto-filled with a default (first model in
+  // the list) even when nobody chose anything, so features that must fall
+  // back to the provider's configured default (ex. auto-triage) need to tell
+  // "explicit choice" apart from "never touched" — see autoTriageController.js.
+  modelUserSelected: false,
   baseUrl: _loadStorage().ollamaBaseUrl || 'http://127.0.0.1:11434',
   busy: false,
-  conversation: _loadStoredOllamaConversation(),
+  conversation: [],
   history: [],
   activeConversationId: '',
   historyQuery: '',
@@ -559,7 +561,7 @@ function _normalizeDecompileQuality(quality) {
 // See CONTRACTS_SHARED.md §Plugin Webview API.
 window.PoF = {
   // Contract version — plugins declare minPoFVersion in plugin.json to enforce compatibility.
-  version: '1.0.0',
+  version: '1.1.0',
 
   // Returns the currently loaded binary path (empty string if none).
   getBinaryPath: () => (typeof getStaticBinaryPath === 'function' ? getStaticBinaryPath() : ''),
@@ -573,6 +575,22 @@ window.PoF = {
 
   // Persistent storage (defined in state.js, no lazy guard needed).
   saveStorage: (data) => _saveStorage(data),
+
+  // Plugin tab metadata mirrored into sandboxed plugin frames.
+  getGroupLabels: () => ({ ...(typeof GROUP_LABELS !== 'undefined' ? GROUP_LABELS : {}) }),
+  getTabFamilies: () => ({ ...(typeof PREMIUM_TAB_FAMILY !== 'undefined' ? PREMIUM_TAB_FAMILY : {}) }),
+  getDisabledFamilies: () => getDisabledFamilies(),
+
+  // Loading helper kept on the host facade as part of the stable 1.1 API.
+  setLoading: (containerId, message) => {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    el.replaceChildren();
+    const p = document.createElement('p');
+    p.className = 'loading-state';
+    p.textContent = message || 'Chargement…';
+    el.appendChild(p);
+  },
 
   // Navigation actions that only make sense in the host's own DOM/scope
   // (panel/group switching, address-context sync, xrefs/strings reveal).
@@ -612,7 +630,7 @@ window.PoF = {
           if (contentEl) contentEl.textContent = 'Analyse des références croisées…';
           el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
-        window.vscode.postMessage({ type: 'hubLoadXrefs', addr, binaryPath: (typeof getStaticBinaryPath === 'function' ? getStaticBinaryPath() : '') || '', mode: p.mode || 'to' });
+        window.POFHubMessageBus?.postMessage?.({ type: 'hubLoadXrefs', addr, binaryPath: (typeof getStaticBinaryPath === 'function' ? getStaticBinaryPath() : '') || '', mode: p.mode || 'to' });
         break;
       }
       case 'openStringAt': {

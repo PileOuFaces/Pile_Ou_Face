@@ -21,6 +21,7 @@ from backends.static.binary.arch import (
 from backends.static.disasm.call_graph import build_call_graph
 from backends.static.disasm.cfg import build_cfg
 from backends.static.disasm.discover_functions import discover_functions
+from backends.static.disasm.xrefs import extract_xrefs
 from backends.static.tests.fixtures.raw_fixture import (
     write_raw_arm32_call_fixture,
     write_raw_arm64_call_fixture,
@@ -70,6 +71,13 @@ RAW_FUNCTION_FIXTURES: tuple[tuple[str, RawFixtureWriter], ...] = (
 
 FUNCTION_FEATURES = ("discover_functions", "cfg", "call_graph")
 SEMANTIC_LEVELS = {"partial", "full"}
+ARM32_FULL_FEATURES = (
+    "discover_functions",
+    "cfg",
+    "xrefs",
+    "call_graph",
+    "stack_frame",
+)
 CFG_CALLGRAPH_COVERAGE_DEBT_ISSUE = 82
 
 # These adapters expose semantic CFG/Call Graph support in the public matrix, but
@@ -80,6 +88,19 @@ CFG_CALLGRAPH_UNFIXTURED_ADAPTERS: set[str] = set()
 
 @unittest.skipUnless(_CAPSTONE_AVAILABLE, "capstone not installed")
 class TestFunctionArchSupportMatrix(unittest.TestCase):
+    def test_arm32_full_claim_keeps_arm_and_thumb_pipeline_fixtures(self):
+        matrix = get_feature_support_matrix()
+        support = matrix["arm32"]
+
+        for feature in ARM32_FULL_FEATURES:
+            with self.subTest(feature=feature):
+                self.assertEqual(support[feature]["level"], "full")
+                self.assertTrue(support[feature]["note"])
+        self.assertEqual(support["calling_convention"]["level"], "partial")
+
+        fixture_labels = {label for label, _writer in RAW_FUNCTION_FIXTURES}
+        self.assertTrue({"arm32", "thumb", "thumb_partial"} <= fixture_labels)
+
     def _fixture_adapter_keys(self) -> set[str]:
         adapter_keys: set[str] = set()
         for _label, writer in RAW_FUNCTION_FIXTURES:
@@ -195,6 +216,41 @@ class TestFunctionArchSupportMatrix(unittest.TestCase):
         for feature in FUNCTION_FEATURES:
             self.assertEqual(support[feature]["level"], "unsupported")
             self.assertIn("WASM", support[feature]["note"])
+
+    def test_arm32_conditional_call_flows_through_discovery_cfg_and_call_graph(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sample = write_raw_arm32_call_fixture(tmp)
+            lines = [dict(line) for line in sample["lines"]]
+            call_line = next(
+                line for line in lines if line["addr"] == sample["call_site_addr"]
+            )
+            call_line["text"] = call_line["text"].replace("bl ", "blne ", 1)
+
+            discovered = discover_functions(lines, set())
+            discovered_addrs = {fn["addr"] for fn in discovered}
+            self.assertIn(sample["target_addr"], discovered_addrs)
+
+            cfg = build_cfg(lines, arch_hint="arm")
+            self.assertTrue(
+                any(
+                    edge.get("type") == "call"
+                    and edge.get("from") == sample["entry_addr"]
+                    and edge.get("to") == sample["target_addr"]
+                    for edge in cfg.get("edges", [])
+                )
+            )
+
+            call_graph = build_call_graph(cfg, discovered, lines=lines)
+            self.assertEqual(len(call_graph["edges"]), 1)
+            self.assertEqual(
+                call_graph["edges"][0]["to_name"],
+                f"sub_{str(sample['target_addr'])[2:]}",
+            )
+
+            refs = extract_xrefs(lines, sample["target_addr"], functions=discovered)
+            self.assertEqual(len(refs), 1)
+            self.assertEqual(refs[0]["type"], "call")
+            self.assertEqual(refs[0]["from_addr"], sample["call_site_addr"])
 
 
 if __name__ == "__main__":

@@ -1,0 +1,110 @@
+rules:
+  - id: pof.webview.dynamic-inner-html
+    message: Data received over the webview message boundary must be escaped before HTML insertion.
+    severity: WARNING
+    languages: [javascript, typescript]
+    mode: taint
+    metadata:
+      category: security
+      technology: [browser, vscode-webview]
+      cwe: CWE-79
+    pattern-sources:
+      - pattern: $EVENT.data
+        exact: true
+    pattern-sanitizers:
+      - pattern: escapeHtml(...)
+      - pattern: escapeAttr(...)
+    pattern-sinks:
+      - pattern: $ELEMENT.innerHTML = $VALUE
+
+  - id: pof.process.interpolated-exec
+    message: Pass executable arguments as an array instead of constructing a shell command.
+    severity: ERROR
+    languages: [javascript, typescript]
+    metadata:
+      category: security
+      technology: [nodejs]
+      cwe: CWE-78
+    patterns:
+      - pattern-inside: |
+          $CP = require('child_process');
+          ...
+      - pattern-either:
+          - pattern: $CP.exec(`...${$VALUE}...`, ...)
+          - pattern: $CP.exec($LEFT + $RIGHT, ...)
+
+  - id: pof.process.spawn-with-shell
+    message: Do not enable a shell for a spawned process; pass an executable and argument array.
+    severity: ERROR
+    languages: [javascript, typescript]
+    metadata:
+      category: security
+      technology: [nodejs]
+      cwe: CWE-78
+    pattern: "$CP.spawn($COMMAND, $ARGS, { ..., shell: true, ... })"
+
+  - id: pof.http.plaintext-request
+    message: Remote HTTP requests must use TLS; explicitly reviewed loopback endpoints are allowed.
+    severity: ERROR
+    languages: [javascript, typescript]
+    metadata:
+      category: security
+      technology: [browser, nodejs]
+      cwe: CWE-319
+    patterns:
+      - pattern-either:
+          - pattern: fetch($URL, ...)
+          - pattern: $CLIENT.get($URL, ...)
+          - pattern: $CLIENT.post($URL, ...)
+      - metavariable-regex:
+          metavariable: $URL
+          regex: ^["'`]http://(?!(?:127\.0\.0\.1|localhost|\[::1\]))
+
+  - id: pof.path.message-to-filesystem
+    message: Validate and constrain paths received over the webview message boundary before filesystem access.
+    severity: ERROR
+    languages: [javascript, typescript]
+    mode: taint
+    metadata:
+      category: security
+      technology: [nodejs, vscode-webview]
+      cwe: CWE-22
+    pattern-sources:
+      - pattern: $EVENT.data
+        exact: true
+    pattern-sanitizers:
+      - pattern: path.basename(...)
+      - pattern: $PATH.basename(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $FS.readFileSync($PATH, ...)
+              - pattern: $FS.writeFileSync($PATH, ...)
+              - pattern: $FS.rmSync($PATH, ...)
+              - pattern: $FS.unlinkSync($PATH, ...)
+              - pattern: $FS.createReadStream($PATH, ...)
+              - pattern: $FS.createWriteStream($PATH, ...)
+
+  - id: pof.crypto.weak-hash
+    message: Do not use MD5 or SHA-1 for security-sensitive hashing.
+    severity: WARNING
+    languages: [javascript, typescript]
+    metadata:
+      category: security
+      technology: [nodejs]
+      cwe: CWE-328
+    pattern-either:
+      - pattern: $CRYPTO.createHash('md5')
+      - pattern: $CRYPTO.createHash('sha1')
+
+  - id: pof.archive.unvalidated-extractall
+    message: Validate every archive member path before extracting an archive.
+    severity: ERROR
+    languages: [python]
+    metadata:
+      category: security
+      technology: [python]
+      cwe: CWE-22
+    pattern-either:
+      - pattern: $ARCHIVE.extractall(...)
+      - pattern: shutil.unpack_archive(...)

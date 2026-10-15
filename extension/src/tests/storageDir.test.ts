@@ -3,7 +3,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
-const { ensureStorageDir, getStorageDir } = require("../shared/utils");
+const { ensureStorageDir, ensureTempDir, getStorageDir, getTempDir } = require("../shared/utils");
 
 describe("extension storage dir", () => {
   it("uses workspace storage when available", () => {
@@ -26,5 +26,19 @@ describe("extension storage dir", () => {
     expect(getStorageDir(context)).to.equal(globalStorage);
     expect(ensureStorageDir(context)).to.equal(globalStorage);
     expect(fs.existsSync(globalStorage)).to.equal(true);
+  });
+
+  it("keeps temp artifacts out of the workspace project directory", () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pof-temp-root-"));
+
+    const tempDir = ensureTempDir(tempRoot);
+
+    expect(tempDir).to.equal(getTempDir(tempRoot));
+    expect(tempDir.startsWith(path.join(os.tmpdir(), "pile-ou-face"))).to.equal(true);
+    expect(fs.existsSync(tempDir)).to.equal(true);
+    expect(fs.existsSync(path.join(tempRoot, ".pile-ou-face"))).to.equal(false);
+
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+    fs.rmSync(tempDir, { recursive: true, force: true });
   });
 });

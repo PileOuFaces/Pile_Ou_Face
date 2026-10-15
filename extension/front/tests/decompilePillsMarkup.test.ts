@@ -24,6 +24,14 @@ describe("decompile pills UI markup", () => {
     path.resolve(__dirname, "../static/tools.js"),
     "utf8",
   );
+  const disasmCssSource = () => fs.readFileSync(
+    path.resolve(__dirname, "../static/disasm.css"),
+    "utf8",
+  );
+  const messagesSource = () => fs.readFileSync(
+    path.resolve(__dirname, "../shared/messages.js"),
+    "utf8",
+  );
 
   it("renders decompiler name, status and score as separate pill elements", () => {
     const source = payloadSource();
@@ -52,5 +60,40 @@ describe("decompile pills UI markup", () => {
   it("does not render the legacy fast/precision quality chip", () => {
     expect(payloadSource()).to.not.include("_formatDecompileQualityLabel");
     expect(toolsSource()).to.not.include("_formatDecompileQualityLabel");
+  });
+
+  it("uses annotation renames in the decompile function selector", () => {
+    const source = payloadSource();
+
+    expect(source).to.include("function getAnnotatedFunctionDisplayName");
+    expect(source).to.include("window._annotations?.[normalized]?.name");
+    expect(source).to.include("const displayName = getAnnotatedFunctionDisplayName(normalized, name)");
+    expect(source).to.include("name: displayName");
+  });
+
+  it("ships visual styles for function vs note annotations", () => {
+    const source = disasmCssSource();
+
+    expect(source).to.include(".annotation-item-function");
+    expect(source).to.include(".annotation-item-note");
+    expect(source).to.include(".ann-kind-function");
+    expect(source).to.include(".ann-kind-note");
+    expect(source).to.include(".ann-kind-ai");
+    expect(source).to.include(".ann-edit");
+  });
+
+  it("marks AI-authored annotations as proposals to verify", () => {
+    const source = messagesSource();
+
+    expect(source).to.include("v.nameSource === 'ai' || v.commentSource === 'ai'");
+    expect(source).to.include("IA · à vérifier");
+    expect(source).to.include("annotation-item-ai");
+    expect(source).to.include("Valider IA");
+    expect(source).to.include("ann-validate-ai");
+    expect(source).to.include("type: 'hubValidateAiAnnotations'");
+    expect(source).to.include("hubRejectAiAnnotations");
+    expect(source).to.include("Afficher uniquement les IA");
+    expect(source).to.include("Tout valider");
+    expect(source).to.include("Tout rejeter");
   });
 });

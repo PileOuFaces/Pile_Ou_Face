@@ -30,12 +30,32 @@ function _derivePluginSlug(pluginDir, manifest) {
 function _resolvePluginAssetPath(pluginDir, manifest, relativeAssetPath) {
   const relPath = String(relativeAssetPath || '').trim();
   if (!relPath) return '';
-  const directPath = path.join(pluginDir, relPath);
-  if (fs.existsSync(directPath)) return directPath;
+
+  const resolveContainedPath = (...segments) => {
+    try {
+      const realPluginDir = fs.realpathSync(pluginDir);
+      const candidatePath = path.resolve(realPluginDir, ...segments);
+      const relativePath = path.relative(realPluginDir, candidatePath);
+      if (relativePath === '..' || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)) {
+        return '';
+      }
+      if (!fs.existsSync(candidatePath)) return '';
+
+      const realCandidatePath = fs.realpathSync(candidatePath);
+      const realRelativePath = path.relative(realPluginDir, realCandidatePath);
+      if (realRelativePath === '..' || realRelativePath.startsWith(`..${path.sep}`) || path.isAbsolute(realRelativePath)) {
+        return '';
+      }
+      return realCandidatePath;
+    } catch (_) {
+      return '';
+    }
+  };
+
+  const directPath = resolveContainedPath(relPath);
+  if (directPath) return directPath;
   const slug = _derivePluginSlug(pluginDir, manifest);
-  const extrasPath = path.join(pluginDir, 'metadata', 'extras', 'plugins', slug, relPath);
-  if (fs.existsSync(extrasPath)) return extrasPath;
-  return '';
+  return resolveContainedPath('metadata', 'extras', 'plugins', slug, relPath);
 }
 
 function _escapeHtmlAttr(value) {
@@ -144,6 +164,24 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
       banner.classList.remove('is-indeterminate');
     }, 650);
   }
+  function _normalizePluginBinaryPath(value) {
+    return String(value || '').trim().replace(/\\\\/g, '/');
+  }
+  function _isStalePluginBinaryMessage(msg, scope) {
+    var responseBinaryPath = String((msg && msg.binaryPath) || '').trim();
+    var currentBinaryPath = String(window._pofCurrentBinaryPath || '').trim();
+    if (!responseBinaryPath || !currentBinaryPath) return false;
+    if (_normalizePluginBinaryPath(responseBinaryPath) === _normalizePluginBinaryPath(currentBinaryPath)) return false;
+    try {
+      window.vscode.postMessage({
+        type: 'hubDebugLog',
+        scope: scope || 'plugin-iframe',
+        event: 'ignored-stale-response',
+        details: { currentBinaryPath: currentBinaryPath, responseBinaryPath: responseBinaryPath }
+      });
+    } catch (_) {}
+    return true;
+  }
   window.addEventListener('message', function (e) {
     if (!e.data || !e.data.__pof_host) return;
     var msg = e.data.payload;
@@ -154,14 +192,28 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
     if (msg && msg.type === 'showTab') {
       _activatePanel(msg.tabId);
     }
+    if (msg && msg.type === '__binaryPath' && typeof msg.binaryPath === 'string') {
+      window._pofCurrentBinaryPath = msg.binaryPath;
+    }
+    if (msg && msg.__pof_tabload) {
+      if (_isStalePluginBinaryMessage(msg, 'plugin-tabload')) {
+        if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+        return;
+      }
+    }
     if (msg && msg.type === 'hubPluginProgress') {
+      if (_isStalePluginBinaryMessage(msg, 'plugin-progress')) {
+        if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+        return;
+      }
       _showPluginProgress(msg);
     }
     if (msg && msg.type === 'hubPluginResult') {
+      if (_isStalePluginBinaryMessage(msg, 'plugin-result')) {
+        if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+        return;
+      }
       _hidePluginProgressSoon();
-    }
-    if (msg && msg.type === '__binaryPath' && typeof msg.binaryPath === 'string') {
-      window._pofCurrentBinaryPath = msg.binaryPath;
     }
     if (msg && msg.type === '__cssVars' && msg.vars && typeof msg.vars === 'object') {
       var keys = Object.keys(msg.vars);
@@ -197,7 +249,7 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
     });
   }
   window.PoF = {
-    version: null,
+    version: '1.1.0',
     // Synchronous: mirrors the __binaryPath broadcast already cached locally,
     // no round-trip needed (and plugin code written pre-iframe expects a string, not a Promise).
     getBinaryPath:       function () { return window._pofCurrentBinaryPath || ''; },
@@ -207,6 +259,7 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
       _call('registerTabLoader', [tabId]);
       window.addEventListener('message', function (e) {
         if (e.data && e.data.__pof_host && e.data.payload && e.data.payload.__pof_tabload && e.data.payload.tabId === tabId) {
+          if (_isStalePluginBinaryMessage(e.data.payload, 'plugin-tabload')) return;
           if (e.data.payload.binaryPath) window._pofCurrentBinaryPath = e.data.payload.binaryPath;
           fn(e.data.payload.binaryPath);
         }
@@ -254,8 +307,8 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
   window.PREMIUM_TAB_FAMILY = window.PREMIUM_TAB_FAMILY || {};
   window.GROUP_LABELS = window.GROUP_LABELS || {};
   // Mirror the host's registerPluginTabs(): populate label/family lookups for
-  // every tab across all plugins, so cross-plugin display code (e.g. cross-analysis
-  // showing "source: audit") doesn't need direct access to the host's own state.
+  // every tab across all plugins, so cross-plugin display code can use manifest
+  // metadata without direct access to the host's own state.
   window.addEventListener('message', function (e) {
     if (!e.data || !e.data.__pof_host) return;
     var msg = e.data.payload;
@@ -279,10 +332,9 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
   window.functionListCache = window.functionListCache || [];
   window.functionsUiState = window.functionsUiState || { selectedAddr: '' };
 
-  // ── Code-navigation helpers (mirrors vulnerability-audit-pro/webview/tab.ts) ──
-  // These plugins used to share one global scope with vulnerability-audit-pro
-  // before iframe isolation; provided here so every plugin can resolve addresses
-  // without duplicating this logic. Address caches are always empty in an
+  // ── Generic code-navigation helpers exposed by the host bridge ──
+  // Provided here so every plugin can resolve addresses without duplicating
+  // host integration logic. Address caches are always empty in an
   // isolated iframe, so these gracefully return '' / false instead of crashing.
   function _isExecutableSection(section) {
     if (!section || typeof section !== 'object') return false;
@@ -883,8 +935,8 @@ function _buildPluginSrcdoc(html, inlineJs, pluginCss, hostCss = '') {
   ].join('');
 }
 
-function loadPluginWebviews(root, options: { storageDir?: string; globalDir?: string; extensionFrontDir?: string; webviewResourceResolver?: (absPath: string) => string } = {}) {
-  const { storageDir = '', globalDir = '', extensionFrontDir = '', webviewResourceResolver } = options;
+function loadPluginWebviews(options: { storageDir?: string; globalDir?: string; extensionFrontDir?: string } = {}) {
+  const { storageDir = '', globalDir = '', extensionFrontDir = '' } = options;
   let groupStyles = '';
   const frames: { pluginId: string; pluginSlug: string; frameId: string; srcdoc: string }[] = [];
 
@@ -969,7 +1021,7 @@ function loadPluginWebviews(root, options: { storageDir?: string; globalDir?: st
 
   const framesHtml = frames.map((f) => {
     const escapedSrcdoc = _escapeHtmlAttr(f.srcdoc);
-    return `<iframe id="${f.frameId}" data-plugin-id="${_escapeHtmlAttr(f.pluginId)}" data-plugin-slug="${_escapeHtmlAttr(f.pluginSlug)}" class="plugin-iframe static-panel" sandbox="allow-scripts allow-same-origin" srcdoc="${escapedSrcdoc}"></iframe>`;
+    return `<iframe id="${f.frameId}" data-plugin-id="${_escapeHtmlAttr(f.pluginId)}" data-plugin-slug="${_escapeHtmlAttr(f.pluginSlug)}" class="plugin-iframe static-panel" sandbox="allow-scripts" srcdoc="${escapedSrcdoc}"></iframe>`;
   }).join('\n');
 
   return { groupStyles: groupStyles.trim(), frames, framesHtml: framesHtml.trim() };
@@ -985,6 +1037,7 @@ function getWebviewContent(webview, extensionUri) {
     html = fs.readFileSync(legacyPath.fsPath, 'utf8');
   }
   const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'dynamic', 'app', 'main.js'));
+  const telemetryClientUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'telemetryClient.js'));
   const preferredStyle = vscode.Uri.joinPath(extensionUri, 'front', 'dynamic', 'graphical-stack.css');
   const fallbackStyle = vscode.Uri.joinPath(extensionUri, 'front', 'dynamic', 'legacy-visualizer.css');
   const stylePath = fs.existsSync(preferredStyle.fsPath) ? preferredStyle : fallbackStyle;
@@ -992,18 +1045,19 @@ function getWebviewContent(webview, extensionUri) {
   const csp = webview.cspSource;
   return html
     .replace(/{{scriptUri}}/g, scriptUri.toString())
+    .replace(/{{telemetryClientUri}}/g, telemetryClientUri.toString())
     .replace(/{{styleUri}}/g, styleUri.toString())
     .replace(/{{cspSource}}/g, csp);
 }
 
 // static/hub — main static analysis hub (shell + fragments)
-function getHubContent(webview, extensionUri, initialPanel = 'dashboard', workspaceRoot = '', globalDir = '', storageDir = '') {
+function getHubContent(webview, extensionUri, initialPanel = 'dashboard', globalDir = '', storageDir = '') {
   const read = (...parts) => fs.readFileSync(
     vscode.Uri.joinPath(extensionUri, ...parts).fsPath, 'utf8'
   );
 
   const { groupStyles: pluginGroupStyles, framesHtml: pluginFrames } =
-    (storageDir || globalDir) ? loadPluginWebviews(workspaceRoot, {
+    (storageDir || globalDir) ? loadPluginWebviews({
       storageDir,
       globalDir,
       extensionFrontDir: vscode.Uri.joinPath(extensionUri, 'front').fsPath,
@@ -1018,6 +1072,7 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', worksp
 
   const scriptUri              = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'hub.js'));
   // shared modules
+  const sharedI18nUri         = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'i18n.js'));
   const sharedRawTabCapabilitiesUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'rawTabCapabilities.js'));
   const sharedStateUri         = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'state.js'));
   const sharedBinaryUri        = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'binary.js'));
@@ -1034,6 +1089,7 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', worksp
   const sharedMessagesUri      = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'messages.js'));
   const sharedSettingsUri      = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'settings.js'));
   const sharedAnnotationsUri   = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'annotations.js'));
+  const sharedIdaKeymapUri     = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'idaKeymap.js'));
   const sharedAccountUri       = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'account.js'));
   // static modules
   const staticPayloadUri       = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'static', 'payload.js'));
@@ -1045,6 +1101,7 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', worksp
   // shared controllers
   const sharedHubStateUri              = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'hubState.js'));
   const sharedMessageBusUri            = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'messageBus.js'));
+  const sharedTelemetryClientUri       = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'telemetryClient.js'));
   const sharedTaskProgressControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'taskProgressController.js'));
   const sharedMessageRouterUri         = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'messageRouter.js'));
   const sharedStatusControllerUri      = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'shared', 'statusController.js'));
@@ -1064,6 +1121,8 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', worksp
   const staticExploitHelperControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'static', 'exploitHelperController.js'));
   const staticPwntoolsScriptControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'static', 'pwntoolsScriptController.js'));
   const staticToolsWidgetsControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'static', 'staticToolsWidgetsController.js'));
+  const staticAutoTriageControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'static', 'autoTriageController.js'));
+  const staticDecompileAugmentationControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'static', 'decompileAugmentationController.js'));
   // dynamic controllers
   const dynamicPayloadHistoryControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'dynamic', 'payloadHistoryController.js'));
   const dynamicVisualizerControllerUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'front', 'dynamic', 'dynamicVisualizerController.js'));
@@ -1101,6 +1160,8 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', worksp
 
   return html
     .replace(/{{scriptUri}}/g, scriptUri.toString())
+    .replace(/{{sharedI18nUri}}/g, sharedI18nUri.toString())
+    .replace(/{{locale}}/g, String(vscode.env?.language || '').toLowerCase().startsWith('fr') ? 'fr' : 'en')
     // shared modules
     .replace(/{{sharedRawTabCapabilitiesUri}}/g, sharedRawTabCapabilitiesUri.toString())
     .replace(/{{sharedStateUri}}/g, sharedStateUri.toString())
@@ -1118,6 +1179,7 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', worksp
     .replace(/{{sharedMessagesUri}}/g, sharedMessagesUri.toString())
     .replace(/{{sharedSettingsUri}}/g, sharedSettingsUri.toString())
     .replace(/{{sharedAnnotationsUri}}/g, sharedAnnotationsUri.toString())
+    .replace(/{{sharedIdaKeymapUri}}/g, sharedIdaKeymapUri.toString())
     .replace(/{{sharedAccountUri}}/g, sharedAccountUri.toString())
     // static modules
     .replace(/{{staticPayloadUri}}/g, staticPayloadUri.toString())
@@ -1129,6 +1191,7 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', worksp
     // shared controllers
     .replace(/{{sharedHubStateUri}}/g, sharedHubStateUri.toString())
     .replace(/{{sharedMessageBusUri}}/g, sharedMessageBusUri.toString())
+    .replace(/{{sharedTelemetryClientUri}}/g, sharedTelemetryClientUri.toString())
     .replace(/{{sharedTaskProgressControllerUri}}/g, sharedTaskProgressControllerUri.toString())
     .replace(/{{sharedMessageRouterUri}}/g, sharedMessageRouterUri.toString())
     .replace(/{{sharedStatusControllerUri}}/g, sharedStatusControllerUri.toString())
@@ -1148,6 +1211,8 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', worksp
     .replace(/{{staticExploitHelperControllerUri}}/g, staticExploitHelperControllerUri.toString())
     .replace(/{{staticPwntoolsScriptControllerUri}}/g, staticPwntoolsScriptControllerUri.toString())
     .replace(/{{staticToolsWidgetsControllerUri}}/g, staticToolsWidgetsControllerUri.toString())
+    .replace(/{{staticAutoTriageControllerUri}}/g, staticAutoTriageControllerUri.toString())
+    .replace(/{{staticDecompileAugmentationControllerUri}}/g, staticDecompileAugmentationControllerUri.toString())
     // dynamic controllers
     .replace(/{{dynamicPayloadHistoryControllerUri}}/g, dynamicPayloadHistoryControllerUri.toString())
     .replace(/{{dynamicVisualizerControllerUri}}/g, dynamicVisualizerControllerUri.toString())

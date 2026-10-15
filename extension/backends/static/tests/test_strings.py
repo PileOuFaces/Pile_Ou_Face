@@ -66,9 +66,33 @@ class TestExtractStrings(unittest.TestCase):
             self.assertEqual(len(extract_strings(str(f), min_len=4)), 1)
             self.assertGreaterEqual(len(extract_strings(str(f), min_len=3)), 1)
 
+    def test_max_results_limits_during_python_extraction(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "bin"
+            f.write_bytes(b"aaaa\x00bbbb\x00cccc\x00dddd\x00")
+            result = extract_strings(str(f), min_len=4, max_results=2)
+            self.assertEqual(len(result), 2)
+
     def test_nonexistent_returns_empty(self):
         result = extract_strings("/nonexistent/path/binary")
         self.assertEqual(result, [])
+
+    def test_large_file_does_not_build_per_byte_offset_map(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "large.bin"
+            with f.open("wb") as handle:
+                handle.write(b"hello-large-file\x00")
+                handle.seek((17 * 1024 * 1024) + 128)
+                handle.write(b"\x00")
+
+            with patch(
+                "backends.static.search.strings.build_offset_to_vaddr",
+                side_effect=AssertionError("per-byte map should not be built"),
+            ):
+                result = extract_strings(str(f), min_len=4, max_results=1)
+
+            self.assertEqual(len(result), 1)
+            self.assertEqual(result[0]["value"], "hello-large-file")
 
     def test_utf16_le(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -5,7 +5,7 @@ Couvre le chemin :
     lignes désassemblage → CFG (complet + par fonction)
     → export DOT + CSV + JSON
     → AnnotationStore (commenter, renommer, lister)
-    → DisasmCache (symboles, strings, annotations)
+    → DisasmCache (symboles, strings)
     → cache_admin (stats, list, purge)
 
 Ces tests utilisent uniquement des données synthétiques (pas de vrai binaire).
@@ -184,7 +184,7 @@ class TestExportPipeline(unittest.TestCase):
 
 
 class TestCachePipeline(unittest.TestCase):
-    """Pipeline : cache désassemblage + symboles + strings + annotations."""
+    """Pipeline : cache désassemblage + symboles + strings."""
 
     def setUp(self):
         self._bin_file = tempfile.NamedTemporaryFile(delete=False, suffix=".elf")
@@ -206,21 +206,14 @@ class TestCachePipeline(unittest.TestCase):
             cache.save_disasm(self._binary_path, DISASM_LINES)
             cache.save_symbols(self._binary_path, SYMBOLS)
             cache.save_strings(self._binary_path, STRINGS)
-            cache.save_annotation(
-                self._binary_path, "0x401000", "comment", "entry of func_a"
-            )
-            cache.save_annotation(self._binary_path, "0x401000", "rename", "func_a")
-
             disasm = cache.get_disasm(self._binary_path)
             syms = cache.get_symbols(self._binary_path)
             strs = cache.get_strings(self._binary_path)
-            anns = cache.get_annotations(self._binary_path)
 
         self.assertIsNotNone(disasm)
         self.assertEqual(len(disasm[1]), len(DISASM_LINES))  # type: ignore
         self.assertEqual(len(syms), 2)  # type: ignore
         self.assertEqual(len(strs), 2)  # type: ignore
-        self.assertEqual(len(anns), 2)
 
     def test_cache_admin_stats_after_populate(self):
         """cache_admin.stats reflète le contenu réel du cache."""

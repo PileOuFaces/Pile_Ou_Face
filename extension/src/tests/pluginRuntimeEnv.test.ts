@@ -1,8 +1,9 @@
 const { expect } = require('chai');
+const { EventEmitter } = require('events');
 const proxyquire = require('proxyquire').noCallThru();
 const sinon = require('sinon');
 
-describe('buildPluginRuntimeEnv — MODE selection', () => {
+describe('plugin runtime online key transport — MODE selection', () => {
   afterEach(() => sinon.restore());
 
   /**
@@ -17,6 +18,25 @@ describe('buildPluginRuntimeEnv — MODE selection', () => {
   function makeHandlers({ fakeKeys = {}, licenseFiles = [], authThrows = false, refreshKeysIfStaleStub = null, captureMessages = null } = {}) {
     const execFileStub = sinon.stub().callsFake((_bin, _args, _opts, cb) => {
       cb(null, JSON.stringify({ ok: true, plugins: [] }), '');
+    });
+    const spawnCalls = [];
+    const spawnStub = sinon.stub().callsFake((_bin, _args, opts) => {
+      const proc = new EventEmitter();
+      proc.stdout = new EventEmitter();
+      proc.stderr = new EventEmitter();
+      proc.stdin = {
+        chunks: [],
+        write: sinon.stub().callsFake((chunk) => {
+          proc.stdin.chunks.push(String(chunk));
+        }),
+        end: sinon.stub(),
+      };
+      spawnCalls.push({ args: [_bin, _args, opts], proc });
+      process.nextTick(() => {
+        proc.stdout.emit('data', JSON.stringify({ ok: true, plugins: [] }));
+        proc.emit('close', 0);
+      });
+      return proc;
     });
 
     const getContentKeys = authThrows
@@ -33,7 +53,7 @@ describe('buildPluginRuntimeEnv — MODE selection', () => {
           getConfiguration: () => ({ inspect: () => ({}) }),
         },
       },
-      child_process: { execFile: execFileStub },
+      child_process: { execFile: execFileStub, spawn: spawnStub },
       fs: {
         readdirSync: sinon.stub().callsFake((dir) => {
           if (String(dir).includes('licenses')) return licenseFiles;
@@ -45,12 +65,21 @@ describe('buildPluginRuntimeEnv — MODE selection', () => {
       path: require('path'),
       '../shared/utils': {
         detectPythonExecutable: () => '/usr/bin/python3',
-        buildRuntimeEnv: () => ({}),
+        buildRuntimeEnv: (_root, _storageDir, extraEnv = {}) => ({ ...extraEnv }),
       },
       '../shared/sharedHandlers': { normalizeRawArchName: (v) => v },
       '../shared/authService': {
         AuthService: {
-          getInstance: sinon.stub().returns({ getContentKeys, refreshKeysIfStale }),
+          getInstance: sinon.stub().returns({
+            getContentKeys,
+            refreshKeysIfStale,
+            getDeploymentStatus: () => ({
+              profile: 'OSS_DEVELOPMENT',
+              origin: 'http://localhost:8000',
+              deploymentId: 'oss-development',
+              verified: true,
+            }),
+          }),
         },
       },
       '../shared/authConfig': {
@@ -77,79 +106,98 @@ describe('buildPluginRuntimeEnv — MODE selection', () => {
         secrets: {},
       },
       logChannel: null,
+      storageDir: '/workspace-storage',
+      globalDir: '/global-storage',
     });
 
-    return { handlers, execFileStub };
+    return { handlers, execFileStub, spawnStub, spawnCalls };
+  }
+
+  function runtimeEnv(spawnCalls) {
+    return spawnCalls[0].args[2].env;
+  }
+
+  function runtimeStdin(spawnCalls) {
+    return spawnCalls[0].proc.stdin.chunks.join('');
   }
 
   // -------------------------------------------------------------------------
   // MODE 1 — online keys available
   // -------------------------------------------------------------------------
 
-  it('MODE 1 — online keys present: BINHOST flag is set and keys are injected', async () => {
-    const { handlers, execFileStub } = makeHandlers({
+  it('MODE 1 — online keys present: BINHOST flags are set and keys are written to stdin', async () => {
+    const { handlers, spawnCalls } = makeHandlers({
       fakeKeys: { 'pof.plugin-x': 'base64key==', 'pof.plugin-y': 'anotherkey==' },
     });
 
     await handlers.hubLoadPluginState();
 
-    const env = execFileStub.getCall(0).args[2].env;
+    const env = runtimeEnv(spawnCalls);
     expect(env).to.have.property('BINHOST_DISABLE_LICENSE_FALLBACK', '1');
-    expect(env).to.have.property('POF_CONTENT_KEY_POF_PLUGIN_X', 'base64key==');
-    expect(env).to.have.property('POF_CONTENT_KEY_POF_PLUGIN_Y', 'anotherkey==');
+    expect(env).to.have.property('BINHOST_CONTENT_KEYS_STDIN', '1');
+    expect(env).to.have.property('POF_GLOBAL_STORAGE_DIR', '/global-storage');
+    expect(env).to.not.have.property('POF_CONTENT_KEY_POF_PLUGIN_X');
+    expect(env).to.not.have.property('POF_CONTENT_KEY_POF_PLUGIN_Y');
+    expect(JSON.parse(runtimeStdin(spawnCalls))).to.deep.equal({
+      content_keys: { 'pof.plugin-x': 'base64key==', 'pof.plugin-y': 'anotherkey==' },
+    });
   });
 
   it('MODE 1 priority — online keys + license files present: online wins, flag is set', async () => {
-    const { handlers, execFileStub } = makeHandlers({
+    const { handlers, spawnCalls } = makeHandlers({
       fakeKeys: { 'pof.plugin-x': 'key==' },
       licenseFiles: ['pof.plugin-x.license.json'],
     });
 
     await handlers.hubLoadPluginState();
 
-    const env = execFileStub.getCall(0).args[2].env;
+    const env = runtimeEnv(spawnCalls);
     expect(env).to.have.property('BINHOST_DISABLE_LICENSE_FALLBACK', '1');
+    expect(env).to.have.property('BINHOST_CONTENT_KEYS_STDIN', '1');
   });
 
   // -------------------------------------------------------------------------
-  // MODE 3 — no online keys, offline license files present
+  // Offline license files are never accepted by ONLINE_STANDARD
   // -------------------------------------------------------------------------
 
-  it('MODE 3 — no online keys + .license.json files: BINHOST flag is absent', async () => {
-    const { handlers, execFileStub } = makeHandlers({
+  it('Locked — local .license.json cannot enable a plugin without an online lease', async () => {
+    const { handlers, spawnCalls } = makeHandlers({
       fakeKeys: {},
       licenseFiles: ['pof.plugin-x.license.json'],
     });
 
     await handlers.hubLoadPluginState();
 
-    const env = execFileStub.getCall(0).args[2].env;
-    expect(env).to.not.have.property('BINHOST_DISABLE_LICENSE_FALLBACK');
+    const env = runtimeEnv(spawnCalls);
+    expect(env).to.have.property('BINHOST_DISABLE_LICENSE_FALLBACK', '1');
+    expect(env).to.not.have.property('BINHOST_CONTENT_KEYS_STDIN');
+    expect(runtimeStdin(spawnCalls)).to.equal('');
   });
 
-  it('MODE 3 — AuthService throws + license files: BINHOST flag is absent', async () => {
-    const { handlers, execFileStub } = makeHandlers({
+  it('Locked — auth failure cannot fall back to local license files', async () => {
+    const { handlers, spawnCalls } = makeHandlers({
       authThrows: true,
       licenseFiles: ['pof.plugin-y.license.json', 'pof.plugin-z.license.json'],
     });
 
     await handlers.hubLoadPluginState();
 
-    const env = execFileStub.getCall(0).args[2].env;
-    expect(env).to.not.have.property('BINHOST_DISABLE_LICENSE_FALLBACK');
+    const env = runtimeEnv(spawnCalls);
+    expect(env).to.have.property('BINHOST_DISABLE_LICENSE_FALLBACK', '1');
+    expect(env).to.not.have.property('BINHOST_CONTENT_KEYS_STDIN');
   });
 
-  it('MODE 3 — only .license.json files count, not other files', async () => {
-    const { handlers, execFileStub } = makeHandlers({
+  it('Locked — unrelated local files cannot enable a plugin', async () => {
+    const { handlers, spawnCalls } = makeHandlers({
       fakeKeys: {},
       licenseFiles: ['README.md', 'install.sh', 'notes.txt'],
     });
 
     await handlers.hubLoadPluginState();
 
-    // No .license.json → locked, not MODE 3
-    const env = execFileStub.getCall(0).args[2].env;
+    const env = runtimeEnv(spawnCalls);
     expect(env).to.have.property('BINHOST_DISABLE_LICENSE_FALLBACK', '1');
+    expect(env).to.not.have.property('BINHOST_CONTENT_KEYS_STDIN');
   });
 
   // -------------------------------------------------------------------------
@@ -157,30 +205,33 @@ describe('buildPluginRuntimeEnv — MODE selection', () => {
   // -------------------------------------------------------------------------
 
   it('Locked — no online keys + no license files: BINHOST flag is set', async () => {
-    const { handlers, execFileStub } = makeHandlers({
+    const { handlers, spawnCalls } = makeHandlers({
       fakeKeys: {},
       licenseFiles: [],
     });
 
     await handlers.hubLoadPluginState();
 
-    const env = execFileStub.getCall(0).args[2].env;
+    const env = runtimeEnv(spawnCalls);
     expect(env).to.have.property('BINHOST_DISABLE_LICENSE_FALLBACK', '1');
+    expect(env).to.not.have.property('BINHOST_CONTENT_KEYS_STDIN');
     // No content keys injected
     const keyVars = Object.keys(env).filter((k) => k.startsWith('POF_CONTENT_KEY_'));
     expect(keyVars).to.have.length(0);
+    expect(runtimeStdin(spawnCalls)).to.equal('');
   });
 
   it('Locked — AuthService throws + no license files: BINHOST flag is set', async () => {
-    const { handlers, execFileStub } = makeHandlers({
+    const { handlers, spawnCalls } = makeHandlers({
       authThrows: true,
       licenseFiles: [],
     });
 
     await handlers.hubLoadPluginState();
 
-    const env = execFileStub.getCall(0).args[2].env;
+    const env = runtimeEnv(spawnCalls);
     expect(env).to.have.property('BINHOST_DISABLE_LICENSE_FALLBACK', '1');
+    expect(env).to.not.have.property('BINHOST_CONTENT_KEYS_STDIN');
   });
 
   // -------------------------------------------------------------------------
@@ -188,14 +239,17 @@ describe('buildPluginRuntimeEnv — MODE selection', () => {
   // -------------------------------------------------------------------------
 
   it('plugin IDs with hyphens and dots are normalised to underscores in env var names', async () => {
-    const { handlers, execFileStub } = makeHandlers({
+    const { handlers, spawnCalls } = makeHandlers({
       fakeKeys: { 'pof.plugin-z': 'mykey==' },
     });
 
     await handlers.hubLoadPluginState();
 
-    const env = execFileStub.getCall(0).args[2].env;
-    expect(env).to.have.property('POF_CONTENT_KEY_POF_PLUGIN_Z', 'mykey==');
+    const env = runtimeEnv(spawnCalls);
+    expect(env).to.not.have.property('POF_CONTENT_KEY_POF_PLUGIN_Z');
+    expect(JSON.parse(runtimeStdin(spawnCalls))).to.deep.equal({
+      content_keys: { 'pof.plugin-z': 'mykey==' },
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -204,16 +258,20 @@ describe('buildPluginRuntimeEnv — MODE selection', () => {
 
   it('TTL — refresh réussi : MODE 1 maintenu avec clés fraîches', async () => {
     const refreshKeysIfStale = sinon.stub().resolves({ refreshed: true, revoked: false });
-    const { handlers, execFileStub } = makeHandlers({
+    const { handlers, spawnCalls } = makeHandlers({
       fakeKeys: { 'pof.plugin-x': 'refreshed-key==' },
       refreshKeysIfStaleStub: refreshKeysIfStale,
     });
 
     await handlers.hubLoadPluginState();
 
-    const env = execFileStub.getCall(0).args[2].env;
+    const env = runtimeEnv(spawnCalls);
     expect(env).to.have.property('BINHOST_DISABLE_LICENSE_FALLBACK', '1');
-    expect(env).to.have.property('POF_CONTENT_KEY_POF_PLUGIN_X', 'refreshed-key==');
+    expect(env).to.have.property('BINHOST_CONTENT_KEYS_STDIN', '1');
+    expect(env).to.not.have.property('POF_CONTENT_KEY_POF_PLUGIN_X');
+    expect(JSON.parse(runtimeStdin(spawnCalls))).to.deep.equal({
+      content_keys: { 'pof.plugin-x': 'refreshed-key==' },
+    });
   });
 
   it('TTL — révocation (revoked=true) : postMessage accountState loggedIn=false', async () => {
@@ -230,5 +288,9 @@ describe('buildPluginRuntimeEnv — MODE selection', () => {
     const accountMsg = postedMessages.find((m) => m.type === 'accountState');
     expect(accountMsg).to.exist;
     expect(accountMsg.loggedIn).to.equal(false);
+    expect(accountMsg.deployment).to.deep.include({
+      profile: 'OSS_DEVELOPMENT',
+      deploymentId: 'oss-development',
+    });
   });
 });

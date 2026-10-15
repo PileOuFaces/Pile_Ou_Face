@@ -12,6 +12,7 @@ Si tu dois presenter la partie statique rapidement, commence par ces fichiers :
 | [FONCTIONNALITES.md](FONCTIONNALITES.md) | Liste complete des fonctionnalites par groupe `CODE`, `DATA` et des groupes pluginises `AUDIT`, `MALWARE`, `OFFENSIF` |
 | [GUIDE_UTILISATION.md](GUIDE_UTILISATION.md) | Guide pratique : comment utiliser chaque vue et comment interpreter les resultats |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Architecture statique : webview, extension VS Code, backend Python, cache et tests |
+| [ADR-001 Auth](../architecture/ADR-001-auth-deployment-profiles.md) | Profils SaaS, on-prem, OSS et air-gap ; identité serveur et isolation des secrets |
 | [PLUGIN.md](PLUGIN.md) | Host plugin : runtime, manifest, installation, MCP, capacites du host |
 | [PLUGIN_DEV.md](PLUGIN_DEV.md) | **Guide communaute** : creer un plugin open source, format manifest, API context, best practices |
 
@@ -1166,11 +1167,10 @@ statut/notes de revue) sur les adresses d'un binaire.
   `review_status`, `review_notes`, `bookmark`, `bookmark_color`.
 - Binaire identifié par le **hash sha256 de son contenu** (pas chemin+mtime) — stable
   entre machines/recompilations, prépare le terrain pour la synchro multi-utilisateur.
-- Migration automatique et paresseuse des anciens fichiers JSON par binaire de l'UI Hub
-  (`{storageDir}/annotations/*.json`, système historique de l'extension) au premier
-  chargement — l'ancien fichier est renommé en `.migrated`, jamais supprimé.
 - `AnnotationStore` reste la façade haut niveau, maintenant construite sur
   `annotation_db.AnnotationDb` (et non plus `DisasmCache`).
+- Il n'existe aucun lecteur ou stockage JSON de compatibilité, ni table
+  d'annotations dans les bases `.pfdb` : `AnnotationDb` est l'unique source de vérité.
 
 **Interface Python** :
 ```python
@@ -1188,7 +1188,7 @@ with AnnotationStore("/path/to/binary.elf") as store:
 
 CLI unifié (utilisé en subprocess par l'extension, sortie JSON groupée par adresse) :
 `annotate` / `review` / `bookmark` / `delete-bookmark` / `clear-bookmarks` /
-`delete-annotation` / `migrate-legacy` / `list --grouped`.
+`delete-annotation` / `list --grouped`.
 
 **Interface Hub** :
 - **Ctrl+Clic** sur une adresse dans le désassemblage → popup de saisie de note

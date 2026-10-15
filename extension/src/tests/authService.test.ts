@@ -1,7 +1,10 @@
-// @ts-nocheck
 const { expect } = require("chai");
 const proxyquire = require("proxyquire").noCallThru();
 const sinon = require("sinon");
+const crypto = require("crypto");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 
 // ---------------------------------------------------------------------------
 // Existing suite — loopback fallback
@@ -35,6 +38,15 @@ describe("auth service loopback fallback", () => {
   it("retries loopback auth on ::1 when localhost resolves to the wrong server", async () => {
     const { AuthService } = proxyquire("../shared/authService", {
       vscode: {},
+      "./authDiscovery": {
+        discoverAuthServer: async (origin) => ({
+          origin,
+          issuer: origin,
+          lease_audience: "pof-plugin-runtime",
+          deployment_id: "loopback-test",
+          jwks_uri: `${origin}/auth/jwks`,
+        }),
+      },
     });
     AuthService._instance = null;
 
@@ -84,6 +96,7 @@ function makeAuthService({
   refreshResponse = null,
   refreshThrows = false,
   refreshThrows401 = false,
+  pluginSearchDirs = [],
 } = {}) {
   // Reset du singleton avant chaque usage
   const mod = require("../shared/authService");
@@ -107,7 +120,14 @@ function makeAuthService({
     }),
   };
 
-  const svc = mod.AuthService.getInstance(secrets, "http://localhost:8000");
+  const svc = mod.AuthService.getInstance(secrets, "http://localhost:8000", { pluginSearchDirs });
+  svc._serverIdentity = {
+    origin: "http://localhost:8000",
+    issuer: "http://localhost:8000",
+    lease_audience: "pof-plugin-runtime",
+    deployment_id: "unit-test-deployment",
+    jwks_uri: "http://localhost:8000/auth/jwks",
+  };
 
   // Stub _postJson pour contrôler la réponse réseau
   if (refreshThrows) {
@@ -295,5 +315,377 @@ describe("AuthService.refresh() — refresh token rotation", () => {
 
     expect(ok).to.equal(true);
     expect(store["pof.auth.refreshToken"]).to.equal("fake-refresh");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// New suite — _syncLicenseLeases() (XSYNC-LIC-001, Pile_Ou_Face#70)
+// ---------------------------------------------------------------------------
+describe("AuthService._syncLicenseLeases()", () => {
+  const tempDirs = [];
+  const encryptedPayload = Buffer.from("encrypted-plugin-payload");
+  const ciphertextSha256 = crypto.createHash("sha256").update(encryptedPayload).digest("hex");
+
+  function pluginSearchDir(pluginId = "pof.plugin-x", releaseId = "release-test-1") {
+    const pluginsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pof-online-license-"));
+    const pluginDir = path.join(pluginsDir, "plugin-x");
+    fs.mkdirSync(pluginDir);
+    fs.writeFileSync(
+      path.join(pluginDir, "manifest.json"),
+      JSON.stringify({ id: pluginId, licensing: { release_id: releaseId } }),
+    );
+    fs.writeFileSync(path.join(pluginDir, "payload.enc"), encryptedPayload);
+    tempDirs.push(pluginsDir);
+    return pluginsDir;
+  }
+
+  function b64url(buf) {
+    return buf
+      .toString("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+  }
+
+  function signLease(payload, signingPrivateKeyPem) {
+    const header = { alg: "RS256", typ: "JWT", kid: "1" };
+    const headerB64 = b64url(Buffer.from(JSON.stringify(header)));
+    const payloadB64 = b64url(Buffer.from(JSON.stringify(payload)));
+    const signingInput = `${headerB64}.${payloadB64}`;
+    const signature = crypto.sign("RSA-SHA256", Buffer.from(signingInput), signingPrivateKeyPem);
+    return `${signingInput}.${b64url(signature)}`;
+  }
+
+  function serverKeypair() {
+    const { publicKey, privateKey } = crypto.generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      publicKeyEncoding: { type: "spki", format: "pem" },
+      privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    });
+    const jwk = crypto.createPublicKey(publicKey).export({ format: "jwk" });
+    return { publicKey, privateKey, jwks: { keys: [{ kty: "RSA", n: jwk.n, e: jwk.e, kid: "1" }] } };
+  }
+
+  afterEach(() => {
+    sinon.restore();
+    for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+    const mod = require("../shared/authService");
+    mod.AuthService._instance = null;
+  });
+
+  it("overwrites cached content_keys with freshly lease-derived DEKs on success", async () => {
+    const accessToken = `header.${b64url(Buffer.from(JSON.stringify({ sub: "user-test" })))}.signature`;
+    const { svc, store } = makeAuthService({
+      storedKeys: { "pof.plugin-x": "stale-cached-key==" },
+      refreshResponse: { access_token: accessToken },
+      pluginSearchDirs: [pluginSearchDir()],
+    });
+
+    const server = serverKeypair();
+    sinon.stub(svc, "_fetchJwks").resolves(server.jwks);
+
+    let capturedPublicKey;
+    const enrollmentChallenge = Buffer.from("pof-enroll-v1\ntest-challenge");
+    sinon.stub(svc, "_postJsonAuthenticated").callsFake(async (baseUrl, path, token, payload) => {
+      if (path === "/plugins/enroll/challenge") {
+        capturedPublicKey = payload.public_key;
+        return { challenge_id: "challenge-1", challenge: enrollmentChallenge.toString("base64") };
+      }
+      if (path === "/plugins/enroll") {
+        expect(payload.challenge_id).to.equal("challenge-1");
+        expect(crypto.verify(
+          "sha256",
+          enrollmentChallenge,
+          {
+            key: capturedPublicKey,
+            padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+            saltLength: crypto.constants.RSA_PSS_SALTLEN_AUTO,
+          },
+          Buffer.from(payload.signature, "base64"),
+        )).to.equal(true);
+        return { device_id: "device-test" };
+      }
+      if (path === "/plugins/lease") {
+        const dek = crypto.randomBytes(32);
+        const wrapped = crypto.publicEncrypt(
+          { key: capturedPublicKey, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha256" },
+          dek,
+        );
+        const now = Math.floor(Date.now() / 1000);
+        const lease = signLease(
+          {
+            protocol_version: 1,
+            iss: "http://localhost:8000",
+            aud: "pof-plugin-runtime",
+            deployment_id: "unit-test-deployment",
+            jti: "123e4567-e89b-42d3-a456-426614174000",
+            sub: "user-test",
+            org_id: null,
+            device_id: payload.device_id,
+            plugin_id: "pof.plugin-x",
+            release_id: "release-test-1",
+            ciphertext_sha256: ciphertextSha256,
+            iat: now,
+            nbf: now,
+            exp: now + 8 * 60 * 60,
+          },
+          server.privateKey,
+        );
+        return {
+          plugins: {
+            "pof.plugin-x": { wrapped_dek: wrapped.toString("base64"), lease, release_id: "release-test-1", ciphertext_sha256: ciphertextSha256 },
+          },
+        };
+      }
+      throw new Error(`unexpected path: ${path}`);
+    });
+
+    await svc.refresh();
+
+    const contentKeys = JSON.parse(store["pof.auth.contentKeys"]);
+    expect(contentKeys["pof.plugin-x"]).to.not.equal("stale-cached-key==");
+    expect(Buffer.from(contentKeys["pof.plugin-x"], "base64")).to.have.lengthOf(32);
+    expect(Number(store["pof.auth.leaseExpiresAt"])).to.be.greaterThan(Date.now());
+  });
+
+  it("does not touch cached content_keys when the lease sync fails (no bypass, no legacy fallback)", async () => {
+    const { svc, store } = makeAuthService({
+      storedKeys: { "pof.plugin-x": "stale-cached-key==" },
+      refreshResponse: { access_token: "new-tok" },
+    });
+    sinon.stub(svc, "_postJsonAuthenticated").rejects(Object.assign(new Error("Not Found"), { status: 404 }));
+
+    const ok = await svc.refresh();
+
+    expect(ok).to.equal(true);
+    // _syncLicenseLeases échoue avant d'écrire quoi que ce soit — la valeur
+    // en cache reste celle d'avant, ni écrasée ni "réparée" par un repli.
+    expect(JSON.parse(store["pof.auth.contentKeys"])).to.deep.equal({ "pof.plugin-x": "stale-cached-key==" });
+  });
+
+  it("persists the same device_id across multiple syncs (idempotent identity)", async () => {
+    const { svc } = makeAuthService({
+      refreshResponse: { access_token: "new-tok", content_keys: {} },
+    });
+    sinon.stub(svc, "_fetchJwks").resolves({ keys: [] });
+    const deviceIds = [];
+    sinon.stub(svc, "_postJsonAuthenticated").callsFake(async (baseUrl, path, token, payload) => {
+      if (path === "/plugins/enroll/challenge") {
+        deviceIds.push(payload.device_id);
+        return { challenge_id: crypto.randomUUID(), challenge: Buffer.from("challenge").toString("base64") };
+      }
+      if (path === "/plugins/lease") deviceIds.push(payload.device_id);
+      return { plugins: {} };
+    });
+
+    await svc.refresh();
+    await svc.refresh();
+
+    expect(new Set(deviceIds).size).to.equal(1);
+  });
+
+  it("keeps no lease expiry when no customer release is installed", async () => {
+    const { svc, store } = makeAuthService({
+      refreshResponse: { access_token: "new-tok", content_keys: {} },
+    });
+    sinon.stub(svc, "_fetchJwks").resolves({ keys: [] });
+    sinon.stub(svc, "_postJsonAuthenticated").callsFake(async (baseUrl, path) => {
+      if (path === "/plugins/enroll/challenge") {
+        return { challenge_id: "challenge-1", challenge: Buffer.from("challenge").toString("base64") };
+      }
+      return { plugins: {} };
+    });
+
+    await svc.refresh();
+
+    expect(JSON.parse(store["pof.auth.contentKeys"])).to.deep.equal({});
+    expect(store["pof.auth.leaseExpiresAt"]).to.equal(undefined);
+  });
+
+  it("does NOT set leaseExpiresAt when the sync fails (network error, server down, etc.)", async () => {
+    const { svc, store } = makeAuthService({
+      refreshResponse: { access_token: "new-tok", content_keys: {} },
+    });
+    sinon.stub(svc, "_postJsonAuthenticated").rejects(Object.assign(new Error("Not Found"), { status: 404 }));
+
+    await svc.refresh();
+
+    expect(store["pof.auth.leaseExpiresAt"]).to.equal(undefined);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ONLINE_STANDARD — no grace beyond the signed lease expiration
+// ---------------------------------------------------------------------------
+describe("AuthService.getContentKeys() — signed lease validity", () => {
+  function createSecrets(initial = {}) {
+    const store = { ...initial };
+    return {
+      store,
+      secrets: {
+        async get(key) { return store[key]; },
+        async store(key, value) { store[key] = value; },
+        async delete(key) { delete store[key]; },
+      },
+    };
+  }
+
+  afterEach(() => {
+    const mod = require("../shared/authService");
+    mod.AuthService._instance = null;
+  });
+
+  it("serves lease-derived content_keys while the lease is valid", async () => {
+    const { secrets } = createSecrets({
+      "pof.auth.contentKeys": JSON.stringify({ "pof.x": "key==" }),
+      "pof.auth.leaseExpiresAt": String(Date.now() + 60_000),
+    });
+    const { AuthService } = proxyquire("../shared/authService", { vscode: {} });
+    AuthService._instance = null;
+    const svc = AuthService.getInstance(secrets, "http://localhost:8000");
+
+    expect(await svc.getContentKeys()).to.deep.equal({ "pof.x": "key==" });
+  });
+
+  it("refuses lease-derived content_keys immediately after lease expiration", async () => {
+    const { secrets } = createSecrets({
+      "pof.auth.contentKeys": JSON.stringify({ "pof.x": "key==" }),
+      "pof.auth.leaseExpiresAt": String(Date.now() - 1),
+    });
+    const { AuthService } = proxyquire("../shared/authService", { vscode: {} });
+    AuthService._instance = null;
+    const svc = AuthService.getInstance(secrets, "http://localhost:8000");
+
+    expect(await svc.getContentKeys()).to.deep.equal({});
+  });
+
+  it("fails closed when leaseExpiresAt is missing", async () => {
+    const { secrets } = createSecrets({
+      "pof.auth.contentKeys": JSON.stringify({ "pof.x": "key==" }),
+    });
+    const { AuthService } = proxyquire("../shared/authService", { vscode: {} });
+    AuthService._instance = null;
+    const svc = AuthService.getInstance(secrets, "http://localhost:8000");
+
+    expect(await svc.getContentKeys()).to.deep.equal({});
+  });
+
+  it("clears leaseExpiresAt on logout", async () => {
+    const { secrets, store } = createSecrets({
+      "pof.auth.refreshToken": "tok",
+      "pof.auth.leaseExpiresAt": String(Date.now() + 60_000),
+    });
+    const { AuthService } = proxyquire("../shared/authService", { vscode: {} });
+    AuthService._instance = null;
+    const originalFetch = global.fetch;
+    global.fetch = async () => ({ ok: true, json: async () => ({}) });
+    const svc = AuthService.getInstance(secrets, "http://localhost:8000");
+
+    await svc.logout();
+    global.fetch = originalFetch;
+
+    expect(store["pof.auth.leaseExpiresAt"]).to.equal(undefined);
+  });
+});
+
+describe("AuthService SecretStorage server isolation", () => {
+  function createSecrets(initial = {}) {
+    const store = { ...initial };
+    return {
+      store,
+      secrets: {
+        async get(key) { return store[key]; },
+        async store(key, value) { store[key] = value; },
+        async delete(key) { delete store[key]; },
+      },
+    };
+  }
+
+  function isolatedService(secrets, origin = "https://auth-a.example") {
+    const { AuthService } = proxyquire("../shared/authService", {
+      vscode: {},
+      "./authDiscovery": {
+        discoverAuthServer: async (serverOrigin) => ({
+          origin: serverOrigin,
+          issuer: serverOrigin,
+          lease_audience: "pof-plugin-runtime",
+          deployment_id: serverOrigin.includes("auth-a") ? "deployment-a" : "deployment-b",
+          jwks_uri: `${serverOrigin}/auth/jwks`,
+        }),
+      },
+    });
+    AuthService._instance = null;
+    return new AuthService(secrets, origin, { deploymentProfile: "OSS_DEVELOPMENT" });
+  }
+
+  it("purges unbound legacy secrets after the server identity is verified", async () => {
+    const { secrets, store } = createSecrets({
+      "pof.auth.accessToken": "legacy-token",
+      "pof.auth.refreshToken": "legacy-refresh",
+    });
+    const svc = isolatedService(secrets);
+
+    await svc._ensureServerIdentity("https://auth-a.example");
+
+    const binding = JSON.parse(store["pof.auth.serverBinding.v1"]);
+    expect(binding).to.include({
+      profile: "OSS_DEVELOPMENT",
+      deploymentId: "deployment-a",
+      origin: "https://auth-a.example",
+    });
+    expect(store["pof.auth.accessToken"]).to.equal(undefined);
+    expect(store[`${binding.namespace}.accessToken`]).to.equal(undefined);
+    expect(await svc.isAuthenticated()).to.equal(false);
+  });
+
+  it("reports the configured deployment before discovery", () => {
+    const { secrets } = createSecrets();
+    const svc = isolatedService(secrets, "https://auth-a.example/");
+
+    expect(svc.getDeploymentStatus("configured-deployment")).to.deep.equal({
+      profile: "OSS_DEVELOPMENT",
+      origin: "https://auth-a.example",
+      deploymentId: "configured-deployment",
+      verified: false,
+    });
+  });
+
+  it("reports the verified server identity after discovery", async () => {
+    const { secrets } = createSecrets();
+    const svc = isolatedService(secrets);
+
+    await svc._ensureServerIdentity("https://auth-a.example");
+
+    expect(svc.getDeploymentStatus("configured-deployment")).to.deep.equal({
+      profile: "OSS_DEVELOPMENT",
+      origin: "https://auth-a.example",
+      deploymentId: "deployment-a",
+      verified: true,
+    });
+  });
+
+  it("purges the old namespace when the verified server identity changes", async () => {
+    const { secrets, store } = createSecrets();
+    const svc = isolatedService(secrets);
+    await svc._ensureServerIdentity("https://auth-a.example");
+    await svc.secrets.store("pof.auth.accessToken", "server-a-token");
+    await svc.secrets.store("pof.auth.devicePrivateKey", "server-a-private-key");
+    const oldBinding = JSON.parse(store["pof.auth.serverBinding.v1"]);
+
+    svc.serverUrl = "https://auth-b.example";
+    await svc._ensureServerIdentity("https://auth-b.example");
+
+    const nextBinding = JSON.parse(store["pof.auth.serverBinding.v1"]);
+    expect(nextBinding.deploymentId).to.equal("deployment-b");
+    expect(nextBinding.namespace).to.not.equal(oldBinding.namespace);
+    expect(store[`${oldBinding.namespace}.accessToken`]).to.equal(undefined);
+    expect(store[`${oldBinding.namespace}.devicePrivateKey`]).to.equal(undefined);
+    expect(await svc.isAuthenticated()).to.equal(false);
+  });
+
+  afterEach(() => {
+    sinon.restore();
+    const mod = require("../shared/authService");
+    mod.AuthService._instance = null;
   });
 });

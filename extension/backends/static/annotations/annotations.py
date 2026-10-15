@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Annotations persistantes sur les adresses d'un binaire.
 
-Stocke commentaires et renommages dans le cache SQLite (.pfdb).
-Façade de haut niveau sur DisasmCache.annotations.
+Stocke commentaires, renommages, bookmarks et revues dans la base SQLite
+dédiée aux annotations. Façade de haut niveau sur AnnotationDb.
 
 Usage:
     from backends.static.annotations.annotations import AnnotationStore
@@ -24,6 +24,7 @@ from __future__ import annotations
 import builtins
 
 from backends.shared.log import configure_logging, get_logger
+from backends.static.annotations import overlay_patch
 from backends.static.annotations.annotation_db import AnnotationDb
 
 logger = get_logger(__name__)
@@ -40,7 +41,7 @@ KIND_BOOKMARK_COLOR = "bookmark_color"
 class AnnotationStore:
     """Façade pour les annotations persistantes d'un binaire.
 
-    Gère commentaires et renommages via le cache SQLite.
+    Gère les annotations via l'unique base SQLite dédiée.
     """
 
     def __init__(self, binary_path: str, cache_path: str | None = None) -> None:
@@ -48,30 +49,81 @@ class AnnotationStore:
 
         Args:
             binary_path: Chemin absolu vers le binaire analysé.
-            cache_path: Chemin vers le fichier cache SQLite (None = chemin auto).
+            cache_path: Chemin vers la base SQLite (None = chemin auto).
         """
         self._binary_path = binary_path
         self._cache = AnnotationDb(cache_path)
 
-    def comment(self, addr: str, text: str) -> None:
+    def comment(self, addr: str, text: str, source: str = "user") -> None:
         """Ajoute ou remplace un commentaire sur une adresse.
 
         Args:
             addr: Adresse (ex: "0x401000")
             text: Texte du commentaire
+            source: Origine de l'annotation (ex: "user", "script")
         """
-        self._cache.save_annotation(self._binary_path, addr, KIND_COMMENT, text)
+        self._cache.save_annotation(
+            self._binary_path, addr, KIND_COMMENT, text, source=source
+        )
         logger.debug("Comment set: %s → %r", addr, text)
 
-    def rename(self, addr: str, name: str) -> None:
+    def rename(self, addr: str, name: str, source: str = "user") -> None:
         """Renomme la fonction ou le symbole à une adresse.
 
         Args:
             addr: Adresse (ex: "0x401000")
             name: Nouveau nom (ex: "my_main")
+            source: Origine de l'annotation (ex: "user", "script")
         """
-        self._cache.save_annotation(self._binary_path, addr, KIND_RENAME, name)
+        self._cache.save_annotation(
+            self._binary_path, addr, KIND_RENAME, name, source=source
+        )
         logger.debug("Rename set: %s → %r", addr, name)
+
+    def import_annotation(self, addr: str, kind: str, value: str, source: str) -> None:
+        """Persist a validated annotation supplied by an external importer."""
+        if kind not in {
+            KIND_COMMENT,
+            KIND_RENAME,
+            KIND_REVIEW_STATUS,
+            KIND_REVIEW_NOTES,
+            KIND_BOOKMARK,
+            KIND_BOOKMARK_COLOR,
+        }:
+            raise ValueError(f"Unsupported imported annotation kind: {kind}")
+        if not source or source == "user":
+            raise ValueError("External annotation source is required")
+        self._cache.save_annotation(self._binary_path, addr, kind, value, source=source)
+
+    def ai_comment(self, addr: str, text: str) -> bool:
+        """Suggère un commentaire au nom de l'IA, sans écraser une note humaine.
+
+        Returns:
+            True si écrit, False si une annotation manuelle occupait déjà
+            ce (addr, kind) et a été préservée.
+        """
+        written = self._cache.save_ai_annotation(
+            self._binary_path, addr, KIND_COMMENT, text
+        )
+        logger.debug(
+            "AI comment %s: %s → %r", "set" if written else "skipped (user)", addr, text
+        )
+        return written
+
+    def ai_rename(self, addr: str, name: str) -> bool:
+        """Suggère un renommage au nom de l'IA, sans écraser un renommage humain.
+
+        Returns:
+            True si écrit, False si une annotation manuelle occupait déjà
+            ce (addr, kind) et a été préservée.
+        """
+        written = self._cache.save_ai_annotation(
+            self._binary_path, addr, KIND_RENAME, name
+        )
+        logger.debug(
+            "AI rename %s: %s → %r", "set" if written else "skipped (user)", addr, name
+        )
+        return written
 
     def get(self, addr: str) -> builtins.list[dict]:
         """Retourne toutes les annotations pour une adresse.
@@ -119,6 +171,34 @@ class AnnotationStore:
         n = self._cache.delete_annotation(self._binary_path, addr, kind=kind)
         logger.debug("Deleted %d annotation(s) at %s (kind=%s)", n, addr, kind)
         return n
+
+    def reject_ai(self, addr: str | None = None) -> int:
+        """Delete only AI-authored rename/comment suggestions."""
+        removed = 0
+        for row in self.list(addr=addr):
+            if row.get("source") != "ai" or row.get("kind") not in {
+                KIND_COMMENT,
+                KIND_RENAME,
+            }:
+                continue
+            removed += self._cache.delete_annotation(
+                self._binary_path, row["addr"], kind=row["kind"]
+            )
+        return removed
+
+    def validate_ai(self, addr: str | None = None) -> int:
+        """Promote AI suggestions to user-authored annotations in place."""
+        validated = 0
+        for row in self.list(addr=addr):
+            if row.get("source") != "ai":
+                continue
+            if row.get("kind") == KIND_COMMENT:
+                self.comment(row["addr"], row["value"])
+                validated += 1
+            elif row.get("kind") == KIND_RENAME:
+                self.rename(row["addr"], row["value"])
+                validated += 1
+        return validated
 
     def set_review(self, addr: str, status: str = "", notes: str = "") -> None:
         """Définit le statut de revue et/ou les notes sur une adresse.
@@ -207,26 +287,6 @@ class AnnotationStore:
             if "label" in v
         ]
 
-    def migrate_legacy_json(self, legacy_annotations: dict) -> None:
-        """Insère les entrées d'un ancien fichier JSON par binaire (système A)."""
-        for addr, entry in legacy_annotations.items():
-            if entry.get("comment"):
-                self.comment(addr, entry["comment"])
-            if entry.get("name"):
-                self.rename(addr, entry["name"])
-            if entry.get("reviewStatus") or entry.get("reviewNotes"):
-                self.set_review(
-                    addr,
-                    status=entry.get("reviewStatus", ""),
-                    notes=entry.get("reviewNotes", ""),
-                )
-            if entry.get("bookmark"):
-                self.set_bookmark(
-                    addr,
-                    label=entry.get("bookmarkLabel", addr),
-                    color=entry.get("bookmarkColor", "#4ec9b0"),
-                )
-
     def export_json(self) -> builtins.list[dict]:
         """Retourne toutes les annotations au format JSON-serializable."""
         return self._cache.get_annotations(self._binary_path)
@@ -248,9 +308,11 @@ def _grouped_export(store: AnnotationStore) -> dict:
         entry = out.setdefault(row["addr"], {})
         if row["kind"] == KIND_COMMENT:
             entry["comment"] = row["value"]
+            entry["commentSource"] = row["source"]
             entry["updated"] = row["updated_at"]
         elif row["kind"] == KIND_RENAME:
             entry["name"] = row["value"]
+            entry["nameSource"] = row["source"]
             entry["updated"] = row["updated_at"]
         elif row["kind"] == KIND_REVIEW_STATUS:
             entry["reviewStatus"] = row["value"]
@@ -277,6 +339,15 @@ def main() -> int:
     )
     parser.add_argument("--binary", required=True, help="Binary path")
     parser.add_argument("--cache-db", help="Cache DB path (default: auto)")
+    parser.add_argument(
+        "--overlay-mapping",
+        help=(
+            "Chemin du mapping JSON allégé du désassemblage. Si fourni, les "
+            "commandes de mutation arbitrent l'overlay du .asm (patch en "
+            "place des commentaires) et la sortie devient "
+            '{"annotations": ..., "overlay": verdict}.'
+        ),
+    )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     # list
@@ -317,6 +388,15 @@ def main() -> int:
     )
     p_del_annotation.add_argument("--addr", required=True)
 
+    p_reject_ai = sub.add_parser(
+        "reject-ai", help="Delete AI suggestions while preserving user annotations"
+    )
+    p_reject_ai.add_argument("--addr")
+    p_validate_ai = sub.add_parser(
+        "validate-ai", help="Promote AI suggestions to user annotations"
+    )
+    p_validate_ai.add_argument("--addr")
+
     # annotate (comment + rename in one call, used by the VS Code extension bridge)
     p_annotate = sub.add_parser(
         "annotate", help="Set comment and/or rename in one call"
@@ -343,14 +423,6 @@ def main() -> int:
 
     # clear-bookmarks
     sub.add_parser("clear-bookmarks", help="Clear all bookmarks")
-
-    # migrate-legacy
-    p_migrate = sub.add_parser(
-        "migrate-legacy", help="Migrate a legacy JSON blob into this store"
-    )
-    p_migrate.add_argument(
-        "--json", required=True, help="JSON-encoded legacy annotations dict"
-    )
 
     args = parser.parse_args()
     configure_logging()
@@ -388,111 +460,80 @@ def main() -> int:
         elif args.cmd == "delete-annotation":
             store.delete(args.addr, kind=KIND_COMMENT)
             store.delete(args.addr, kind=KIND_RENAME)
-            print(json.dumps(_grouped_export(store), indent=2, ensure_ascii=False))
+            _print_grouped(store, args, overlay_mutation={"deleted": True})
+
+        elif args.cmd == "reject-ai":
+            store.reject_ai(addr=getattr(args, "addr", None))
+            _print_grouped(store, args, overlay_mutation={"deleted": True})
+
+        elif args.cmd == "validate-ai":
+            store.validate_ai(addr=getattr(args, "addr", None))
+            _print_grouped(store, args, overlay_mutation=None)
 
         elif args.cmd == "annotate":
             if args.comment is not None:
                 store.comment(args.addr, args.comment)
             if args.name is not None:
                 store.rename(args.addr, args.name)
-            print(json.dumps(_grouped_export(store), indent=2, ensure_ascii=False))
+            _print_grouped(
+                store,
+                args,
+                overlay_mutation={"name": args.name, "comment": args.comment},
+            )
 
         elif args.cmd == "review":
             store.set_review(args.addr, status=args.status, notes=args.notes)
-            print(json.dumps(_grouped_export(store), indent=2, ensure_ascii=False))
+            _print_grouped(store, args, overlay_mutation=None)
 
         elif args.cmd == "bookmark":
             store.set_bookmark(args.addr, label=args.label, color=args.color)
-            print(json.dumps(_grouped_export(store), indent=2, ensure_ascii=False))
+            _print_grouped(store, args, overlay_mutation=None)
 
         elif args.cmd == "delete-bookmark":
             store.delete_bookmark(args.addr)
-            print(json.dumps(_grouped_export(store), indent=2, ensure_ascii=False))
+            _print_grouped(store, args, overlay_mutation=None)
 
         elif args.cmd == "clear-bookmarks":
             store.clear_bookmarks()
-            print(json.dumps(_grouped_export(store), indent=2, ensure_ascii=False))
-
-        elif args.cmd == "migrate-legacy":
-            store.migrate_legacy_json(json.loads(args.json))
-            print(json.dumps(_grouped_export(store), indent=2, ensure_ascii=False))
+            _print_grouped(store, args, overlay_mutation=None)
 
     return 0
 
 
-import contextlib
-import json as _json
-import time as _time
-from pathlib import Path as _Path
+def _print_grouped(store, args, *, overlay_mutation: dict | None) -> None:
+    """Sortie des commandes de mutation.
 
+    Sans --overlay-mapping : export groupé brut (compat historique). Avec :
+    enveloppe {"annotations", "overlay"} — les mutations sans effet sur le
+    .asm (review/bookmark) portent le verdict 'unchanged' sans rien tenter.
+    """
+    import json
 
-def get_annotations_path(workspace: str) -> _Path:
-    return _Path(workspace) / ".pof" / "annotations.json"
-
-
-def load_annotations(workspace: str, binary_sha256: str) -> dict:
-    """Load annotations for a specific binary from workspace storage."""
-    path = get_annotations_path(workspace)
-    if not path.exists():
-        return {}
-    try:
-        data = _json.loads(path.read_text())
-        return data.get(binary_sha256, {})
-    except Exception:
-        return {}
-
-
-def save_annotation(
-    workspace: str, binary_sha256: str, addr: str, note: str, color: str = "#4ec9b0"
-) -> None:
-    """Persist a note for a specific address in the workspace annotations file."""
-    path = get_annotations_path(workspace)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        data = _json.loads(path.read_text()) if path.exists() else {}
-    except Exception:
-        data = {}
-    if binary_sha256 not in data:
-        data[binary_sha256] = {}
-    data[binary_sha256][addr] = {
-        "note": note,
-        "color": color,
-        "timestamp": _time.time(),
-    }
-    path.write_text(_json.dumps(data, indent=2))
+    grouped = _grouped_export(store)
+    mapping_path = getattr(args, "overlay_mapping", None)
+    if not mapping_path:
+        print(json.dumps(grouped, indent=2, ensure_ascii=False))
+        return
+    if overlay_mutation is None:
+        verdict = overlay_patch.VERDICT_UNCHANGED
+    else:
+        verdict = overlay_patch.apply_overlay_mutation(
+            mapping_path,
+            args.addr,
+            name=overlay_mutation.get("name"),
+            comment=overlay_mutation.get("comment"),
+            deleted=bool(overlay_mutation.get("deleted")),
+        )
+    print(
+        json.dumps(
+            {"annotations": grouped, "overlay": verdict},
+            indent=2,
+            ensure_ascii=False,
+        )
+    )
 
 
 if __name__ == "__main__":
-    import argparse as _argparse
-    import hashlib as _hashlib
     import sys
 
-    # If the first argument is --save or --load, use the new persistence CLI
-    if len(sys.argv) > 1 and sys.argv[1] in ("--save", "--load"):
-        parser = _argparse.ArgumentParser()
-        parser.add_argument("--save", action="store_true")
-        parser.add_argument("--load", action="store_true")
-        parser.add_argument("--workspace", required=True)
-        parser.add_argument("--binary", default=None)
-        parser.add_argument("--addr", default=None)
-        parser.add_argument("--note", default="")
-        parser.add_argument("--color", default="#4ec9b0")
-        args = parser.parse_args()
-
-        binary_sha256 = "unknown"
-        if args.binary:
-            with contextlib.suppress(Exception):
-                binary_sha256 = _hashlib.sha256(
-                    open(args.binary, "rb").read()
-                ).hexdigest()
-
-        if args.save and args.addr:
-            save_annotation(
-                args.workspace, binary_sha256, args.addr, args.note, args.color
-            )
-            print('{"saved": true}')
-        elif args.load:
-            result = load_annotations(args.workspace, binary_sha256)
-            print(_json.dumps(result))
-    else:
-        sys.exit(main())
+    sys.exit(main())

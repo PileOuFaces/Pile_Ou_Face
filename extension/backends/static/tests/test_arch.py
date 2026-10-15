@@ -63,6 +63,15 @@ class TestRawArchInfo(unittest.TestCase):
         self.assertEqual(info.endian, "little")
 
     @unittest.skipUnless(_CAPSTONE_AVAILABLE, "capstone not installed")
+    def test_raw_riscv_enables_compressed_instructions(self):
+        info = arch_module.get_raw_arch_info("riscv64")
+        self.assertIsNotNone(info)
+        self.assertEqual(
+            info.capstone_mode & _capstone.CS_MODE_RISCVC,
+            _capstone.CS_MODE_RISCVC,
+        )
+
+    @unittest.skipUnless(_CAPSTONE_AVAILABLE, "capstone not installed")
     def test_raw_capstone_architecture_aliases(self):
         cases = {
             "mips64": ("mips64", 8),
@@ -133,18 +142,150 @@ class TestArchAdapters(unittest.TestCase):
             arch_module.SYSZ_ADAPTER.classify_code_ref_mnemonic("j"), "jmp"
         )
 
+    def test_ppc_adapter_classifies_indirect_link_branch_aliases(self):
+        adapter = arch_module.PPC_ADAPTER
+        for mnemonic in ("blrl", "beqlrl+", "bctrl", "bnectrl-"):
+            with self.subTest(mnemonic=mnemonic):
+                self.assertEqual(
+                    adapter.classify_code_ref_instruction(mnemonic), "call"
+                )
+        self.assertEqual(adapter.classify_code_ref_instruction("bctr"), "jmp")
+        self.assertEqual(adapter.classify_code_ref_instruction("beqctr+"), "jcc")
+        self.assertEqual(adapter.classify_code_ref_instruction("blr"), "ret")
+        self.assertEqual(adapter.classify_code_ref_instruction("beqlr+"), "ret")
+        self.assertTrue(adapter.is_conditional_return_instruction("beqlr+"))
+        self.assertTrue(adapter.is_conditional_return_instruction("bdnzlr"))
+        self.assertFalse(adapter.is_conditional_return_instruction("blr"))
+
     def test_extended_adapters_recognize_operand_based_returns(self):
         self.assertTrue(arch_module.ARM32_ADAPTER.is_return_instruction("bx", "lr"))
+        self.assertTrue(arch_module.ARM32_ADAPTER.is_return_instruction("bx", "r14"))
         self.assertTrue(
             arch_module.ARM32_ADAPTER.is_return_instruction("pop", "{r4, pc}")
         )
         self.assertTrue(
+            arch_module.ARM32_ADAPTER.is_return_instruction("pop", "{r4, r15}")
+        )
+        self.assertTrue(
             arch_module.ARM32_ADAPTER.is_return_instruction("ldmia", "sp!, {r4, pc}")
+        )
+        self.assertTrue(
+            arch_module.ARM32_ADAPTER.is_return_instruction("mov", "pc, lr")
+        )
+        self.assertTrue(
+            arch_module.ARM32_ADAPTER.is_return_instruction("ldr", "pc, [sp], #4")
+        )
+        self.assertFalse(
+            arch_module.ARM32_ADAPTER.is_return_instruction("ldr", "pc, [r3]")
+        )
+        self.assertTrue(
+            arch_module.ARM32_ADAPTER.is_return_instruction("movs", "pc, lr")
+        )
+        self.assertTrue(
+            arch_module.ARM32_ADAPTER.is_return_instruction("subs", "pc, lr, #4")
+        )
+        self.assertTrue(arch_module.ARM32_ADAPTER.is_return_instruction("rfeia", "sp!"))
+        self.assertFalse(
+            arch_module.ARM32_ADAPTER.is_return_instruction("subs", "r0, lr, #4")
         )
         self.assertTrue(arch_module.MIPS_ADAPTER.is_return_instruction("jr", "$ra"))
         self.assertFalse(arch_module.MIPS_ADAPTER.is_return_instruction("jr", "$t9"))
         self.assertTrue(arch_module.SYSZ_ADAPTER.is_return_instruction("br", "%r14"))
         self.assertFalse(arch_module.SYSZ_ADAPTER.is_return_instruction("br", "%r1"))
+
+    def test_riscv_adapter_classifies_link_register_operands(self):
+        adapter = arch_module.RISCV_ADAPTER
+        self.assertEqual(
+            adapter.classify_code_ref_instruction("jal", "ra, 0x1020"), "call"
+        )
+        self.assertEqual(adapter.classify_code_ref_instruction("jal", "0x1020"), "call")
+        self.assertEqual(
+            adapter.classify_code_ref_instruction("jal", "zero, 0x1020"), "jmp"
+        )
+        self.assertEqual(
+            adapter.classify_code_ref_instruction("jal", "x0, 0x1020"), "jmp"
+        )
+        self.assertEqual(
+            adapter.classify_code_ref_instruction("jalr", "ra, t0, 0"), "call"
+        )
+        self.assertEqual(
+            adapter.classify_code_ref_instruction("jalr", "zero, t0, 0"), "jmp"
+        )
+        self.assertEqual(
+            adapter.classify_code_ref_instruction("jalr", "zero, ra, 0"), "ret"
+        )
+        self.assertEqual(
+            adapter.classify_code_ref_instruction("jalr", "x0, x1, 0x0"), "ret"
+        )
+        self.assertTrue(adapter.is_return_instruction("jr", "ra"))
+
+    def test_mips_adapter_classifies_jalr_link_register_operands(self):
+        adapter = arch_module.MIPS_ADAPTER
+        self.assertEqual(adapter.classify_code_ref_instruction("jalr", "$t9"), "call")
+        self.assertEqual(
+            adapter.classify_code_ref_instruction("jalr", "$ra, $t9"), "call"
+        )
+        self.assertEqual(
+            adapter.classify_code_ref_instruction("jalr", "$zero, $t9"), "jmp"
+        )
+        self.assertEqual(
+            adapter.classify_code_ref_instruction("jalr", "$0, $t9"), "jmp"
+        )
+        self.assertEqual(
+            adapter.classify_code_ref_instruction("jalr", "$zero, $ra"), "ret"
+        )
+
+    def test_arm32_condition_and_width_suffixes_keep_their_semantics(self):
+        adapter = arch_module.ARM32_ADAPTER
+
+        for mnemonic in ("blne", "blxeq", "blne.w"):
+            with self.subTest(mnemonic=mnemonic):
+                self.assertTrue(adapter.is_call_mnemonic(mnemonic))
+                self.assertEqual(adapter.classify_code_ref_mnemonic(mnemonic), "call")
+
+        for mnemonic in ("bxeq", "bne.w", "ble", "cbz", "cbnz"):
+            with self.subTest(mnemonic=mnemonic):
+                self.assertTrue(adapter.is_conditional_branch_mnemonic(mnemonic))
+                self.assertEqual(adapter.classify_code_ref_mnemonic(mnemonic), "jcc")
+
+        for mnemonic in ("ldrne", "streq", "ldrne.w"):
+            with self.subTest(mnemonic=mnemonic):
+                self.assertTrue(adapter.supports_data_ref_mnemonic(mnemonic))
+
+    def test_arm32_return_suffixes_preserve_conditional_fallthrough(self):
+        adapter = arch_module.ARM32_ADAPTER
+
+        for mnemonic, operands in (
+            ("bx.w", "lr"),
+            ("pop.w", "{r4, pc}"),
+            ("ldmia.w", "sp!, {r4, pc}"),
+            ("mov.w", "pc, lr"),
+            ("ldr.w", "pc, [sp], #4"),
+            ("bx.w", "r14"),
+            ("pop.w", "{r4, r15}"),
+            ("ldmia.w", "r13!, {r4, r15}"),
+        ):
+            with self.subTest(mnemonic=mnemonic):
+                self.assertTrue(adapter.is_return_instruction(mnemonic, operands))
+                self.assertFalse(
+                    adapter.is_conditional_return_instruction(mnemonic, operands)
+                )
+
+        for mnemonic, operands in (
+            ("bxne", "lr"),
+            ("popne.w", "{r4, pc}"),
+            ("ldmiane", "sp!, {r4, pc}"),
+            ("movne.w", "pc, lr"),
+            ("ldrne.w", "pc, [sp], #4"),
+            ("bxne", "r14"),
+            ("popne.w", "{r4, r15}"),
+            ("ldmiane", "r13!, {r4, r15}"),
+        ):
+            with self.subTest(mnemonic=mnemonic):
+                self.assertFalse(adapter.is_return_instruction(mnemonic, operands))
+                self.assertTrue(
+                    adapter.is_conditional_return_instruction(mnemonic, operands)
+                )
 
     def test_extended_prologue_patterns_accept_hex_immediates(self):
         cases = [
@@ -155,6 +296,38 @@ class TestArchAdapters(unittest.TestCase):
         for adapter, text, expected in cases:
             with self.subTest(adapter=adapter.key):
                 self.assertEqual(adapter.matches_prologue(text), expected)
+
+    def test_riscv_adapter_classifies_compressed_control_flow(self):
+        adapter = arch_module.RISCV_ADAPTER
+
+        self.assertEqual(
+            adapter.classify_code_ref_instruction("c.jal", "0x100"), "call"
+        )
+        self.assertEqual(adapter.classify_code_ref_instruction("c.j", "0x100"), "jmp")
+        self.assertEqual(
+            adapter.classify_code_ref_instruction("c.beqz", "a0, 0x100"), "jcc"
+        )
+        self.assertTrue(adapter.is_return_instruction("c.jr", "ra"))
+
+    def test_arm32_adapter_recognizes_full_descending_and_single_lr_saves(self):
+        cases = (
+            ("stmfd sp!, {r4, r5, lr}", "stmfd sp"),
+            ("stmfd.w r13!, {r4, r5, r14}", "stmfd sp"),
+            ("stmdb r13!, {r4, r14}", "stmdb sp"),
+            ("push.w {r4, r14}", "push lr"),
+            ("str lr, [sp, #-4]!", "str lr preindex"),
+            ("str.w r14, [r13, #-0x4]!", "str lr preindex"),
+        )
+
+        for text, expected in cases:
+            with self.subTest(text=text):
+                self.assertEqual(
+                    arch_module.ARM32_ADAPTER.matches_prologue(text), expected
+                )
+
+        self.assertIsNone(
+            arch_module.ARM32_ADAPTER.matches_prologue("str r4, [sp, #-4]!")
+        )
 
     def test_feature_support_matrix_exposes_levels(self):
         matrix = arch_module.get_feature_support_matrix()
@@ -186,10 +359,13 @@ class TestDetectBinaryArch(unittest.TestCase):
             CS_ARCH_ARM=2,
             CS_ARCH_ARM64=3,
             CS_ARCH_BPF=4,
+            CS_ARCH_MIPS=5,
             CS_MODE_32=32,
             CS_MODE_64=64,
             CS_MODE_ARM=128,
             CS_MODE_BPF_EXTENDED=256,
+            CS_MODE_MIPS32=512,
+            CS_MODE_BIG_ENDIAN=1024,
             CS_MODE_LITTLE_ENDIAN=0,
         )
 
@@ -207,6 +383,7 @@ class TestDetectBinaryArch(unittest.TestCase):
                     AARCH64="ELF_AARCH64",
                     ARM="ELF_ARM",
                     BPF="ELF_BPF",
+                    MIPS="ELF_MIPS",
                 ),
             ),
             PE=types.SimpleNamespace(
@@ -275,6 +452,30 @@ class TestDetectBinaryArch(unittest.TestCase):
         self.assertEqual(info.key, "bpf")
         self.assertEqual(info.raw_name, "BPF")
         self.assertEqual(info.format_kind, "elf")
+
+    def test_detect_binary_arch_elf_fallback_preserves_big_endian(self):
+        fake_lief = self._fake_lief()
+        fake_capstone = self._fake_capstone()
+        binary = fake_lief.ELF.Binary()
+        binary.header = types.SimpleNamespace(
+            machine_type=fake_lief.ELF.ARCH.MIPS,
+            identity_class=types.SimpleNamespace(name="CLASS32"),
+            identity_data=types.SimpleNamespace(name="MSB"),
+        )
+
+        with (
+            mock.patch.object(arch_module, "lief", fake_lief),
+            mock.patch.object(arch_module, "capstone", fake_capstone),
+        ):
+            info = arch_module.detect_binary_arch(binary)
+
+        self.assertIsNotNone(info)
+        self.assertEqual(info.key, "mips32")
+        self.assertEqual(info.endian, "big")
+        self.assertEqual(
+            info.capstone_mode & fake_capstone.CS_MODE_BIG_ENDIAN,
+            fake_capstone.CS_MODE_BIG_ENDIAN,
+        )
 
 
 if __name__ == "__main__":

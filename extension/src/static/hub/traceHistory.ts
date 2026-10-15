@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
+
+const { EVENT_NAMES } = require('../../shared/telemetry/telemetryEvents');
 
 function createTraceHistory({
   panel,
@@ -19,6 +20,7 @@ function createTraceHistory({
   fs,
   path,
   crypto,
+  telemetry,
 }) {
   let _activeDynamicTracePath = '';
   const getActiveDynamicTracePath = () => _activeDynamicTracePath;
@@ -160,8 +162,11 @@ function createTraceHistory({
     });
   };
 
+  // Builds and posts the same 'dynamicTraceReady' message the runTrace handler
+  // sends on a fresh run, so a fresh run and a historical trace both drive the
+  // Hub's embedded Runtime tab through one mechanism (no standalone panel).
   const postDynamicTraceReady = (trace, { binaryPath = '', tracePath = '' } = {}) => {
-    panel.webview.postMessage({
+    return panel.webview.postMessage({
       type: 'dynamicTraceReady',
       binaryPath,
       traceRunId: (trace?.meta?.trace_run_id !== undefined && trace?.meta?.trace_run_id !== null)
@@ -171,12 +176,19 @@ function createTraceHistory({
       crash: trace?.crash && typeof trace.crash === 'object' ? trace.crash : null,
       diagnostics: Array.isArray(trace?.diagnostics) ? trace.diagnostics : [],
       risks: Array.isArray(trace?.risks) ? trace.risks : [],
+      // Same field the standalone visualizer's 'init' message carries
+      // (visualizer.ts::sendInitToWebview) -- the embedded Hub Runtime
+      // view must see the same per-step Evidence, not just snapshots.
       analysisByStep: trace?.analysisByStep && typeof trace.analysisByStep === 'object' ? trace.analysisByStep : {},
       enrichment: trace?.enrichment && typeof trace.enrichment === 'object' ? trace.enrichment : {},
       tracePath,
     });
   };
 
+  // trace.meta.binary is stored by the Python pipeline relative to the
+  // workspace root when possible (see run_pipeline._normalize_path), so it
+  // must be resolved to an absolute path before being converted back to the
+  // webview-relative form the Hub's binary field expects.
   const toDynamicTraceBinaryWebviewPath = (rawBinaryPath) => {
     const raw = String(rawBinaryPath || '').trim();
     if (!raw) return '';
@@ -245,9 +257,20 @@ function createTraceHistory({
     openDynamicTraceHistory: async (message) => {
       const requestedTracePath = String(message.tracePath || '').trim();
       if (!isManagedDynamicTracePath(requestedTracePath) || !fs.existsSync(requestedTracePath)) {
-        vscode.window.showErrorMessage('Trace historique introuvable.');
+        vscode.window.showErrorMessage('Historical trace not found.');
         postDynamicTraceHistory();
         return;
+      }
+      if (normalizeHistoryPath(requestedTracePath) === normalizeHistoryPath(_activeDynamicTracePath)) {
+        const revealed = typeof openVisualizerWebview?.revealCurrentTrace === 'function'
+          ? openVisualizerWebview.revealCurrentTrace()
+          : false;
+        if (revealed) {
+          telemetry?.trackEvent?.(EVENT_NAMES.VISUALIZER_OPENED, {
+            origin: 'history', surface: 'standalone',
+          });
+          return;
+        }
       }
       const trace = readTraceJson(requestedTracePath);
       enrichTraceForVisualizer(trace, {
@@ -258,14 +281,24 @@ function createTraceHistory({
       writeTraceJson(requestedTracePath, trace);
       if (trace?.meta?.view_mode === 'static') {
         openVisualizerWebview(trace);
+        telemetry?.trackEvent?.(EVENT_NAMES.VISUALIZER_OPENED, {
+          origin: 'history', surface: 'standalone',
+        });
       } else {
         const binaryPath = toDynamicTraceBinaryWebviewPath(trace?.meta?.binary);
+        // Sync the Hub's active binary field first and wait for it to be
+        // queued before sending dynamicTraceReady, so the front-end's
+        // stale-binary guard (runtimeSessionController.js) sees a matching
+        // binaryPath instead of dropping the message as a race.
         await panel.webview.postMessage({
           type: 'hubSetBinaryPath',
           binaryPath,
           binaryMeta: trace?.meta?.binary_metadata || null,
         });
-        postDynamicTraceReady(trace, { binaryPath, tracePath: requestedTracePath });
+        await postDynamicTraceReady(trace, { binaryPath, tracePath: requestedTracePath });
+        telemetry?.trackEvent?.(EVENT_NAMES.VISUALIZER_OPENED, {
+          origin: 'history', surface: 'embedded',
+        });
       }
       postDynamicTraceHistory();
     },

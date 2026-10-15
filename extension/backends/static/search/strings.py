@@ -4,11 +4,14 @@
 from __future__ import annotations
 
 import re
+from bisect import bisect_right
+from collections.abc import Callable
 from pathlib import Path
 
 from backends.shared.utils import build_offset_to_vaddr
 
 SUPPORTED_ENCODINGS = ("auto", "utf-8", "utf-16-le", "utf-16-be")
+OFFSET_MAP_MAX_BYTES = 16 * 1024 * 1024
 
 
 def _load_data_slice(binary_path: str, section: str | None) -> tuple[bytes, int] | None:
@@ -37,13 +40,79 @@ def _pattern_for_encoding(encoding: str, min_len: int) -> bytes:
     return rb"[\x20-\x7e]{" + str(min_len).encode() + rb",}"
 
 
+def _build_range_offset_resolver(binary_path: str) -> Callable[[int], int]:
+    """Resolve file offsets to VAs without building one dict entry per byte."""
+    path = Path(binary_path)
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return lambda file_off: file_off
+
+    # Keep the old dict-based path for small inputs. Several tests monkeypatch
+    # build_offset_to_vaddr, and a small dict is still cheap for tiny fixtures.
+    if size <= OFFSET_MAP_MAX_BYTES:
+        offset_map = build_offset_to_vaddr(binary_path)
+        return lambda file_off: offset_map.get(file_off, file_off)
+
+    try:
+        import lief  # type: ignore[import-untyped]
+
+        binary = lief.parse(binary_path)
+        if binary is None:
+            return lambda file_off: file_off
+
+        ranges: list[tuple[int, int, int]] = []
+        if isinstance(binary, lief.ELF.Binary):
+            for seg in binary.segments:
+                if seg.file_size == 0 or seg.virtual_address == 0:
+                    continue
+                start = int(seg.file_offset)
+                ranges.append(
+                    (start, start + int(seg.file_size), int(seg.virtual_address))
+                )
+        elif isinstance(binary, lief.PE.Binary):
+            base = int(binary.optional_header.imagebase)
+            for sec in binary.sections:
+                start = int(sec.offset)
+                ranges.append(
+                    (start, start + int(sec.size), base + int(sec.virtual_address))
+                )
+        elif isinstance(binary, lief.MachO.Binary):
+            for seg in binary.segments:
+                if seg.file_size == 0 or seg.virtual_address == 0:
+                    continue
+                start = int(seg.file_offset)
+                ranges.append(
+                    (start, start + int(seg.file_size), int(seg.virtual_address))
+                )
+
+        ranges = sorted({item for item in ranges if item[1] > item[0]})
+        starts = [item[0] for item in ranges]
+        if not ranges:
+            return lambda file_off: file_off
+
+        def resolve(file_off: int) -> int:
+            idx = bisect_right(starts, file_off) - 1
+            if idx < 0:
+                return file_off
+            start, end, va = ranges[idx]
+            if start <= file_off < end:
+                return va + (file_off - start)
+            return file_off
+
+        return resolve
+    except Exception:
+        return lambda file_off: file_off
+
+
 def _extract_strings_for_encoding(
     data_slice: bytes,
     *,
     encoding: str,
     min_len: int,
     offset_base: int,
-    offset_map: dict[int, int],
+    resolve_offset: Callable[[int], int],
+    max_results: int = 0,
 ) -> list[dict]:
     strings: list[dict] = []
     pattern = _pattern_for_encoding(encoding, min_len)
@@ -54,7 +123,7 @@ def _extract_strings_for_encoding(
         except UnicodeDecodeError:
             continue
         file_off = match.start() + offset_base
-        addr = offset_map.get(file_off, file_off)
+        addr = resolve_offset(file_off)
         strings.append(
             {
                 "addr": f"0x{addr:x}",
@@ -63,6 +132,8 @@ def _extract_strings_for_encoding(
                 "encoding": encoding,
             }
         )
+        if max_results > 0 and len(strings) >= max_results:
+            break
     return strings
 
 
@@ -127,6 +198,7 @@ def extract_strings(
     min_len: int = 4,
     encoding: str = "utf-8",
     section: str | None = None,
+    max_results: int = 0,
 ) -> list[dict]:
     """Extrait les chaînes lisibles d'un binaire.
 
@@ -143,7 +215,7 @@ def extract_strings(
     if loaded is None:
         return []
     data_slice, offset_base = loaded
-    offset_map = build_offset_to_vaddr(binary_path)
+    resolve_offset = _build_range_offset_resolver(binary_path)
 
     selected_encodings = (
         ("utf-8", "utf-16-le", "utf-16-be") if encoding == "auto" else (encoding,)
@@ -152,12 +224,16 @@ def extract_strings(
     merged: list[dict] = []
     seen: set[tuple[str, str, str]] = set()
     for current_encoding in selected_encodings:
+        remaining = max(0, max_results - len(merged)) if max_results > 0 else 0
+        if max_results > 0 and remaining <= 0:
+            break
         for entry in _extract_strings_for_encoding(
             data_slice,
             encoding=current_encoding,
             min_len=min_len,
             offset_base=offset_base,
-            offset_map=offset_map,
+            resolve_offset=resolve_offset,
+            max_results=remaining,
         ):
             key = (
                 entry["addr"],
@@ -168,6 +244,8 @@ def extract_strings(
                 continue
             seen.add(key)
             merged.append(entry)
+            if max_results > 0 and len(merged) >= max_results:
+                break
 
     # Augmente avec la table d'imports PE — fonctionne même si le binaire est packé,
     # car le loader PE doit pouvoir lire les imports au démarrage.
@@ -208,7 +286,7 @@ def extract_strings_system(binary_path: str, min_len: int = 4) -> list[dict]:
     if result.returncode != 0:
         return []
 
-    offset_map = build_offset_to_vaddr(binary_path)
+    resolve_offset = _build_range_offset_resolver(binary_path)
 
     strings = []
     for line in result.stdout.splitlines():
@@ -216,7 +294,7 @@ def extract_strings_system(binary_path: str, min_len: int = 4) -> list[dict]:
         match = re.match(r"^\s*([0-9a-fA-F]+)\s+(.+)$", line)
         if match:
             file_off = int(match.group(1), 16)
-            addr = offset_map.get(file_off, file_off)
+            addr = resolve_offset(file_off)
             value = match.group(2)
             strings.append(
                 {
@@ -266,12 +344,16 @@ def main() -> int:
             min_len=args.min_len,
             encoding=args.encoding,
             section=args.section,
+            max_results=args.max_results,
         )
     else:
         strings = extract_strings_system(args.binary, min_len=args.min_len)
         if not strings:
             strings = extract_strings(
-                args.binary, min_len=args.min_len, encoding=args.encoding
+                args.binary,
+                min_len=args.min_len,
+                encoding=args.encoding,
+                max_results=args.max_results,
             )
 
     if args.max_results > 0 and len(strings) > args.max_results:

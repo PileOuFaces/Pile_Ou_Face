@@ -9,6 +9,7 @@ import re
 from backends.shared.log import configure_logging, get_logger
 from backends.shared.utils import normalize_addr as _normalize_addr
 from backends.shared.utils import parse_addr as _addr_to_int
+from backends.static.annotations.annotation_db import AnnotationDb
 from backends.static.annotations.typed_struct_refs import (
     build_typed_struct_index,
     collect_typed_struct_hints,
@@ -31,11 +32,18 @@ def _candidate_adapters(binary_path: str | None = None) -> tuple[ArchAdapter, ..
     return tuple(iter_supported_adapters())
 
 
+def _arm32_mode_for_binary(binary_path: str | None) -> str | None:
+    info = detect_binary_arch_from_path(binary_path) if binary_path else None
+    if info is None or info.key != "arm32":
+        return None
+    return "thumb" if info.raw_name == "thumb" or info.machine == "thumb" else "arm"
+
+
 def _classify_code_ref_mnemonic(
-    mnem: str, adapters: tuple[ArchAdapter, ...]
+    mnem: str, adapters: tuple[ArchAdapter, ...], operands: str = ""
 ) -> str | None:
     for adapter in adapters:
-        kind = adapter.classify_code_ref_mnemonic(mnem)
+        kind = adapter.classify_code_ref_instruction(mnem, operands)
         if kind:
             return kind
     return None
@@ -348,10 +356,15 @@ def _enrich_refs_with_binary_context(
     if not binary_path or not os.path.exists(binary_path):
         return _enrich_refs_with_function_context(refs, functions)
     try:
+        with AnnotationDb() as annotation_db:
+            annotations = annotation_db.get_annotations(binary_path)
+    except Exception as exc:
+        logger.debug("Annotations unavailable for %s: %s", binary_path, exc)
+        annotations = []
+    try:
         with DisasmCache(default_cache_path(binary_path)) as cache:
             functions = functions or cache.get_functions(binary_path) or []
             symbols = cache.get_symbols(binary_path) or []
-            annotations = cache.get_annotations(binary_path) or []
             function_ranges = _build_function_ranges(functions)
             rename_map = _annotation_name_map(annotations)
             symbol_map = _symbol_name_map(symbols)
@@ -475,7 +488,40 @@ def _extract_pc_relative_addresses(line: dict) -> list[str]:
     return refs
 
 
-def _extract_data_target_addresses(line: dict) -> list[str]:
+def _extract_arm32_pc_relative_addresses(
+    line: dict, arm32_mode: str | None
+) -> list[str]:
+    """Resolve ARM/Thumb literal-pool operands using the architectural PC value."""
+    if arm32_mode not in {"arm", "thumb"}:
+        return []
+    operands = str(line.get("operands") or "").strip()
+    text = operands or str(line.get("text") or "")
+    current_addr = _addr_to_int(line.get("addr"))
+    if current_addr is None:
+        return []
+
+    match = re.search(
+        r"\[(?:pc|r15)(?:\s*,\s*#?\s*([-+]?(?:0x[0-9a-fA-F]+|\d+)))?\]",
+        text,
+        re.IGNORECASE,
+    )
+    if not match:
+        return []
+    offset = _parse_int_literal(match.group(1) or "0")
+    if offset is None:
+        return []
+    pc_base = (current_addr + 4) & ~3 if arm32_mode == "thumb" else current_addr + 8
+    return [_normalize_addr(hex(pc_base + offset))]
+
+
+def _extract_data_target_addresses(
+    line: dict, arm32_mode: str | None = None
+) -> list[str]:
+    arm32_refs = _extract_arm32_pc_relative_addresses(line, arm32_mode)
+    if arm32_refs:
+        # The hexadecimal literal in ``[pc, #imm]`` is an offset, not an
+        # absolute address. Returning early prevents a false xref to ``imm``.
+        return arm32_refs
     targets: list[str] = []
     seen: set[str] = set()
     for addr in _extract_addresses_from_text(str(line.get("text", "") or "")):
@@ -572,14 +618,19 @@ def extract_xrefs(
     target = _normalize_addr(target_addr)
     refs = []
     adapters = _candidate_adapters(binary_path)
+    arm32_mode = _arm32_mode_for_binary(binary_path)
 
     for line in lines:
         addr = _normalize_addr(line.get("addr", ""))
         text = line.get("text", "")
         mnem = _get_mnemonic(text)
+        operands = re.split(
+            rf"\b{re.escape(mnem)}\b", text, maxsplit=1, flags=re.IGNORECASE
+        )
+        op_str = operands[1] if len(operands) == 2 else ""
 
         # Code refs (jmp, call)
-        ref_kind = _classify_code_ref_mnemonic(mnem, adapters)
+        ref_kind = _classify_code_ref_mnemonic(mnem, adapters, op_str)
         if ref_kind in {"jmp", "jcc", "call"}:
             t = _extract_jump_target(text)
             if t and t == target:
@@ -599,7 +650,7 @@ def extract_xrefs(
             and _supports_data_ref_mnemonic(mnem, adapters)
             and _has_memory_operand(text)
         ):
-            for a in _extract_data_target_addresses(line):
+            for a in _extract_data_target_addresses(line, arm32_mode):
                 if a == target:
                     refs.append(
                         {
@@ -631,15 +682,20 @@ def build_xref_map(
     """
     xref_map: dict = {}
     adapters = _candidate_adapters(binary_path)
+    arm32_mode = _arm32_mode_for_binary(binary_path)
 
     for line in lines:
         addr = _normalize_addr(line.get("addr", ""))
         text = line.get("text", "")
         mnem = _get_mnemonic(text)
+        operands = re.split(
+            rf"\b{re.escape(mnem)}\b", text, maxsplit=1, flags=re.IGNORECASE
+        )
+        op_str = operands[1] if len(operands) == 2 else ""
         line_num = line.get("line")
 
         # Code refs
-        ref_kind = _classify_code_ref_mnemonic(mnem, adapters)
+        ref_kind = _classify_code_ref_mnemonic(mnem, adapters, op_str)
         if ref_kind in {"jmp", "jcc", "call"}:
             t = _extract_jump_target(text)
             if t:
@@ -661,7 +717,7 @@ def build_xref_map(
             and _has_memory_operand(text)
         ):
             ref_type = _classify_data_ref(mnem, text)
-            for a in _extract_data_target_addresses(line):
+            for a in _extract_data_target_addresses(line, arm32_mode):
                 xref_map.setdefault(a, []).append(
                     {
                         "from_addr": addr,
@@ -675,25 +731,41 @@ def build_xref_map(
     return xref_map
 
 
-def extract_xrefs_from_addr(lines: list[dict], from_addr: str) -> list[str]:
+def extract_xrefs_from_addr(
+    lines: list[dict], from_addr: str, binary_path: str | None = None
+) -> list[str]:
     """Pour une instruction à from_addr, retourne les adresses qu'elle référence (cibles).
 
     Inclut les cibles de jmp/call ET les adresses dans les opérandes données (mov, lea, etc.).
     """
     from_a = _normalize_addr(from_addr)
+    adapters = _candidate_adapters(binary_path)
+    arm32_mode = _arm32_mode_for_binary(binary_path)
     for line in lines:
         if _normalize_addr(line.get("addr", "")) == from_a:
             text = line.get("text", "")
             mnem = _get_mnemonic(text)
+            operands = re.split(
+                rf"\b{re.escape(mnem)}\b",
+                text,
+                maxsplit=1,
+                flags=re.IGNORECASE,
+            )
+            op_str = operands[1] if len(operands) == 2 else ""
             # Code target (jmp/call)
-            t = _extract_jump_target(text)
-            if t:
-                return [t]
+            if _classify_code_ref_mnemonic(mnem, adapters, op_str) in {
+                "jmp",
+                "jcc",
+                "call",
+            }:
+                t = _extract_jump_target(text)
+                if t:
+                    return [t]
             # Data targets (mov, lea, etc.)
-            if _supports_data_ref_mnemonic(
-                mnem, tuple(iter_supported_adapters())
-            ) and _has_memory_operand(text):
-                return _extract_data_target_addresses(line)
+            if _supports_data_ref_mnemonic(mnem, adapters) and _has_memory_operand(
+                text
+            ):
+                return _extract_data_target_addresses(line, arm32_mode)
     return []
 
 
@@ -729,8 +801,10 @@ def main() -> int:
         logger.error("Mapping file not found: %s", args.mapping)
         return 1
 
-    with open(args.mapping, encoding="utf-8") as f:
-        data = json.load(f)
+    # JSON allégé : les lignes vivent dans le SQLite associé.
+    from backends.static.disasm.mapping_db import load_mapping_with_lines
+
+    data = load_mapping_with_lines(args.mapping)
     lines = data.get("lines", [])
     binary_path = args.binary or data.get("binary")
     functions = []
@@ -743,7 +817,7 @@ def main() -> int:
             functions = loaded.get("functions", []) or []
 
     if args.mode == "map":
-        xmap = build_xref_map(lines)
+        xmap = build_xref_map(lines, binary_path=binary_path)
         out = {"mode": "map", "xref_map": xmap}
     elif not args.addr:
         logger.error("--addr is required unless --mode=map")
@@ -754,7 +828,7 @@ def main() -> int:
         )
         out = {"addr": args.addr, "mode": "to", "refs": refs}
     else:
-        targets = extract_xrefs_from_addr(lines, args.addr)
+        targets = extract_xrefs_from_addr(lines, args.addr, binary_path=binary_path)
         out = {
             "addr": args.addr,
             "mode": "from",

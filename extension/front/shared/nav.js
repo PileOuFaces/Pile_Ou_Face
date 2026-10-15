@@ -14,7 +14,7 @@ function initPanel() {
   renderRecentBinaries();
   showPanel(panelId);
   updateActiveContextBars(window._lastDisasmAddr);
-  vscode.postMessage({ type: 'hubGetSettings' });
+  _requestSettings();
 }
 
 function showPanel(id) {
@@ -42,6 +42,7 @@ function showPanel(id) {
   }
   if (id === 'dashboard') {
     if (!ollamaUiState.models.length) requestOllamaModels();
+    window.POFHubAutoTriageController?.refreshReportButton?.();
   }
   if (id === 'static') {
     const bp = getStaticBinaryPath();
@@ -56,7 +57,7 @@ function showPanel(id) {
     requestRunTraceInit();
   }
   if (id === 'options') {
-    vscode.postMessage({ type: 'hubGetSettings' });
+    _requestSettings();
   }
   syncStaticBinary();
   vscode.postMessage({ type: 'hubModeChange', mode: id === 'static' ? 'static' : id === 'dynamic' ? 'dynamic' : 'other' });
@@ -65,7 +66,11 @@ function showPanel(id) {
 
 // Icon nav click handlers
 iconNavItems.forEach((item) => {
-  item.addEventListener('click', () => showPanel(item.dataset.panel));
+  item.addEventListener('click', () => {
+    const panel = window.POFTelemetryClient?.mapPanel?.(item.dataset.panel);
+    if (panel) window.POFTelemetry?.trackEvent?.('panel.opened', { panel });
+    showPanel(item.dataset.panel);
+  });
 });
 
 // Binary button listeners are handled by binarySourceController (binarySourceController.js).
@@ -217,6 +222,8 @@ function showGroup(groupId, tabId, skipAutoLoad = false) {
     btn.addEventListener('click', () => {
       if (Date.now() < staticSubtabSuppressClickUntil) return;
       if (isUnsupported) return;
+      const feature = window.POFTelemetryClient?.mapStaticFeature?.(tid);
+      if (feature) window.POFTelemetry?.trackEvent?.('static.feature.used', { feature });
       showSubTab(groupId, tid);
     });
     bar.appendChild(btn);

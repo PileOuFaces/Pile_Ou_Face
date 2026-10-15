@@ -10,6 +10,60 @@ window.discoveredFunctionsCache = window.discoveredFunctionsCache || [];
 window.functionListCache = window.functionListCache || [];
 window.functionRadarCache = window.functionRadarCache || null;
 window.functionWorkspaceState = window.functionWorkspaceState || null;
+window.POF_PERF_DIAGNOSTICS_ENABLED = Boolean(window.POF_PERF_DIAGNOSTICS_ENABLED);
+
+const pofPerfLastByEvent = new Map();
+
+function getPofWebviewPerfSnapshot() {
+  const memory = performance && performance.memory ? {
+    usedJSHeapSize: Math.round(Number(performance.memory.usedJSHeapSize || 0)),
+    totalJSHeapSize: Math.round(Number(performance.memory.totalJSHeapSize || 0)),
+    jsHeapSizeLimit: Math.round(Number(performance.memory.jsHeapSizeLimit || 0)),
+  } : null;
+  return {
+    memory,
+    domNodes: document.getElementsByTagName('*').length,
+    iframes: document.querySelectorAll('iframe').length,
+    tables: document.querySelectorAll('table').length,
+    tableRows: document.querySelectorAll('tr').length,
+    activePanel: document.querySelector('.panel.active')?.id || '',
+    activeStaticTab: typeof getActiveStaticTab === 'function' ? getActiveStaticTab() : '',
+    hidden: document.hidden,
+    viewport: {
+      width: window.innerWidth,
+      height: window.innerHeight,
+      devicePixelRatio: window.devicePixelRatio || 1,
+    },
+  };
+}
+
+function reportPofWebviewPerf(event, details = {}, opts = {}) {
+  if (!window.POF_PERF_DIAGNOSTICS_ENABLED) return;
+  const name = String(event || 'snapshot').replace(/[^a-z0-9_.:-]/gi, '_');
+  const now = performance.now();
+  const last = pofPerfLastByEvent.get(name) || 0;
+  if (!opts.force && now - last < 1500) return;
+  pofPerfLastByEvent.set(name, now);
+  const send = () => {
+    vscode.postMessage({
+      type: 'hubDebugLog',
+      scope: 'perf.webview',
+      event: name,
+      details: {
+        ts: new Date().toISOString(),
+        ...getPofWebviewPerfSnapshot(),
+        ...details,
+      },
+    });
+  };
+  if (opts.afterPaint) requestAnimationFrame(send);
+  else send();
+}
+
+window.capturePofWebviewPerfSnapshot = (event = 'manual', details = {}) => {
+  reportPofWebviewPerf(event, details, { force: true, afterPaint: true });
+};
+window.reportPofWebviewPerf = reportPofWebviewPerf;
 
 // Correspondance tab → feature(s) dans la matrice de support arch
 // Tableau = on prend le niveau le plus bas parmi toutes les features
@@ -63,6 +117,7 @@ let runtimeSessionController = null;
 const staticToolsWidgetsControllerFactory = window.POFHub?.staticToolsWidgetsController || window.POFHubStaticToolsWidgetsController;
 const staticToolsWidgetsController = staticToolsWidgetsControllerFactory?.initStaticToolsWidgetsController?.() || null;
 window.staticToolsWidgetsController = staticToolsWidgetsController;
+window.POFHubAutoTriageController?.initAutoTriage?.();
 const toastControllerFactory = window.POFHub?.toastController || window.POFHubToastController;
 const toastController = toastControllerFactory?.initToastController?.() || null;
 const archBadgeControllerFactory = window.POFHub?.archBadgeController || window.POFHubArchBadgeController;
@@ -110,6 +165,12 @@ binarySourceController = binarySourceControllerFactory?.initBinarySourceControll
   triggerStaticQuickAction,
   _autoLoadTab,
   getSectionsCacheBinaryPath: () => tabDataCache.sections?.binaryPath,
+  trackBinaryLoaded: (meta) => {
+    window.POFTelemetry?.trackEvent?.('binary.loaded', {
+      binaryFormat: window.POFTelemetryClient?.mapBinaryFormat?.(meta?.format),
+      arch: window.POFTelemetryClient?.mapArch?.(meta?.arch || meta?.rawConfig?.arch),
+    });
+  },
 }) || null;
 
 // Restore static binary path from storage
@@ -346,6 +407,7 @@ runtimeSessionController = runtimeSessionControllerFactory?.initRuntimeSessionCo
   document,
   postMessage: (message) => vscode.postMessage(message),
   showPanel,
+  getBinaryPath: () => String(binaryPathInput?.value || '').trim(),
   fallbackRenderer: window.POFHub?.runtimeFallbackRenderer || window.POFHubRuntimeFallbackRenderer,
 });
 
@@ -364,14 +426,25 @@ messageRouter?.registerController(runtimeSessionController);
 
 
 
+let telemetryBuilderLevel = payloadTabsController?.getBuilderLevel?.() || 'beginner';
 payloadTabsController?.bindEvents({
-  onTabClick: invalidateDynamicPayloadPreview,
+  onTabClick: ({ mode }) => {
+    const payloadMode = window.POFTelemetryClient?.mapPayloadMode?.(mode);
+    if (payloadMode) window.POFTelemetry?.trackEvent?.('payload.mode.used', { payloadMode });
+    invalidateDynamicPayloadPreview();
+  },
   onFileSourceChange: () => {
     filePayloadController?.refreshFilePayloadUi?.();
     invalidateDynamicPayloadPreview();
   },
   onHelperTemplateChange: invalidateDynamicPayloadPreview,
-  onBuilderLevelClick: invalidateDynamicPayloadPreview,
+  onBuilderLevelClick: ({ builderLevel }) => {
+    if (builderLevel !== telemetryBuilderLevel) {
+      telemetryBuilderLevel = builderLevel;
+      window.POFTelemetry?.trackEvent?.('payload.builder_level.changed', { level: builderLevel });
+    }
+    invalidateDynamicPayloadPreview();
+  },
 });
 
 // Disasm nav / search / export listeners registered in search.js at top level
@@ -442,6 +515,7 @@ renderOllamaConversation();
 renderOllamaConversationHistory();
 requestOllamaModels();
 vscode.postMessage({ type: 'hubReady' });
+window.capturePofWebviewPerfSnapshot?.('hub.ready', { source: 'startup' });
 
 // Initialize plugin iframe router and register all plugin frames
 if (window.PluginIframeRouter) {

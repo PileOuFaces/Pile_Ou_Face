@@ -1,5 +1,16 @@
 # Architecture de la partie statique
 
+## Architecture Auth et profils de déploiement
+
+La décision transversale concernant les artefacts SaaS, on-prem, OSS et
+air-gap, la résolution de l’endpoint, la découverte serveur et le
+cloisonnement des secrets est définie dans
+[ADR-001 — Profils de déploiement Auth](../architecture/ADR-001-auth-deployment-profiles.md).
+
+Cette décision s’applique au Host entier, pas uniquement aux backends
+statiques. Le contrat de découverte est fourni par le dépôt Auth ; le Host le
+valide avant toute utilisation de l’autorité de licence.
+
 ## Principe general
 
 La partie statique est construite comme une chaine d'analyse modulaire :
@@ -172,26 +183,40 @@ Code, le dossier de reference est `context.storageUri`, c'est-a-dire le
 <workspaceStorage>/<workspace-id>/PileOuFaces.stack-visualizer/
 ```
 
-Le dossier projet `.pile-ou-face/` reste un fallback de compatibilite pour
-certains lancements CLI, MCP ou artefacts de developpement ; ce n'est pas le
-stockage principal de l'extension.
+Le dossier projet `.pile-ou-face/` n'est pas un fallback de stockage pour
+l'extension et il n'est pas migre au demarrage.
 
 Elements persistants :
 
-- `static_cache/` : caches par binaire;
-- `decompile_cache/` : pseudo-C mis en cache;
+- `static_cache/static-cache.sqlite3` : source unique pour les resultats d'analyse,
+  le pseudo-C et les augmentations IA. Il n'existe ni cache JSON, ni lecteur de
+  compatibilite, ni migration de l'ancien format. Le store refuse une valeur de plus
+  de 16 Mio et applique une eviction LRU au-dela de 4 096 entrees ou 256 Mio de
+  donnees utiles. Les consultations de l'interface lisent uniquement les metadonnees,
+  sans charger les payloads;
 - `pfdb/` : base d'analyse SQLite selon les modules (desassemblage, CFG, symboles...);
-- `patches/` : patchs persistants;
 - `plugins/` : plugins installes par l'extension;
 - `licenses/` : licences importees dans le workspace;
 - `decompilers.json` : configuration des decompilateurs.
+- `types.db` : definitions C par binaire et references typees appliquees, dans une base SQLite
+  normalisee propre au workspace.
 
 **Annotations (labels, commentaires, renommages, bookmarks, revue)** : cas particulier,
 stockees a part dans `~/.pile-ou-face/annotations.db` (base SQLite dediee, dans le home
 de l'utilisateur — pas sous `storageUri`, pas dans le projet). Ce chemin fixe est
 resolu de la meme facon par l'extension VS Code (via subprocess CLI) et par le serveur
 MCP (process independant, sans acces aux API VS Code), qui partagent donc desormais
-les memes annotations. Voir `annotations.py` / `annotation_db.py` plus bas.
+les memes annotations. Aucun stockage JSON ni table d'annotations dans `DisasmCache`
+n'est conserve. Voir `annotations.py` / `annotation_db.py` plus bas.
+
+**Patches binaires** : l'historique actif et la pile redo sont stockés uniquement
+dans `~/.pile-ou-face/patches.db`, avec une table de binaires et une table de patches.
+Il n'existe plus de fichier JSON, de migration ni de fallback. La suppression d'un
+binaire récent et la purge du workspace nettoient également les lignes SQLite.
+
+**Types C et references typees** : `types.db` est l'unique stockage. Les definitions,
+champs, enums, applications et champs appliques utilisent des tables relationnelles.
+Les anciens fichiers `structs.json` et `typed_struct_refs.json` ne sont ni lus ni migres.
 
 ## Formats supportes
 

@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 /**
  * @file productConfig.ts
  * @brief Couche de configuration produit.
  *
  * Frontière open-core : la source open-source ne contient AUCUN endpoint,
  * branding ou télémétrie spécifique à la société. Les URLs des providers
- * (auth/entitlement, collaboration) sont lues ici, jamais codées en dur.
+ * (auth/entitlement, collaboration, télémétrie) sont lues ici, jamais codées en dur.
  *
  * - `product.default.json` (versionné) : configuration NEUTRE, tout vide.
  * - `product.json` (non versionné, cf. .gitignore) : overlay écrit par le
@@ -20,7 +19,20 @@
 const fs = require('fs');
 const path = require('path');
 
-const NEUTRAL_CONFIG = Object.freeze({ authProviderUrl: '', collabProviderUrl: '' });
+const DEPLOYMENT_PROFILES = Object.freeze({
+  OFFICIAL_SAAS: 'OFFICIAL_SAAS',
+  MANAGED_ON_PREM: 'MANAGED_ON_PREM',
+  OSS_DEVELOPMENT: 'OSS_DEVELOPMENT',
+  AIRGAP_ENTERPRISE: 'AIRGAP_ENTERPRISE',
+});
+
+const NEUTRAL_CONFIG = Object.freeze({
+  deploymentProfile: DEPLOYMENT_PROFILES.OSS_DEVELOPMENT,
+  deploymentId: 'oss-development',
+  authProviderUrl: '',
+  collabProviderUrl: '',
+  telemetryProviderUrl: '',
+});
 
 let _cache = null;
 
@@ -49,15 +61,39 @@ function loadProductConfig(root = _extensionRoot()) {
   return { ...NEUTRAL_CONFIG, ...(defaults || {}), ...(overlay || {}) };
 }
 
+function isDeploymentProfile(value) {
+  return Object.values(DEPLOYMENT_PROFILES).includes(value);
+}
+
+function validateProductConfig(config) {
+  const profile = config?.deploymentProfile;
+  if (!isDeploymentProfile(profile)) {
+    throw new Error(`Unknown deployment profile: ${String(profile || '<empty>')}`);
+  }
+  if (profile === DEPLOYMENT_PROFILES.AIRGAP_ENTERPRISE && config.authProviderUrl) {
+    throw new Error('AIRGAP_ENTERPRISE must not define an auth provider URL');
+  }
+  if (
+    (profile === DEPLOYMENT_PROFILES.OFFICIAL_SAAS
+      || profile === DEPLOYMENT_PROFILES.MANAGED_ON_PREM)
+    && (!config.authProviderUrl || !config.deploymentId)
+  ) {
+    throw new Error(`${profile} requires authProviderUrl and deploymentId`);
+  }
+  return config;
+}
+
 function getProductConfig() {
   if (!_cache) {
-    _cache = loadProductConfig();
+    _cache = validateProductConfig(loadProductConfig());
   }
   return _cache;
 }
 
 module.exports = {
+  DEPLOYMENT_PROFILES,
   NEUTRAL_CONFIG,
   loadProductConfig,
+  validateProductConfig,
   getProductConfig,
 };

@@ -17,6 +17,7 @@ const KIND_REGISTERS = {
   fatal_crash: ['rip', 'eip', 'rsp', 'esp', 'rbp', 'ebp'],
   control_hijack: ['rip', 'eip', 'rsp', 'esp', 'rbp', 'ebp'],
   ret2win_success: ['rip', 'eip'],
+  stack_chk_fail: ['rip', 'eip', 'rsp', 'esp', 'rbp', 'ebp'],
   runtime_crash: ['rip', 'eip', 'rsp', 'esp', 'rbp', 'ebp']
 };
 
@@ -25,8 +26,22 @@ const CRASH_KINDS = new Set([
   'invalid_control_flow',
   'fatal_crash',
   'control_hijack',
-  'ret2win_success'
+  'ret2win_success',
+  'stack_chk_fail'
 ]);
+
+function hasControlCorruptionEvidence(crash) {
+  const slot = crash?.suspectOverwrittenSlot;
+  const slotKind = slot && typeof slot === 'object'
+    ? String(slot.kind || '').trim().toLowerCase()
+    : '';
+  const payloadOffset = crash?.payloadOffset;
+  const hasPayloadOffset = payloadOffset !== null
+    && payloadOffset !== undefined
+    && String(payloadOffset).trim() !== ''
+    && Number.isFinite(Number(payloadOffset));
+  return ['return_address', 'saved_bp', 'control'].includes(slotKind) || hasPayloadOffset;
+}
 
 export function diagnosticsForStep(diagnostics, step) {
   const wanted = Number(step);
@@ -56,6 +71,10 @@ export function crashDiagnosticForStep(crash, step) {
     kind = 'fatal_crash';
     severity = 'error';
     confidence = 0.96;
+  } else if (classification === 'stack_chk_fail') {
+    kind = 'stack_chk_fail';
+    severity = 'error';
+    confidence = 0.97;
   } else if (classification === 'benign_termination' || classification === 'emulator_stop') {
     // Backend already proved there is no corruption evidence (no overflow
     // reaching a control slot, no flagged write, no payload match) for this
@@ -65,15 +84,26 @@ export function crashDiagnosticForStep(crash, step) {
     severity = 'info';
     confidence = 0.5;
   } else {
-    kind = crashType === 'unmapped_fetch'
+    const looksLikeControlDivert = crashType === 'unmapped_fetch'
       || instructionText.startsWith('ret')
       || instructionText.startsWith('jmp')
-      || instructionText.startsWith('call')
-      ? 'fatal_crash'
-      : 'runtime_crash';
-    severity = 'error';
-    confidence = kind === 'fatal_crash' ? 0.96 : 0.88;
+      || instructionText.startsWith('call');
+    if (looksLikeControlDivert && hasControlCorruptionEvidence(crash)) {
+      kind = 'fatal_crash';
+      severity = 'error';
+      confidence = 0.96;
+    } else if (looksLikeControlDivert) {
+      kind = instructionText.startsWith('ret') ? 'benign_termination' : 'emulator_stop';
+      severity = 'info';
+      confidence = 0.5;
+    } else {
+      kind = 'runtime_crash';
+      severity = 'error';
+      confidence = 0.88;
+    }
   }
+
+  const isBenignStop = kind === 'benign_termination' || kind === 'emulator_stop';
 
   const afterValue = (classification === 'ret2win_success' || classification === 'control_hijack')
     ? (crash.retTarget || crash.memoryAddress || crash.rip || crash.eip || null)
@@ -92,8 +122,8 @@ export function crashDiagnosticForStep(crash, step) {
     before: null,
     after: afterValue,
     bytes: crash.suspectBytes || '',
-    probableSource: crash.probableSource || null,
-    payloadOffset: crash.payloadOffset,
+    probableSource: isBenignStop ? null : (crash.probableSource || null),
+    payloadOffset: isBenignStop ? null : crash.payloadOffset,
     confidence,
     registers: crash.registers && typeof crash.registers === 'object' ? crash.registers : {},
     crashType: crashType || null,
@@ -112,7 +142,7 @@ export function mergeCrashDiagnostic(diagnostics, crash, step) {
   const alreadyPresent = current.some((diagnostic) => {
     const sameAddress = crashAddress !== null
       && parseAddress(diagnostic?.instructionAddress) === crashAddress;
-    return sameAddress && ['runtime_crash', 'invalid_control_flow', 'ret2win_success', 'control_hijack', 'fatal_crash'].includes(String(diagnostic?.kind || ''));
+    return sameAddress && ['runtime_crash', 'invalid_control_flow', 'ret2win_success', 'control_hijack', 'fatal_crash', 'stack_chk_fail'].includes(String(diagnostic?.kind || ''));
   });
   return (alreadyPresent ? current : [crashDiagnostic, ...current]).sort(compareDiagnostics);
 }
@@ -220,6 +250,8 @@ export function diagnosticKindLabel(kind) {
       return 'Acces a la fonction cible';
     case 'runtime_crash':
       return 'Crash runtime';
+    case 'stack_chk_fail':
+      return 'Protection de pile déclenchée';
     case 'benign_termination':
       return "Fin d'execution normale";
     case 'emulator_stop':

@@ -51,7 +51,7 @@
 
   /**
    * Register an iframe element so the router can send messages to it.
-   * @param {string} slug     - Plugin slug (e.g. "malware-triage-pro")
+   * @param {string} slug     - Plugin slug (e.g. "analysis-demo")
    * @param {HTMLIFrameElement} frameEl - The iframe DOM element
    */
   function register(slug, frameEl) {
@@ -60,7 +60,7 @@
 
   /**
    * Dispatch a host-originated message to a specific plugin's iframe.
-   * @param {string} pluginId - Plugin id (e.g. "pof.malware-triage-pro")
+   * @param {string} pluginId - Plugin id (e.g. "vendor.analysis-demo")
    * @param {object} msg
    */
   function dispatch(pluginId, msg) {
@@ -80,6 +80,11 @@
     for (const [, frame] of _frames) {
       frame.contentWindow.postMessage({ __pof_host: true, payload: msg }, '*');
     }
+  }
+
+  /** Check whether a plugin iframe completed its tab-loader registration handshake. */
+  function hasTabLoader(slug, tabId) {
+    return _tabLoaders.get(String(tabId || ''))?.has(String(slug || '')) === true;
   }
 
   /** Send a PoF proxy reply back to a frame's contentWindow. */
@@ -167,7 +172,7 @@
     }
   }
 
-  const PluginIframeRouter = { init, register, dispatch, broadcast };
+  const PluginIframeRouter = { init, register, dispatch, broadcast, hasTabLoader };
 
   // CommonJS (Node / test environment) or browser global
   if (typeof module !== 'undefined' && module.exports) {

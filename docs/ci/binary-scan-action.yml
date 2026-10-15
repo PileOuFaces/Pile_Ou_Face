@@ -1,0 +1,43 @@
+name: Pile ou Face binary scan
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install host and analysis dependencies
+        run: pip install -r extension/backends/requirements.txt
+      - name: Build release artifact
+        run: make release
+      - name: Scan binary
+        id: scan
+        continue-on-error: true
+        env:
+          BINHOST_CONTENT_KEYS_STDIN: "1"
+          POF_PLUGIN_CONTENT_KEYS_JSON: ${{ secrets.POF_PLUGIN_CONTENT_KEYS_JSON }}
+        run: |
+          set -o pipefail
+          cd extension
+          printf '%s' "$POF_PLUGIN_CONTENT_KEYS_JSON" | python -m backends.ci_scan ../dist/application \
+            --plugin-path "${{ github.workspace }}/.pile-ou-face/plugins" \
+            --format sarif \
+            --output ../pof-results.sarif \
+            --fail-on high
+      - name: Upload SARIF
+        if: always() && hashFiles('pof-results.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: pof-results.sarif
+      - name: Enforce scan result
+        if: steps.scan.outcome == 'failure'
+        run: exit 1

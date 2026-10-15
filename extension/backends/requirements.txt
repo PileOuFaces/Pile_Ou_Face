@@ -2,5 +2,6 @@ unicorn==2.1.4
 capstone
 flare-capa
 lief
+python-idb>=0.8,<0.9
 cryptography>=42.0.0
 yara-python

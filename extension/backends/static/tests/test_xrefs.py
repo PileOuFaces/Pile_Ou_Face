@@ -11,6 +11,8 @@ ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from backends.static.binary import arch as arch_module
+from backends.static.binary.arch import ARM32_ADAPTER
 from backends.static.disasm.xrefs import (
     _classify_data_ref,
     _describe_source_context,
@@ -78,6 +80,51 @@ class TestExtractXrefs(unittest.TestCase):
         self.assertEqual(refs[0]["type"], "lea")
         self.assertEqual(refs[0]["from_addr"], "0x401010")
 
+    def test_arm32_literal_load_uses_pipelined_pc_instead_of_absolute_offset(self):
+        lines = [
+            {
+                "addr": "0x1000",
+                "text": "ldr r0, [pc, #0x10]",
+                "operands": "r0, [pc, #0x10]",
+                "bytes": "10 00 9f e5",
+                "line": 1,
+            }
+        ]
+        info = mock.Mock(
+            key="arm32", raw_name="arm", machine="arm", adapter=ARM32_ADAPTER
+        )
+        with mock.patch(
+            "backends.static.disasm.xrefs.detect_binary_arch_from_path",
+            return_value=info,
+        ):
+            xref_map = build_xref_map(lines, binary_path="/fake/arm.bin")
+
+        self.assertIn("0x1018", xref_map)
+        self.assertNotIn("0x10", xref_map)
+
+    def test_thumb_literal_load_aligns_pipelined_pc(self):
+        lines = [
+            {
+                "addr": "0x1002",
+                "text": "ldr r0, [pc, #0x10]",
+                "operands": "r0, [pc, #0x10]",
+                "bytes": "04 48",
+                "line": 1,
+            }
+        ]
+        info = mock.Mock(
+            key="arm32", raw_name="thumb", machine="thumb", adapter=ARM32_ADAPTER
+        )
+        with mock.patch(
+            "backends.static.disasm.xrefs.detect_binary_arch_from_path",
+            return_value=info,
+        ):
+            targets = extract_xrefs_from_addr(
+                lines, "0x1002", binary_path="/fake/thumb.bin"
+            )
+
+        self.assertEqual(targets, ["0x1014"])
+
     def test_data_ref_store(self):
         """mov [addr], src doit être classifié store."""
         lines = [
@@ -135,6 +182,20 @@ class TestExtractXrefs(unittest.TestCase):
         branch_refs = extract_xrefs(lines, "0x800018")
         self.assertEqual(call_refs[0]["type"], "call")
         self.assertEqual(branch_refs[0]["type"], "jcc")
+
+    def test_riscv_zero_destination_is_jump_not_call(self):
+        lines = [
+            {"addr": "0x1000", "text": "jal zero, 0x1020", "line": 1},
+            {"addr": "0x1004", "text": "jal ra, 0x1030", "line": 2},
+        ]
+        with mock.patch(
+            "backends.static.disasm.xrefs._candidate_adapters",
+            return_value=(arch_module.RISCV_ADAPTER,),
+        ):
+            jump_refs = extract_xrefs(lines, "0x1020")
+            call_refs = extract_xrefs(lines, "0x1030")
+        self.assertEqual(jump_refs[0]["type"], "jmp")
+        self.assertEqual(call_refs[0]["type"], "call")
 
 
 class TestStoreDetection(unittest.TestCase):
@@ -296,9 +357,6 @@ class TestXrefBinaryContext(unittest.TestCase):
             def get_symbols(self, _binary_path):
                 return []
 
-            def get_annotations(self, _binary_path):
-                return [{"addr": "0x401000", "kind": "rename", "value": "entry_main"}]
-
             def get_stack_frame(self, _binary_path, _func_addr):
                 return {
                     "args": [],
@@ -313,6 +371,19 @@ class TestXrefBinaryContext(unittest.TestCase):
                 }
 
         return FakeCache()
+
+    def _fake_annotation_db(self):
+        class FakeAnnotationDb:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def get_annotations(self, _binary_path):
+                return [{"addr": "0x401000", "kind": "rename", "value": "entry_main"}]
+
+        return FakeAnnotationDb()
 
     def test_extract_xrefs_enriches_function_and_stack_context(self):
         lines = [
@@ -330,6 +401,10 @@ class TestXrefBinaryContext(unittest.TestCase):
             ),
             mock.patch(
                 "backends.static.disasm.xrefs.default_cache_path", return_value=tmp.name
+            ),
+            mock.patch(
+                "backends.static.disasm.xrefs.AnnotationDb",
+                return_value=self._fake_annotation_db(),
             ),
         ):
             refs = extract_xrefs(lines, "0x601000", binary_path=tmp.name)
@@ -390,9 +465,6 @@ class TestXrefBinaryContext(unittest.TestCase):
             def get_symbols(self, _binary_path):
                 return []
 
-            def get_annotations(self, _binary_path):
-                return []
-
             def get_stack_frame(self, _binary_path, _func_addr):
                 return {
                     "args": [
@@ -421,6 +493,10 @@ class TestXrefBinaryContext(unittest.TestCase):
             mock.patch(
                 "backends.static.disasm.xrefs.default_cache_path", return_value=tmp.name
             ),
+            mock.patch(
+                "backends.static.disasm.xrefs.AnnotationDb",
+                return_value=self._fake_annotation_db(),
+            ),
         ):
             refs = extract_xrefs(lines, "0x601000", binary_path=tmp.name)
 
@@ -447,9 +523,6 @@ class TestXrefBinaryContext(unittest.TestCase):
                 ]
 
             def get_symbols(self, _binary_path):
-                return []
-
-            def get_annotations(self, _binary_path):
                 return []
 
             def get_stack_frame(self, _binary_path, func_addr):
@@ -491,6 +564,10 @@ class TestXrefBinaryContext(unittest.TestCase):
             mock.patch(
                 "backends.static.disasm.xrefs.default_cache_path", return_value=tmp.name
             ),
+            mock.patch(
+                "backends.static.disasm.xrefs.AnnotationDb",
+                return_value=self._fake_annotation_db(),
+            ),
         ):
             refs_arm64 = extract_xrefs(lines, "0x601000", binary_path=tmp.name)
             refs_arm32 = extract_xrefs(lines, "0x602000", binary_path=tmp.name)
@@ -522,9 +599,6 @@ class TestXrefBinaryContext(unittest.TestCase):
                 return [{"addr": "0x800000", "name": "sub_800000", "size": 0x40}]
 
             def get_symbols(self, _binary_path):
-                return []
-
-            def get_annotations(self, _binary_path):
                 return []
 
             def get_stack_frame(self, _binary_path, _func_addr):
@@ -592,6 +666,10 @@ class TestXrefBinaryContext(unittest.TestCase):
             ),
             mock.patch(
                 "backends.static.disasm.xrefs.default_cache_path", return_value=tmp.name
+            ),
+            mock.patch(
+                "backends.static.disasm.xrefs.AnnotationDb",
+                return_value=self._fake_annotation_db(),
             ),
         ):
             source = _describe_source_context(lines, "0x401010", binary_path=tmp.name)

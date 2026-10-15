@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 const cp = require('child_process');
 const path = require('path');
+const { recordRuntimeEvent } = require('./runtimeAudit');
 
 /**
  * Crée une fonction runPython(argsWithScript, opts) qui exécute un script Python en subprocess.
@@ -15,15 +16,25 @@ const path = require('path');
 function makeRunPython({ root, extensionPath, getPythonExecutable, buildPythonEnv }) {
   const resolveExe = getPythonExecutable || (() => 'python3');
   const resolveEnv = buildPythonEnv || (() => process.env);
-  return (argsWithScript, { timeout = 60000, maxBuffer = 4 * 1024 * 1024 } = {}) =>
+  return (argsWithScript, { timeout = 60000, maxBuffer = 4 * 1024 * 1024, input = '' } = {}) =>
     new Promise((resolve, reject) => {
       const [scriptRelPath, ...rest] = argsWithScript;
       const scriptPath = path.join(extensionPath || root, scriptRelPath);
-      cp.execFile(resolveExe(), [scriptPath, ...rest], {
+      const startedAt = Date.now();
+      const child = cp.execFile(resolveExe(), [scriptPath, ...rest], {
         encoding: 'utf8', cwd: root, maxBuffer, timeout, env: resolveEnv(),
       }, (err, stdout, stderr) => {
+        recordRuntimeEvent('python', scriptRelPath, {
+          source: 'pythonRunner',
+          argc: rest.length,
+          durationMs: Date.now() - startedAt,
+          ok: !err,
+          stdoutBytes: Buffer.byteLength(String(stdout || ''), 'utf8'),
+          stderrBytes: Buffer.byteLength(String(stderr || ''), 'utf8'),
+        });
         if (err) { err.stderr = stderr; reject(err); } else resolve({ stdout });
       });
+      if (input) child.stdin.end(String(input));
     });
 }
 

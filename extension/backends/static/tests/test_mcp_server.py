@@ -269,6 +269,48 @@ class TestMcpServer(unittest.TestCase):
         self.assertFalse(result["isError"])
         self.assertEqual(result["structuredContent"]["result"], {"findings": 2})
 
+    @patch("backends.mcp.server.call_provider")
+    def test_tools_call_ai_analyze_without_write_annotation(self, mock_call_provider):
+        mock_call_provider.return_value = "some analysis text"
+        result = mcp_impl._call_tool(
+            "ai_analyze", {"prompt": "p", "context": "c", "provider": "ollama"}
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["response"], "some analysis text")
+        self.assertNotIn("written", result)
+
+    @patch("backends.static.annotations.annotation_db.default_db_path")
+    @patch("backends.mcp.server.call_provider")
+    def test_tools_call_ai_analyze_writes_annotation_when_requested(
+        self, mock_call_provider, mock_default_db_path
+    ):
+        mock_call_provider.return_value = "parse_header"
+        with tempfile.NamedTemporaryFile(suffix=".elf") as bin_file:
+            bin_file.write(b"\x7fELF" + b"\x00" * 60)
+            bin_file.flush()
+            binary_path = str(Path(bin_file.name).resolve())
+            with tempfile.NamedTemporaryFile(suffix=".pfdb") as db_file:
+                mock_default_db_path.return_value = Path(db_file.name)
+                result = mcp_impl._call_tool(
+                    "ai_analyze",
+                    {
+                        "prompt": "p",
+                        "context": "c",
+                        "provider": "ollama",
+                        "binary_path": binary_path,
+                        "write_annotation": {"addr": "0x1000", "kind": "rename"},
+                    },
+                )
+                self.assertTrue(result["ok"])
+                self.assertTrue(result["written"])
+
+                from backends.static.annotations.annotations import AnnotationStore
+
+                with AnnotationStore(binary_path) as store:
+                    rows = store.list(addr="0x1000")
+                self.assertEqual(rows[0]["value"], "parse_header")
+                self.assertEqual(rows[0]["source"], "ai")
+
     @patch("backends.mcp.server._extract_symbols")
     def test_tools_call_get_symbols(self, mock_extract):
         mock_extract.return_value = [{"name": "main", "addr": "0x401000", "type": "T"}]
@@ -514,6 +556,22 @@ class TestMcpServer(unittest.TestCase):
         ]
         resolved = mcp_impl._resolve_binary_path("sample_demo.elf")
         self.assertEqual(resolved, "/repo/examples/sample_demo.elf")
+
+    def test_iter_workspace_files_scans_workspace_root_not_extension_root(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            target = Path(tmp_dir) / "agent_project.bin"
+            target.write_bytes(b"\x00")
+            with patch.object(mcp_impl, "WORKSPACE_ROOT", tmp_dir):
+                paths = mcp_impl._iter_workspace_files()
+        self.assertIn(str(target), paths)
+
+    def test_find_files_reports_workspace_root_not_extension_root(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            (Path(tmp_dir) / "agent_project.bin").write_bytes(b"\x00")
+            with patch.object(mcp_impl, "WORKSPACE_ROOT", tmp_dir):
+                result = mcp_impl._find_files("agent_project.bin")
+        self.assertEqual(result["root"], tmp_dir)
+        self.assertEqual(result["count"], 1)
 
     @patch("backends.plugins.runtime.collect_runtime_state")
     @patch("backends.plugins.runtime.default_plugin_search_paths")

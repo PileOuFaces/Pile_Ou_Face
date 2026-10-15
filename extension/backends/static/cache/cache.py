@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Cache SQLite pour les résultats d'analyse statique.
 
-Format : fichier `.pfdb` (SQLite) stocké sous `.pile-ou-face/pfdb/` ou chemin explicite.
+Format : fichier `.pfdb` (SQLite) stocké sous `POF_STORAGE_DIR/pfdb/` ou chemin explicite.
 Schéma : voir docs/static/BDD_FICHIERS_IDA_CUTTER.md
 
 Usage:
@@ -23,9 +23,11 @@ Usage:
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import os
 import sqlite3
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +35,11 @@ from backends.shared.exceptions import CacheCorruptedError, CacheError
 from backends.shared.log import get_logger
 
 logger = get_logger(__name__)
+
+# Taille de batch pour l'insertion des lignes de désassemblage — évite de
+# matérialiser une liste complète de tuples avant d'insérer (cf. le même
+# motif dans backends/static/disasm/mapping_db.py).
+_DISASM_BATCH_SIZE = 5000
 
 # Version du schéma SQLite — incrémentée si changement incompatible
 SCHEMA_VERSION = 2
@@ -83,16 +90,6 @@ CREATE TABLE IF NOT EXISTS strings_data (
     FOREIGN KEY (binary_id) REFERENCES binary(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_strings_binary_addr ON strings_data(binary_id, addr);
-
-CREATE TABLE IF NOT EXISTS annotations (
-    id        INTEGER PRIMARY KEY AUTOINCREMENT,
-    binary_id INTEGER NOT NULL,
-    addr      TEXT    NOT NULL,
-    kind      TEXT    NOT NULL,
-    value     TEXT    NOT NULL,
-    FOREIGN KEY (binary_id) REFERENCES binary(id) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS idx_annotations_binary_addr ON annotations(binary_id, addr);
 
 CREATE TABLE IF NOT EXISTS functions (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -223,17 +220,6 @@ def compute_sha256(path: str) -> str:
     return h.hexdigest()
 
 
-def _find_pof_dir(start_dir: Path) -> Path | None:
-    current = start_dir.resolve()
-    while True:
-        candidate = current / ".pile-ou-face"
-        if candidate.is_dir():
-            return candidate
-        if current.parent == current:
-            return None
-        current = current.parent
-
-
 def _sanitize_cache_filename(name: str) -> str:
     safe = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in name)
     return safe or "binary"
@@ -357,38 +343,115 @@ class DisasmCache:
         logger.debug("Cache hit: %s (%d lines)", binary_path, len(lines))
         return binary_id, lines
 
-    def save_disasm(self, binary_path: str, lines: list[dict]) -> int:
-        """Sauvegarde le désassemblage dans le cache.
+    def iter_disasm(self, binary_path: str) -> tuple[int, Iterator[dict]] | None:
+        """Variante streaming de get_disasm : ne matérialise jamais la liste
+        complète — pour un consommateur qui réécrit lui-même en flux (ex:
+        réapplication de labels sur cache hit sans reconstruire un gros
+        binaire en mémoire). Le curseur SQLite est retourné ouvert ; le
+        consommateur doit l'épuiser avant toute autre requête sur `self`.
+        """
+        row = self._get_valid_binary_row(binary_path)
+        if row is None:
+            return None
+        binary_id: int = row["id"]
+        cur = self._conn.execute(
+            """
+            SELECT addr, line, text, bytes, mnemonic, operands
+            FROM disasm_lines
+            WHERE binary_id=?
+            ORDER BY COALESCE(line, id), id
+            """,
+            (binary_id,),
+        )
+        first = cur.fetchone()
+        if first is None:
+            return None
 
-        Args:
-            binary_path: Chemin absolu vers le binaire
-            lines: Lignes de désassemblage
+        def _rows() -> Iterator[dict]:
+            for r in itertools.chain([first], cur):
+                yield {
+                    "addr": r["addr"],
+                    "line": r["line"],
+                    "text": r["text"],
+                    "bytes": r["bytes"] or "",
+                    "mnemonic": r["mnemonic"] or "",
+                    "operands": r["operands"] or "",
+                }
+
+        return binary_id, _rows()
+
+    def begin_disasm_replace(self, binary_path: str) -> int:
+        """Prépare une écriture streaming du désassemblage : assure l'entrée
+        binaire et vide ses anciennes lignes. À utiliser avec
+        append_disasm_rows()/commit_disasm() pour insérer par lots au fil de
+        l'eau sans jamais matérialiser la liste complète — le pendant
+        streaming de save_disasm(), pour un appelant qui produit déjà ses
+        lignes en flux (ex: le passage d'écriture de disasm.py).
 
         Returns:
             binary_id de l'entrée créée ou mise à jour.
         """
         binary_id = self._ensure_binary(binary_path)
         self._conn.execute("DELETE FROM disasm_lines WHERE binary_id=?", (binary_id,))
-        self._conn.executemany(
-            """
+        return binary_id
+
+    def append_disasm_rows(self, binary_id: int, rows: Iterable[dict]) -> int:
+        """Insère un lot de lignes (après begin_disasm_replace). Ne commite
+        pas — appeler commit_disasm() une fois tous les lots insérés.
+
+        Returns:
+            Nombre de lignes insérées dans ce lot.
+        """
+        insert_sql = """
             INSERT INTO disasm_lines(binary_id, addr, line, text, bytes, mnemonic, operands)
             VALUES(?,?,?,?,?,?,?)
-            """,
-            [
-                (
-                    binary_id,
-                    ln.get("addr", ""),
-                    ln.get("line", idx),
-                    ln.get("text", ""),
-                    ln.get("bytes", ""),
-                    ln.get("mnemonic", ""),
-                    ln.get("operands", ""),
-                )
-                for idx, ln in enumerate(lines, start=1)
-            ],
-        )
+        """
+        batch = [
+            (
+                binary_id,
+                r.get("addr", ""),
+                r.get("line", 0),
+                r.get("text", ""),
+                r.get("bytes", ""),
+                r.get("mnemonic", ""),
+                r.get("operands", ""),
+            )
+            for r in rows
+        ]
+        if batch:
+            self._conn.executemany(insert_sql, batch)
+        return len(batch)
+
+    def commit_disasm(self) -> None:
+        """Valide les lots insérés via append_disasm_rows()."""
         self._conn.commit()
-        logger.debug("Cache saved: %s (%d lines)", binary_path, len(lines))
+
+    def save_disasm(self, binary_path: str, lines: Iterable[dict]) -> int:
+        """Sauvegarde le désassemblage dans le cache.
+
+        Args:
+            binary_path: Chemin absolu vers le binaire
+            lines: Lignes de désassemblage (liste ou tout itérable à usage
+                unique — inséré par lots, jamais matérialisé en un seul bloc)
+
+        Returns:
+            binary_id de l'entrée créée ou mise à jour.
+        """
+        binary_id = self.begin_disasm_replace(binary_path)
+        batch: list[dict] = []
+        count = 0
+        for idx, ln in enumerate(lines, start=1):
+            row = dict(ln)
+            row.setdefault("line", idx)
+            batch.append(row)
+            count += 1
+            if len(batch) >= _DISASM_BATCH_SIZE:
+                self.append_disasm_rows(binary_id, batch)
+                batch = []
+        if batch:
+            self.append_disasm_rows(binary_id, batch)
+        self.commit_disasm()
+        logger.debug("Cache saved: %s (%d lines)", binary_path, count)
         return binary_id
 
     # ------------------------------------------------------------------
@@ -467,6 +530,52 @@ class DisasmCache:
         ]
         return sorted(strings, key=lambda s: _addr_sort_key(s.get("addr")))
 
+    def get_strings_for_addresses(
+        self, binary_path: str, addresses: list[str] | set[str] | tuple[str, ...]
+    ) -> list[dict] | None:
+        """Charge uniquement les strings cachees aux adresses demandees.
+
+        Retourne None si le cache strings est absent/invalidé pour ce binaire.
+        Retourne [] si le cache existe mais qu'aucune adresse demandée ne matche.
+        """
+        row = self._get_valid_binary_row(binary_path)
+        if row is None:
+            return None
+        binary_id: int = row["id"]
+
+        cur = self._conn.execute(
+            "SELECT 1 FROM strings_data WHERE binary_id=? LIMIT 1",
+            (binary_id,),
+        )
+        if cur.fetchone() is None:
+            return None
+
+        normalized = sorted({str(addr or "").strip().lower() for addr in addresses})
+        normalized = [addr for addr in normalized if addr]
+        if not normalized:
+            return []
+
+        rows = []
+        # SQLite limite souvent les placeholders a 999 variables.
+        for idx in range(0, len(normalized), 900):
+            chunk = normalized[idx : idx + 900]
+            placeholders = ",".join("?" for _ in chunk)
+            cur = self._conn.execute(
+                f"""
+                SELECT addr, value, length
+                FROM strings_data
+                WHERE binary_id=? AND lower(addr) IN ({placeholders})
+                """,
+                (binary_id, *chunk),
+            )
+            rows.extend(cur.fetchall())
+
+        strings = [
+            {"addr": r["addr"], "value": r["value"], "length": r["length"]}
+            for r in rows
+        ]
+        return sorted(strings, key=lambda s: _addr_sort_key(s.get("addr")))
+
     def save_strings(self, binary_path: str, strings: list[dict]) -> int:
         """Sauvegarde les strings dans le cache.
 
@@ -489,92 +598,6 @@ class DisasmCache:
         self._conn.commit()
         logger.debug("Strings cached: %s (%d strings)", binary_path, len(strings))
         return binary_id
-
-    # ------------------------------------------------------------------
-    # API publique — annotations
-    # ------------------------------------------------------------------
-
-    def get_annotations(self, binary_path: str, addr: str | None = None) -> list[dict]:
-        """Charge les annotations depuis le cache.
-
-        Args:
-            binary_path: Chemin absolu vers le binaire
-            addr: Filtrer par adresse (None = toutes)
-
-        Returns:
-            Liste de {addr, kind, value}.
-        """
-        row = self._get_valid_binary_row(binary_path)
-        if row is None:
-            return []
-        binary_id: int = row["id"]
-        if addr is not None:
-            cur = self._conn.execute(
-                "SELECT addr, kind, value FROM annotations WHERE binary_id=? AND addr=? ORDER BY id",
-                (binary_id, addr),
-            )
-        else:
-            cur = self._conn.execute(
-                "SELECT addr, kind, value FROM annotations WHERE binary_id=? ORDER BY addr, id",
-                (binary_id,),
-            )
-        return [
-            {"addr": r["addr"], "kind": r["kind"], "value": r["value"]} for r in cur
-        ]
-
-    def save_annotation(
-        self, binary_path: str, addr: str, kind: str, value: str
-    ) -> None:
-        """Ajoute ou remplace une annotation pour une adresse.
-
-        Si une annotation du même (addr, kind) existe, elle est remplacée.
-
-        Args:
-            binary_path: Chemin absolu vers le binaire
-            addr: Adresse (ex: "0x401000")
-            kind: Type d'annotation ("comment", "rename", ...)
-            value: Valeur de l'annotation
-        """
-        binary_id = self._ensure_binary(binary_path)
-        self._conn.execute(
-            "DELETE FROM annotations WHERE binary_id=? AND addr=? AND kind=?",
-            (binary_id, addr, kind),
-        )
-        self._conn.execute(
-            "INSERT INTO annotations(binary_id, addr, kind, value) VALUES(?,?,?,?)",
-            (binary_id, addr, kind, value),
-        )
-        self._conn.commit()
-
-    def delete_annotation(
-        self, binary_path: str, addr: str, kind: str | None = None
-    ) -> int:
-        """Supprime les annotations pour une adresse.
-
-        Args:
-            binary_path: Chemin absolu vers le binaire
-            addr: Adresse cible
-            kind: Type à supprimer (None = tous les types pour cette adresse)
-
-        Returns:
-            Nombre d'annotations supprimées.
-        """
-        row = self._get_valid_binary_row(binary_path)
-        if row is None:
-            return 0
-        binary_id: int = row["id"]
-        if kind is not None:
-            cur = self._conn.execute(
-                "DELETE FROM annotations WHERE binary_id=? AND addr=? AND kind=?",
-                (binary_id, addr, kind),
-            )
-        else:
-            cur = self._conn.execute(
-                "DELETE FROM annotations WHERE binary_id=? AND addr=?",
-                (binary_id, addr),
-            )
-        self._conn.commit()
-        return cur.rowcount
 
     # ------------------------------------------------------------------
     # API publique — fonctions découvertes
@@ -1128,16 +1151,16 @@ class DisasmCache:
 def default_cache_path(binary_path: str) -> str:
     """Retourne le chemin par défaut du fichier cache pour un binaire.
 
-    Place le cache dans `.pile-ou-face/pfdb/` pour éviter de polluer le
-    répertoire du binaire avec des fichiers générés.
+    Dans l'extension, `POF_STORAGE_DIR` place le cache dans `storageDir/pfdb/`.
+    Sans environnement VS Code, le CLI direct utilise `pfdb/` à côté du binaire.
 
     Exemple :
         `/workspace/examples/prog` →
-        `/workspace/.pile-ou-face/pfdb/prog.<hash>.pfdb`
+        `<storageDir>/pfdb/prog.<hash>.pfdb`
     """
     p = Path(binary_path).resolve()
-    pof_dir = _find_pof_dir(p.parent)
-    cache_dir = (pof_dir / "pfdb") if pof_dir else (p.parent / ".pile-ou-face" / "pfdb")
+    storage_dir = os.environ.get("POF_STORAGE_DIR", "").strip()
+    cache_dir = ((Path(storage_dir).resolve()) if storage_dir else p.parent) / "pfdb"
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     cache_key = hashlib.sha256(str(p).encode("utf-8")).hexdigest()[:16]

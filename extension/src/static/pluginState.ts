@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 /**
  * @file pluginState.js
  * @brief Helpers de synthese pour l'etat plugin expose au webview static.
@@ -24,11 +23,11 @@ function emptyPluginUiState(error = '') {
   };
 }
 
-function flattenPluginCapabilities(manifest = {}) {
+function flattenPluginCapabilities(manifest: Record<string, any> = {}) {
   const sections = manifest?.capabilities && typeof manifest.capabilities === 'object'
     ? manifest.capabilities
     : {};
-  const values = new Set();
+  const values = new Set<string>();
   Object.values(sections).forEach((entries) => {
     if (!Array.isArray(entries)) return;
     entries.forEach((entry) => {
@@ -39,7 +38,7 @@ function flattenPluginCapabilities(manifest = {}) {
   return Array.from(values).sort((a, b) => a.localeCompare(b));
 }
 
-function inferPluginFamily({ manifest = {} } = {}) {
+function inferPluginFamily({ manifest = {} }: { manifest?: Record<string, any> } = {}) {
   const family = String(
     manifest?.ui?.family
     || manifest?.entrypoints?.ui?.family
@@ -49,7 +48,7 @@ function inferPluginFamily({ manifest = {} } = {}) {
   return family || null;
 }
 
-function summarizePluginRuntimeState(payload = {}) {
+function summarizePluginRuntimeState(payload: Record<string, any> = {}) {
   const plugins = Array.isArray(payload?.plugins) ? payload.plugins : [];
   const searchPaths = Array.isArray(payload?.search_paths)
     ? payload.search_paths.map((entry) => String(entry || '').trim()).filter(Boolean)
@@ -72,10 +71,10 @@ function summarizePluginRuntimeState(payload = {}) {
           .filter(([key]) => !!key)
       )
     : {};
-  const activePluginIds = new Set();
-  const capabilities = new Set();
+  const activePluginIds = new Set<string>();
+  const capabilities = new Set<string>();
   const activePlugins = [];
-  const families = {};
+  const families: Record<string, boolean> = {};
   const allTabRegistrations = [];
 
   plugins.forEach((record) => {

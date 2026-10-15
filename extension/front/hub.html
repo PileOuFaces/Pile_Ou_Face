@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <!-- Reverse Workspace — Hub principal -->
-<html lang="fr">
+<html lang="{{locale}}">
 <head>
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy"
@@ -319,6 +319,7 @@
     </div>
   </section>
 
+  <script src="{{sharedI18nUri}}"></script>
   <script src="{{elkUri}}"></script>
   <script src="{{cfgHelpersUri}}"></script>
   <!-- shared helpers -->
@@ -327,6 +328,7 @@
   <script src="{{sharedConversionUtilsUri}}"></script>
   <!-- VS Code API bridge — must be first so window.POFHubMessageBus is set before state.js -->
   <script src="{{sharedMessageBusUri}}"></script>
+  <script src="{{sharedTelemetryClientUri}}"></script>
   <script src="{{sharedTaskProgressControllerUri}}"></script>
   <!-- shared modules -->
   <script src="{{sharedRawTabCapabilitiesUri}}"></script>
@@ -362,6 +364,8 @@
   <script src="{{staticExploitHelperControllerUri}}"></script>
   <script src="{{staticPwntoolsScriptControllerUri}}"></script>
   <script src="{{staticToolsWidgetsControllerUri}}"></script>
+  <script src="{{staticAutoTriageControllerUri}}"></script>
+  <script src="{{staticDecompileAugmentationControllerUri}}"></script>
   <!-- dynamic controllers -->
   <script src="{{dynamicPayloadHistoryControllerUri}}"></script>
   <script src="{{dynamicVisualizerControllerUri}}"></script>
@@ -381,6 +385,7 @@
   <script src="{{sharedMessagesUri}}"></script>
   <script src="{{sharedSettingsUri}}"></script>
   <script src="{{sharedAnnotationsUri}}"></script>
+  <script src="{{sharedIdaKeymapUri}}"></script>
   <script src="{{sharedAccountUri}}"></script>
   <script src="{{pluginIframeRouterUri}}"></script>
   <script src="{{scriptUri}}"></script>

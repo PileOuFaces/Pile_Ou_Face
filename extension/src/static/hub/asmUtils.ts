@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 /**
  * @file hub/asmUtils.js
  * @brief Utilitaires purs d'analyse ASM : parsing d'adresses, d'instructions CMP,

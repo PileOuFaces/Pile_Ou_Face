@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from backends.static.annotations.annotation_db import AnnotationDb
 from backends.static.decompile.decompile import _postprocess_code, decompile_function
 
 
@@ -283,14 +284,18 @@ class TestDecompileFunctionStackVars(unittest.TestCase):
         self.assertIn("second_tmp", second.get("code", ""))
         self.assertEqual(second.get("stack_frame", {}).get("abi"), "win64")
 
-    def test_annotations_are_reported_in_result_payload(self):
+    def test_sqlite_annotations_are_reported_in_result_payload(self):
         fake_stack = {"vars": [], "args": []}
         with tempfile.TemporaryDirectory() as d:
-            ann_path = Path(d) / "annotations.json"
-            ann_path.write_text(
-                '{"0x401000": {"name": "decrypt_cfg", "comment": "Point d\'entree de decryption"}}',
-                encoding="utf-8",
-            )
+            db_path = Path(d) / "annotations.db"
+            with AnnotationDb(db_path) as db:
+                db.save_annotation("/bin/ls", "0x401000", "rename", "decrypt_cfg")
+                db.save_annotation(
+                    "/bin/ls",
+                    "0x401000",
+                    "comment",
+                    "Point d'entree de decryption",
+                )
             with ExitStack() as stack:
                 for p in self._base_patches("int f() { return DAT_00401000; }"):
                     stack.enter_context(p)
@@ -303,7 +308,7 @@ class TestDecompileFunctionStackVars(unittest.TestCase):
                 result = decompile_function(
                     "/bin/ls",
                     "0x401000",
-                    annotations_json=str(ann_path),
+                    annotations_db=str(db_path),
                     cache_dir=Path(d),
                 )
         annotations = result.get("annotations") or []

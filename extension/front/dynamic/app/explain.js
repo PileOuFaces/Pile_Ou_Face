@@ -3,7 +3,7 @@
  * @brief Rendu du panneau pedagogique en langage humain.
  */
 import { dom } from './dom.js';
-import { diagnosticKindLabel, primaryDiagnostic } from './diagnostics.js';
+import { crashDiagnosticForStep, diagnosticKindLabel, primaryDiagnostic } from './diagnostics.js';
 import { explainStackEffect } from './render.js';
 
 export function renderExplain(snap, prevSnap, regMap = {}, prevRegMap = {}, meta = {}, analysis = null, mcp = null, diagnostics = [], crash = null) {
@@ -42,9 +42,10 @@ export function renderExplain(snap, prevSnap, regMap = {}, prevRegMap = {}, meta
 
 function buildSections(snap, meta, analysis, mcp, diagnostics = [], crash = null) {
   const diagnostic = primaryDiagnostic(diagnostics);
-  const classification = crash && typeof crash === 'object'
-    ? String(crash.classification || '').trim().toLowerCase()
-    : '';
+  const projectedCrash = crash && typeof crash === 'object'
+    ? crashDiagnosticForStep(crash, crash.step)
+    : null;
+  const classification = String(projectedCrash?.kind || crash?.classification || '').trim().toLowerCase();
   const crashSection = crash && typeof crash === 'object'
     ? classification === 'ret2win_success'
       ? { label: 'ACCES CIBLE', text: buildRetWinText(crash), severity: 'success' }

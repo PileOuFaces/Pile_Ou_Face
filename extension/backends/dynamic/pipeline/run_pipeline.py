@@ -322,36 +322,39 @@ def _slot_value_text(slot: dict, analysis: dict, slot_kind: str) -> str | None:
 def _guess_crash_slot(
     crash: dict, analysis: dict, meta: dict, disasm_lines: list[dict]
 ) -> tuple[dict | None, str | None, int | None]:
+    """Attribute a crash to a control slot (return_address/saved_bp) only
+    when there is direct evidence tying THIS crash to THAT slot's value --
+    never from crash_type/instruction-mnemonic membership alone (#300).
+
+    `not _is_code_address(value, code_ranges)` is *never* usable as
+    evidence here: by construction, the value that just faulted an
+    unmapped_fetch is never a known code address (that is what "unmapped"
+    means), and a legitimate `rbp` is never a code address either
+    (corrupted or not) -- both checks are tautologically true and used to
+    make every unmapped_read/unmapped_write/unmapped_fetch match its
+    corresponding slot regardless of relevance. The only evidence kept:
+    the address the CPU actually faulted on (fetch target for
+    return_address, faultAddress for saved_bp) exactly equals what is
+    currently stored in that slot -- direct proof this crash's bad value
+    came from that slot, not a coincidence of crash_type.
+    """
     if not isinstance(crash, dict) or not isinstance(analysis, dict):
         return None, None, None
-    code_ranges = _build_code_ranges(meta, disasm_lines)
     registers = (
         crash.get("registers") if isinstance(crash.get("registers"), dict) else {}
     )
     arch_bits = 32 if int(meta.get("arch_bits") or 64) == 32 else 64
     ip_name = "eip" if arch_bits == 32 else "rip"
-    bp_name = "ebp" if arch_bits == 32 else "rbp"
     ip_value = _parse_int(
         crash.get(ip_name) or registers.get(ip_name) or crash.get("faultAddress")
     )
-    bp_value = _parse_int(crash.get(bp_name) or registers.get(bp_name))
-    crash_type = str(crash.get("type") or "").strip().lower()
+    fault_address = _parse_int(crash.get("faultAddress"))
     instruction = str(crash.get("instructionText") or "").strip().lower()
 
     ret_slot = _analysis_slot(analysis, "return_address")
     if ret_slot is not None:
         ret_value = _parse_int(_slot_value_text(ret_slot, analysis, "return_address"))
-        if (
-            crash_type == "unmapped_fetch"
-            or instruction.startswith("ret")
-            or instruction.startswith("jmp")
-            or instruction.startswith("call")
-        ) and (
-            ret_value is None
-            or ip_value is None
-            or ret_value == ip_value
-            or not _is_code_address(ip_value, code_ranges)
-        ):
+        if ret_value is not None and ip_value is not None and ret_value == ip_value:
             bytes_hex = str(ret_slot.get("bytesHex") or "").strip()
             return (
                 {
@@ -376,10 +379,9 @@ def _guess_crash_slot(
             _slot_value_text(saved_bp_slot, analysis, "saved_bp")
         )
         if (
-            saved_bp_value is None
-            or bp_value is None
-            or saved_bp_value == bp_value
-            or not _is_code_address(bp_value, code_ranges)
+            saved_bp_value is not None
+            and fault_address is not None
+            and saved_bp_value == fault_address
         ):
             bytes_hex = str(saved_bp_slot.get("bytesHex") or "").strip()
             return (
@@ -482,7 +484,15 @@ def _build_crash_report(
                 _slot_value_text(ret_slot_data, analysis, "return_address")
             )
     code_ranges = _build_code_ranges(meta, disasm_lines or [])
-    if crash_type in {
+    if crash_type == "stack_chk_fail":
+        # The traced program's own stack protector already confirmed a
+        # corrupted canary -- this is stronger evidence than anything
+        # _classify_crash can infer from ret_target/fault_addr/code-address,
+        # and running it through that generic heuristic would misclassify
+        # a successful protection as "control_hijack" (the instruction
+        # pointer at the call site still sits inside known code).
+        classification = "stack_chk_fail"
+    elif crash_type in {
         "unmapped_read",
         "unmapped_write",
     } and not instruction_text.lower().startswith(("ret", "jmp", "call", "leave")):
@@ -497,14 +507,20 @@ def _build_crash_report(
             meta=meta,
             code_ranges=code_ranges,
         )
-    if classification == "fatal_crash" and not _has_control_corruption_evidence(
-        analysis or {}, payload_offset
+    if (
+        classification == "fatal_crash"
+        and crash_type == "unmapped_fetch"
+        and not _has_control_corruption_evidence(analysis or {}, payload_offset)
     ):
-        # No overflow reached a control slot, no write was flagged on one, and
-        # the faulting bytes don't match the configured payload: this isn't a
-        # vulnerability, it's execution running past a boundary the emulator
-        # doesn't model (classic hello-world/printf-only: main returns into
-        # un-emulated libc and Unicorn faults on the fetch).
+        # This downgrade only applies to unmapped_fetch (#300): that is the
+        # one crash_type with a genuine benign interpretation -- RIP ran
+        # past a boundary the emulator doesn't model (classic hello-world/
+        # printf-only: main returns into un-emulated libc and Unicorn
+        # faults on the fetch) rather than a real control-flow hijack.
+        # unmapped_read/unmapped_write have no such ambiguity: Unicorn
+        # faulted because the traced program's own logic dereferenced an
+        # address that genuinely isn't mapped -- always a real crash,
+        # regardless of whether it happens to also touch a control slot.
         classification = (
             "benign_termination"
             if instruction_text.lower().startswith("ret")
@@ -670,6 +686,7 @@ def run_pipeline(
         and configured_max_steps
         and steps_executed >= configured_max_steps
     )
+    trace_size_reached = bool(trace_meta.get("trace_limit_reached"))
     diagnostics = build_diagnostics(
         snapshots,
         analysis_by_step,
@@ -677,6 +694,7 @@ def run_pipeline(
         disasm_lines=disasm.get("lines") if disasm else None,
         crash=crash,
         max_steps_reached=max_steps_reached,
+        trace_size_reached=trace_size_reached,
     )
     write_audit_json(
         output_path,
@@ -689,6 +707,7 @@ def run_pipeline(
                 "disasm_lines": disasm.get("lines") if disasm else None,
                 "crash": crash,
                 "max_steps_reached": max_steps_reached,
+                "trace_size_reached": trace_size_reached,
             },
             "output": diagnostics,
         },
@@ -786,7 +805,12 @@ def _derive_disasm_path(output_path: str) -> str:
 
 
 def _main(argv: list[str] | None = None) -> int:
-    from backends.dynamic.engine.unicorn.config import TraceConfig
+    from backends.dynamic.engine.unicorn.config import (
+        DEFAULT_MAX_TRACE_BYTES,
+        MAX_USER_TRACE_BYTES,
+        MAX_USER_TRACE_STEPS,
+        TraceConfig,
+    )
 
     parser = argparse.ArgumentParser(description="Generate a trace JSON with Unicorn")
     parser.add_argument("--binary", required=True, help="Raw x86_64 binary")
@@ -799,6 +823,12 @@ def _main(argv: list[str] | None = None) -> int:
         "--stack-size", type=int, default=0x100000, help="Stack size bytes"
     )
     parser.add_argument("--max-steps", type=int, default=200, help="Max instructions")
+    parser.add_argument(
+        "--max-trace-bytes",
+        type=int,
+        default=DEFAULT_MAX_TRACE_BYTES,
+        help="Maximum serialized snapshot bytes",
+    )
     parser.add_argument("--stack-entries", type=int, default=24, help="Stack entries")
     parser.add_argument(
         "--arch-bits", type=int, default=64, choices=[32, 64], help="Architecture bits"
@@ -838,6 +868,11 @@ def _main(argv: list[str] | None = None) -> int:
     parser.add_argument("--patch-payload", default=None, metavar="HEX")
     parser.add_argument("--inject-at-start", action="store_true")
     args = parser.parse_args(argv)
+
+    if not 1 <= args.max_steps <= MAX_USER_TRACE_STEPS:
+        parser.error(f"--max-steps must be between 1 and {MAX_USER_TRACE_STEPS}")
+    if not 1 <= args.max_trace_bytes <= MAX_USER_TRACE_BYTES:
+        parser.error(f"--max-trace-bytes must be between 1 and {MAX_USER_TRACE_BYTES}")
 
     stdin_text = _expand_payload_expression(args.stdin)
     stdin_data = stdin_text.encode("utf-8", errors="ignore")
@@ -912,6 +947,7 @@ def _main(argv: list[str] | None = None) -> int:
         stack_base=int(args.stack_base, 16),
         stack_size=args.stack_size,
         max_steps=args.max_steps,
+        max_trace_bytes=args.max_trace_bytes,
         stack_entries=args.stack_entries,
         arch_bits=args.arch_bits,
         interp_base=0x70000000 if args.arch_bits == 32 else 0x7F0000000000,

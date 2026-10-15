@@ -156,6 +156,99 @@ class TestAnnotationDb(unittest.TestCase):
             with self.assertRaises(BinaryNotFoundError):
                 db.get_annotations(missing_path)
 
+    def test_save_annotation_defaults_source_to_user(self):
+        with AnnotationDb(self._db_path) as db:
+            db.save_annotation(self._binary_path, "0x401000", "comment", "c")
+            result = db.get_annotations(self._binary_path)
+        self.assertEqual(result[0]["source"], "user")
+
+    def test_save_annotation_accepts_explicit_source(self):
+        with AnnotationDb(self._db_path) as db:
+            db.save_annotation(
+                self._binary_path, "0x401000", "comment", "c", source="ai"
+            )
+            result = db.get_annotations(self._binary_path)
+        self.assertEqual(result[0]["source"], "ai")
+
+    def test_migration_adds_source_column_to_legacy_db(self):
+        # Simulate a pre-existing DB created before the `source` column existed.
+        import sqlite3
+
+        conn = sqlite3.connect(self._db_path)
+        conn.execute(
+            """
+            CREATE TABLE binaries (
+                sha256 TEXT PRIMARY KEY,
+                first_seen_path TEXT,
+                indexed_at INTEGER
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE annotations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                binary_sha256 TEXT NOT NULL REFERENCES binaries(sha256) ON DELETE CASCADE,
+                addr TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(binary_sha256, addr, kind)
+            )
+            """
+        )
+        sha256 = hash_binary_content(self._binary_path)
+        conn.execute(
+            "INSERT INTO binaries (sha256, first_seen_path, indexed_at) VALUES (?, ?, 0)",
+            (sha256, self._binary_path),
+        )
+        conn.execute(
+            "INSERT INTO annotations (binary_sha256, addr, kind, value, updated_at) "
+            "VALUES (?, '0x1000', 'comment', 'legacy', '2026-01-01T00:00:00.000Z')",
+            (sha256,),
+        )
+        conn.commit()
+        conn.close()
+
+        with AnnotationDb(self._db_path) as db:
+            result = db.get_annotations(self._binary_path)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["value"], "legacy")
+        self.assertEqual(result[0]["source"], "user")
+
+    def test_save_ai_annotation_writes_when_slot_empty(self):
+        with AnnotationDb(self._db_path) as db:
+            written = db.save_ai_annotation(
+                self._binary_path, "0x401000", "comment", "ai guess"
+            )
+            result = db.get_annotations(self._binary_path)
+        self.assertTrue(written)
+        self.assertEqual(result[0]["value"], "ai guess")
+        self.assertEqual(result[0]["source"], "ai")
+
+    def test_save_ai_annotation_never_overwrites_user_annotation(self):
+        with AnnotationDb(self._db_path) as db:
+            db.save_annotation(self._binary_path, "0x401000", "comment", "human note")
+            written = db.save_ai_annotation(
+                self._binary_path, "0x401000", "comment", "ai guess"
+            )
+            result = db.get_annotations(self._binary_path)
+        self.assertFalse(written)
+        self.assertEqual(result[0]["value"], "human note")
+        self.assertEqual(result[0]["source"], "user")
+
+    def test_save_ai_annotation_can_replace_earlier_ai_annotation(self):
+        with AnnotationDb(self._db_path) as db:
+            db.save_ai_annotation(
+                self._binary_path, "0x401000", "comment", "first guess"
+            )
+            written = db.save_ai_annotation(
+                self._binary_path, "0x401000", "comment", "refined guess"
+            )
+            result = db.get_annotations(self._binary_path)
+        self.assertTrue(written)
+        self.assertEqual(result[0]["value"], "refined guess")
+
 
 if __name__ == "__main__":
     unittest.main()

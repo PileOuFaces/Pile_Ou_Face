@@ -320,6 +320,7 @@ function normalizeStoredOllamaHistory(raw) {
       updatedAt: Number.isFinite(updatedAt) ? updatedAt : Date.now(),
       messages,
       model: String(entry?.model || '').trim(),
+      binaryPath: String(entry?.binaryPath || '').trim(),
     });
   });
   normalized.sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
@@ -342,6 +343,7 @@ function syncActiveOllamaConversationInHistory(touch = true) {
       updatedAt: now,
       messages: [...ollamaUiState.conversation],
       model: getCurrentOllamaModel() || ollamaUiState.lastModel || '',
+      binaryPath: getStaticBinaryPath(),
     });
   } else {
     existing.messages = [...ollamaUiState.conversation];
@@ -349,6 +351,7 @@ function syncActiveOllamaConversationInHistory(touch = true) {
       existing.title = buildOllamaConversationTitle(existing.messages);
     }
     existing.model = getCurrentOllamaModel() || ollamaUiState.lastModel || existing.model || '';
+    existing.binaryPath = getStaticBinaryPath() || existing.binaryPath || '';
     if (touch) existing.updatedAt = now;
   }
   ollamaUiState.history.sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
@@ -358,33 +361,26 @@ function syncActiveOllamaConversationInHistory(touch = true) {
 }
 
 function persistOllamaConversation() {
-  _saveStorage({
-    ollamaConversation: ollamaUiState.conversation,
-    ollamaConversationHistory: ollamaUiState.history,
-    ollamaActiveConversationId: ollamaUiState.activeConversationId,
+  vscode.postMessage({
+    type: 'hubSaveChatHistory',
+    conversations: ollamaUiState.history,
+    activeConversationId: ollamaUiState.activeConversationId,
   });
 }
 
 function hydrateOllamaConversationHistory() {
-  const stored = _loadStorage();
-  let history = normalizeStoredOllamaHistory(stored.ollamaConversationHistory);
-  let changed = false;
-  if (!history.length) {
-    const legacyMessages = _normalizeOllamaConversationMessages(stored.ollamaConversation);
-    history = [
-      {
-        id: createOllamaConversationId(),
-        title: buildOllamaConversationTitle(legacyMessages),
-        customTitle: false,
-        generationSettings: null,
-        updatedAt: Date.now(),
-        messages: legacyMessages,
-        model: String(stored.ollamaModel || '').trim(),
-      },
-    ];
-    changed = true;
-  }
-  const savedActiveId = String(stored.ollamaActiveConversationId || '').trim();
+  window.POFHubState?.removeStorageKeys?.([
+    'ollamaConversation',
+    'ollamaConversationHistory',
+    'ollamaActiveConversationId',
+  ]);
+  applyOllamaConversationHistory([], '');
+  vscode.postMessage({ type: 'hubLoadChatHistory' });
+}
+
+function applyOllamaConversationHistory(rawHistory, activeConversationId) {
+  let history = normalizeStoredOllamaHistory(rawHistory);
+  const savedActiveId = String(activeConversationId || '').trim();
   let active = history.find((entry) => entry.id === savedActiveId) || history[0];
   if (!active) {
     active = {
@@ -394,15 +390,16 @@ function hydrateOllamaConversationHistory() {
       generationSettings: null,
       updatedAt: Date.now(),
       messages: [],
-      model: String(stored.ollamaModel || '').trim(),
+      model: getCurrentOllamaModel() || ollamaUiState.lastModel || '',
+      binaryPath: getStaticBinaryPath(),
     };
     history = [active];
-    changed = true;
   }
   ollamaUiState.history = history;
   ollamaUiState.activeConversationId = active.id;
   ollamaUiState.conversation = _normalizeOllamaConversationMessages(active.messages);
-  if (changed) persistOllamaConversation();
+  renderOllamaConversation();
+  renderOllamaConversationHistory();
 }
 
 function switchOllamaConversation(conversationId) {
@@ -1291,14 +1288,25 @@ function requestOllamaModels() {
 
 // Quick actions
 document.querySelectorAll('.action-card').forEach((card) => {
-  card.addEventListener('click', () => {
+  card.addEventListener('click', (event) => {
     if (card.dataset.action === 'static-open') {
       showPanel('static');
-      if (!getStaticBinaryPath()) openBinaryMenu();
+      if (!getStaticBinaryPath()) {
+        event.stopPropagation();
+        openBinaryMenu();
+      }
     } else if (card.dataset.action === 'dynamic-run') {
       showPanel('dynamic');
     } else if (card.dataset.action === 'outils-open') {
       showPanel('outils');
+    } else if (card.dataset.action === 'auto-triage') {
+      const binaryPath = getStaticBinaryPath();
+      if (!binaryPath) {
+        showPanel('static');
+        openBinaryMenu();
+        return;
+      }
+      window.POFHubAutoTriageController?.startRun?.(binaryPath);
     }
   });
 });
@@ -1430,7 +1438,8 @@ function updateDisasmSessionSummary() {
     hintEl.textContent = 'Choisis un binaire puis ouvre le désassemblage pour démarrer la session.';
   } else if (summary.addr && summary.functionName) {
     const historyHint = _navHistory.length > 1 ? ` Fil actuel: ${Math.min(_navIndex + 1, _navHistory.length)}/${_navHistory.length}.` : '';
-    hintEl.textContent = `Tu es positionné sur ${summary.functionName} à ${summary.addr}. Les actions essentielles restent visibles, le reste peut se replier.${historyHint}`;
+    const positionPreposition = window.POFI18n?.resolveLocale(document.documentElement.lang) === 'fr' ? 'à' : 'at';
+    hintEl.textContent = `Tu es positionné sur ${summary.functionName} ${positionPreposition} ${summary.addr}. Les actions essentielles restent visibles, le reste peut se replier.${historyHint}`;
   } else if (summary.addr) {
     const historyHint = _navHistory.length > 1 ? ` Fil actuel: ${Math.min(_navIndex + 1, _navHistory.length)}/${_navHistory.length}.` : '';
     hintEl.textContent = `Adresse active ${summary.addr}. Tu peux naviguer, annoter ou lancer les xrefs depuis ici.${historyHint}`;
@@ -1497,6 +1506,9 @@ function resetStackAndDecompileDerivedState() {
   stackUiState.renderedBinaryPath = '';
   stackUiState.activeEntryName = '';
   stackUiState.pendingEntryName = '';
+  decompileUiState.selectedAddr = '';
+  decompileUiState.searchQuery = '';
+  decompileUiState.activeSearchHit = -1;
   decompileUiState.activeStackEntryName = '';
   decompileUiState.pendingStackEntryName = '';
   clearDecompileCaches();
@@ -1506,6 +1518,11 @@ function resetStackAndDecompileDerivedState() {
 }
 
 function resetTypedDataDerivedState() {
+  typedDataUiState.structSource = '';
+  typedDataUiState.structs = [];
+  typedDataUiState.structsLoaded = false;
+  typedDataUiState.loadingStructs = false;
+  typedDataUiState.pendingEditorOpen = false;
   typedDataUiState.appliedStructName = '';
   typedDataUiState.appliedStructOffset = '0x0';
   typedDataUiState.appliedStructAddr = '';
@@ -1513,8 +1530,81 @@ function resetTypedDataDerivedState() {
 }
 
 function resetGraphDerivedState() {
+  stringsCache = [];
+  stringsPage = 1;
+  window.discoveredFunctionsCache = [];
+  window.functionListCache = [];
+  window.functionRadarCache = null;
+  window.functionWorkspaceState = null;
+  if (typeof functionsUiState !== 'undefined') {
+    functionsUiState.quickFilter = 'all';
+    functionsUiState.reviewFilter = 'all';
+    functionsUiState.signalFilter = 'all';
+    functionsUiState.selectedAddr = '';
+    _saveStorage({
+      functionsQuickFilter: 'all',
+      functionsReviewFilter: 'all',
+      functionsSignalFilter: 'all',
+      functionsSelectedAddr: '',
+      decompileAddr: '',
+      decompileSearch: '',
+      cfgSearch: '',
+      cgSearch: '',
+    });
+  }
   const cfgContent = document.getElementById('cfgContent');
   if (cfgContent) cfgContent.innerHTML = '';
+  const stringsContent = document.getElementById('stringsContent');
+  if (stringsContent) stringsContent.innerHTML = '';
+  const functionsCount = document.getElementById('functionsCount');
+  if (functionsCount) functionsCount.textContent = '';
+  const functionsSearch = document.getElementById('functionsSearch');
+  if (functionsSearch) functionsSearch.value = '';
+  const functionsNlSearchInput = document.getElementById('functionsNlSearchInput');
+  if (functionsNlSearchInput) functionsNlSearchInput.value = '';
+  const functionsNlSearchStatus = document.getElementById('functionsNlSearchStatus');
+  if (functionsNlSearchStatus) functionsNlSearchStatus.textContent = 'Les preuves de l’index local sont classées par le provider IA configuré.';
+  const functionsNlSearchResults = document.getElementById('functionsNlSearchResults');
+  if (functionsNlSearchResults) {
+    functionsNlSearchResults.innerHTML = '';
+    functionsNlSearchResults.hidden = true;
+  }
+  const functionsFilterPills = document.getElementById('functionsFilterPills');
+  if (functionsFilterPills) {
+    functionsFilterPills.querySelectorAll('[data-functions-filter]').forEach((button) => {
+      button.classList.toggle('is-active', button.dataset.functionsFilter === 'all');
+    });
+  }
+  const functionsReviewFilter = document.getElementById('functionsReviewFilter');
+  if (functionsReviewFilter) functionsReviewFilter.value = 'all';
+  const functionsSignalFilter = document.getElementById('functionsSignalFilter');
+  if (functionsSignalFilter) functionsSignalFilter.value = 'all';
+  const functionsRadar = document.getElementById('functionsRadar');
+  if (functionsRadar) functionsRadar.innerHTML = '';
+  const functionsDetails = document.getElementById('functionsDetails');
+  if (functionsDetails) functionsDetails.innerHTML = '';
+  [
+    'importsContent',
+    'exportsContent',
+    'symbolsContent',
+    'infoContent',
+    'sectionsContent',
+    'functionsContent',
+    'hexContent',
+    'patchList',
+    'typedDataContent',
+    'exceptionsContent',
+    'peResourcesContent',
+    'xrefsResultContent',
+  ].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = '';
+  });
+  const xrefsResult = document.getElementById('xrefsResult');
+  if (xrefsResult) {
+    xrefsResult.style.display = 'none';
+    xrefsResult.classList.remove('xrefs-panel-visible');
+  }
   const cfgFuncSelect = document.getElementById('cfgFuncSelect');
   if (cfgFuncSelect) {
     cfgFuncSelect.replaceChildren();
@@ -1528,10 +1618,12 @@ function resetGraphDerivedState() {
   cfgUiState.funcAddr = '';
   cfgUiState.binaryPath = '';
   cfgUiState.activeAddr = '';
+  cfgUiState.search = '';
   cfgUiState.expandedAddrs = [];
   cfgUiState.graphView = null;
   callGraphUiState.binaryPath = '';
   callGraphUiState.activeAddr = '';
+  callGraphUiState.search = '';
   callGraphUiState.graphView = null;
   window._pendingCfgHighlightAddr = null;
 }
@@ -1546,6 +1638,23 @@ function resetStaticBinaryDerivedState() {
   window._lastDisasmAddr = '';
   window.lastBinaryArch = '';
   window._annotations = {};
+  const annotationBadge = document.getElementById('annotationAddrBadge');
+  if (annotationBadge) {
+    annotationBadge.textContent = '\u2014';
+    annotationBadge.dataset.addr = '';
+    annotationBadge.classList.remove('has-addr');
+  }
+  const annotationName = document.getElementById('annotationName');
+  if (annotationName) annotationName.value = '';
+  const annotationComment = document.getElementById('annotationComment');
+  if (annotationComment) annotationComment.value = '';
+  const annotationSubmit = document.getElementById('btnAddAnnotation');
+  if (annotationSubmit) {
+    annotationSubmit.disabled = true;
+    annotationSubmit.textContent = 'Annoter';
+    annotationSubmit.title = "Sélectionnez d'abord une adresse";
+  }
+  if (typeof renderAnnotationsList === 'function') renderAnnotationsList({});
   resetGraphDerivedState();
   updateActiveContextBars('');
   renderBookmarks();
@@ -1975,6 +2084,7 @@ document.querySelectorAll('[data-ollama-model-select="true"]').forEach((selectEl
   selectEl.addEventListener('change', (event) => {
     const value = String(event.target?.value || '').trim();
     if (!value) return;
+    ollamaUiState.modelUserSelected = true;
     if (value.includes('@')) {
       // Cloud model selected — just sync state without re-rendering Ollama list
       rememberOllamaModel(value, true);

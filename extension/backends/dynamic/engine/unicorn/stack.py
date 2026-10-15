@@ -12,16 +12,30 @@
 """
 
 import contextlib
+import secrets
 
 from unicorn import UC_PROT_ALL
 from unicorn.x86_const import (
     UC_X86_REG_EBP,
     UC_X86_REG_ESP,
+    UC_X86_REG_FS_BASE,
     UC_X86_REG_RBP,
     UC_X86_REG_RSP,
 )
 
 from .config import TraceConfig
+
+# Minimal TLS area so that -fstack-protector code can read/check its canary
+# seed at fs:0x28 (the standard glibc x86_64 layout) without faulting.
+# Execution-infrastructure prerequisite only: no canary/business logic reads
+# this value back -- it just needs to exist and be stable across a single
+# trace so the compiler-generated prologue/epilogue comparison succeeds when
+# the canary is left untouched. 32-bit binaries use %gs instead of %fs for
+# TLS and are not covered here (documented limitation, see stabilization
+# audit report).
+_TLS_AREA_BASE = 0x00007E0000000000
+_TLS_AREA_SIZE = 0x1000
+_TLS_CANARY_OFFSET = 0x28
 
 
 def _stack_top_headroom(stack_size: int) -> int:
@@ -29,6 +43,33 @@ def _stack_top_headroom(stack_size: int) -> int:
     if stack_size <= 0:
         return 0
     return max(0x1000, min(0x10000, stack_size // 4))
+
+
+def _generate_canary_seed() -> int:
+    """Fresh 64-bit seed per trace, low byte cleared (glibc convention: it
+    stops the canary being leaked as a printable/NUL-terminated string)."""
+    return secrets.randbits(64) & ~0xFF
+
+
+def init_tls(uc, config: TraceConfig) -> None:
+    """@brief Mappe une zone TLS minimale et positionne fs:0x28 (x86_64).
+
+    Prerequis d'execution pour tout binaire compile avec -fstack-protector:
+    sans cela, la premiere lecture du canary (prologue de fonction) leve une
+    erreur memoire non mappee, avant meme qu'un eventuel overflow ne soit
+    atteint. N'implemente aucune logique canary: ecrit une valeur fraiche a
+    chaque trace, a l'emplacement attendu par le code genere par le
+    compilateur -- rien ne depend de sa valeur precise, seul son
+    round-trip (ecriture au prologue, lecture a l'epilogue) doit reussir.
+    """
+    if config.arch_bits != 64:
+        return
+    uc.mem_map(_TLS_AREA_BASE, _TLS_AREA_SIZE, UC_PROT_ALL)
+    uc.mem_write(
+        _TLS_AREA_BASE + _TLS_CANARY_OFFSET,
+        _generate_canary_seed().to_bytes(8, "little", signed=False),
+    )
+    uc.reg_write(UC_X86_REG_FS_BASE, _TLS_AREA_BASE)
 
 
 def align_up(value: int, align: int) -> int:

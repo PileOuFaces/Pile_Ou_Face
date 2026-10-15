@@ -851,6 +851,66 @@ class TestStackFrame(unittest.TestCase):
             )
         )
 
+    def test_thumb_wide_r7_frame_pointer_tracks_locals_and_args(self):
+        class FakeInstr:
+            def __init__(self, mnemonic, op_str):
+                self.mnemonic = mnemonic
+                self.op_str = op_str
+
+        class FakeDisasm:
+            def __init__(self, instrs):
+                self.detail = False
+                self._instrs = instrs
+
+            def disasm(self, _code, _base):
+                return iter(self._instrs)
+
+        instrs = [
+            FakeInstr("push.w", "{r7, lr}"),
+            FakeInstr("sub.w", "sp, sp, #0x10"),
+            FakeInstr("add.w", "r7, sp, #0"),
+            FakeInstr("str", "r0, [r7, #0x4]"),
+            FakeInstr("ldr", "r1, [r7, #0x18]"),
+            FakeInstr("bx", "lr"),
+        ]
+
+        with (
+            mock.patch.object(
+                stack_frame_module, "_get_arch_mode", return_value=(1, 1)
+            ),
+            mock.patch.object(
+                stack_frame_module, "_detect_abi", return_value=("arm", 4, "aapcs32")
+            ),
+            mock.patch.object(
+                stack_frame_module,
+                "_get_code_bytes",
+                return_value=(b"\x90" * 24, 0x600200),
+            ),
+            mock.patch.object(
+                stack_frame_module,
+                "lief",
+                mock.Mock(parse=mock.Mock(return_value=object())),
+            ),
+            mock.patch.object(
+                stack_frame_module,
+                "capstone",
+                mock.Mock(Cs=mock.Mock(return_value=FakeDisasm(instrs))),
+            ),
+        ):
+            data = stack_frame_module.analyse_stack_frame(self.binary, 0x600200)
+
+        self.assertEqual(data["frame_size"], 24)
+        self.assertTrue(
+            any(
+                v["location"] == "[r7+0x4]" and v["offset"] == -20 for v in data["vars"]
+            )
+        )
+        self.assertTrue(
+            any(
+                a["location"] == "[r7+0x18]" and a["offset"] == 24 for a in data["args"]
+            )
+        )
+
     def test_arm64_frame_pointer_anchor_tracks_saved_area_size(self):
         class FakeInstr:
             def __init__(self, mnemonic, op_str):
@@ -996,6 +1056,117 @@ class TestStackFrame(unittest.TestCase):
                     stack_frame_module._update_stack_adjust(0, ins, family, ptr_size),
                     expected,
                 )
+
+    def test_arm32_wide_stack_aliases_are_tracked(self):
+        save = SimpleNamespace(mnemonic="stmfd.w", op_str="sp!, {r7, lr}")
+        restore = SimpleNamespace(mnemonic="ldmfd.w", op_str="sp!, {r7, pc}")
+
+        adjusted = stack_frame_module._update_stack_adjust(0, save, "arm", 4)
+
+        self.assertEqual(adjusted, 8)
+        self.assertEqual(
+            stack_frame_module._update_stack_adjust(adjusted, restore, "arm", 4),
+            0,
+        )
+
+    def test_arm32_vfp_stack_saves_use_register_width(self):
+        cases = [
+            ("{d8-d15}", 64),
+            ("{s16-s31}", 64),
+        ]
+
+        for registers, expected in cases:
+            with self.subTest(registers=registers):
+                save = SimpleNamespace(mnemonic="vpush", op_str=registers)
+                restore = SimpleNamespace(mnemonic="vpop", op_str=registers)
+
+                adjusted = stack_frame_module._update_stack_adjust(0, save, "arm", 4)
+
+                self.assertEqual(adjusted, expected)
+                self.assertEqual(
+                    stack_frame_module._update_stack_adjust(
+                        adjusted, restore, "arm", 4
+                    ),
+                    0,
+                )
+
+    def test_thumb_compact_sp_adjustments_are_tracked(self):
+        allocate = SimpleNamespace(mnemonic="sub", op_str="sp, #0x10")
+        release = SimpleNamespace(mnemonic="add", op_str="sp, #0x10")
+
+        adjusted = stack_frame_module._update_stack_adjust(8, allocate, "arm", 4)
+
+        self.assertEqual(adjusted, 24)
+        self.assertEqual(
+            stack_frame_module._update_stack_adjust(adjusted, release, "arm", 4),
+            8,
+        )
+
+    def test_arm32_indexed_stack_saves_are_tracked(self):
+        cases = [
+            ("str", "lr, [sp, #-4]!", "ldr", "lr, [sp], #4", 4),
+            ("strd.w", "r4, r5, [r13, #-8]!", "ldrd.w", "r4, r5, [r13], #8", 8),
+        ]
+
+        for save_mnemonic, save_ops, restore_mnemonic, restore_ops, expected in cases:
+            with self.subTest(save=save_mnemonic):
+                save = SimpleNamespace(mnemonic=save_mnemonic, op_str=save_ops)
+                restore = SimpleNamespace(mnemonic=restore_mnemonic, op_str=restore_ops)
+
+                adjusted = stack_frame_module._update_stack_adjust(0, save, "arm", 4)
+
+                self.assertEqual(adjusted, expected)
+                self.assertEqual(
+                    stack_frame_module._update_stack_adjust(
+                        adjusted, restore, "arm", 4
+                    ),
+                    0,
+                )
+
+
+@unittest.skipUnless(
+    _lief_available() and _capstone_available(), "lief et capstone requis"
+)
+class TestGetCodeBytesBounding(unittest.TestCase):
+    """_get_code_bytes doit borner sa lecture a max_size, meme si la section
+    est plus grande (evite un scan O(taille_section) par fonction)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.binary_path = str(Path(self.tmp) / "test.elf")
+        make_minimal_elf(self.binary_path)
+        import lief
+
+        self.binary = lief.parse(self.binary_path)
+        self.text_addr = 0x400078  # cf. make_elf.py: base .text de make_minimal_elf
+
+    def test_result_capped_to_max_size(self):
+        result = stack_frame_module._get_code_bytes(
+            self.binary, self.text_addr, max_size=10
+        )
+        self.assertIsNotNone(result)
+        assert result is not None
+        code, addr = result
+        self.assertEqual(len(code), 10)
+        self.assertEqual(addr, self.text_addr)
+
+    def test_default_max_size_matches_constant(self):
+        result = stack_frame_module._get_code_bytes(self.binary, self.text_addr)
+        self.assertIsNotNone(result)
+        assert result is not None
+        code, _ = result
+        self.assertLessEqual(len(code), stack_frame_module._STACK_FRAME_MAX_SCAN_BYTES)
+
+    def test_max_size_never_exceeds_section_bounds(self):
+        # La section .text de make_minimal_elf fait 0x100 octets ; demander
+        # plus large ne doit jamais deborder au-dela de la section.
+        result = stack_frame_module._get_code_bytes(
+            self.binary, self.text_addr, max_size=1_000_000
+        )
+        self.assertIsNotNone(result)
+        assert result is not None
+        code, _ = result
+        self.assertLessEqual(len(code), 0x100)
 
 
 if __name__ == "__main__":

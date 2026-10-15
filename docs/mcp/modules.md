@@ -62,8 +62,9 @@ construite sur `annotation_db.AnnotationDb` (et non plus sur `DisasmCache`) — 
 chemin+mtime).
 
 Les fonctions module-level historiques `load_annotations`/`save_annotation`
-(`(workspace, binary_sha256, ...)`) documentées précédemment ici ne sont **pas**
-utilisées par ces trois tools — elles sont du code mort résiduel, non appelé.
+(`(workspace, binary_sha256, ...)`) et le CLI `--save`/`--load` qui écrivaient
+dans `.pof/annotations.json` ont été retirés : le chemin supporté est
+`AnnotationStore` + SQLite. Les anciens fichiers JSON webview ne sont plus migrés.
 
 ### Input MCP
 ```json
@@ -322,7 +323,7 @@ compute_sha256(path) -> str
 ```
 
 ### Notes MCP
-- `default_cache_path(bp)` → `<workspace>/.pile-ou-face/pfdb/<binary_name>.<hash>.pfdb`
+- `default_cache_path(bp)` → `$POF_STORAGE_DIR/pfdb/<binary_name>.<hash>.pfdb` quand `POF_STORAGE_DIR` est defini, sinon `<binary_dir>/pfdb/<binary_name>.<hash>.pfdb` pour un lancement CLI direct
 - Les chemins sont normalisés en absolu (`os.path.abspath`) avant lookup
 - `invalidate` force le recalcul à la prochaine analyse
 
@@ -979,14 +980,14 @@ purge_binary(db_path: str, binary_path=None) -> int  # 0=all, int=deleted
 [{
   "id": 1, "path": "/abs/path/binary", "hash": "...",
   "created_at": "2026-03-01T12:00:00",
-  "disasm_lines": 299, "symbols": 12, "strings": 47, "annotations": 3
+  "disasm_lines": 299, "symbols": 12, "strings": 47
 }]
 ```
 
 ### Output (stats)
 ```json
 {
-  "db_path": "/abs/path/.pile-ou-face/pfdb/binary.0123abcd4567ef89.pfdb",
+  "db_path": "/abs/storage/pfdb/binary.0123abcd4567ef89.pfdb",
   "size_bytes": 204800, "size_human": "200 KB",
   "binaries": 3, "total_disasm_lines": 12000
 }

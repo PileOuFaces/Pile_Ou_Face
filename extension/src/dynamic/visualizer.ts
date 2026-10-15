@@ -10,6 +10,7 @@ const path = require('path');
 const { resolveProjectRoot } = require('../shared/utils');
 const { getWebviewContent } = require('../shared/webview');
 const { buildFunctionModel, buildMcpPayload, chooseFocusFunction } = require('./pedagogy');
+const { createTelemetryHandlers } = require('../shared/telemetry/telemetryMessageHandler');
 
 /**
  * @brief Crée la fonction openVisualizerWebview.
@@ -17,15 +18,18 @@ const { buildFunctionModel, buildMcpPayload, chooseFocusFunction } = require('./
  * @return openVisualizerWebview(trace)
  */
 function createVisualizer(config) {
-  const { context, logChannel, decorationTypes } = config;
+  const { context, logChannel, decorationTypes, telemetry } = config;
+  const telemetryHandlers = createTelemetryHandlers(telemetry);
   let visualizerPanelRef = null;
   let currentTraceRef = null;
   let functionModelCacheRef = new Map();
 
+  const getBesideColumn = () => vscode?.ViewColumn?.Beside ?? vscode?.ViewColumn?.Two ?? 2;
+
   function openVisualizerWebview(trace) {
     currentTraceRef = trace;
     functionModelCacheRef = new Map();
-    const besideColumn = vscode?.ViewColumn?.Beside ?? vscode?.ViewColumn?.Two ?? 2;
+    const besideColumn = getBesideColumn();
     const getActiveTrace = () => currentTraceRef || trace;
     const getTraceRunId = (traceData) => {
       const raw = traceData?.meta?.trace_run_id;
@@ -100,6 +104,10 @@ function createVisualizer(config) {
 
     visualizerPanel.webview.onDidReceiveMessage(
       async (message) => {
+        if (message?.type === 'pof.telemetry') {
+          await telemetryHandlers['pof.telemetry'](message);
+          return;
+        }
         logChannel.appendLine('[pile-ou-face] webview message: ' + JSON.stringify(message));
         const traceForHandler = getActiveTrace();
         const currentTraceRunId = getTraceRunId(traceForHandler);
@@ -255,6 +263,14 @@ function createVisualizer(config) {
         ...message
       });
     }
+  };
+
+  openVisualizerWebview.revealCurrentTrace = function revealCurrentTrace() {
+    if (visualizerPanelRef && !visualizerPanelRef.disposed) {
+      visualizerPanelRef.reveal(getBesideColumn());
+      return true;
+    }
+    return false;
   };
 
   return openVisualizerWebview;

@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 /**
  * @file utils.js
  * @brief Utilitaires partagés (temp, Python, runCommand, etc.)
@@ -7,9 +6,12 @@
 
 const vscode = require('vscode');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const cp = require('child_process');
+const crypto = require('crypto');
 const logger = require('./logger');
+const { recordRuntimeEvent } = require('./runtimeAudit');
 
 const logChannel = vscode.window.createOutputChannel('Pile ou Face');
 
@@ -23,7 +25,7 @@ const logInfo = (message) => logAt('info', message);
 const logWarning = (message) => logAt('warning', message);
 const logError = (message) => logAt('error', message);
 
-const TEMP_DIR_NAME = '.pile-ou-face';
+const TEMP_DIR_NAME = 'pile-ou-face';
 
 // Singleton initialisé au démarrage avec context.extensionPath.
 // Sépare "où vivent les backends" (extensionPath) de "workspace utilisateur" (root).
@@ -73,7 +75,9 @@ function findGitRoot(dir) {
 }
 
 function getTempDir(root) {
-  return path.resolve(findGitRoot(resolveProjectRoot(root)), TEMP_DIR_NAME);
+  const projectRoot = path.resolve(findGitRoot(resolveProjectRoot(root)) || process.cwd());
+  const key = crypto.createHash('sha256').update(projectRoot).digest('hex').slice(0, 16);
+  return path.join(os.tmpdir(), TEMP_DIR_NAME, key);
 }
 
 function ensureTempDir(root) {
@@ -105,7 +109,7 @@ function ensureStorageDir(context) {
   return dir;
 }
 
-async function ensurePythonDependencies(pythonExe, root, options = {}) {
+async function ensurePythonDependencies(pythonExe, root, options: { quiet?: boolean } = {}) {
   const { quiet = false } = options || {};
   const backendBase = _extensionPath || path.resolve(String(root || '').trim());
   const requirementsPath = path.join(backendBase, 'backends', 'requirements.txt');
@@ -118,7 +122,7 @@ async function ensurePythonDependencies(pythonExe, root, options = {}) {
     if (!fs.existsSync(venvPath)) {
       logChannel.appendLine('[venv] Création du venv…');
       try {
-        await new Promise((resolve, reject) => {
+        await new Promise<void>((resolve, reject) => {
           cp.exec(`${pythonExe} -m venv ${venvPath}`, (error, stdout, stderr) =>
             error ? reject(new Error(stderr)) : resolve());
         });
@@ -147,7 +151,7 @@ async function ensurePythonDependencies(pythonExe, root, options = {}) {
   let needInstall = false;
   for (const dep of coreDeps) {
     try {
-      await new Promise((resolve, reject) => {
+      await new Promise<void>((resolve, reject) => {
         cp.exec(`${pythonExe} -c "import ${dep}"`, (error) => (error ? reject(error) : resolve()));
       });
     } catch {
@@ -161,7 +165,7 @@ async function ensurePythonDependencies(pythonExe, root, options = {}) {
   }
   logChannel.appendLine('[pip] Installation des dépendances…');
   try {
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       cp.execFile(pythonExe, ['-m', 'pip', 'install', '-r', requirementsPath, '--quiet', '--break-system-packages'], (error, stdout, stderr) =>
         error ? reject(new Error(stderr || error.message)) : resolve());
     });
@@ -216,20 +220,11 @@ function resolveDockerExecutable() {
 
 /**
  * Build the runtime env for Python/Docker processes.
- * Accepts two call patterns (backward-compatible):
- *   buildRuntimeEnv(root, storageDir)           — new style: storageDir is a string path
- *   buildRuntimeEnv(root, extraEnv)             — legacy: extraEnv is a plain object
- *   buildRuntimeEnv(root, storageDir, extraEnv) — new style with extra overrides
+ * Accepts buildRuntimeEnv(root, storageDir, extraEnv).
  * When storageDir is provided, injects POF_STORAGE_DIR, DECOMPILERS_CONFIG, COMPILERS_CONFIG.
  */
-function buildRuntimeEnv(root, storageDirOrExtra, extraEnv = {}) {
-  let storageDir = '';
-  let mergedExtra = extraEnv;
-  if (typeof storageDirOrExtra === 'string') {
-    storageDir = storageDirOrExtra;
-  } else if (storageDirOrExtra && typeof storageDirOrExtra === 'object') {
-    mergedExtra = { ...storageDirOrExtra, ...extraEnv };
-  }
+function buildRuntimeEnv(root, storageDir = '', extraEnv: NodeJS.ProcessEnv = {}) {
+  const mergedExtra: NodeJS.ProcessEnv = extraEnv && typeof extraEnv === 'object' ? extraEnv : {};
   const backendBase = _extensionPath || path.resolve(String(root || '').trim());
   const env = { ...process.env, ...mergedExtra };
   if (!mergedExtra.BINHOST_LOG_LEVEL) {
@@ -280,15 +275,32 @@ function check32BitToolchain(output) {
   };
 }
 
-function runCommand(command, args, cwd, output, envOverrides = {}, streamHooks = {}) {
-  const env = buildRuntimeEnv(cwd, envOverrides);
+function runCommand(command, args, cwd, output, envOverrides: NodeJS.ProcessEnv = {}, streamHooks: Record<string, any> = {}) {
+  const env = buildRuntimeEnv(cwd, '', envOverrides);
+  const startedAt = Date.now();
+  let stdoutBytes = 0;
+  let stderrBytes = 0;
   output.appendLine(`[cmd] ${command} ${args.join(' ')}`);
-  return new Promise((resolve, reject) => {
+  return new Promise<void>((resolve, reject) => {
     let settled = false;
     let cancelled = false;
+    let processAuditRecorded = false;
     let cancelSubscription = null;
     let forceKillTimer = null;
     const child = cp.spawn(command, args, { cwd, env });
+    const recordProcessAudit = ({ ok, exitCode = -1 }: { ok: boolean; exitCode?: number }) => {
+      if (processAuditRecorded) return;
+      processAuditRecorded = true;
+      recordRuntimeEvent('process', command, {
+        source: 'runCommand',
+        argc: Array.isArray(args) ? args.length : 0,
+        durationMs: Date.now() - startedAt,
+        ok,
+        exitCode,
+        stdoutBytes,
+        stderrBytes,
+      });
+    };
     const cleanup = () => {
       if (forceKillTimer) {
         clearTimeout(forceKillTimer);
@@ -329,7 +341,9 @@ function runCommand(command, args, cwd, output, envOverrides = {}, streamHooks =
     } else if (typeof token?.onCancellationRequested === 'function') {
       cancelSubscription = token.onCancellationRequested(cancel);
     }
-    const handleChunk = (hook, chunk) => {
+    const handleChunk = (hook, chunk, streamName) => {
+      if (streamName === 'stdout') stdoutBytes += chunk.length || 0;
+      if (streamName === 'stderr') stderrBytes += chunk.length || 0;
       const text = chunk.toString();
       if (typeof hook !== 'function') {
         output.append(text);
@@ -347,10 +361,14 @@ function runCommand(command, args, cwd, output, envOverrides = {}, streamHooks =
       }
       output.append(text);
     };
-    child.stdout.on('data', (d) => handleChunk(streamHooks.onStdoutData, d));
-    child.stderr.on('data', (d) => handleChunk(streamHooks.onStderrData, d));
-    child.on('error', (err) => finish(err));
+    child.stdout.on('data', (d) => handleChunk(streamHooks.onStdoutData, d, 'stdout'));
+    child.stderr.on('data', (d) => handleChunk(streamHooks.onStderrData, d, 'stderr'));
+    child.on('error', (err) => {
+      recordProcessAudit({ ok: false });
+      finish(err);
+    });
     child.on('close', (code) => {
+      recordProcessAudit({ ok: !cancelled && code === 0, exitCode: Number.isFinite(code) ? code : -1 });
       if (cancelled) {
         finish(new Error(`${command} cancelled`));
         return;

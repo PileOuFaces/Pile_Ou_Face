@@ -18,6 +18,64 @@ document.getElementById('btnRefreshFiles')?.addEventListener('click', () => {
   vscode.postMessage({ type: 'listGeneratedFiles' });
 });
 
+function runNaturalLanguageFunctionSearch() {
+  const input = document.getElementById('functionsNlSearchInput');
+  const button = document.getElementById('btnFunctionsNlSearch');
+  const status = document.getElementById('functionsNlSearchStatus');
+  const query = String(input?.value || '').trim();
+  if (!query) {
+    if (status) status.textContent = 'Saisissez une question avant de lancer la recherche.';
+    input?.focus();
+    return;
+  }
+  if (button) button.disabled = true;
+  if (status) status.textContent = 'Classement des fonctions en cours…';
+  vscode.postMessage({ type: 'hubNaturalLanguageSearch', binaryPath: getStaticBinaryPath(), query });
+}
+
+document.getElementById('btnFunctionsNlSearch')?.addEventListener('click', runNaturalLanguageFunctionSearch);
+document.getElementById('functionsNlSearchInput')?.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') runNaturalLanguageFunctionSearch();
+});
+
+function renderNaturalLanguageFunctionSearch(message = {}) {
+  const button = document.getElementById('btnFunctionsNlSearch');
+  const status = document.getElementById('functionsNlSearchStatus');
+  const container = document.getElementById('functionsNlSearchResults');
+  if (button) button.disabled = false;
+  if (!container) return;
+  if (!message.ok) {
+    if (status) status.textContent = String(message.error || 'Recherche impossible.');
+    container.hidden = true;
+    container.innerHTML = '';
+    return;
+  }
+  const results = Array.isArray(message.result?.results) ? message.result.results : [];
+  if (status) status.textContent = results.length
+    ? `${results.length} fonction(s) pertinente(s) parmi ${Number(message.result?.candidate_count || 0)} candidates.`
+    : 'Aucune fonction pertinente trouvée.';
+  container.hidden = !results.length;
+  container.innerHTML = results.map((item) => `
+    <article class="functions-nl-search-result">
+      <div class="functions-nl-search-result-head">
+        <strong>${escapeHtml(String(item.name || item.addr || 'Fonction'))}</strong>
+        <code>${escapeHtml(String(item.addr || ''))}</code>
+        <span class="functions-score">${escapeHtml(String(item.score || 0))}</span>
+        <button type="button" class="btn btn-xs btn-secondary functions-nl-open"
+                data-addr="${escapeHtml(String(item.addr || ''))}"
+                data-name="${escapeHtml(String(item.name || ''))}">Ouvrir</button>
+      </div>
+      <p>${escapeHtml(String(item.reason || ''))}</p>
+    </article>
+  `).join('');
+  container.querySelectorAll('.functions-nl-open').forEach((element) => {
+    element.addEventListener('click', () => {
+      const addr = element.dataset.addr || '';
+      if (addr) openFunctionInView(addr, element.dataset.name || '', 'disasm');
+    });
+  });
+}
+
 document.getElementById('btnPurgeStale')?.addEventListener('click', () => {
   vscode.postMessage({ type: 'purgeStaleCache' });
 });
@@ -736,10 +794,24 @@ function renderDecompilePayload(container, payload) {
   decompileUiState.selectedAddr = payload.full ? '' : (payload.addr || decompileUiState.selectedAddr);
   if (result.error) {
     cancelPendingDecompileHighlight();
+    window.decompileAugmentationController?.setSource(null);
     container.textContent = `Erreur : ${_ERROR_TYPE_MESSAGES[result.error_type] || result.error}`;
     return;
   }
-  const code = result.code || (result.functions || []).map((f) => `// ${f.addr}\n${f.code}`).join('\n\n');
+  const rawCode = result.code || (result.functions || []).map((f) => `// ${f.addr}\n${f.code}`).join('\n\n');
+  window.decompileAugmentationController?.setSource({
+    binaryPath: decompileUiState.renderedBinaryPath,
+    addr: decompileUiState.renderedAddr,
+    functionName: payload.funcName || '',
+    code: rawCode,
+    functions: Array.isArray(result.functions) ? result.functions : [],
+  });
+  const acceptedAugmentation = window.decompileAugmentationController?.state?.result;
+  const code = Array.isArray(acceptedAugmentation?.accepted_ids)
+    && acceptedAugmentation.accepted_ids.length > 0
+    && acceptedAugmentation.augmented_code
+    ? String(acceptedAugmentation.augmented_code)
+    : rawCode;
   const wrap = document.createElement('div');
   const callTargets = extractDecompileCallTargets(code, payload.addr);
   const addressTargets = extractDecompileAddressTargets(code, payload.addr);
@@ -976,6 +1048,22 @@ function renderDecompilePayload(container, payload) {
   tabDataCache.decompile = { binaryPath: decompileUiState.renderedBinaryPath || getStaticBinaryPath() };
 }
 
+function applyAcceptedDecompileAugmentation(result) {
+  const pre = document.querySelector('#decompileContent .decompile-output');
+  const code = String(result?.augmented_code || '');
+  if (!pre || !code) return false;
+  scheduleDecompileHighlight(pre, code, {
+    binaryPath: decompileUiState.renderedBinaryPath,
+    decompiler: decompileUiState.renderedDecompiler,
+    addr: decompileUiState.renderedAddr,
+    activeStackName: decompileUiState.pendingStackEntryName || decompileUiState.activeStackEntryName,
+    searchQuery: decompileUiState.searchQuery || '',
+  });
+  return true;
+}
+
+window.applyAcceptedDecompileAugmentation = applyAcceptedDecompileAugmentation;
+
 function resetHexActiveUiState() {
   (hexActiveUiState.selectedRowEls || []).forEach((el) => {
     if (el?.isConnected) el.classList.remove('hex-row-selected');
@@ -1067,6 +1155,8 @@ function getFunctionScoreClass(level) {
   if (level === 'medium') return 'functions-score-medium';
   return 'functions-score-low';
 }
+
+const FUNCTIONS_TABLE_PAGE_SIZE = 60;
 
 function isAnnotationEntryEmpty(entry) {
   return !entry || (
@@ -1503,6 +1593,8 @@ function renderFunctionDetails(entry) {
   const proofDossiers = Array.isArray(entry.proofDossiers || entry.proof_dossiers) ? (entry.proofDossiers || entry.proof_dossiers) : [];
   const primaryProofDossier = proofDossiers[0] || null;
   const nextSteps = Array.isArray(primaryProofDossier?.next_steps) ? primaryProofDossier.next_steps : (Array.isArray(entry.nextSteps) ? entry.nextSteps : []);
+  const topBreakdown = breakdown.slice(0, 4);
+  const remainingBreakdown = breakdown.slice(4);
   const metaItems = [
     ['Adresse', addr],
     ['Type', String(entry.typeLabel || entry.kind || 'function')],
@@ -1533,11 +1625,16 @@ function renderFunctionDetails(entry) {
         <button type="button" class="btn btn-sm btn-secondary functions-export-action" data-addr="${escapeHtml(addr)}">Dossier</button>
       </div>
     </div>
-    <div class="functions-details-grid">
+    <div class="functions-details-summary">
+      <div class="functions-meta-list functions-meta-list-inline">
+        ${metaItems.slice(0, 6).map(([label, value]) => `<div class="functions-meta-item"><div class="functions-breakdown-label">${escapeHtml(label)}</div><div class="functions-meta-value">${escapeHtml(String(value || '—'))}</div></div>`).join('')}
+      </div>
+    </div>
+    <div class="functions-details-grid functions-details-grid-compact">
       <div class="functions-details-card">
         <h4>Breakdown du score</h4>
         <div class="functions-breakdown-list">
-          ${breakdown.length ? breakdown.map((item) => `
+          ${topBreakdown.length ? topBreakdown.map((item) => `
             <div class="functions-breakdown-item">
               <div class="functions-breakdown-main">
                 <span class="functions-breakdown-label">${escapeHtml(String(item.label || 'Signal'))}</span>
@@ -1547,51 +1644,70 @@ function renderFunctionDetails(entry) {
             </div>
           `).join('') : '<p class="hint">Aucun détail de score disponible.</p>'}
         </div>
-        <h4>Hypothèses de lecture</h4>
-        <div class="functions-evidence-list">
-          ${reasonList.length ? reasonList.map((item) => `<div class="functions-evidence-item"><div class="functions-evidence-title">${escapeHtml(String(item))}</div></div>`).join('') : '<p class="hint">Aucune hypothèse synthétique.</p>'}
-        </div>
+        ${remainingBreakdown.length || reasonList.length ? `
+          <details class="functions-details-disclosure">
+            <summary>Plus de contexte</summary>
+            ${remainingBreakdown.length ? `
+              <div class="functions-breakdown-list">
+                ${remainingBreakdown.map((item) => `
+                  <div class="functions-breakdown-item">
+                    <div class="functions-breakdown-main">
+                      <span class="functions-breakdown-label">${escapeHtml(String(item.label || 'Signal'))}</span>
+                      <span class="functions-breakdown-detail">${escapeHtml(String(item.detail || ''))}</span>
+                    </div>
+                    <span class="functions-breakdown-points">${Number(item.points || 0) > 0 ? '+' : ''}${escapeHtml(String(item.points || 0))}</span>
+                  </div>
+                `).join('')}
+              </div>
+            ` : ''}
+            <h4>Hypothèses de lecture</h4>
+            <div class="functions-evidence-list">
+              ${reasonList.length ? reasonList.map((item) => `<div class="functions-evidence-item"><div class="functions-evidence-title">${escapeHtml(String(item))}</div></div>`).join('') : '<p class="hint">Aucune hypothèse synthétique.</p>'}
+            </div>
+          </details>
+        ` : ''}
       </div>
       <div class="functions-details-card">
-        <h4>Preuves et contexte</h4>
-        <div class="functions-meta-list">
-          ${metaItems.map(([label, value]) => `<div class="functions-meta-item"><div class="functions-breakdown-label">${escapeHtml(label)}</div><div class="functions-meta-value">${escapeHtml(String(value || '—'))}</div></div>`).join('')}
-          ${reviewHint ? `<div class="functions-meta-item"><div class="functions-breakdown-label">Revue</div><div class="functions-meta-value">${escapeHtml(reviewHint)}</div></div>` : ''}
-        </div>
         <h4>Signaux</h4>
         <div class="functions-radar-badges">
           ${signalTags.length ? signalTags.map((tag) => `<span class="functions-radar-badge">${escapeHtml(String(tag))}</span>`).join('') : '<span class="hint">Aucun badge particulier.</span>'}
         </div>
-        ${nextSteps.length ? `
-          <h4>Étapes suggérées</h4>
-          <div class="functions-evidence-list">
-            ${nextSteps.map((step) => `<div class="functions-evidence-item"><div class="functions-evidence-desc">${escapeHtml(String(step))}</div></div>`).join('')}
+        <details class="functions-details-disclosure">
+          <summary>Revue et next steps</summary>
+          ${reviewHint ? `<div class="functions-evidence-item"><div class="functions-breakdown-label">Revue</div><div class="functions-meta-value">${escapeHtml(reviewHint)}</div></div>` : ''}
+          ${nextSteps.length ? `
+            <h4>Étapes suggérées</h4>
+            <div class="functions-evidence-list">
+              ${nextSteps.map((step) => `<div class="functions-evidence-item"><div class="functions-evidence-desc">${escapeHtml(String(step))}</div></div>`).join('')}
+            </div>
+          ` : ''}
+          <h4>Workflow de revue</h4>
+          <div class="functions-review-panel">
+            <div class="functions-review-toolbar">
+              <select class="select-modern functions-review-select" data-addr="${escapeHtml(addr)}">
+                <option value="unreviewed"${reviewStatus === 'unreviewed' ? ' selected' : ''}>Sans revue</option>
+                <option value="todo"${reviewStatus === 'todo' ? ' selected' : ''}>À revoir</option>
+                <option value="in_progress"${reviewStatus === 'in_progress' ? ' selected' : ''}>En cours</option>
+                <option value="reviewed"${reviewStatus === 'reviewed' ? ' selected' : ''}>Reviewée</option>
+                <option value="important"${reviewStatus === 'important' ? ' selected' : ''}>Prioritaire</option>
+              </select>
+              <button type="button" class="btn btn-xs btn-secondary functions-review-save" data-addr="${escapeHtml(addr)}">Enregistrer</button>
+              <button type="button" class="btn btn-xs btn-secondary functions-review-clear" data-addr="${escapeHtml(addr)}">Effacer</button>
+            </div>
+            <textarea class="functions-review-notes" data-addr="${escapeHtml(addr)}" rows="3" placeholder="Notes de revue, next steps, hypothèses…">${escapeHtml(reviewNotes)}</textarea>
+            <div class="functions-review-shortcuts">
+              <button type="button" class="btn btn-xs btn-secondary functions-review-shortcut" data-status="todo">À revoir</button>
+              <button type="button" class="btn btn-xs btn-secondary functions-review-shortcut" data-status="in_progress">En cours</button>
+              <button type="button" class="btn btn-xs btn-secondary functions-review-shortcut" data-status="reviewed">Reviewée</button>
+              <button type="button" class="btn btn-xs btn-secondary functions-review-shortcut" data-status="important">Prioritaire</button>
+            </div>
           </div>
-        ` : ''}
-        <h4>Workflow de revue</h4>
-        <div class="functions-review-panel">
-          <div class="functions-review-toolbar">
-            <select class="select-modern functions-review-select" data-addr="${escapeHtml(addr)}">
-              <option value="unreviewed"${reviewStatus === 'unreviewed' ? ' selected' : ''}>Sans revue</option>
-              <option value="todo"${reviewStatus === 'todo' ? ' selected' : ''}>À revoir</option>
-              <option value="in_progress"${reviewStatus === 'in_progress' ? ' selected' : ''}>En cours</option>
-              <option value="reviewed"${reviewStatus === 'reviewed' ? ' selected' : ''}>Reviewée</option>
-              <option value="important"${reviewStatus === 'important' ? ' selected' : ''}>Prioritaire</option>
-            </select>
-            <button type="button" class="btn btn-xs btn-secondary functions-review-save" data-addr="${escapeHtml(addr)}">Enregistrer</button>
-            <button type="button" class="btn btn-xs btn-secondary functions-review-clear" data-addr="${escapeHtml(addr)}">Effacer</button>
-          </div>
-          <textarea class="functions-review-notes" data-addr="${escapeHtml(addr)}" rows="3" placeholder="Notes de revue, next steps, hypothèses…">${escapeHtml(reviewNotes)}</textarea>
-          <div class="functions-review-shortcuts">
-            <button type="button" class="btn btn-xs btn-secondary functions-review-shortcut" data-status="todo">À revoir</button>
-            <button type="button" class="btn btn-xs btn-secondary functions-review-shortcut" data-status="in_progress">En cours</button>
-            <button type="button" class="btn btn-xs btn-secondary functions-review-shortcut" data-status="reviewed">Reviewée</button>
-            <button type="button" class="btn btn-xs btn-secondary functions-review-shortcut" data-status="important">Prioritaire</button>
-          </div>
-        </div>
+        </details>
       </div>
     </div>
-    <div class="functions-details-grid" style="margin-top:12px;">
+    <details class="functions-details-disclosure functions-details-evidence-disclosure">
+      <summary>Imports, chaînes et annotations</summary>
+      <div class="functions-details-grid" style="margin-top:12px;">
       <div class="functions-details-card">
         <h4>Imports sensibles exacts</h4>
         <div class="functions-evidence-list">
@@ -1638,6 +1754,7 @@ function renderFunctionDetails(entry) {
         </div>
       </div>
     </div>
+    </details>
   `;
 
   container.querySelectorAll('.functions-detail-action').forEach((button) => {
@@ -1881,6 +1998,7 @@ function buildFunctionsRowsFromDiscovered(discovered = []) {
 }
 
 function renderFunctionsWorkspace(rows = [], radar = null, opts = {}) {
+  const workspaceRenderStarted = performance.now();
   const container = document.getElementById('functionsContent');
   const countEl = document.getElementById('functionsCount');
   const searchEl = document.getElementById('functionsSearch');
@@ -1905,23 +2023,36 @@ function renderFunctionsWorkspace(rows = [], radar = null, opts = {}) {
     sortSelect.value = available.includes(functionsUiState.sort) ? functionsUiState.sort : 'priority_desc';
   }
   if (searchEl) {
-    searchEl.oninput = () => renderTable();
+    searchEl.oninput = () => {
+      currentPage = 1;
+      renderTable();
+    };
   }
   if (sortSelect) {
     sortSelect.onchange = () => {
       functionsUiState.sort = sortSelect.value || 'priority_desc';
+      currentPage = 1;
       persistFunctionsUiState();
       renderTable();
     };
   }
   bindFunctionsFilterControls(renderTable);
 
+  let currentPage = 1;
+  let lastFilterKey = '';
+
   function renderTable() {
+    const tableRenderStarted = performance.now();
     const rawFilter = String(searchEl?.value || '').trim().toLowerCase();
     const quickFilter = String(functionsUiState.quickFilter || 'all');
     const reviewFilter = String(functionsUiState.reviewFilter || 'all');
     const signalFilter = String(functionsUiState.signalFilter || 'all');
     const sortMode = String(sortSelect?.value || functionsUiState.sort || 'priority_desc');
+    const filterKey = [rawFilter, quickFilter, reviewFilter, signalFilter, sortMode].join('\u0001');
+    if (filterKey !== lastFilterKey) {
+      currentPage = 1;
+      lastFilterKey = filterKey;
+    }
 
     const filtered = decoratedRows.filter((entry) => {
       const signalTags = Array.isArray(entry.signalTags) ? entry.signalTags : [];
@@ -1967,26 +2098,43 @@ function renderFunctionsWorkspace(rows = [], radar = null, opts = {}) {
       return (parseNumericAddress(a.addr) || 0) - (parseNumericAddress(b.addr) || 0);
     });
 
+    const totalPages = Math.max(1, Math.ceil(filtered.length / FUNCTIONS_TABLE_PAGE_SIZE));
+    currentPage = Math.min(Math.max(1, currentPage), totalPages);
+    const pageStart = (currentPage - 1) * FUNCTIONS_TABLE_PAGE_SIZE;
+    const visibleRows = filtered.slice(pageStart, pageStart + FUNCTIONS_TABLE_PAGE_SIZE);
+    const renderPagination = (placement) => {
+      if (totalPages <= 1) return '';
+      return `
+        <div class="functions-pagination ${placement === 'top' ? 'top' : 'bottom'}">
+          <span class="hint">${escapeHtml(String(pageStart + 1))}-${escapeHtml(String(pageStart + visibleRows.length))} / ${escapeHtml(String(filtered.length))}</span>
+          <div class="functions-pagination-actions">
+            <button type="button" class="btn btn-xs btn-secondary" data-functions-page="prev"${currentPage <= 1 ? ' disabled' : ''}>Previous</button>
+            <span class="functions-pagination-current">Page ${escapeHtml(String(currentPage))} / ${escapeHtml(String(totalPages))}</span>
+            <button type="button" class="btn btn-xs btn-secondary" data-functions-page="next"${currentPage >= totalPages ? ' disabled' : ''}>Next</button>
+          </div>
+        </div>
+      `;
+    };
+
     if (countEl) {
       const hotCount = filtered.filter((entry) => Number(entry.priorityScore || 0) >= 52).length;
-      countEl.textContent = `${filtered.length} fonction(s) · ${hotCount} chaude(s)`;
+      countEl.textContent = `${filtered.length} function(s) · ${hotCount} hot · page ${currentPage}/${totalPages}`;
     }
 
-      const selectedAddr = getFunctionRowByAddr(functionsUiState.selectedAddr, filtered)?.addr
-      || filtered[0]?.addr
-      || '';
+    const selectedInVisibleRows = getFunctionRowByAddr(functionsUiState.selectedAddr, visibleRows);
+    const selectedAddr = selectedInVisibleRows?.addr || visibleRows[0]?.addr || '';
     if (selectedAddr) {
       functionsUiState.selectedAddr = selectedAddr;
       persistFunctionsUiState();
     }
 
     if (!filtered.length) {
-      container.innerHTML = '<p class="hint">Aucune fonction ne correspond aux filtres actifs.</p>';
+      container.innerHTML = '<p class="hint">No functions match the active filters.</p>';
       renderFunctionDetails(null);
       return;
     }
 
-    const tbody = filtered.map((entry) => {
+    const tbody = visibleRows.map((entry) => {
       const scoreClass = getFunctionScoreClass(entry.priorityLevel);
       const subtitle = entry.focusSummary || entry.reasons?.[0] || 'Signal faible';
       const metrics = [];
@@ -2027,6 +2175,7 @@ function renderFunctionsWorkspace(rows = [], radar = null, opts = {}) {
     }).join('');
 
     container.innerHTML = `
+      ${renderPagination('top')}
       <table class="data-table functions-table">
         <thead>
           <tr>
@@ -2040,39 +2189,65 @@ function renderFunctionsWorkspace(rows = [], radar = null, opts = {}) {
         </thead>
         <tbody>${tbody}</tbody>
       </table>
+      ${renderPagination('bottom')}
     `;
 
-    container.querySelectorAll('tbody tr[data-addr]').forEach((rowEl) => {
-      rowEl.addEventListener('click', (event) => {
-        if (event.target?.closest('.addr-link, .functions-row-action')) return;
-        selectFunctionRow(rowEl.dataset.addr || '', decoratedRows);
+    container.onclick = (event) => {
+      const target = event.target;
+      const pageButton = target?.closest('[data-functions-page]');
+      if (pageButton) {
+        if (pageButton.dataset.functionsPage === 'prev') currentPage -= 1;
+        if (pageButton.dataset.functionsPage === 'next') currentPage += 1;
         renderTable();
-      });
-    });
-    container.querySelectorAll('.addr-link').forEach((el) => {
-      el.style.cursor = 'pointer';
-      el.onclick = () => {
-        const addr = el.dataset.addr || '';
+        return;
+      }
+      const action = target?.closest('.functions-row-action');
+      if (action) {
+        const addr = action.dataset.addr || '';
+        selectFunctionRow(addr, decoratedRows);
+        openFunctionInView(addr, action.dataset.name || '', action.dataset.view || 'disasm');
+        return;
+      }
+      const addrLink = target?.closest('.addr-link');
+      if (addrLink) {
+        const addr = addrLink.dataset.addr || '';
         selectFunctionRow(addr, decoratedRows);
         vscode.postMessage({ type: 'hubGoToAddress', addr, binaryPath: getStaticBinaryPath() });
-      };
-    });
-    container.querySelectorAll('.functions-row-action').forEach((el) => {
-      el.onclick = () => {
-        const addr = el.dataset.addr || '';
-        selectFunctionRow(addr, decoratedRows);
-        openFunctionInView(addr, el.dataset.name || '', el.dataset.view || 'disasm');
-      };
-    });
+        return;
+      }
+      const rowEl = target?.closest('tbody tr[data-addr]');
+      if (rowEl) {
+        selectFunctionRow(rowEl.dataset.addr || '', decoratedRows);
+        container.querySelectorAll('tbody tr[data-addr]').forEach((row) => {
+          const rowAddr = normalizeHexAddress(row.dataset.addr || '');
+          row.classList.toggle('functions-row-selected', rowAddr === functionsUiState.selectedAddr);
+        });
+      }
+    };
 
     updateActiveNavRows(window._lastDisasmAddr);
     renderFunctionDetails(getFunctionRowByAddr(selectedAddr, decoratedRows));
+    window.reportPofWebviewPerf?.('functions.table.render', {
+      elapsedMs: Math.round((performance.now() - tableRenderStarted) * 10) / 10,
+      rowsTotal: decoratedRows.length,
+      rowsFiltered: filtered.length,
+      rowsRendered: visibleRows.length,
+      page: currentPage,
+      totalPages,
+      selectedAddr: functionsUiState.selectedAddr || '',
+    }, { afterPaint: true });
   }
 
   renderTable();
+  window.reportPofWebviewPerf?.('functions.workspace.render', {
+    elapsedMs: Math.round((performance.now() - workspaceRenderStarted) * 10) / 10,
+    rowsTotal: decoratedRows.length,
+    sourceMode: opts?.sourceMode || '',
+  }, { afterPaint: true });
 }
 
 function renderFunctionsRadar(radar = {}) {
+  const renderStarted = performance.now();
   const container = document.getElementById('functionsRadar');
   if (!container) return;
   if (radar?.error) {
@@ -2098,21 +2273,20 @@ function renderFunctionsRadar(radar = {}) {
       <div class="functions-radar-row">
         <div class="functions-radar-row-main">
           <div class="functions-radar-row-title">
-            <span class="functions-radar-row-name">${escapeHtml(name)}</span>
-            <code class="addr-link" data-addr="${escapeHtml(addr)}">${escapeHtml(addr)}</code>
+            <div class="functions-radar-row-id">
+              <span class="functions-radar-row-name">${escapeHtml(name)}</span>
+              <code class="addr-link" data-addr="${escapeHtml(addr)}">${escapeHtml(addr)}</code>
+            </div>
+            <div class="functions-radar-row-tools">
+              <span class="functions-score ${scoreClass}">${escapeHtml(String(score))}</span>
+              <button type="button" class="btn btn-xs btn-secondary functions-radar-action" data-view="disasm" data-addr="${escapeHtml(addr)}" data-name="${escapeHtml(name)}">${escapeHtml(actionLabel)}</button>
+            </div>
           </div>
           <div class="functions-radar-row-summary">${escapeHtml(summaryText)}</div>
           <div class="functions-radar-badges">
             ${badges.map((tag) => `<span class="functions-radar-badge">${escapeHtml(String(tag))}</span>`).join('')}
           </div>
-          <div class="functions-radar-actions">
-            <button type="button" class="btn btn-xs btn-secondary functions-radar-action" data-view="disasm" data-addr="${escapeHtml(addr)}" data-name="${escapeHtml(name)}">${escapeHtml(actionLabel)}</button>
-            <button type="button" class="btn btn-xs btn-secondary functions-radar-action" data-view="decompile" data-addr="${escapeHtml(addr)}" data-name="${escapeHtml(name)}">Pseudo-C</button>
-            <button type="button" class="btn btn-xs btn-secondary functions-radar-action" data-view="cfg" data-addr="${escapeHtml(addr)}" data-name="${escapeHtml(name)}">CFG</button>
-            <button type="button" class="btn btn-xs btn-secondary functions-radar-action" data-view="callgraph" data-addr="${escapeHtml(addr)}" data-name="${escapeHtml(name)}">Graph</button>
-          </div>
         </div>
-        <span class="functions-score ${scoreClass}">${escapeHtml(String(score))}</span>
       </div>
     `;
   };
@@ -2131,31 +2305,14 @@ function renderFunctionsRadar(radar = {}) {
       <div>
         <p class="static-kicker">Radar</p>
         <h4 class="functions-radar-title">Priorisation intelligente des fonctions</h4>
-        <p class="functions-radar-desc">
-          ${escapeHtml(sourceLabel)}. Le radar combine structure, centralité, imports sensibles, chaînes parlantes et annotations pour indiquer où commencer.
-        </p>
+        <p class="functions-radar-desc">${escapeHtml(sourceLabel)}</p>
       </div>
-    </div>
-    <div class="functions-radar-summary">
-      <div class="functions-radar-stat">
-        <span class="functions-radar-stat-label">Fonctions</span>
-        <strong class="functions-radar-stat-value">${escapeHtml(String(summary.function_count || 0))}</strong>
-      </div>
-      <div class="functions-radar-stat">
-        <span class="functions-radar-stat-label">Hotspots</span>
-        <strong class="functions-radar-stat-value">${escapeHtml(String(summary.hotspot_count || 0))}</strong>
-      </div>
-      <div class="functions-radar-stat">
-        <span class="functions-radar-stat-label">Imports sensibles</span>
-        <strong class="functions-radar-stat-value">${escapeHtml(String(summary.suspicious_import_sites || 0))}</strong>
-      </div>
-      <div class="functions-radar-stat">
-        <span class="functions-radar-stat-label">Chaînes parlantes</span>
-        <strong class="functions-radar-stat-value">${escapeHtml(String(summary.suspicious_string_sites || 0))}</strong>
-      </div>
-      <div class="functions-radar-stat">
-        <span class="functions-radar-stat-label">Fonctions annotées</span>
-        <strong class="functions-radar-stat-value">${escapeHtml(String(summary.annotated_functions || 0))}</strong>
+      <div class="functions-radar-kpis">
+        <span class="functions-radar-kpi"><strong>${escapeHtml(String(summary.function_count || 0))}</strong> fonctions</span>
+        <span class="functions-radar-kpi"><strong>${escapeHtml(String(summary.hotspot_count || 0))}</strong> hotspots</span>
+        <span class="functions-radar-kpi"><strong>${escapeHtml(String(summary.suspicious_import_sites || 0))}</strong> imports</span>
+        <span class="functions-radar-kpi"><strong>${escapeHtml(String(summary.suspicious_string_sites || 0))}</strong> chaînes</span>
+        <span class="functions-radar-kpi"><strong>${escapeHtml(String(summary.annotated_functions || 0))}</strong> annotées</span>
       </div>
     </div>
     <div class="functions-radar-grid">
@@ -2165,19 +2322,25 @@ function renderFunctionsRadar(radar = {}) {
           ${hotspots.length ? hotspots.slice(0, 5).map((entry) => renderRow(entry, 'Ouvrir')).join('') : '<p class="hint">Aucun hotspot marqué pour ce binaire.</p>'}
         </div>
       </div>
-      <div class="functions-radar-card">
-        <h4 class="functions-radar-card-title">Entrées rapides</h4>
-        <div class="functions-radar-list">
-          ${entryCandidates.length ? entryCandidates.slice(0, 4).map((entry) => renderRow(entry, 'Entrer')).join('') : '<p class="hint">Aucune entrée candidate claire.</p>'}
-        </div>
-        <h4 class="functions-radar-card-title">Quick wins</h4>
-        <div class="functions-radar-list">
-          ${quickWins.length ? quickWins.slice(0, 3).map((entry) => renderRow(entry, 'Zoomer')).join('') : '<p class="hint">Pas de petite cible à haute valeur pour le moment.</p>'}
-        </div>
-        <h4 class="functions-radar-card-title">Familles de signaux</h4>
-        <div class="functions-radar-clusters">
-          ${clusters.length ? clusters.map((cluster) => `<span class="functions-radar-cluster">${escapeHtml(String(cluster.name || 'signal'))}<strong>${escapeHtml(String(cluster.count || 0))}</strong></span>`).join('') : '<span class="hint">Aucune famille dominante</span>'}
-        </div>
+      <div class="functions-radar-side">
+        <details class="functions-radar-card functions-radar-disclosure" open>
+          <summary class="functions-radar-card-title">Entrées rapides</summary>
+          <div class="functions-radar-list">
+            ${entryCandidates.length ? entryCandidates.slice(0, 3).map((entry) => renderRow(entry, 'Entrer')).join('') : '<p class="hint">Aucune entrée candidate claire.</p>'}
+          </div>
+        </details>
+        <details class="functions-radar-card functions-radar-disclosure">
+          <summary class="functions-radar-card-title">Quick wins</summary>
+          <div class="functions-radar-list">
+            ${quickWins.length ? quickWins.slice(0, 2).map((entry) => renderRow(entry, 'Zoomer')).join('') : '<p class="hint">Pas de petite cible à haute valeur pour le moment.</p>'}
+          </div>
+        </details>
+        <details class="functions-radar-card functions-radar-disclosure">
+          <summary class="functions-radar-card-title">Familles de signaux</summary>
+          <div class="functions-radar-clusters">
+            ${clusters.length ? clusters.map((cluster) => `<span class="functions-radar-cluster">${escapeHtml(String(cluster.name || 'signal'))}<strong>${escapeHtml(String(cluster.count || 0))}</strong></span>`).join('') : '<span class="hint">Aucune famille dominante</span>'}
+          </div>
+        </details>
       </div>
     </div>
   `;
@@ -2200,6 +2363,13 @@ function renderFunctionsRadar(radar = {}) {
       }
     });
   });
+  window.reportPofWebviewPerf?.('functions.radar.render', {
+    elapsedMs: Math.round((performance.now() - renderStarted) * 10) / 10,
+    hotspots: hotspots.length,
+    quickWins: quickWins.length,
+    entryCandidates: entryCandidates.length,
+    clusters: clusters.length,
+  }, { afterPaint: true });
 }
 
 function normalizeSpanLength(value) {
@@ -3157,115 +3327,6 @@ document.getElementById('btnDecompileSearchNext')?.addEventListener('click', () 
 });
 updateDecompileHistoryControls();
 updateDecompileSearchUi();
-
-// ── Script panel ──────────────────────────────────────────────────
-(function initScriptPanel() {
-  const editor = document.getElementById('scriptEditor');
-  const output = document.getElementById('scriptOutput');
-  const status = document.getElementById('scriptStatus');
-  const runBtn = document.getElementById('btnRunScript');
-  const saveBtn = document.getElementById('btnSaveScript');
-  const loadBtn = document.getElementById('btnLoadScript');
-  const clearBtn = document.getElementById('btnClearScript');
-  const splitter = document.getElementById('scriptSplitter');
-  if (!editor) return;
-
-  const saved = _loadStorage();
-  if (saved.scriptCode) editor.value = saved.scriptCode;
-
-  let _saveTimer;
-  editor.addEventListener('input', () => {
-    clearTimeout(_saveTimer);
-    _saveTimer = setTimeout(() => _saveStorage({ scriptCode: editor.value }), 500);
-  });
-
-  function runScript() {
-    const code = editor.value.trim();
-    if (!code) return;
-    runBtn.setAttribute('disabled', 'true');
-    status.textContent = '⏳ Exécution…';
-    output.textContent = '';
-    output.className = 'sc-output';
-
-    const binaryPath = document.querySelector('input[name="binaryPath"]')?.value || '';
-    const b64 = btoa(unescape(encodeURIComponent(code)));
-    vscode.postMessage({ type: 'hubRunScript', code: b64, binaryPath });
-  }
-
-  runBtn?.addEventListener('click', runScript);
-
-  editor.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-      e.preventDefault();
-      runScript();
-    }
-    if (e.key === 'Tab') {
-      e.preventDefault();
-      const start = editor.selectionStart;
-      editor.value = editor.value.substring(0, start) + '    ' + editor.value.substring(editor.selectionEnd);
-      editor.selectionStart = editor.selectionEnd = start + 4;
-    }
-  });
-
-  saveBtn?.addEventListener('click', () => {
-    const name = prompt('Nom du script :', 'script.py');
-    if (!name) return;
-    vscode.postMessage({ type: 'hubSaveScript', name, content: editor.value });
-  });
-
-  loadBtn?.addEventListener('click', () => {
-    vscode.postMessage({ type: 'hubLoadScript' });
-  });
-
-  clearBtn?.addEventListener('click', () => {
-    editor.value = '';
-    output.textContent = '';
-    output.className = 'sc-output';
-    status.textContent = '';
-    _saveStorage({ scriptCode: '' });
-  });
-
-  if (splitter) {
-    const editorWrap = editor.closest('.sc-editor-wrap');
-    const outputWrap = output.closest('.sc-output-wrap');
-    let dragging = false;
-
-    splitter.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      dragging = true;
-      document.body.style.cursor = 'row-resize';
-      document.body.style.userSelect = 'none';
-    });
-
-    document.addEventListener('mousemove', (e) => {
-      if (!dragging || !editorWrap || !outputWrap) return;
-      const container = editorWrap.parentElement;
-      const rect = container.getBoundingClientRect();
-      const y = e.clientY - rect.top;
-      const toolbarH = container.querySelector('.sc-toolbar')?.offsetHeight || 0;
-      const splitterH = splitter.offsetHeight;
-      const available = rect.height - toolbarH - splitterH;
-      const editorH = Math.max(60, Math.min(available - 60, y - toolbarH));
-      editorWrap.style.flex = 'none';
-      editorWrap.style.height = editorH + 'px';
-      outputWrap.style.flex = '1';
-      _saveStorage({ scriptSplitH: editorH });
-    });
-
-    document.addEventListener('mouseup', () => {
-      if (dragging) {
-        dragging = false;
-        document.body.style.cursor = '';
-        document.body.style.userSelect = '';
-      }
-    });
-
-    if (saved.scriptSplitH) {
-      editorWrap.style.flex = 'none';
-      editorWrap.style.height = saved.scriptSplitH + 'px';
-    }
-  }
-})();
 
 // Payload conversion
 document.getElementById('btnPayloadToHex')?.addEventListener('click', doPayloadConvert);

@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 
 function createLoaders({
   panel,
@@ -17,6 +16,7 @@ function createLoaders({
   getSectionsScript,
   getXrefsScript,
 }) {
+  const MAX_CACHED_STRINGS = 5000;
   const {
     resolveBinaryInputContext,
     buildPseudoRawInfo,
@@ -32,7 +32,7 @@ function createLoaders({
     cacheKey,
     cacheOptions = undefined,
     logLabel = null,
-    isCacheUsable = () => true,
+    isCacheUsable = (_cached = undefined) => true,
     compute,
     useCache = true,
   }) => {
@@ -55,7 +55,7 @@ function createLoaders({
     hubLoadSymbols: async (message) => {
       const { absPath, exists, isDirectory } = resolveBinaryInputContext(message.binaryPath, message.binaryMeta || null);
       if (!exists || isDirectory) {
-        hubPost('hubSymbols', { symbols: [] });
+        hubPost('hubSymbols', { binaryPath: absPath, symbols: [] });
         return;
       }
       try {
@@ -64,11 +64,11 @@ function createLoaders({
           cacheKey: 'symbols',
           logLabel: 'Symboles',
           useCache: message.useCache !== false,
-          compute: () => loadBinarySymbols(absPath),
+          compute: () => loadBinarySymbols(absPath, { useCache: false }),
         });
-        hubPost('hubSymbols', { symbols });
+        hubPost('hubSymbols', { binaryPath: absPath, symbols });
       } catch (_) {
-        hubPost('hubSymbols', { symbols: [] });
+        hubPost('hubSymbols', { binaryPath: absPath, symbols: [] });
       }
     },
 
@@ -78,7 +78,7 @@ function createLoaders({
       const encoding = message.encoding || 'utf-8';
       const section = (message.section || '').trim() || null;
       if (!exists || isDirectory) {
-        hubPost('hubStrings', { strings: [] });
+        hubPost('hubStrings', { binaryPath: absPath, strings: [] });
         return;
       }
       try {
@@ -88,7 +88,7 @@ function createLoaders({
         // Section filtering stays in Python (uses file-offset ranges, not VA — correct for PE RVA).
         const BASE_MIN_LEN = 4;
         const extractMinLen = Math.min(minLen, BASE_MIN_LEN);
-        const opts = { minLen: extractMinLen, encoding };
+        const opts: Record<string, any> = { minLen: extractMinLen, encoding, maxResults: MAX_CACHED_STRINGS };
         if (section) opts.section = section;
         const allStrings = await resolveCachedBinaryView({
           absPath,
@@ -99,7 +99,12 @@ function createLoaders({
           isCacheUsable: (cached) => Array.isArray(cached) && cached.length > 0,
           compute: async () => {
             const scriptPath = getStringsScript(root);
-            const args = ['--binary', absPath, '--min-len', String(extractMinLen), '--encoding', encoding];
+            const args = [
+              '--binary', absPath,
+              '--min-len', String(extractMinLen),
+              '--encoding', encoding,
+              '--max-results', String(MAX_CACHED_STRINGS),
+            ];
             if (section) args.push('--section', section);
             const tmpFile = path.join(storageDir, `strings_${Date.now()}.json`);
             return runPythonJsonViaFile(scriptPath, args, tmpFile);
@@ -109,9 +114,9 @@ function createLoaders({
         // minLen filtering is the frontend's responsibility (renderStringsTable).
         // The extension sends the full set for the requested (encoding, section) so that
         // switching minLen never requires a round-trip.
-        hubPost('hubStrings', { strings: Array.isArray(allStrings) ? allStrings : [] });
+        hubPost('hubStrings', { binaryPath: absPath, strings: Array.isArray(allStrings) ? allStrings : [] });
       } catch (_) {
-        hubPost('hubStrings', { strings: [] });
+        hubPost('hubStrings', { binaryPath: absPath, strings: [] });
       }
     },
 
@@ -124,16 +129,16 @@ function createLoaders({
         binaryMeta,
       } = resolveBinaryInputContext(message.binaryPath, message.binaryMeta || null);
       if (!binaryPath) {
-        hubPost('hubBinaryInfo', { info: { error: 'Indiquez un chemin binaire.' } });
+        hubPost('hubBinaryInfo', { binaryPath: absPath, info: { error: 'Indiquez un chemin binaire.' } });
         return;
       }
       if (!exists || isDirectory) {
-        hubPost('hubBinaryInfo', { info: { error: `Binaire introuvable: ${binaryPath}` } });
+        hubPost('hubBinaryInfo', { binaryPath: absPath, info: { error: `Binaire introuvable: ${binaryPath}` } });
         return;
       }
       try {
         if (binaryMeta.kind === 'raw') {
-          hubPost('hubBinaryInfo', { info: buildPseudoRawInfo(absPath, binaryMeta.rawConfig) });
+          hubPost('hubBinaryInfo', { binaryPath: absPath, info: buildPseudoRawInfo(absPath, binaryMeta.rawConfig) });
           return;
         }
         const info = await resolveCachedBinaryView({
@@ -148,12 +153,12 @@ function createLoaders({
             && typeof cached.endianness === 'string'
             && cached.endianness
           ),
-          compute: () => loadBinaryHeaders(absPath),
+          compute: () => loadBinaryHeaders(absPath, { useCache: false }),
         });
-        hubPost('hubBinaryInfo', { info });
+        hubPost('hubBinaryInfo', { binaryPath: absPath, info });
       } catch (err) {
         logChannel.appendLine(`[headers] ${err.message}`);
-        hubPost('hubBinaryInfo', { info: { error: err.message || 'Impossible de lire les infos' } });
+        hubPost('hubBinaryInfo', { binaryPath: absPath, info: { error: err.message || 'Impossible de lire les infos' } });
       }
     },
 
@@ -166,17 +171,18 @@ function createLoaders({
         binaryMeta,
       } = resolveBinaryInputContext(message.binaryPath, message.binaryMeta || null);
       if (!binaryPath) {
-        hubPost('hubSections', { sections: [], error: 'Indiquez un chemin binaire.' });
+        hubPost('hubSections', { binaryPath: absPath, sections: [], error: 'Indiquez un chemin binaire.' });
         return;
       }
       if (!exists || isDirectory) {
-        hubPost('hubSections', { sections: [], error: `Binaire introuvable: ${binaryPath}` });
+        hubPost('hubSections', { binaryPath: absPath, sections: [], error: `Binaire introuvable: ${binaryPath}` });
         return;
       }
       try {
         if (binaryMeta.kind === 'raw') {
           const stats = fs.statSync(absPath);
           hubPost('hubSections', {
+            binaryPath: absPath,
             sections: [{
               name: 'raw',
               offset: '0x0',
@@ -198,10 +204,10 @@ function createLoaders({
             return Array.isArray(rawSections) ? rawSections : (rawSections.sections || []);
           },
         });
-        hubPost('hubSections', { sections });
+        hubPost('hubSections', { binaryPath: absPath, sections });
       } catch (err) {
         logChannel.appendLine(`[sections] ${err.message}`);
-        hubPost('hubSections', { sections: [], error: err.message });
+        hubPost('hubSections', { binaryPath: absPath, sections: [], error: err.message });
       }
     },
 
@@ -228,7 +234,7 @@ function createLoaders({
       try {
         if (!fs.existsSync(mappingPath)) {
           if (!hasAnalyzableBinary) {
-            hubPost('hubXrefs', { addr, refs: [], targets: [], mode, requestKey, error: 'Mapping introuvable. Ouvrez d\'abord le désassemblage.' });
+            hubPost('hubXrefs', { binaryPath, addr, refs: [], targets: [], mode, requestKey, error: 'Mapping introuvable. Ouvrez d\'abord le désassemblage.' });
             return;
           }
         }
@@ -248,6 +254,7 @@ function createLoaders({
           '--mode', mode,
         ]);
         hubPost('hubXrefs', {
+          binaryPath,
           addr,
           refs: parsed.refs || [],
           targets: parsed.targets || [],
@@ -256,19 +263,28 @@ function createLoaders({
         });
       } catch (err) {
         logChannel.appendLine(`[Xrefs] ${err.message}`);
-        hubPost('hubXrefs', { addr, refs: [], targets: [], mode, requestKey });
+        hubPost('hubXrefs', {
+          binaryPath,
+          addr,
+          refs: [],
+          targets: [],
+          mode,
+          requestKey,
+          error: err.message || String(err),
+        });
       }
     },
 
     getSymbols: async (message) => {
       const { absPath, exists, isDirectory } = resolveBinaryInputContext(message.binaryPath, message.binaryMeta || null);
+      const responseBinaryPath = absPath || String(message.binaryPath || '');
       let symbols = [];
       if (exists && !isDirectory) {
         try {
           symbols = collectSymbolNames(await loadBinarySymbols(absPath));
         } catch (_) { /* symbol extraction failed */ }
       }
-      panel.webview.postMessage({ type: 'symbols', symbols });
+      panel.webview.postMessage({ type: 'symbols', binaryPath: responseBinaryPath, symbols });
     },
   };
 }

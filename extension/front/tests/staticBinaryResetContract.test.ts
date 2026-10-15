@@ -28,6 +28,11 @@ describe("static binary reset contract", () => {
     expect(body).to.include("tabDataCache = {}");
     expect(body).to.include("window.sectionsCache = []");
     expect(body).to.include("window._annotations = {}");
+    expect(body).to.include("annotationBadge.dataset.addr = ''");
+    expect(body).to.include("annotationName.value = ''");
+    expect(body).to.include("annotationComment.value = ''");
+    expect(body).to.include("annotationSubmit.disabled = true");
+    expect(body).to.include("renderAnnotationsList({})");
   });
 
   it("documents which state each reset helper owns", () => {
@@ -43,6 +48,9 @@ describe("static binary reset contract", () => {
     expect(stackDecompile).to.include("decompileUiState.renderedBinaryPath = ''");
 
     const typedData = functionBody(source, "resetTypedDataDerivedState");
+    expect(typedData).to.include("typedDataUiState.structSource = ''");
+    expect(typedData).to.include("typedDataUiState.structs = []");
+    expect(typedData).to.include("typedDataUiState.structsLoaded = false");
     expect(typedData).to.include("typedDataUiState.appliedStructName = ''");
     expect(typedData).to.include("typedDataUiState.hexStructPreview = null");
 
@@ -50,5 +58,15 @@ describe("static binary reset contract", () => {
     expect(graphs).to.include("cfgUiState.funcAddr = ''");
     expect(graphs).to.include("callGraphUiState.binaryPath = ''");
     expect(graphs).to.include("window._pendingCfgHighlightAddr = null");
+  });
+
+  it("keeps the binary picker open when static analysis starts from an empty workspace", () => {
+    const source = outilsSource();
+    const quickActionsStart = source.indexOf("// Quick actions");
+    expect(quickActionsStart).to.be.greaterThan(-1);
+    const quickActions = source.slice(quickActionsStart);
+
+    expect(quickActions).to.include("card.addEventListener('click', (event) => {");
+    expect(quickActions).to.include("event.stopPropagation();\n        openBinaryMenu();");
   });
 });

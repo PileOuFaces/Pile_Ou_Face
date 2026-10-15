@@ -1,0 +1,211 @@
+(function (root) {
+  'use strict';
+
+  function flattenItems(proposal) {
+    const items = [];
+    if (proposal?.summary) items.push({ id: 'summary', text: proposal.summary, kind: 'summary' });
+    for (const kind of ['renames', 'comments', 'types']) {
+      for (const item of proposal?.[kind] || []) items.push({ ...item, kind });
+    }
+    if (proposal?.prototype) items.push({ ...proposal.prototype, kind: 'prototype' });
+    return items;
+  }
+
+  function itemLabel(item) {
+    if (item.kind === 'summary') return `Résumé : ${item.text}`;
+    if (item.kind === 'renames') return `${item.from} → ${item.to}`;
+    if (item.kind === 'comments') return `Commentaire : ${item.text}`;
+    if (item.kind === 'types') return `${item.name} : ${item.type}`;
+    return `Prototype : ${item.value}`;
+  }
+
+  function createController(options) {
+    const document = options.document;
+    const postMessage = options.postMessage;
+    const applyAccepted = options.applyAccepted || (() => {});
+    const state = { source: null, result: null, loading: false, view: 'augmented' };
+    const el = (id) => document.getElementById(id);
+
+    function setStatus(text, tone) {
+      const node = el('decompileAugmentStatus');
+      if (!node) return;
+      node.textContent = text || '';
+      node.dataset.tone = tone || '';
+    }
+
+    function setBusy(value) {
+      state.loading = Boolean(value);
+      const button = el('btnAugmentDecompile');
+      if (button) {
+        button.disabled = state.loading || !state.source?.code;
+        button.textContent = state.loading ? '✦ Analyse…' : '✦ Augmenter';
+        button.title = state.source?.addr
+          ? 'Proposer des noms, types et commentaires pour cette fonction'
+          : 'Choisissez une fonction avant de lancer l’augmentation';
+      }
+    }
+
+    function renderCode() {
+      const code = el('decompileAugmentCode');
+      if (!code || !state.result) return;
+      code.textContent = state.view === 'raw' ? state.result.raw_code : state.result.augmented_code;
+      for (const button of document.querySelectorAll('[data-augment-view]')) {
+        button.classList.toggle('active', button.dataset.augmentView === state.view);
+      }
+    }
+
+    function renderResult(result) {
+      state.result = result;
+      const panel = el('decompileAugmentReview');
+      const list = el('decompileAugmentSuggestions');
+      if (!panel || !list) return;
+      list.replaceChildren();
+      const items = flattenItems(result.proposal);
+      for (const item of items) {
+        const label = document.createElement('label');
+        label.className = 'decompile-augment-suggestion';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = result.accepted_ids?.length ? result.accepted_ids.includes(item.id) : true;
+        checkbox.dataset.suggestionId = item.id;
+        const body = document.createElement('span');
+        const title = document.createElement('strong');
+        title.textContent = itemLabel(item);
+        const reason = document.createElement('small');
+        reason.textContent = item.reason || '';
+        body.append(title, reason);
+        label.append(checkbox, body);
+        list.appendChild(label);
+      }
+      panel.hidden = false;
+      const summary = el('decompileAugmentSummary');
+      if (summary) summary.textContent = result.proposal?.summary || `${items.length} suggestion(s)`;
+      setStatus(result.cached ? 'Proposition chargée depuis le cache.' : 'Proposition prête à vérifier.', 'success');
+      renderCode();
+    }
+
+    function request() {
+      if (!state.source?.code || state.loading) return false;
+      if (!state.source.addr) {
+        setStatus('Choisissez une fonction dans la liste avant de lancer l’augmentation IA.', 'warning');
+        return false;
+      }
+      setBusy(true);
+      setStatus('Analyse structurée en cours…', 'progress');
+      postMessage({ type: 'hubAugmentDecompile', ...state.source });
+      return true;
+    }
+
+    function accept() {
+      if (!state.result || state.loading) return false;
+      const selectedIds = Array.from(document.querySelectorAll('[data-suggestion-id]:checked'))
+        .map((node) => node.dataset.suggestionId);
+      if (!selectedIds.length) {
+        setStatus('Sélectionnez au moins une suggestion.', 'warning');
+        return false;
+      }
+      setBusy(true);
+      setStatus('Enregistrement de la sélection…', 'progress');
+      postMessage({
+        type: 'hubAcceptDecompileAugmentation',
+        cacheKey: state.result.cache_key,
+        selectedIds,
+        binaryPath: state.source.binaryPath,
+        addr: state.source.addr,
+      });
+      return true;
+    }
+
+    function setSource(source) {
+      const functions = Array.isArray(source?.functions) ? source.functions : [];
+      const singleFunction = functions.length === 1 ? functions[0] : null;
+      const normalized = source?.code ? {
+        ...source,
+        addr: source.addr || singleFunction?.addr || '',
+        functionName: source.functionName || singleFunction?.name || '',
+        code: source.addr || !singleFunction?.code ? source.code : String(singleFunction.code),
+      } : null;
+      const changed = !state.source
+        || state.source.binaryPath !== normalized?.binaryPath
+        || state.source.addr !== normalized?.addr
+        || state.source.code !== normalized?.code;
+      state.source = normalized;
+      if (changed) {
+        state.result = null;
+        const panel = el('decompileAugmentReview');
+        if (panel) panel.hidden = true;
+        setStatus(
+          state.source?.addr
+            ? 'Optionnel : obtenez des noms, types et commentaires proposés par l’IA.'
+            : state.source?.code
+              ? 'Pseudo-code prêt. Choisissez une fonction pour lancer l’augmentation IA.'
+              : 'Décompilez puis choisissez une fonction pour activer l’augmentation.',
+          '',
+        );
+        if (state.source?.binaryPath && state.source?.addr && state.source?.code) {
+          postMessage({ type: 'hubLoadDecompileAugmentationCache', ...state.source });
+        }
+      }
+      setBusy(false);
+    }
+
+    function receive(message) {
+      if (!['hubDecompileAugmented', 'hubDecompileAugmentationCache'].includes(message.type)) return false;
+      if (message.binaryPath && message.binaryPath !== state.source?.binaryPath) return true;
+      if (message.addr && message.addr !== state.source?.addr) return true;
+      setBusy(false);
+      if (!message.ok) {
+        if (message.type === 'hubDecompileAugmentationCache') return true;
+        setStatus(message.error || 'Augmentation impossible.', 'error');
+        return true;
+      }
+      if (message.type === 'hubDecompileAugmentationCache') {
+        if (message.result?.found) {
+          state.result = message.result;
+          applyAccepted(message.result);
+          setStatus('Version IA acceptée restaurée depuis le cache.', 'success');
+        }
+        return true;
+      }
+      renderResult(message.result);
+      if (message.accepted) {
+        applyAccepted(message.result);
+        const panel = el('decompileAugmentReview');
+        if (panel) panel.hidden = true;
+        setStatus('Version IA appliquée et enregistrée dans le cache.', 'success');
+      }
+      return true;
+    }
+
+    function bind() {
+      el('btnAugmentDecompile')?.addEventListener('click', request);
+      el('btnAcceptDecompileAugment')?.addEventListener('click', accept);
+      for (const button of document.querySelectorAll('[data-augment-view]')) {
+        button.addEventListener('click', () => {
+          state.view = button.dataset.augmentView;
+          renderCode();
+        });
+      }
+      setBusy(false);
+    }
+
+    return { accept, bind, flattenItems, receive, request, setSource, state };
+  }
+
+  function mountController(target) {
+    const vscodeApi = target?.POFHubMessageBus?.vscode;
+    if (!target?.document || !vscodeApi) return null;
+    const controller = createController({
+      document: target.document,
+      postMessage: (message) => vscodeApi.postMessage(message),
+      applyAccepted: (result) => target.applyAcceptedDecompileAugmentation?.(result),
+    });
+    controller.bind();
+    target.decompileAugmentationController = controller;
+    return controller;
+  }
+
+  const api = { createController, flattenItems, itemLabel, mountController };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  mountController(root);
+})(typeof window !== 'undefined' ? window : globalThis);

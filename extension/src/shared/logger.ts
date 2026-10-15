@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 /**
  * @file logger.ts
  * @brief Logique pure du logger à niveaux (extension). Pas de dépendance vscode
@@ -42,8 +41,8 @@ const REDACTION_PATTERNS = [
   { pattern: /[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, replacement: '[REDACTED_JWT]' },
   // PEM blocks (private keys, certs, licenses signés).
   { pattern: /-----BEGIN [^-]+-----[\s\S]+?-----END [^-]+-----/g, replacement: '[REDACTED_PEM]' },
-  // key=value / key: value pour password/token/secret/content_key (avec préfixe/suffixe
-  // de type nom de variable d'env, ex. POF_CONTENT_KEY_<PLUGIN_ID>=...).
+  // key=value / key: value pour password/token/secret/content_key,
+  // même avec préfixe/suffixe applicatif.
   { pattern: /((?:[A-Za-z0-9_-]*(?:password|token|secret|content[_-]?key)[A-Za-z0-9_-]*)\s*[:=]\s*)\S+/gi, replacement: '$1[REDACTED]' },
 ];
 

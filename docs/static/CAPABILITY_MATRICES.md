@@ -65,11 +65,66 @@ est :
 
 - `extension/backends/static/tests/test_function_arch_matrix.py`
 
+Le corpus ELF compilé bloquant couvre également `x86_64`, `arm64`, `mips32`,
+`ppc32` et `riscv64` dans
+`extension/backends/static/tests/test_real_binary_corpus.py`. Il mesure la
+découverte, les arêtes CFG/appels nommées et les stack frames sur le code
+réellement produit par les toolchains GNU. La campagne RAM planifiée réutilise
+les cinq architectures avec une fixture d'environ 100 Mio.
+
 Ce test relie la matrice aux fixtures raw Capstone et verifie que :
 
 - la decouverte de fonctions retrouve la fonction d'entree et la cible ;
 - le CFG contient l'edge d'appel direct attendu ;
 - le call graph contient l'edge de fonction attendu.
+
+### Garantie ARM32 / Thumb
+
+Les niveaux `full` de l'adaptateur `arm32` couvrent les chemins de production
+ARM et Thumb pour :
+
+- la decouverte par symboles, cibles d'appel et prologues usuels AAPCS ;
+- le CFG des branches, appels, retours, veneers et jump tables usuelles ;
+- les xrefs de code et les references de donnees PC-relatives ;
+- le call graph direct et les appels indirects usuels via literal pool ;
+- les stack frames basees sur SP, r7, r11/fp et les sauvegardes de registres.
+
+Les fixtures `arm32`, `thumb` et `thumb_partial` executent la vraie pipeline
+Functions. Les tests specialises couvrent en plus les formes conditionnelles,
+les alias r13/r14/r15, l'interworking, les tables TBB/TBH et les epilogues
+d'exception. `full` designe cette famille de chemins publics testes ; il ne
+pretend pas reconstruire statiquement toute cible indirecte arbitraire.
+
+La detection de convention d'appel reste `partial` : elle distingue AAPCS32
+soft-float et hard-float pour les ELF qui portent les flags ABI, et expose les
+registres VFP d'arguments en hard-float. Les formats sans metadonnee equivalente
+et les variantes de plateforme ne sont pas encore distingues au niveau de
+chaque fonction.
+
+Pour ARM64, le format permet de distinguer AAPCS64 ELF, Apple Darwin PCS et
+Windows ARM64. Les registres d'arguments entiers x0-x7 et flottants/vectoriels
+v0-v7 sont exposes. Le niveau reste `partial` car les particularites des appels
+variadiques et les conventions propres a certaines fonctions ne sont pas
+reconstruites instruction par instruction.
+
+Pour MIPS classique, le CFG conserve l'instruction de delay slot dans le bloc
+du branchement ou de l'appel et place le fallthrough apres cette instruction.
+La classification de `jalr` tient compte du registre de lien : `$ra` produit
+un appel, `$zero`/`$0` un saut, et `jalr $zero, $ra` termine le bloc comme un
+retour.
+Le support reste `partial` tant que les variantes compactes MIPS32r6 et les
+semantiques annulees des branches likely ne sont pas modelisees explicitement.
+
+Pour RISC-V, la classification de `jal` et `jalr` tient compte du registre de
+destination : `ra` produit un appel, `zero`/`x0` un saut, et le retour canonique
+`jalr zero, ra, 0` termine le bloc. Le support reste `partial` pour les cibles
+indirectes qui ne peuvent pas etre resolues statiquement.
+
+Pour PowerPC, les branches indirectes via LR et CTR respectent le bit de lien :
+les alias Capstone termines par `lrl`/`ctrl` sont des appels, ceux termines par
+`lr` des retours, et ceux termines par `ctr` des sauts. Les variantes
+conditionnelles et leurs suffixes de prediction `+`/`-` conservent leur
+fallthrough.
 
 ## Matrice des onglets raw
 

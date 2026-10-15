@@ -131,6 +131,58 @@ describe('stackExpertView — buildExpertRowItems', () => {
     expect(rows[0].badges).to.include('RET');
   });
 
+  it('raw backend corrupted flag alone is not an authoritative verdict', () => {
+    // Regression: a legitimate stack-protector canary write (role="local")
+    // used to reach `corrupted: true` / flags: ["corrupted"] from the
+    // backend's per-slot heuristic with no crossing-write evidence behind
+    // it (diagnostics stays empty). Only an actual backend diagnostic may
+    // promote a slot to CORRUPT here.
+    const rows = mod.buildExpertRowItems([
+      makeSlot({
+        kind: 'local',
+        corrupted: true,
+        flags: ['corrupted'],
+        diagnosticCorrupted: false,
+        diagnostics: []
+      })
+    ]);
+    expect(rows[0].isCorrupted).to.equal(false);
+    expect(rows[0].badges).to.not.include('CORRUPT');
+    expect(rows[0].badges).to.not.include('CORROMPU');
+  });
+
+  it('backend diagnostic stays authoritative for saved_bp corruption', () => {
+    const rows = mod.buildExpertRowItems([
+      makeSlot({
+        kind: 'saved_bp',
+        diagnosticCorrupted: true,
+        diagnosticSeverity: 'warning',
+        diagnostics: [{ message: 'saved rbp overwritten' }]
+      })
+    ]);
+    expect(rows[0].isSavedBp).to.equal(true);
+    expect(rows[0].isCorrupted).to.equal(true);
+    expect(rows[0].badges).to.include('CORRUPT');
+  });
+
+  it('a legitimate write with raw corrupted=true stays informative, never CORRUPT', () => {
+    const rows = mod.buildExpertRowItems([
+      makeSlot({
+        kind: 'local',
+        changed: true,
+        recentWrite: true,
+        corrupted: true,
+        flags: ['changed', 'recent_write', 'corrupted'],
+        diagnosticCorrupted: false,
+        diagnostics: []
+      })
+    ]);
+    expect(rows[0].isChanged).to.equal(true);
+    expect(rows[0].badges).to.include('CHANGED');
+    expect(rows[0].badges).to.not.include('CORRUPT');
+    expect(rows[0].badges).to.not.include('CORROMPU');
+  });
+
   it('saved rbp slot is marked isSavedBp', () => {
     const rows = mod.buildExpertRowItems([makeSlot({ kind: 'saved_bp' })]);
     expect(rows[0].isSavedBp).to.equal(true);
@@ -228,6 +280,17 @@ describe('stackExpertView — buildExpertRowItems', () => {
   it('normalizes and preserves existing expert badges', () => {
     const rows = mod.buildExpertRowItems([makeSlot({ badges: ['ABI', 'overflow'] })]);
     expect(rows[0].badges).to.deep.equal(['OVERFLOW', 'ABI']);
+  });
+
+  it('does not infer overflow from a negated diagnostic message', () => {
+    const rows = mod.buildExpertRowItems([makeSlot({
+      diagnostics: [{
+        kind: 'benign_termination',
+        message: 'Aucun overflow et aucune ecriture suspecte.'
+      }]
+    })]);
+
+    expect(rows[0].badges).to.not.include('OVERFLOW');
   });
 
   it('value preview is carried through', () => {
@@ -411,7 +474,21 @@ describe('stack render dispatch — simple/expert panel modes', () => {
     expect(harness.stack.querySelectorAll('.frame-slot')).to.have.length(0);
   });
 
-  function renderSelectedFrame(stackPanelMode: 'simple' | 'expert') {
+  it('simple mode keeps selected slot details inline without the bottom detail drawer', () => {
+    const initialWorkspace = renderSelectedFrame('simple') as any;
+    const selectedEntry = initialWorkspace.frameModel.entries.find((entry: any) => (
+      entry.kind !== 'return_address' && entry.kind !== 'saved_bp'
+    ));
+
+    renderSelectedFrame('simple', selectedEntry.key);
+
+    expect(harness.stack.querySelectorAll('.is-expanded')).to.have.length(1);
+    expect(harness.stack.querySelectorAll('.frame-slot-inline-details')).to.have.length.greaterThan(0);
+    expect(harness.document.getElementById('stackDetail')?.hidden).to.equal(true);
+    expect(harness.document.getElementById('stackDetail')?.querySelectorAll('.stack-detail-card')).to.have.length(0);
+  });
+
+  function renderSelectedFrame(stackPanelMode: 'simple' | 'expert', selectedSlotKey = '') {
     return renderStack(
       [
         {
@@ -430,6 +507,7 @@ describe('stack render dispatch — simple/expert panel modes', () => {
       {
         displayMode: 'frame',
         stackPanelMode,
+        selectedSlotKey,
         snapshots: [{ step: 1, func: 'main' }],
         currentStep: 1,
         selectedFunction: 'main',

@@ -12,32 +12,86 @@ on:
     branches: [main, develops]
     paths:
       - 'extension/**'
+      - 'tooling/loadtest/**'
       - '.github/workflows/ci.yml'
+      - '.github/workflows/large-real-corpus-loadtest.yml'
       - '.github/workflows/publish.yml'
       - '.github/workflows/tripartite-scheduled.yml'
+      - 'security/**'
+      - 'tooling/security_baseline.py'
+      - 'tooling/tests/test_security_baseline.py'
 
 permissions:
   contents: read
+  pull-requests: read
+
+# Un nouveau push (ou une nouvelle synchro de PR) annule le run précédent
+# encore en cours sur la même ref — sans ça, chaque commit successif laisse
+# tourner à fond les runs déjà obsolètes en plus du nouveau.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
+  security-baseline:
+    name: Security baseline policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+      - name: Validate inventory and suppressions
+        run: python3 -m tooling.security_baseline
+
+  # La campagne 100 MiB est coûteuse : elle ne tourne sur develops que lorsque
+  # le runtime, le corpus ou ses budgets changent.
+  large-real-corpus-changes:
+    name: Detect large corpus changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      relevant: ${{ steps.filter.outputs.relevant }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+
+      - name: Detect relevant paths
+        id: filter
+        uses: dorny/paths-filter@15192bc058cc28a13dbf6cde61f19e18988b7af6
+        with:
+          filters: |
+            relevant:
+              - 'extension/backends/static/**'
+              - 'extension/backends/requirements.txt'
+              - 'extension/backends/requirements-ci.txt'
+              - 'tooling/loadtest/**'
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/large-real-corpus-loadtest.yml'
+
+  large-real-corpus:
+    name: Large real corpus gate
+    needs: large-real-corpus-changes
+    if: github.base_ref == 'develops' && needs.large-real-corpus-changes.outputs.relevant == 'true'
+    uses: ./.github/workflows/large-real-corpus-loadtest.yml
+
   # ══════════════════════════════════════════════════════════════
-  # 🔎 Lint — feature branches + PRs (une seule fois, ubuntu uniquement)
+  # 🔎 Lint — PRs (une seule fois, ubuntu uniquement)
   # ══════════════════════════════════════════════════════════════
   lint:
     name: Lint
-    if: |
-      github.event_name == 'pull_request' ||
-      (github.event_name == 'push' &&
-       github.ref != 'refs/heads/main' &&
-       github.ref != 'refs/heads/develops')
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -54,78 +108,12 @@ jobs:
         run: python3 -m ruff format --check .
 
   # ══════════════════════════════════════════════════════════════
-  # 🔍 Tests Rapides — feature branches (push uniquement, hors main/develops)
-  # ══════════════════════════════════════════════════════════════
-  quick-test:
-    name: Quick Test
-    if: |
-      github.event_name == 'push' &&
-      github.ref != 'refs/heads/main' &&
-      github.ref != 'refs/heads/develops'
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '22.x'
-          cache: 'npm'
-          cache-dependency-path: extension/package-lock.json
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-
-      - name: Install dependencies
-        run: |
-          pip install -r extension/backends/requirements-ci.txt
-          cd extension && npm ci
-
-      - name: Python tests
-        working-directory: ./extension
-        run: |
-          python3 -m coverage erase
-          python3 -m coverage run -m pytest
-          python3 -m coverage report
-          python3 -m coverage xml
-          python3 -m coverage json -o coverage-python.json
-
-      - name: JavaScript tests
-        working-directory: ./extension
-        run: npm run test:coverage
-
-      - name: Summarize coverage
-        if: always()
-        working-directory: ./extension
-        run: |
-          mkdir -p .pile-ou-face/test-artifacts
-          npm run coverage:summary > .pile-ou-face/test-artifacts/coverage-summary.log
-          cat .pile-ou-face/test-artifacts/coverage-summary.md >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload coverage reports
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: coverage-quick-${{ github.sha }}
-          path: |
-            extension/coverage-python.json
-            extension/coverage.xml
-            extension/coverage/
-            extension/.pile-ou-face/test-artifacts/coverage-summary.md
-          if-no-files-found: warn
-
-  # ══════════════════════════════════════════════════════════════
   # 🧪 Tests Complets Multi-OS — PRs uniquement
   # ══════════════════════════════════════════════════════════════
   full-test:
     name: ${{ matrix.os }} / Node ${{ matrix.node }}
-    if: github.event_name == 'pull_request'
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
 
     strategy:
       fail-fast: false
@@ -138,17 +126,17 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: ${{ matrix.node }}
           cache: 'npm'
           cache-dependency-path: extension/package-lock.json
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -184,7 +172,7 @@ jobs:
           cat .pile-ou-face/test-artifacts/coverage-summary.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload coverage reports
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
           name: coverage-${{ matrix.os }}-node-${{ matrix.node }}
@@ -195,6 +183,124 @@ jobs:
             extension/.pile-ou-face/test-artifacts/coverage-summary.md
           if-no-files-found: warn
 
+  # Chaque profil est préparé, vérifié et empaqueté dans un VSIX distinct.
+  # La matrice empêche qu'un profil commercial, OSS ou hors-ligne ne dérive
+  # silencieusement de son identité et de sa politique d'endpoint.
+  deployment-profile-artifacts:
+    name: Deployment artifact / ${{ matrix.profile }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: OFFICIAL_SAAS
+            artifact: official-saas
+            deployment_id: official-saas
+            auth_url: https://auth.pileouface.dev
+          - profile: MANAGED_ON_PREM
+            artifact: managed-on-prem
+            deployment_id: ci-managed-on-prem
+            auth_url: https://auth.on-prem.example
+          - profile: OSS_DEVELOPMENT
+            artifact: oss-development
+            deployment_id: oss-development
+            auth_url: ''
+          - profile: AIRGAP_ENTERPRISE
+            artifact: airgap-enterprise
+            deployment_id: ci-airgap-enterprise
+            auth_url: ''
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '22.x'
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./extension
+        run: npm ci
+
+      - name: Prepare and verify deployment profile
+        working-directory: ./extension
+        env:
+          POF_DEPLOYMENT_ID: ${{ matrix.deployment_id }}
+          POF_AUTH_PROVIDER_URL: ${{ matrix.auth_url }}
+        run: |
+          node scripts/prepare-deployment-profile.js "${{ matrix.profile }}"
+          npm run profile:verify -- "${{ matrix.profile }}"
+
+      - name: Package isolated VSIX
+        working-directory: ./extension
+        run: npx vsce package --out "pile-ou-face-${{ matrix.artifact }}.vsix"
+
+      - name: Upload deployment artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pile-ou-face-${{ matrix.artifact }}-${{ github.sha }}
+          path: extension/pile-ou-face-${{ matrix.artifact }}.vsix
+          if-no-files-found: error
+          retention-days: 7
+
+  # ══════════════════════════════════════════════════════════════
+  # 🪟 Auth Licensing Windows Unit Tests — PRs uniquement, filtré par chemin
+  # DoD XSYNC-LIC-001 (Pile_Ou_Face#70) exige une couverture Windows pour
+  # l'agent de licence par installation. Job dédié et léger (juste les specs
+  # concernées, pas toute la suite Python+JS) plutôt qu'ajouter windows-latest
+  # à la matrice `full-test` : le backend Python a des hypothèses Unix
+  # (compilateurs, subprocess) sans rapport avec ce chemin, les y exposer
+  # casserait `full-test` sur des bases qui n'ont rien à voir avec l'auth.
+  # ══════════════════════════════════════════════════════════════
+  auth-licensing-windows:
+    name: Auth Licensing Windows Unit Tests
+    runs-on: windows-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+
+      - name: Detect relevant changes
+        id: filter
+        uses: dorny/paths-filter@6852f92c20ea7fd3b0c25de3b5112db3a98da050 # v3
+        with:
+          filters: |
+            relevant:
+              - 'extension/src/shared/authService.ts'
+              - 'extension/src/shared/deviceLicensing.ts'
+              - 'extension/src/tests/authService.test.ts'
+              - 'extension/src/tests/deviceLicensing.test.ts'
+
+      - name: Setup Node.js
+        if: steps.filter.outputs.relevant == 'true'
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '22.x'
+          cache: 'npm'
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Install dependencies
+        if: steps.filter.outputs.relevant == 'true'
+        working-directory: ./extension
+        run: npm ci
+
+      - name: Run authService/deviceLicensing tests on Windows
+        if: steps.filter.outputs.relevant == 'true'
+        working-directory: ./extension
+        shell: bash
+        # node_modules/.bin/_mocha est le shim POSIX généré par npm ; sur
+        # windows-latest le shell par défaut (pwsh) le passe tel quel à tsx,
+        # qui essaie de le parser comme du JS et échoue ("missing ) after
+        # argument list" — c'est le script shell, pas le vrai fichier JS).
+        # On force bash (git-bash, présent sur windows-latest) et on pointe
+        # directement sur le vrai fichier pour éviter le shim.
+        run: npx tsx node_modules/mocha/bin/_mocha "src/tests/authService.test.ts" "src/tests/deviceLicensing.test.ts" --require src/tests/setup.ts --exit
+
   # ══════════════════════════════════════════════════════════════
   # 🦄 Régressions Unicorn x86_64 — PRs uniquement, Linux
   # Le requirements-ci générique exclut Unicorn car son binding natif est
@@ -203,66 +309,102 @@ jobs:
   # ══════════════════════════════════════════════════════════════
   dynamic-unicorn:
     name: Dynamic Unicorn Regression
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+
+      - name: Detect relevant changes
+        id: filter
+        uses: dorny/paths-filter@6852f92c20ea7fd3b0c25de3b5112db3a98da050 # v3
+        with:
+          filters: |
+            relevant:
+              - 'extension/backends/dynamic/**'
+              - 'extension/backends/requirements-ci.txt'
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        if: steps.filter.outputs.relevant == 'true'
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.11'
           cache: 'pip'
 
       - name: Install x86_64 test toolchain
+        if: steps.filter.outputs.relevant == 'true'
         run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
           sudo apt-get update
           sudo apt-get install -y build-essential binutils
 
       - name: Install test dependencies
+        if: steps.filter.outputs.relevant == 'true'
         run: |
           pip install -r extension/backends/requirements-ci.txt
           pip install unicorn==2.1.4
 
       - name: Run libc/syscall bridge regressions
+        if: steps.filter.outputs.relevant == 'true'
         working-directory: ./extension
         run: |
           PYTHONPATH=. python3 -m pytest \
             backends/dynamic/tests/test_libc_syscall_simulation.py \
+            backends/dynamic/tests/test_stack_protector_tls_bootstrap.py \
+            backends/dynamic/tests/test_stack_chk_fail_crash.py \
             -q
 
   # ══════════════════════════════════════════════════════════════
-  # 🧬 Corpus réel ARM64 — PRs uniquement, ubuntu seulement
+  # 🧬 Corpus réel multi-architecture — PRs uniquement, ubuntu seulement
   # ══════════════════════════════════════════════════════════════
   real-corpus-arm64:
-    name: Real Corpus ARM64
-    if: github.event_name == 'pull_request'
+    name: Real Corpus Multi-Arch
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+
+      - name: Detect relevant changes
+        id: filter
+        uses: dorny/paths-filter@6852f92c20ea7fd3b0c25de3b5112db3a98da050 # v3
+        with:
+          filters: |
+            relevant:
+              - 'extension/backends/static/**'
+              - 'extension/backends/requirements-ci.txt'
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        if: steps.filter.outputs.relevant == 'true'
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Install ARM64 corpus toolchain
+      - name: Install multi-architecture corpus toolchains
+        if: steps.filter.outputs.relevant == 'true'
         run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
           sudo apt-get update
           sudo apt-get install -y \
             build-essential \
             gcc-aarch64-linux-gnu \
-            binutils-aarch64-linux-gnu
+            binutils-aarch64-linux-gnu \
+            gcc-mips-linux-gnu \
+            binutils-mips-linux-gnu \
+            gcc-powerpc-linux-gnu \
+            binutils-powerpc-linux-gnu \
+            gcc-riscv64-linux-gnu \
+            binutils-riscv64-linux-gnu
 
       - name: Install Python dependencies
+        if: steps.filter.outputs.relevant == 'true'
         run: pip install -r extension/backends/requirements-ci.txt
 
-      - name: Run real binary corpus with ARM64
+      - name: Run real binary corpus across architectures
+        if: steps.filter.outputs.relevant == 'true'
         working-directory: ./extension
         env:
           # clang PIE analysis on linux/x86_64 is a known open issue — tracked separately
@@ -273,11 +415,102 @@ jobs:
           PYTHONPATH=. python3 -m pytest backends/static/tests/test_real_binary_corpus.py -q
 
       - name: Upload corpus metrics
-        uses: actions/upload-artifact@v4
+        if: steps.filter.outputs.relevant == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: real-binary-corpus-metrics
           path: extension/.pile-ou-face/test-artifacts/real_binary_corpus_metrics.json
           if-no-files-found: error
+
+  # ══════════════════════════════════════════════════════════════
+  # 📈 E2E Runtime Audit — PRs uniquement
+  # Audit runtime complet (VS Code réel) sur binaires réellement compilés
+  # (corpus), avec budgets perf/mémoire BLOQUANTS. C'est le filet anti-crash :
+  # une régression RSS/heap sur un vrai binaire fait échouer la CI au lieu
+  # de geler VS Code chez l'utilisateur.
+  # ══════════════════════════════════════════════════════════════
+  e2e-runtime-audit:
+    name: E2E Runtime Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '22.x'
+          cache: 'npm'
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install corpus toolchain
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            gcc-aarch64-linux-gnu \
+            binutils-aarch64-linux-gnu
+
+      - name: Install dependencies
+        run: |
+          pip install -r extension/backends/requirements-ci.txt
+          cd extension && npm ci
+
+      # L'extension utilise backends/.venv quand il existe ; à l'activation
+      # elle le crée et installe les dépendances en asynchrone — trop tard
+      # pour les premiers scénarios de l'audit. Le provisionner d'avance.
+      - name: Provision backend venv
+        working-directory: ./extension
+        run: |
+          python3 -m venv backends/.venv
+          backends/.venv/bin/pip install -r backends/requirements-ci.txt
+
+      - name: Run E2E runtime audit with enforced budgets
+        working-directory: ./extension
+        env:
+          POF_E2E_REAL_CORPUS: "1"
+          POF_E2E_ENFORCE_PERF_BUDGETS: "1"
+          # Runners CI lents : budgets de durée relâchés. Les budgets mémoire
+          # (heap/RSS) gardent leurs valeurs par défaut — ce sont eux le filet.
+          POF_E2E_BUDGET_SCENARIO_DURATION_WARN_MS: "4000"
+          POF_E2E_BUDGET_SCENARIO_DURATION_FAIL_MS: "10000"
+          POF_E2E_BUDGET_BACKEND_SCENARIO_TOTAL_WARN_MS: "1500"
+          # Two expected static-analysis calls can each approach 3 s on a
+          # shared runner; keep the aggregate gate above that normal variance.
+          POF_E2E_BUDGET_BACKEND_SCENARIO_TOTAL_FAIL_MS: "6000"
+          # The UI audit now exercises six more annotation backend calls. Keep
+          # slow-runner variance visible without failing below the expanded
+          # suite's measured worst case (37.2 s on 79 calls).
+          POF_E2E_BUDGET_BACKEND_GLOBAL_TOTAL_WARN_MS: "30000"
+          POF_E2E_BUDGET_BACKEND_GLOBAL_TOTAL_FAIL_MS: "45000"
+        run: xvfb-run -a npm run test:e2e:audit
+
+      - name: Run MCP stdio E2E smoke
+        working-directory: ./extension
+        run: npm run test:e2e:mcp
+
+      - name: Upload audit reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: e2e-runtime-audit-reports
+          path: |
+            extension/.pile-ou-face/test-artifacts/e2e-runtime-audit/runtime-audit-workflow-report.md
+            extension/.pile-ou-face/test-artifacts/e2e-runtime-audit/runtime-audit-workflow-report.json
+            extension/.pile-ou-face/test-artifacts/e2e-runtime-audit/runtime-audit-feature-coverage.md
+            extension/.pile-ou-face/test-artifacts/e2e-runtime-audit/*.png
+            extension/.pile-ou-face/test-artifacts/e2e-runtime-audit/*.html
+          if-no-files-found: warn
+          include-hidden-files: true
 
   # ══════════════════════════════════════════════════════════════
   # 🔐 Security Scan — PRs uniquement, ubuntu seulement
@@ -285,109 +518,278 @@ jobs:
   # ══════════════════════════════════════════════════════════════
   security-scan:
     name: Security Scan
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
+      # security-scan audite les dépendances installées, pas le code — inutile
+      # de le relancer si aucun manifeste de dépendances n'a bougé.
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+
+      - name: Detect relevant changes
+        id: filter
+        uses: dorny/paths-filter@6852f92c20ea7fd3b0c25de3b5112db3a98da050 # v3
+        with:
+          filters: |
+            relevant:
+              - 'extension/package.json'
+              - 'extension/package-lock.json'
+              - 'extension/backends/requirements-ci.txt'
+              - 'extension/backends/**/requirements*.txt'
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        if: steps.filter.outputs.relevant == 'true'
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: '20.x'
           cache: 'npm'
           cache-dependency-path: extension/package-lock.json
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        if: steps.filter.outputs.relevant == 'true'
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.11'
           cache: 'pip'
 
       - name: Install dependencies
+        if: steps.filter.outputs.relevant == 'true'
         run: |
           pip install -r extension/backends/requirements-ci.txt pip-audit
           cd extension && npm ci
 
       - name: npm audit
+        if: steps.filter.outputs.relevant == 'true'
         working-directory: ./extension
         run: npm audit --audit-level=moderate
         continue-on-error: true
 
       - name: pip-audit (Python deps)
+        if: steps.filter.outputs.relevant == 'true'
         run: pip-audit --desc
         continue-on-error: true
 
       - name: Check outdated npm packages
+        if: steps.filter.outputs.relevant == 'true'
         working-directory: ./extension
         run: npm outdated || true
         continue-on-error: true
 
   # ══════════════════════════════════════════════════════════════
-  # ✅ Status Check — required check pour les PRs et les pushs
+  # 🔑 Auth Licensing Interop E2E — toutes les PRs couvertes par cette CI
+  # Test réel host<->auth (XSYNC-LIC-001, Pile_Ou_Face#70) : démarre un vrai
+  # serveur Pile_ou_Face_auth (repo privé, sibling) et fait dialoguer le vrai
+  # AuthService avec lui. Il tourne sur chaque PR qui déclenche ci.yml : une
+  # régression indirecte (bundling, dépendances, runtime, stockage) peut casser
+  # le licensing même sans modifier directement authService.ts.
+  #
+  # Nécessite un PAT en lecture seule sur Pile_ou_Face_auth stocké dans le
+  # secret CROSS_REPO_READONLY_PAT de CE repo (Settings > Secrets and
+  # variables > Actions). Absent : le job échoue fermé ; un succès sans avoir
+  # exécuté l'interop réel serait un faux vert.
+  # ══════════════════════════════════════════════════════════════
+  auth-licensing-e2e:
+    name: Auth Licensing Interop E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      # La condition ne peut pas référencer `secrets` directement dans un `if:`
+      # (context non disponible à cet endroit) — on le teste ici et on
+      # propage le résultat via un output de step, seul context garanti
+      # disponible dans les `if:` suivants.
+      - name: Check secret configured
+        id: secret_check
+        env:
+          CROSS_REPO_READONLY_PAT: ${{ secrets.CROSS_REPO_READONLY_PAT }}
+        run: |
+          if [ -n "$CROSS_REPO_READONLY_PAT" ]; then
+            echo "has_pat=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_pat=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Require Auth checkout capability
+        if: steps.secret_check.outputs.has_pat == 'false'
+        run: |
+          echo "::error::CROSS_REPO_READONLY_PAT non configuré — impossible d'exécuter l'interop Host↔Auth↔Plugins obligatoire."
+          exit 1
+
+      - name: Setup Node.js
+        if: steps.secret_check.outputs.has_pat == 'true'
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22.x'
+          cache: 'npm'
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Setup Python
+        if: steps.secret_check.outputs.has_pat == 'true'
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.11'
+
+      - name: Checkout sibling auth repo
+        if: steps.secret_check.outputs.has_pat == 'true'
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: PileOuFaces/Pile_ou_Face_auth
+          ref: develops
+          token: ${{ secrets.CROSS_REPO_READONLY_PAT }}
+          path: pof-auth-sibling
+
+      - name: Checkout sibling plugins repo
+        if: steps.secret_check.outputs.has_pat == 'true'
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: PileOuFaces/Pile_ou_Face_plugins
+          ref: develops
+          token: ${{ secrets.CROSS_REPO_READONLY_PAT }}
+          path: pof-plugins-sibling
+
+      - name: Cache pip downloads (auth-sibling deps)
+        if: steps.secret_check.outputs.has_pat == 'true'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/pip
+          # Le lockfile Auth est la source reproductible des dépendances de ce
+          # serveur sibling ; toute mise à jour invalide automatiquement le cache.
+          key: auth-e2e-pip-${{ runner.os }}-${{ hashFiles('pof-auth-sibling/requirements.lock') }}
+          restore-keys: |
+            auth-e2e-pip-${{ runner.os }}-
+
+      - name: Install dependencies
+        if: steps.secret_check.outputs.has_pat == 'true'
+        run: |
+          python3 -m venv pof-auth-sibling/.venv
+          # Uvicorn importe `app` depuis le checkout utilisé comme CWD. Seules
+          # les dépendances runtime doivent donc être installées ici, depuis le
+          # lockfile hashé maintenu par Auth plutôt qu'une liste dupliquée.
+          pof-auth-sibling/.venv/bin/pip install \
+            --require-hashes \
+            --requirement pof-auth-sibling/requirements.lock
+          pof-auth-sibling/.venv/bin/pip install -e './pof-plugins-sibling[dev]'
+          cd pof-plugins-sibling
+          npm ci
+          npm run build:webviews
+          cd ..
+          cd extension && npm ci
+
+      - name: Run real host<->auth interop e2e
+        if: steps.secret_check.outputs.has_pat == 'true'
+        working-directory: ./extension
+        env:
+          AUTH_REPO_PATH: ${{ github.workspace }}/pof-auth-sibling
+          PLUGINS_REPO_PATH: ${{ github.workspace }}/pof-plugins-sibling
+          AUTH_PUBLIC_URL: http://127.0.0.1:8791
+          AUTH_ISSUER: http://127.0.0.1:8791
+          AUTH_AUDIENCE: pile-ou-face-host
+          PLUGIN_LEASE_AUDIENCE: pof-plugin-runtime
+          DEPLOYMENT_ID: ci-tripartite-auth
+          AUTH_CAPABILITIES: auth,online-standard-licensing
+        run: npm run test:e2e:auth-licensing
+
+  # ══════════════════════════════════════════════════════════════
+  # 📊 Backend Loadtest — budgets RAM/temps bloquants sur fixture 20 Mo
+  # ══════════════════════════════════════════════════════════════
+  backend-loadtest:
+    name: Backend Performance Budgets
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install toolchain and Python dependencies
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
+          sudo apt-get update
+          sudo apt-get install -y build-essential binutils
+          pip install -r extension/backends/requirements-ci.txt
+
+      - name: Enforce medium backend performance budgets
+        run: >-
+          python3 -m tooling.loadtest
+          --size medium
+          --baseline tooling/loadtest/baselines/ubuntu-latest-python311-medium.json
+          --results-dir "${{ runner.temp }}/backend-loadtest"
+
+      - name: Upload loadtest report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: backend-loadtest-report
+          path: ${{ runner.temp }}/backend-loadtest/loadtest_*.json
+          if-no-files-found: error
+
+  # ══════════════════════════════════════════════════════════════
+  # ✅ Status Check — required check pour les PRs
   # ══════════════════════════════════════════════════════════════
   ci-success:
     name: CI Success
     if: always()
-    needs: [lint, quick-test, full-test, dynamic-unicorn, real-corpus-arm64, security-scan]
+    needs: [security-baseline, lint, full-test, dynamic-unicorn, real-corpus-arm64, e2e-runtime-audit, backend-loadtest, security-scan, auth-licensing-e2e, auth-licensing-windows, large-real-corpus-changes, large-real-corpus]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Check results
         shell: bash
         run: |
           LINT="${{ needs.lint.result }}"
-          QUICK="${{ needs.quick-test.result }}"
+          SECURITY_BASELINE="${{ needs.security-baseline.result }}"
           FULL="${{ needs.full-test.result }}"
           DYNAMIC_UNICORN="${{ needs.dynamic-unicorn.result }}"
           REAL_CORPUS="${{ needs.real-corpus-arm64.result }}"
+          E2E_AUDIT="${{ needs.e2e-runtime-audit.result }}"
+          BACKEND_LOADTEST="${{ needs.backend-loadtest.result }}"
           SECURITY="${{ needs.security-scan.result }}"
+          AUTH_LICENSING_E2E="${{ needs.auth-licensing-e2e.result }}"
+          AUTH_LICENSING_WINDOWS="${{ needs.auth-licensing-windows.result }}"
+          LARGE_CORPUS_CHANGES="${{ needs.large-real-corpus-changes.result }}"
+          LARGE_CORPUS="${{ needs.large-real-corpus.result }}"
 
-          echo "Event      : ${{ github.event_name }}"
           echo "Lint       : $LINT"
-          echo "Quick test : $QUICK"
+          echo "Sec policy : $SECURITY_BASELINE"
           echo "Full test  : $FULL"
           echo "Unicorn    : $DYNAMIC_UNICORN"
           echo "Corpus ARM : $REAL_CORPUS"
+          echo "E2E Audit  : $E2E_AUDIT"
+          echo "Loadtest   : $BACKEND_LOADTEST"
           echo "Security   : $SECURITY"
+          echo "Auth Win   : $AUTH_LICENSING_WINDOWS"
+          echo "Auth E2E   : $AUTH_LICENSING_E2E"
+          echo "Corpus filter: $LARGE_CORPUS_CHANGES"
+          echo "Large corpus : $LARGE_CORPUS"
 
           fail_if_bad() {
-            if [[ "$1" == "failure" || "$1" == "cancelled" ]]; then
-              echo "❌ $2 failed" && exit 1
+            if [[ "$1" == "failure" || "$1" == "cancelled" || "$1" == "skipped" ]]; then
+              echo "❌ $2 failed or was skipped — check workflow conditions" && exit 1
             fi
           }
 
-          if [[ "${{ github.event_name }}" == "push" ]]; then
-            fail_if_bad "$LINT" "Lint"
-            fail_if_bad "$QUICK" "Quick test"
-            echo "✅ Push checks passed (lint=$LINT, quick=$QUICK)"
-            exit 0
+          fail_if_bad "$LINT" "Lint"
+          fail_if_bad "$SECURITY_BASELINE" "Security Baseline Policy"
+          fail_if_bad "$FULL" "Full test"
+          fail_if_bad "$DYNAMIC_UNICORN" "Dynamic Unicorn Regression"
+          fail_if_bad "$REAL_CORPUS" "Real Corpus ARM64"
+          fail_if_bad "$E2E_AUDIT" "E2E Runtime Audit"
+          fail_if_bad "$BACKEND_LOADTEST" "Backend Performance Budgets"
+          fail_if_bad "$AUTH_LICENSING_E2E" "Auth Licensing Interop E2E"
+          fail_if_bad "$AUTH_LICENSING_WINDOWS" "Auth Licensing Windows Unit Tests"
+          fail_if_bad "$LARGE_CORPUS_CHANGES" "Large Corpus Path Filter"
+          if [[ "$LARGE_CORPUS" == "failure" || "$LARGE_CORPUS" == "cancelled" ]]; then
+            echo "❌ Large Real Corpus failed" && exit 1
           fi
-
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            fail_if_bad "$LINT" "Lint"
-            fail_if_bad "$FULL" "Full test"
-            fail_if_bad "$DYNAMIC_UNICORN" "Dynamic Unicorn Regression"
-            fail_if_bad "$REAL_CORPUS" "Real Corpus ARM64"
-            # security-scan est informatif uniquement (continue-on-error sur tous ses steps)
-            if [[ "$LINT" == "skipped" ]]; then
-              echo "❌ Lint was skipped on a PR — check workflow conditions"
-              exit 1
-            fi
-            if [[ "$FULL" == "skipped" ]]; then
-              echo "❌ Full test was skipped on a PR — check workflow conditions"
-              exit 1
-            fi
-            if [[ "$DYNAMIC_UNICORN" == "skipped" ]]; then
-              echo "❌ Dynamic Unicorn Regression was skipped on a PR — check workflow conditions"
-              exit 1
-            fi
-            if [[ "$REAL_CORPUS" == "skipped" ]]; then
-              echo "❌ Real Corpus ARM64 was skipped on a PR — check workflow conditions"
-              exit 1
-            fi
-            echo "✅ PR checks passed (lint=$LINT, full=$FULL, unicorn=$DYNAMIC_UNICORN, real-corpus-arm64=$REAL_CORPUS, security=$SECURITY)"
-            exit 0
-          fi
-
-          echo "❌ Unexpected event: ${{ github.event_name }}" && exit 1
+          # security-scan est informatif uniquement (continue-on-error sur tous ses steps)
+          echo "✅ PR checks passed (lint=$LINT, full=$FULL, unicorn=$DYNAMIC_UNICORN, real-corpus-arm64=$REAL_CORPUS, e2e-audit=$E2E_AUDIT, backend-loadtest=$BACKEND_LOADTEST, security=$SECURITY, auth-licensing-e2e=$AUTH_LICENSING_E2E, auth-licensing-windows=$AUTH_LICENSING_WINDOWS, large-corpus=$LARGE_CORPUS)"

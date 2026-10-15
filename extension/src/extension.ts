@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 /**
  * @file extension.js
  * @brief Entree principale de l'extension VS Code.
@@ -8,7 +7,6 @@
 
 const vscode = require('vscode');
 const path = require('path');
-const fs = require('fs');
 
 // Treat local `.ts` files as plain CommonJS sources at runtime so the extension
 // can launch directly from `src/` without a separate compile step.
@@ -33,6 +31,7 @@ const {
   ensureStorageDir,
   getGlobalStorageDir,
   logError,
+  logWarning,
 } = require('./shared/utils');
 const { readTraceJson, writeTraceJson, setViewMode, loadTraceFromWorkspace } = require('./shared/trace');
 const { payloadToHex, parseStdinExpression } = require('./shared/payload');
@@ -40,11 +39,31 @@ const { getDisasmScript } = require('./shared/paths');
 const { registerSharedCommands } = require('./shared/commands');
 const { registerStaticCommands } = require('./static/commands');
 const { registerDecompilerCommands } = require('./static/decompilerCommands');
+const { createMcpAgentsPanel } = require('./static/mcpAgentsPanel');
+const { registerMcpAgentCommands, createMcpStatusBarItem } = require('./static/mcpAgentCommands');
+const { makeMcpSetupBridge } = require('./shared/mcpSetupBridge');
 const { AuthService } = require('./shared/authService');
-const { resolveAuthServerUrl } = require('./shared/authConfig');
+const { planLegacyAuthUrlMigration, resolveAuthServerUrl } = require('./shared/authConfig');
+const { getProductConfig } = require('./shared/productConfig');
+const { configureRuntimeAudit, recordRuntimeEvent, resetRuntimeAudit } = require('./shared/runtimeAudit');
+const { createTelemetryService } = require('./shared/telemetry/telemetry');
+const { EVENT_NAMES } = require('./shared/telemetry/telemetryEvents');
+const { mapPlatform } = require('./shared/telemetry/telemetryMappings');
 const logger = require('./shared/logger');
 
 const decorationTypes = new Map();
+
+interface HubConfig {
+  [key: string]: unknown;
+  refreshSidebar?: (binaryPath: string) => void;
+  setSidebarMode?: (mode: string) => void;
+}
+
+interface PythonCommandOptions {
+  timeout?: number;
+  maxBuffer?: number;
+  cwd?: string;
+}
 
 // Filet de sécurité : capture les promesses rejetées non gérées et les logue
 // via le canal de l'extension au lieu de les laisser invisibles dans la
@@ -79,45 +98,6 @@ function _unregisterGlobalErrorHandlers() {
 }
 
 
-function _migrateFromLegacyPofDir(root, storageDir, globalDir) {
-  const legacyDir = path.join(root, '.pile-ou-face');
-  if (!fs.existsSync(legacyDir)) return;
-  logChannel.appendLine('[storage] Migration legacy .pile-ou-face → storageUri…');
-
-  const copyIfExists = (src, dest) => {
-    if (!fs.existsSync(src)) return;
-    const destDir = path.dirname(dest);
-    if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
-    if (!fs.existsSync(dest)) fs.copyFileSync(src, dest);
-  };
-
-  const copyDirIfExists = (src, dest) => {
-    if (!fs.existsSync(src)) return;
-    let entries;
-    try { entries = fs.readdirSync(src, { withFileTypes: true }); } catch (_) { return; }
-    for (const e of entries) {
-      const srcPath = path.join(src, e.name);
-      const destPath = path.join(dest, e.name);
-      if (e.isDirectory()) copyDirIfExists(srcPath, destPath);
-      else copyIfExists(srcPath, destPath);
-    }
-  };
-
-  // Configs → storageDir
-  copyIfExists(path.join(legacyDir, 'decompilers.json'), path.join(storageDir, 'decompilers.json'));
-  copyIfExists(path.join(legacyDir, 'compilers.json'),   path.join(storageDir, 'compilers.json'));
-
-  // Données utilisateur → storageDir
-  copyDirIfExists(path.join(legacyDir, 'annotations'),   path.join(storageDir, 'annotations'));
-  copyDirIfExists(path.join(legacyDir, 'pfdb'),          path.join(storageDir, 'pfdb'));
-  copyDirIfExists(path.join(legacyDir, 'patches'),       path.join(storageDir, 'patches'));
-  copyDirIfExists(path.join(legacyDir, 'static_cache'),  path.join(storageDir, 'static_cache'));
-  copyDirIfExists(path.join(legacyDir, 'licenses'), path.join(storageDir, 'licenses'));
-
-  logChannel.appendLine('[storage] Migration terminée. Le dossier .pile-ou-face peut être supprimé manuellement.');
-}
-
-
 /**
  * @brief Active l'extension et enregistre les commandes.
  * @param context Contexte VS Code.
@@ -125,8 +105,21 @@ function _migrateFromLegacyPofDir(root, storageDir, globalDir) {
 function activate(context) {
   setExtensionPath(context.extensionPath);
   _registerGlobalErrorHandlers();
+  const productConfig = getProductConfig();
+  const telemetry = createTelemetryService({
+    vscode,
+    context,
+    endpoint: productConfig.telemetryProviderUrl,
+  });
+  telemetry.trackEvent(EVENT_NAMES.EXTENSION_ACTIVATED, {
+    extensionVersion: String(context.extension?.packageJSON?.version || '0.0.0'),
+    vscodeVersionMajor: String(vscode.version || '0').split('.')[0],
+    platform: mapPlatform(process.platform),
+  });
   const storageDir  = ensureStorageDir(context);
   const globalDir   = getGlobalStorageDir(context);
+  const auditEnabled = vscode.workspace.getConfiguration('pileOuFace').get('runtimeUsageAudit', false);
+  configureRuntimeAudit({ storageDir, logChannel, vscode, enabled: auditEnabled === true });
 
   const applyLogLevelFromConfig = () => {
     const level = vscode.workspace.getConfiguration('pileOuFace').get('logLevel', 'warning');
@@ -149,30 +142,42 @@ function activate(context) {
     });
   }
 
-  // Migration one-shot depuis l'ancien .pile-ou-face/ (ne tourne qu'une fois)
-  if (!context.globalState.get('pof-storage-migration-v1') && folders && folders.length > 0) {
-    const legacyRoot = resolveProjectRoot(folders[0].uri.fsPath);
-    try {
-      _migrateFromLegacyPofDir(legacyRoot, storageDir, globalDir);
-      context.globalState.update('pof-storage-migration-v1', true);
-    } catch (migErr) {
-      logChannel.appendLine(`[storage] Migration error (non-fatal): ${migErr.message || migErr}`);
-    }
-  }
-
   // checkDecompilerDeps supprimé : l'install est proposé à la demande via le dropdown
 
   const authConfig = vscode.workspace.getConfiguration('pileOuFace').inspect('authServerUrl');
-  const authServerUrl = resolveAuthServerUrl({
-    savedAuthServerUrl: context.globalState.get('pof-settings', {}).authServerUrl || '',
-    configuredAuthServerUrl: authConfig?.workspaceFolderValue || authConfig?.workspaceValue || authConfig?.globalValue || '',
-    projectRoot: folders?.[0]?.uri?.fsPath || '',
+  const authSavedSettings = context.globalState.get('pof-settings', {});
+  const configuredAuthServerUrl = authConfig?.workspaceFolderValue || authConfig?.workspaceValue || authConfig?.globalValue || '';
+  const legacyAuthMigration = planLegacyAuthUrlMigration({
+    deploymentProfile: productConfig.deploymentProfile,
+    legacyUrl: authSavedSettings.authServerUrl || '',
+    configuredUrl: configuredAuthServerUrl,
   });
-  const _authService = AuthService.getInstance(context.secrets, authServerUrl);
+  const authServerUrl = resolveAuthServerUrl({
+    savedAuthServerUrl: authSavedSettings.authServerUrl || '',
+    configuredAuthServerUrl,
+    projectRoot: folders?.[0]?.uri?.fsPath || '',
+    productConfig,
+  });
+  if (legacyAuthMigration.removeLegacy) {
+    const { authServerUrl: _removedLegacyAuthUrl, ...migratedSettings } = authSavedSettings;
+    if (!configuredAuthServerUrl && legacyAuthMigration.configuredUrl) {
+      vscode.workspace.getConfiguration('pileOuFace')
+        .update('authServerUrl', legacyAuthMigration.configuredUrl, vscode.ConfigurationTarget.Global)
+        .catch((err) => logWarning(`[Auth] migration du réglage URL échouée: ${err.message || err}`));
+    }
+    context.globalState.update('pof-settings', migratedSettings)
+      .catch((err) => logWarning(`[Auth] suppression de l'ancienne URL échouée: ${err.message || err}`));
+  }
+  const _authService = AuthService.getInstance(context.secrets, authServerUrl, {
+    deploymentProfile: productConfig.deploymentProfile,
+    pluginSearchDirs: [storageDir, globalDir]
+      .filter(Boolean)
+      .map((dir) => path.join(dir, 'plugins')),
+  });
   _authService.refresh().catch(() => {}); // refresh silencieux au démarrage
 
-  const openVisualizerWebview = createVisualizer({ context, logChannel, decorationTypes });
-  const hubConfig = {
+  const openVisualizerWebview = createVisualizer({ context, logChannel, decorationTypes, telemetry });
+  const hubConfig: HubConfig = {
     context,
     logChannel,
     storageDir,
@@ -188,7 +193,8 @@ function activate(context) {
     payloadToHex,
     parseStdinExpression,
     check32BitToolchain,
-    openVisualizerWebview
+    openVisualizerWebview,
+    telemetry,
   };
   const openHub = createHub(hubConfig);
 
@@ -219,20 +225,56 @@ function activate(context) {
 
   // Commandes de gestion des décompilateurs (add, remove, list, test, openConfig)
   const cp = require('child_process');
-  const _runPythonForCmds = (argsWithScript, { timeout = 60000, maxBuffer = 4 * 1024 * 1024, cwd } = {}) =>
+  const _runPythonForCmds = (
+    argsWithScript: string[],
+    { timeout = 60000, maxBuffer = 4 * 1024 * 1024, cwd }: PythonCommandOptions = {},
+  ) =>
     new Promise((resolve, reject) => {
       const [scriptRelPath, ...rest] = argsWithScript;
       const scriptPath = require('path').join(cwd || root, scriptRelPath);
+      const startedAt = Date.now();
       cp.execFile(pythonExe, [scriptPath, ...rest], {
         encoding: 'utf8', cwd: cwd || root, maxBuffer, timeout,
         env: buildRuntimeEnv(cwd || root, storageDir),
       }, (err, stdout, stderr) => {
+        recordRuntimeEvent('python', scriptRelPath, {
+          source: 'extension.commands',
+          argc: rest.length,
+          durationMs: Date.now() - startedAt,
+          ok: !err,
+          stdoutBytes: Buffer.byteLength(String(stdout || ''), 'utf8'),
+          stderrBytes: Buffer.byteLength(String(stderr || ''), 'utf8'),
+        });
         if (err) { err.stderr = stderr; reject(err); } else resolve({ stdout });
       });
     });
   const decompilerDeps = { runPython: _runPythonForCmds, logChannel };
   const decompilerSubs = registerDecompilerCommands(context, decompilerDeps, root, storageDir);
   context.subscriptions.push(...decompilerSubs);
+
+  // Connexion des agents MCP (Claude Code/Codex) : panel "Connect Agents",
+  // doctor, rollback et barre de statut.
+  const getMcpProjectDir = () => root;
+  const mcpSetupBridge = makeMcpSetupBridge({
+    root,
+    extensionPath: context.extensionPath,
+    getPythonExecutable: () => pythonExe,
+    buildPythonEnv: () => buildRuntimeEnv(root, storageDir),
+  });
+  const mcpAgentsPanel = createMcpAgentsPanel({ context, bridge: mcpSetupBridge, getProjectDir: getMcpProjectDir });
+  const mcpAgentSubs = registerMcpAgentCommands(context, {
+    bridge: mcpSetupBridge,
+    getProjectDir: getMcpProjectDir,
+    panel: mcpAgentsPanel,
+    logChannel,
+  });
+  context.subscriptions.push(...mcpAgentSubs);
+  const mcpStatusBar = createMcpStatusBarItem({
+    bridge: mcpSetupBridge,
+    getProjectDir: getMcpProjectDir,
+    extensionMode: context.extensionMode,
+  });
+  context.subscriptions.push(mcpStatusBar);
 }
 
 /**
@@ -240,6 +282,7 @@ function activate(context) {
  */
 function deactivate() {
   _unregisterGlobalErrorHandlers();
+  resetRuntimeAudit();
   for (const deco of decorationTypes.values()) {
     deco.dispose();
   }

@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 const { expect } = require('chai');
 const fs = require('fs');
 const os = require('os');

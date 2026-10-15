@@ -38,6 +38,7 @@
       triggerStaticQuickAction,
       _autoLoadTab,
       getSectionsCacheBinaryPath,
+      trackBinaryLoaded,
     } = deps || {};
 
     // Internal state — initialized from storage at creation time
@@ -116,6 +117,10 @@
       if (useExisting && staticVal && binaryPathInput && binaryPathInput.value !== staticVal) {
         binaryPathInput.value = staticVal;
       }
+    }
+
+    function normalizeBinaryPathForCompare(value) {
+      return String(value || '').trim().replace(/\\/g, '/');
     }
 
     function getStaticBinaryPath() {
@@ -485,6 +490,19 @@
         const skipAutoLoad = msg.skipAutoLoad === true;
         const nextMeta = _normalizeBinaryMeta(msg.binaryMeta || getCurrentBinaryMeta());
         const prevBp = staticBinaryInput?.value?.trim();
+        if (
+          skipAutoLoad
+          && prevBp
+          && normalizeBinaryPathForCompare(prevBp) !== normalizeBinaryPathForCompare(bp)
+        ) {
+          safePostMessage({
+            type: 'hubDebugLog',
+            scope: 'static-binary',
+            event: 'ignored-stale-response',
+            details: { currentBinaryPath: prevBp, responseBinaryPath: bp, messageType: 'hubSetBinaryPath' },
+          });
+          return true;
+        }
         const prevMetaKey = JSON.stringify(getCurrentBinaryMeta() || null);
         const nextMetaKey = JSON.stringify(nextMeta || null);
         const sameSelection = prevBp === bp && prevMetaKey === nextMetaKey;
@@ -503,8 +521,13 @@
         if (!sameSelection && typeof resetStaticBinaryDerivedState === 'function') {
           resetStaticBinaryDerivedState();
         }
-        applyStaticBinarySelectionUi(bp, nextMeta, skipAutoLoad);
+        // A new selection is autoloaded once by finalizeStaticBinarySelection.
+        // Rendering the stored tab here must not launch the same backend work in parallel.
+        applyStaticBinarySelectionUi(bp, nextMeta, skipAutoLoad || !sameSelection);
         finalizeStaticBinarySelection(bp, nextMeta, { sameSelection, skipAutoLoad });
+        if (!sameSelection && typeof trackBinaryLoaded === 'function') {
+          trackBinaryLoaded(nextMeta);
+        }
         if (window.PluginIframeRouter) {
           window.PluginIframeRouter.broadcast({ type: '__binaryPath', binaryPath: bp });
         }

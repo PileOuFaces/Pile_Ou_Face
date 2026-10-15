@@ -53,7 +53,14 @@ graphify-out/
 .claude/
 .codex/
 
+AGENTS.md
 CLAUDE.md
 
 examples/
 docs/plans/
+
+tooling/loadtest/.results/
+tooling/loadtest/.fixture_cache/
+
+# setup_cli.py backups before overwriting agent configs
+*.bak

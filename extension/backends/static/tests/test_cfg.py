@@ -11,6 +11,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from backends.shared.utils import normalize_addr as _normalize_addr
+from backends.static.binary import arch as arch_module
 from backends.static.disasm.cfg import (
     _detect_switch_max_case,
     _extract_jump_table_base,
@@ -19,8 +20,12 @@ from backends.static.disasm.cfg import (
     _is_branch,
     _is_jump_table,
     _is_valid_code_addr,
+    _match_arm32_literal_pc_load,
     _read_jump_table_entries,
+    _resolve_arm32_add_pc_switch,
+    _resolve_arm32_literal_pc_load,
     _resolve_rip_relative_table,
+    _resolve_thumb_table_branch,
     _section_is_exec,
     build_cfg,
     build_cfg_for_function,
@@ -42,6 +47,105 @@ class TestCfgHelpers(unittest.TestCase):
             _extract_jump_target("jne\t0x1000004be <_main+0x2e>"), "0x1000004be"
         )
 
+    def test_arm32_indexed_pc_load_is_branch_but_stack_restore_is_not_switch(self):
+        self.assertEqual(_is_branch("ldr pc, [r2, r0, lsl #2]"), (True, False, None))
+        self.assertTrue(_is_jump_table("ldr r15, [r2, r0, lsl #2]"))
+        self.assertFalse(_is_jump_table("ldr pc, [sp], #4"))
+        self.assertFalse(_is_jump_table("ldr r3, [r2, r0, lsl #2]"))
+        self.assertEqual(
+            _is_branch("ldrne.w pc, [r2, r0, lsl #2]"), (True, False, None)
+        )
+        self.assertTrue(_is_jump_table("ldrne.w pc, [r2, r0, lsl #2]"))
+
+    def test_arm32_add_pc_switch_is_branch_and_jump_table(self):
+        self.assertEqual(_is_branch("addls pc, pc, r0, lsl #2"), (True, False, None))
+        self.assertTrue(_is_jump_table("addls pc, pc, r0, lsl #2"))
+        self.assertFalse(_is_jump_table("add r3, pc, r0, lsl #2"))
+
+    def test_arm32_literal_pc_load_is_branch_but_normal_loads_are_not(self):
+        for text, expected in (
+            ("ldr pc, [pc, #0x10]", (0x10, False)),
+            ("ldr.w r15, [r15, #4]", (4, False)),
+            ("ldrne.n pc, [pc, #-4]", (-4, True)),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(_match_arm32_literal_pc_load(text), expected)
+                self.assertEqual(_is_branch(text), (True, False, None))
+        for text in (
+            "ldr r3, [pc, #4]",
+            "ldr pc, [sp, #4]",
+            "ldr pc, [pc, r0, lsl #2]",
+            "ldr pc, [pc], #4",
+        ):
+            with self.subTest(text=text):
+                self.assertIsNone(_match_arm32_literal_pc_load(text))
+
+    def test_arm32_literal_pc_load_resolves_arm_and_thumb_pc_bases(self):
+        from backends.static.binary.arch import get_raw_arch_info
+
+        binary = MagicMock()
+        binary.get_content_from_virtual_address.return_value = (0x2001).to_bytes(
+            4, "little"
+        )
+        with patch("backends.static.disasm.cfg._is_valid_code_addr", return_value=True):
+            self.assertEqual(
+                _resolve_arm32_literal_pc_load(
+                    {"addr": "0x1000", "text": "ldr pc, [pc, #8]"},
+                    binary,
+                    get_raw_arch_info("arm"),
+                ),
+                "0x2000",
+            )
+            binary.get_content_from_virtual_address.assert_called_with(0x1010, 4)
+            self.assertEqual(
+                _resolve_arm32_literal_pc_load(
+                    {"addr": "0x1002", "text": "ldr.w r15, [r15, #4]"},
+                    binary,
+                    get_raw_arch_info("thumb"),
+                ),
+                "0x2000",
+            )
+            binary.get_content_from_virtual_address.assert_called_with(0x1008, 4)
+
+    @patch("backends.static.disasm.cfg._resolve_arm32_literal_pc_load")
+    def test_arm32_literal_pc_load_cfg_has_target_and_conditional_fallthrough(
+        self, resolve_literal
+    ):
+        resolve_literal.return_value = "0x2000"
+        lines = [
+            {"addr": "0x1000", "text": "ldrne.w pc, [pc, #4]", "line": 1},
+            {"addr": "0x1004", "text": "bx lr", "line": 2},
+            {"addr": "0x2000", "text": "bx lr", "line": 3},
+        ]
+
+        cfg = build_cfg(lines, binary_path="/fake/arm", arch_hint="arm")
+
+        block = next(item for item in cfg["blocks"] if item["addr"] == "0x1000")
+        self.assertEqual(block["successors"], ["0x2000", "0x1004"])
+        edge_types = {
+            (edge["to"], edge["type"])
+            for edge in cfg["edges"]
+            if edge["from"] == "0x1000"
+        }
+        self.assertEqual(
+            edge_types,
+            {("0x2000", "jmp"), ("0x1004", "fallthrough")},
+        )
+
+        resolve_literal.return_value = None
+        unconditional = build_cfg(
+            [
+                {"addr": "0x3000", "text": "ldr pc, [pc, #4]", "line": 1},
+                {"addr": "0x3004", "text": "mov r0, #0", "line": 2},
+            ],
+            binary_path="/fake/arm",
+            arch_hint="arm",
+        )
+        veneer = next(
+            item for item in unconditional["blocks"] if item["addr"] == "0x3000"
+        )
+        self.assertEqual(veneer["successors"], [])
+
     def test_extract_jump_target_ignores_leading_instruction_bytes(self):
         self.assertEqual(_extract_jump_target("0c200008 jal 0x800020"), "0x800020")
         self.assertIsNone(_extract_jump_target("03e00008 jr ra"))
@@ -55,6 +159,9 @@ class TestCfgHelpers(unittest.TestCase):
             "03e00008 jr ra",
             "e12fff1e bx lr",
             "pop {r4, pc}",
+            "movs pc, lr",
+            "subs pc, lr, #4",
+            "rfeia sp!",
         ]
         for text in cases:
             with self.subTest(text=text):
@@ -62,6 +169,71 @@ class TestCfgHelpers(unittest.TestCase):
                 self.assertTrue(is_branch)
                 self.assertFalse(is_call)
                 self.assertIsNone(target)
+
+    def test_arm32_exception_return_has_no_fallthrough(self):
+        lines = [
+            {"addr": "0x1000", "text": "mov r0, #0", "line": 1},
+            {"addr": "0x1004", "text": "subs pc, lr, #4", "line": 2},
+            {"addr": "0x1008", "text": "mov r1, #1", "line": 3},
+        ]
+
+        cfg = build_cfg(lines, arch_hint="arm")
+
+        block = next(item for item in cfg["blocks"] if item["addr"] == "0x1000")
+        self.assertEqual(block["successors"], [])
+
+    def test_arm32_register_alias_return_has_no_fallthrough(self):
+        lines = [
+            {"addr": "0x1000", "text": "mov r0, #0", "line": 1},
+            {"addr": "0x1004", "text": "pop.w {r4, r15}", "line": 2},
+            {"addr": "0x1008", "text": "mov r1, #1", "line": 3},
+        ]
+
+        cfg = build_cfg(lines, arch_hint="arm")
+
+        block = next(item for item in cfg["blocks"] if item["addr"] == "0x1000")
+        self.assertEqual(block["successors"], [])
+
+    def test_arm_conditional_returns_are_branches_with_fallthrough(self):
+        for text in ("bxne lr", "popne.w {r4, pc}", "ldmiane sp!, {r4, pc}"):
+            with self.subTest(text=text):
+                is_branch, is_call, target = _is_branch(text)
+                self.assertTrue(is_branch)
+                self.assertFalse(is_call)
+                self.assertIsNone(target)
+
+    def test_thumb_compare_and_branch_keeps_target_and_fallthrough(self):
+        for mnemonic in ("cbz", "cbnz"):
+            with self.subTest(mnemonic=mnemonic):
+                lines = [
+                    {"addr": "0x1000", "text": f"{mnemonic} r0, 0x1008", "line": 1},
+                    {"addr": "0x1002", "text": "movs r1, #1", "line": 2},
+                    {"addr": "0x1004", "text": "b 0x100c", "line": 3},
+                    {"addr": "0x1008", "text": "movs r1, #0", "line": 4},
+                    {"addr": "0x100a", "text": "bx lr", "line": 5},
+                    {"addr": "0x100c", "text": "bx lr", "line": 6},
+                ]
+
+                cfg = build_cfg(lines, arch_hint="thumb")
+                block = next(item for item in cfg["blocks"] if item["addr"] == "0x1000")
+
+                self.assertEqual(block["successors"], ["0x1008", "0x1002"])
+                self.assertTrue(
+                    any(
+                        edge["from"] == "0x1000"
+                        and edge["to"] == "0x1008"
+                        and edge["type"] == "jmp"
+                        for edge in cfg["edges"]
+                    )
+                )
+                self.assertTrue(
+                    any(
+                        edge["from"] == "0x1000"
+                        and edge["to"] == "0x1002"
+                        and edge["type"] == "fallthrough"
+                        for edge in cfg["edges"]
+                    )
+                )
 
 
 class TestJumpTableDetection(unittest.TestCase):
@@ -84,12 +256,54 @@ class TestJumpTableDetection(unittest.TestCase):
         self.assertTrue(_is_jump_table("br\tx8"))
         self.assertTrue(_is_jump_table("br\tx10"))
 
+    def test_is_jump_table_thumb_table_branch(self):
+        self.assertTrue(_is_jump_table("tbb\t[pc, r0]"))
+        self.assertTrue(_is_jump_table("tbh\t[pc, r1, lsl #1]"))
+
+    def test_is_jump_table_arm32_bx_register_but_not_return(self):
+        self.assertTrue(_is_jump_table("bx\tr3"))
+        self.assertFalse(_is_jump_table("bx\tlr"))
+        self.assertFalse(_is_jump_table("bx\tr14"))
+
+    def test_resolve_arm32_add_pc_switch_uses_architectural_pc(self):
+        lines = [
+            {"addr": "0x401000", "text": "cmp r0, #0x2"},
+            {"addr": "0x401004", "text": "addls pc, pc, r0, lsl #2"},
+        ]
+
+        self.assertEqual(
+            _resolve_arm32_add_pc_switch(lines),
+            ["0x40100c", "0x401010", "0x401014"],
+        )
+
     def test_is_jump_table_multi_arch_register_indirect(self):
         """Détecte aussi les patterns registre exotiques hors x86/ARM64."""
         self.assertTrue(_is_jump_table("03e00008 jr t9"))
         self.assertFalse(_is_jump_table("03e00008 jr ra"))
         self.assertTrue(_is_jump_table("jalr zero, t0, 0"))
         self.assertTrue(_is_jump_table("bctr"))
+
+    def test_riscv_link_register_controls_transfer_kind(self):
+        adapters = (arch_module.RISCV_ADAPTER,)
+        self.assertEqual(_is_branch("jal ra, 0x1020", adapters), (True, True, "0x1020"))
+        self.assertEqual(
+            _is_branch("jal zero, 0x1030", adapters), (True, False, "0x1030")
+        )
+        self.assertEqual(_is_branch("jalr zero, ra, 0", adapters), (True, False, None))
+
+    def test_mips_jalr_link_register_controls_transfer_kind(self):
+        adapters = (arch_module.MIPS_ADAPTER,)
+        self.assertEqual(_is_branch("jalr $ra, $t9", adapters), (True, True, None))
+        self.assertEqual(_is_branch("jalr $zero, $t9", adapters), (True, False, None))
+        self.assertEqual(_is_branch("jalr $zero, $ra", adapters), (True, False, None))
+
+    def test_ppc_control_register_branches_preserve_link_semantics(self):
+        adapters = (arch_module.PPC_ADAPTER,)
+        self.assertEqual(_is_branch("blrl", adapters), (True, True, None))
+        self.assertEqual(_is_branch("beqlrl+", adapters), (True, True, None))
+        self.assertEqual(_is_branch("bnectrl-", adapters), (True, True, None))
+        self.assertEqual(_is_branch("beqctr+", adapters), (True, False, None))
+        self.assertEqual(_is_branch("beqlr+", adapters), (True, False, None))
 
     def test_is_jump_table_not_detected_for_normal_branch(self):
         """Ne détecte pas les branches normales."""
@@ -111,8 +325,62 @@ class TestJumpTableDetection(unittest.TestCase):
         addr = _extract_jump_table_base("br\tx8")
         self.assertIsNone(addr)
 
+    def test_resolve_thumb_tbb_entries_from_aligned_architectural_pc(self):
+        lines = [
+            {"addr": "0x1000", "text": "cmp r0, #2"},
+            {"addr": "0x1002", "text": "tbb [pc, r0]"},
+        ]
+        with (
+            patch(
+                "backends.static.disasm.cfg._read_bytes_at",
+                return_value=b"\x05\x09\x0d",
+            ) as read,
+            patch("backends.static.disasm.cfg._is_valid_code_addr", return_value=True),
+        ):
+            entries = _resolve_thumb_table_branch(
+                lines, MagicMock(), MagicMock(endian="little")
+            )
+
+        read.assert_called_once_with(unittest.mock.ANY, 0x1004, 3)
+        self.assertEqual(entries, ["0x100e", "0x1016", "0x101e"])
+
+    def test_resolve_thumb_tbh_uses_halfword_entries(self):
+        lines = [
+            {"addr": "0x2000", "text": "cmp r1, #1"},
+            {"addr": "0x2002", "text": "tbh [pc, r1, lsl #1]"},
+        ]
+        with (
+            patch(
+                "backends.static.disasm.cfg._read_bytes_at",
+                return_value=b"\x08\x00\x10\x00",
+            ),
+            patch("backends.static.disasm.cfg._is_valid_code_addr", return_value=True),
+        ):
+            entries = _resolve_thumb_table_branch(
+                lines, MagicMock(), MagicMock(endian="little")
+            )
+
+        self.assertEqual(entries, ["0x2014", "0x2024"])
+
 
 class TestBuildCfg(unittest.TestCase):
+    def test_thumb_table_branch_terminates_block_without_false_fallthrough(self):
+        lines = [
+            {"addr": "0x1000", "text": "cmp r0, #1", "line": 1},
+            {"addr": "0x1002", "text": "tbb [pc, r0]", "line": 2},
+            {"addr": "0x1006", "text": "mov r1, r2", "line": 3},
+        ]
+        with patch(
+            "backends.static.disasm.cfg._resolve_thumb_table_branch",
+            return_value=["0x1010", "0x1020"],
+        ):
+            cfg = build_cfg(lines, binary_path="/fake/thumb", arch_hint="thumb")
+
+        entry = next(block for block in cfg["blocks"] if block["addr"] == "0x1000")
+        self.assertTrue(entry["is_switch"])
+        self.assertEqual(entry["successors"], ["0x1010", "0x1020"])
+        self.assertNotIn("0x1006", entry["successors"])
+
     def test_empty_returns_empty(self):
         cfg = build_cfg([])
         self.assertEqual(cfg["blocks"], [])
@@ -193,12 +461,16 @@ class TestBuildCfg(unittest.TestCase):
         lines = [
             {"addr": "0x800000", "text": "27bdfff0 addiu sp, sp, -0x10", "line": 1},
             {"addr": "0x800004", "text": "0c200008 jal 0x800020", "line": 2},
-            {"addr": "0x800008", "text": "11000003 beq t0, zero, 0x800018", "line": 3},
-            {"addr": "0x80000c", "text": "08000008 j 0x800020", "line": 4},
-            {"addr": "0x800018", "text": "00000000 nop", "line": 5},
-            {"addr": "0x800020", "text": "03e00008 jr ra", "line": 6},
+            {"addr": "0x800008", "text": "00000000 nop", "line": 3},
+            {"addr": "0x80000c", "text": "11000003 beq t0, zero, 0x800030", "line": 4},
+            {"addr": "0x800010", "text": "25080001 addiu t0, t0, 1", "line": 5},
+            {"addr": "0x800014", "text": "08000008 j 0x800020", "line": 6},
+            {"addr": "0x800018", "text": "00000000 nop", "line": 7},
+            {"addr": "0x800020", "text": "03e00008 jr ra", "line": 8},
+            {"addr": "0x800024", "text": "00000000 nop", "line": 9},
+            {"addr": "0x800030", "text": "00000000 nop", "line": 10},
         ]
-        cfg = build_cfg(lines)
+        cfg = build_cfg(lines, arch_hint="mips")
         self.assertTrue(
             any(
                 edge["type"] == "call" and edge["to"] == "0x800020"
@@ -207,11 +479,34 @@ class TestBuildCfg(unittest.TestCase):
         )
         self.assertTrue(
             any(
-                edge["type"] == "jmp" and edge["to"] == "0x800018"
+                edge["type"] == "jmp" and edge["to"] == "0x800030"
                 for edge in cfg["edges"]
             )
         )
         self.assertFalse(any(edge["to"] == "0x03e00008" for edge in cfg["edges"]))
+        call_block = next(
+            block for block in cfg["blocks"] if block["addr"] == "0x800000"
+        )
+        self.assertEqual(
+            [line["addr"] for line in call_block["lines"]],
+            ["0x800000", "0x800004", "0x800008"],
+        )
+        branch_block = next(
+            block for block in cfg["blocks"] if block["addr"] == "0x80000c"
+        )
+        self.assertEqual(
+            [line["addr"] for line in branch_block["lines"]],
+            ["0x80000c", "0x800010"],
+        )
+        self.assertEqual(branch_block["successors"], ["0x800030", "0x800014"])
+        return_block = next(
+            block for block in cfg["blocks"] if block["addr"] == "0x800020"
+        )
+        self.assertEqual(
+            [line["addr"] for line in return_block["lines"]],
+            ["0x800020", "0x800024"],
+        )
+        self.assertEqual(return_block["successors"], [])
         self.assertIn(cfg["support_level"], {"full", "partial"})
 
     def test_systemz_call_branch_and_return_mnemonics(self):
@@ -249,6 +544,64 @@ class TestBuildCfg(unittest.TestCase):
         cfg = build_cfg(lines)
         block = next(b for b in cfg["blocks"] if b["addr"] == "0x1000")
         self.assertEqual(block["successors"], [])
+
+    def test_arm_conditional_pop_pc_keeps_fallthrough(self):
+        lines = [
+            {"addr": "0x1000", "text": "push {r4, lr}", "line": 1},
+            {"addr": "0x1004", "text": "popne.w {r4, pc}", "line": 2},
+            {"addr": "0x1008", "text": "mov r0, r0", "line": 3},
+        ]
+        cfg = build_cfg(lines, arch_hint="arm")
+        block = next(b for b in cfg["blocks"] if b["addr"] == "0x1000")
+        self.assertEqual(block["successors"], ["0x1008"])
+
+    def test_arm_mov_pc_lr_return_preserves_only_conditional_fallthrough(self):
+        unconditional = [
+            {"addr": "0x1000", "text": "mov r0, r1", "line": 1},
+            {"addr": "0x1004", "text": "mov pc, lr", "line": 2},
+            {"addr": "0x1008", "text": "mov r2, r3", "line": 3},
+        ]
+        conditional = [
+            {"addr": "0x2000", "text": "mov r0, r1", "line": 1},
+            {"addr": "0x2004", "text": "movne.w pc, lr", "line": 2},
+            {"addr": "0x2008", "text": "mov r2, r3", "line": 3},
+        ]
+
+        unconditional_cfg = build_cfg(unconditional, arch_hint="arm")
+        conditional_cfg = build_cfg(conditional, arch_hint="arm")
+
+        unconditional_block = next(
+            block for block in unconditional_cfg["blocks"] if block["addr"] == "0x1000"
+        )
+        conditional_block = next(
+            block for block in conditional_cfg["blocks"] if block["addr"] == "0x2000"
+        )
+        self.assertEqual(unconditional_block["successors"], [])
+        self.assertEqual(conditional_block["successors"], ["0x2008"])
+
+    def test_arm_ldr_pc_from_stack_preserves_only_conditional_fallthrough(self):
+        unconditional = [
+            {"addr": "0x1000", "text": "mov r0, r1", "line": 1},
+            {"addr": "0x1004", "text": "ldr.w pc, [sp], #4", "line": 2},
+            {"addr": "0x1008", "text": "mov r2, r3", "line": 3},
+        ]
+        conditional = [
+            {"addr": "0x2000", "text": "mov r0, r1", "line": 1},
+            {"addr": "0x2004", "text": "ldrne.w pc, [sp], #4", "line": 2},
+            {"addr": "0x2008", "text": "mov r2, r3", "line": 3},
+        ]
+
+        unconditional_cfg = build_cfg(unconditional, arch_hint="arm")
+        conditional_cfg = build_cfg(conditional, arch_hint="arm")
+
+        unconditional_block = next(
+            block for block in unconditional_cfg["blocks"] if block["addr"] == "0x1000"
+        )
+        conditional_block = next(
+            block for block in conditional_cfg["blocks"] if block["addr"] == "0x2000"
+        )
+        self.assertEqual(unconditional_block["successors"], [])
+        self.assertEqual(conditional_block["successors"], ["0x2008"])
 
 
 class TestBuildCfgForFunction(unittest.TestCase):
@@ -664,6 +1017,124 @@ class TestJumpTableIntegration(unittest.TestCase):
         self.assertEqual(mock_read.call_args.kwargs.get("entry_size"), 8)
         jt_edges = [e for e in result["edges"] if e["type"] == "jumptable"]
         self.assertEqual([e["case_label"] for e in jt_edges], [0, 1])
+
+    def test_build_cfg_arm32_bx_switch_pattern_uses_absolute_jump_table(self):
+        """Détecte un switch ARM32 via adr + ldr indexé + bx registre."""
+        lines = [
+            {"addr": "0x401000", "text": "cmp r0, #0x1"},
+            {"addr": "0x401004", "text": "adr r2, 0x403000"},
+            {"addr": "0x401008", "text": "ldr r3, [r2, r0, lsl #2]"},
+            {"addr": "0x40100c", "text": "bx r3"},
+        ]
+        fake_binary = MagicMock(name="binary")
+        with (
+            patch("backends.static.disasm.cfg.lief") as mock_lief,
+            patch(
+                "backends.static.disasm.cfg._read_jump_table_entries",
+                return_value=["0x401100", "0x401180"],
+            ) as mock_read,
+        ):
+            mock_lief.parse.return_value = fake_binary
+            result = build_cfg(
+                lines,
+                binary_path="/fake/binary",
+                arch_hint="arm",
+            )
+
+        block = result["blocks"][0]
+        self.assertTrue(block.get("is_switch"))
+        self.assertEqual(block.get("successors"), ["0x401100", "0x401180"])
+        mock_read.assert_called_once()
+        self.assertEqual(mock_read.call_args.args[:2], ("/fake/binary", 0x403000))
+        self.assertEqual(mock_read.call_args.kwargs.get("entry_mode"), "absolute")
+        self.assertEqual(mock_read.call_args.kwargs.get("entry_size"), 4)
+
+    def test_build_cfg_arm32_ldr_pc_switch_uses_absolute_jump_table(self):
+        """Détecte un switch ARM32 direct via adr + ldr pc indexé."""
+        lines = [
+            {"addr": "0x401000", "text": "cmp r0, #0x1"},
+            {"addr": "0x401004", "text": "adr r2, 0x403000"},
+            {"addr": "0x401008", "text": "ldr pc, [r2, r0, lsl #2]"},
+            {"addr": "0x40100c", "text": "mov r4, r4"},
+        ]
+        fake_binary = MagicMock(name="binary")
+        with (
+            patch("backends.static.disasm.cfg.lief") as mock_lief,
+            patch(
+                "backends.static.disasm.cfg._read_jump_table_entries",
+                return_value=["0x401100", "0x401180"],
+            ) as mock_read,
+        ):
+            mock_lief.parse.return_value = fake_binary
+            result = build_cfg(lines, binary_path="/fake/binary", arch_hint="arm")
+
+        switch_block = result["blocks"][0]
+        self.assertTrue(switch_block.get("is_switch"))
+        self.assertEqual(switch_block.get("successors"), ["0x401100", "0x401180"])
+        self.assertNotIn("0x40100c", switch_block.get("successors"))
+        mock_read.assert_called_once()
+        self.assertEqual(mock_read.call_args.args[:2], ("/fake/binary", 0x403000))
+        self.assertEqual(mock_read.call_args.kwargs.get("entry_mode"), "absolute")
+        self.assertEqual(mock_read.call_args.kwargs.get("entry_size"), 4)
+
+    def test_build_cfg_conditional_arm32_ldr_pc_switch_keeps_fallthrough(self):
+        lines = [
+            {"addr": "0x401000", "text": "cmp r0, #0x1"},
+            {"addr": "0x401004", "text": "adr r2, 0x403000"},
+            {"addr": "0x401008", "text": "ldrne.w pc, [r2, r0, lsl #2]"},
+            {"addr": "0x40100c", "text": "mov r4, r4"},
+        ]
+        fake_binary = MagicMock(name="binary")
+        with (
+            patch("backends.static.disasm.cfg.lief") as mock_lief,
+            patch(
+                "backends.static.disasm.cfg._read_jump_table_entries",
+                return_value=["0x401100", "0x401180"],
+            ),
+        ):
+            mock_lief.parse.return_value = fake_binary
+            result = build_cfg(lines, binary_path="/fake/binary", arch_hint="arm")
+
+        switch_block = result["blocks"][0]
+        self.assertTrue(switch_block.get("is_switch"))
+        self.assertEqual(
+            switch_block.get("successors"),
+            ["0x401100", "0x401180", "0x40100c"],
+        )
+        self.assertEqual(
+            switch_block.get("switch_cases"),
+            [
+                {"case": 0, "target": "0x401100"},
+                {"case": 1, "target": "0x401180"},
+            ],
+        )
+
+    def test_build_cfg_conditional_arm32_add_pc_switch_keeps_default_path(self):
+        lines = [
+            {"addr": "0x401000", "text": "cmp r0, #0x2"},
+            {"addr": "0x401004", "text": "addls pc, pc, r0, lsl #2"},
+            {"addr": "0x401008", "text": "b 0x401100"},
+            {"addr": "0x40100c", "text": "b 0x401200"},
+            {"addr": "0x401010", "text": "b 0x401300"},
+            {"addr": "0x401014", "text": "b 0x401400"},
+        ]
+
+        result = build_cfg(lines, arch_hint="arm")
+
+        switch_block = result["blocks"][0]
+        self.assertTrue(switch_block.get("is_switch"))
+        self.assertEqual(
+            switch_block.get("successors"),
+            ["0x40100c", "0x401010", "0x401014", "0x401008"],
+        )
+        self.assertEqual(
+            switch_block.get("switch_cases"),
+            [
+                {"case": 0, "target": "0x40100c"},
+                {"case": 1, "target": "0x401010"},
+                {"case": 2, "target": "0x401014"},
+            ],
+        )
 
     def test_build_cfg_arm64_relative_switch_pattern_uses_relative_jump_table(self):
         """Détecte un switch ARM64 relatif via ldrsw + add + br."""

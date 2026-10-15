@@ -2,20 +2,8 @@ const { expect } = require("chai");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const crypto = require("crypto");
 const proxyquire = require("proxyquire");
 const sinon = require("sinon");
-
-function computeLegacyAnnotationsPath(root, binaryPath, storageDir) {
-  const absPath = path.isAbsolute(binaryPath) ? binaryPath : path.join(root, binaryPath);
-  const hash = crypto
-    .createHash("sha256")
-    .update(absPath)
-    .update(fs.existsSync(absPath) ? String(fs.statSync(absPath).mtimeMs) : "")
-    .digest("hex")
-    .slice(0, 16);
-  return path.join(storageDir, "annotations", `${hash}.json`);
-}
 
 function makePanelSink() {
   const messages = [];
@@ -36,6 +24,7 @@ describe("sharedHandlers", () => {
   let sink;
   let vscodeStub;
   let fileManagerStub;
+  let patchHistoryBridge;
 
   beforeEach(() => {
     tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pof-shared-handlers-"));
@@ -60,6 +49,10 @@ describe("sharedHandlers", () => {
       cleanupAll: sinon.stub().returns({ removedArtifacts: 0, removedCache: 0 }),
       purgeStaleCache: sinon.stub().returns({ removed: 0 }),
     };
+    patchHistoryBridge = {
+      deleteHistory: sinon.stub().resolves({ ok: true, removed: 1 }),
+      purgeMissing: sinon.stub().resolves({ ok: true, removed: 0 }),
+    };
   });
 
   afterEach(() => {
@@ -77,10 +70,11 @@ describe("sharedHandlers", () => {
       root: tempRoot,
       panel: sink.panel,
       clearRawProfile,
+      patchHistoryBridge,
     });
     const missingPath = path.join(tempRoot, "ghost.bin");
 
-    vscodeStub.window.showWarningMessage.onFirstCall().resolves("Retirer et nettoyer");
+    vscodeStub.window.showWarningMessage.onFirstCall().resolves("Remove and clean up");
 
     await handlers.hubUseBinaryPath({ binaryPath: missingPath });
 
@@ -111,6 +105,7 @@ describe("sharedHandlers", () => {
       panel: sink.panel,
       context: { workspaceState: { get: () => [], update: sinon.stub().resolves() } },
       clearRawProfile,
+      patchHistoryBridge,
     });
     const binaryPath = path.join(tempRoot, "sample.exe");
 
@@ -120,7 +115,27 @@ describe("sharedHandlers", () => {
     expect(clearRawProfile.calledOnceWithExactly(binaryPath)).to.equal(true);
     expect(fileManagerStub.cleanupForBinary.calledOnce).to.equal(true);
     expect(fileManagerStub.cleanupForBinary.firstCall.args[1]).to.equal(binaryPath);
+    expect(patchHistoryBridge.deleteHistory.calledOnceWithExactly(binaryPath)).to.equal(true);
     expect(sink.messages.map((message) => message.type)).to.include("generatedFiles");
+  });
+
+  it("purges stale SQLite patch histories with workspace cache entries", async () => {
+    fileManagerStub.purgeStaleCache.returns({ removed: 2 });
+    patchHistoryBridge.purgeMissing.resolves({ ok: true, removed: 3 });
+    const sharedHandlers = proxyquire("../shared/sharedHandlers", {
+      vscode: vscodeStub,
+      "./fileManager": fileManagerStub,
+    });
+    const handlers = sharedHandlers({
+      root: tempRoot,
+      panel: sink.panel,
+      patchHistoryBridge,
+    });
+
+    await handlers.purgeStaleCache();
+
+    expect(patchHistoryBridge.purgeMissing.calledOnceWithExactly(tempRoot)).to.equal(true);
+    expect(vscodeStub.window.showInformationMessage.firstCall.args[0]).to.include("5 stale cache entry");
   });
 
   it("allows reconfiguring a stored raw profile when reopening a blob", async () => {
@@ -217,6 +232,58 @@ describe("sharedHandlers", () => {
     });
   });
 
+  it("loads AI chat history through the SQLite bridge", async () => {
+    const chatHistoryBridge = {
+      loadHistory: sinon.stub().resolves({
+        conversations: [{ id: "conv-1", messages: [] }],
+        activeConversationId: "conv-1",
+      }),
+      saveHistory: sinon.stub().resolves(),
+    };
+    const sharedHandlers = proxyquire("../shared/sharedHandlers", {
+      vscode: vscodeStub,
+      "./fileManager": fileManagerStub,
+    });
+    const handlers = sharedHandlers({
+      root: tempRoot,
+      panel: sink.panel,
+      chatHistoryBridge,
+    });
+
+    await handlers.hubLoadChatHistory();
+
+    expect(chatHistoryBridge.loadHistory.calledOnce).to.equal(true);
+    expect(sink.messages).to.deep.include({
+      type: "hubChatHistory",
+      conversations: [{ id: "conv-1", messages: [] }],
+      activeConversationId: "conv-1",
+    });
+  });
+
+  it("saves AI chat history through the SQLite bridge", async () => {
+    const chatHistoryBridge = {
+      loadHistory: sinon.stub().resolves({}),
+      saveHistory: sinon.stub().resolves(),
+    };
+    const sharedHandlers = proxyquire("../shared/sharedHandlers", {
+      vscode: vscodeStub,
+      "./fileManager": fileManagerStub,
+    });
+    const handlers = sharedHandlers({
+      root: tempRoot,
+      panel: sink.panel,
+      chatHistoryBridge,
+    });
+    const conversations = [{ id: "conv-1", messages: [] }];
+
+    await handlers.hubSaveChatHistory({ conversations, activeConversationId: "conv-1" });
+
+    expect(chatHistoryBridge.saveHistory.calledOnceWithExactly({
+      conversations,
+      activeConversationId: "conv-1",
+    })).to.equal(true);
+  });
+
   it("exports an AI conversation in the selected format", async () => {
     const sharedHandlers = proxyquire("../shared/sharedHandlers", {
       vscode: vscodeStub,
@@ -243,64 +310,17 @@ describe("sharedHandlers", () => {
     expect(vscodeStub.window.showInformationMessage.calledOnce).to.equal(true);
   });
 
-  it("migrates a legacy JSON annotations file on first load and renames it", async () => {
+  it("loads annotations directly from the SQLite bridge", async () => {
     const sharedHandlers = proxyquire("../shared/sharedHandlers", {
       vscode: vscodeStub,
       "./fileManager": fileManagerStub,
     });
     const storageDir = path.join(tempRoot, "storage");
-    const binaryPath = path.join(tempRoot, "sample.bin");
-    fs.writeFileSync(binaryPath, Buffer.from("binary-content"));
-
-    const legacyPath = computeLegacyAnnotationsPath(tempRoot, binaryPath, storageDir);
-    fs.mkdirSync(path.dirname(legacyPath), { recursive: true });
-    const legacyAnnotations = {
-      "0x1000": { comment: "legacy comment", name: "legacy_fn" },
-    };
-    fs.writeFileSync(legacyPath, JSON.stringify(legacyAnnotations, null, 2), "utf8");
-
-    const migratedAnnotations = {
-      "0x1000": { comment: "legacy comment", name: "legacy_fn" },
-    };
-    const annotationsBridgeStub = {
-      migrateLegacyJson: sinon.stub().resolves(migratedAnnotations),
-      loadAnnotations: sinon.stub().resolves(migratedAnnotations),
-    };
-
-    const handlers = sharedHandlers({
-      root: tempRoot,
-      storageDir,
-      panel: sink.panel,
-      annotationsBridge: annotationsBridgeStub,
-    });
-
-    await handlers.hubLoadAnnotations({ binaryPath });
-
-    expect(annotationsBridgeStub.migrateLegacyJson.calledOnce).to.equal(true);
-    expect(annotationsBridgeStub.migrateLegacyJson.firstCall.args[0]).to.equal(binaryPath);
-    expect(annotationsBridgeStub.migrateLegacyJson.firstCall.args[1]).to.deep.equal(legacyAnnotations);
-
-    expect(fs.existsSync(legacyPath)).to.equal(false);
-    expect(fs.existsSync(`${legacyPath}.migrated`)).to.equal(true);
-    expect(JSON.parse(fs.readFileSync(`${legacyPath}.migrated`, "utf8"))).to.deep.equal(legacyAnnotations);
-
-    const annotationsMessage = sink.messages.find((message) => message.type === "hubAnnotations");
-    expect(annotationsMessage).to.exist;
-    expect(annotationsMessage.annotations).to.deep.equal(migratedAnnotations);
-  });
-
-  it("skips migration and loads directly when no legacy JSON file exists", async () => {
-    const sharedHandlers = proxyquire("../shared/sharedHandlers", {
-      vscode: vscodeStub,
-      "./fileManager": fileManagerStub,
-    });
-    const storageDir = path.join(tempRoot, "storage");
-    const binaryPath = path.join(tempRoot, "no-legacy.bin");
+    const binaryPath = path.join(tempRoot, "sqlite-only.bin");
     fs.writeFileSync(binaryPath, Buffer.from("binary-content"));
 
     const currentAnnotations = { "0x2000": { comment: "already in sqlite" } };
     const annotationsBridgeStub = {
-      migrateLegacyJson: sinon.stub().resolves({}),
       loadAnnotations: sinon.stub().resolves(currentAnnotations),
     };
 
@@ -313,41 +333,36 @@ describe("sharedHandlers", () => {
 
     await handlers.hubLoadAnnotations({ binaryPath });
 
-    expect(annotationsBridgeStub.migrateLegacyJson.called).to.equal(false);
     expect(annotationsBridgeStub.loadAnnotations.calledOnceWithExactly(binaryPath)).to.equal(true);
 
     const annotationsMessage = sink.messages.find((message) => message.type === "hubAnnotations");
     expect(annotationsMessage).to.exist;
+    expect(annotationsMessage.binaryPath).to.equal(binaryPath);
     expect(annotationsMessage.annotations).to.deep.equal(currentAnnotations);
   });
 
-  it("falls through gracefully when a concurrent call already migrated and renamed the legacy file", async () => {
+  it("includes function addresses from the disassembly mapping when loading annotations", async () => {
     const sharedHandlers = proxyquire("../shared/sharedHandlers", {
       vscode: vscodeStub,
       "./fileManager": fileManagerStub,
     });
     const storageDir = path.join(tempRoot, "storage");
-    const binaryPath = path.join(tempRoot, "sample-race.bin");
+    fs.mkdirSync(storageDir, { recursive: true });
+    const binaryPath = path.join(tempRoot, "sample.bin");
     fs.writeFileSync(binaryPath, Buffer.from("binary-content"));
-
-    const legacyPath = computeLegacyAnnotationsPath(tempRoot, binaryPath, storageDir);
-    fs.mkdirSync(path.dirname(legacyPath), { recursive: true });
-    const legacyAnnotations = {
-      "0x1000": { comment: "legacy comment", name: "legacy_fn" },
-    };
-    fs.writeFileSync(legacyPath, JSON.stringify(legacyAnnotations, null, 2), "utf8");
-
-    const migratedAnnotations = {
-      "0x1000": { comment: "legacy comment", name: "legacy_fn" },
-    };
-    const annotationsBridgeStub = {
-      // Simulate a "winning" concurrent call that already migrated and renamed
-      // the legacy file during this call's await on migrateLegacyJson.
-      migrateLegacyJson: sinon.stub().callsFake(async () => {
-        fs.renameSync(legacyPath, `${legacyPath}.migrated`);
-        return migratedAnnotations;
+    fs.writeFileSync(
+      path.join(storageDir, "sample.disasm.mapping.json"),
+      JSON.stringify({
+        binary: binaryPath,
+        functions: [{ addr: "0x80490a0", name: "_start" }],
+        lines: [{ addr: "0x80490a0", function_addr: "0x80490a0" }],
       }),
-      loadAnnotations: sinon.stub().resolves(migratedAnnotations),
+      "utf8",
+    );
+
+    const currentAnnotations = { "0x80490a0": { comment: "aaaa", name: "test" } };
+    const annotationsBridgeStub = {
+      loadAnnotations: sinon.stub().resolves(currentAnnotations),
     };
 
     const handlers = sharedHandlers({
@@ -359,11 +374,9 @@ describe("sharedHandlers", () => {
 
     await handlers.hubLoadAnnotations({ binaryPath });
 
-    expect(vscodeStub.window.showErrorMessage.called).to.equal(false);
-    expect(annotationsBridgeStub.loadAnnotations.calledOnceWithExactly(binaryPath)).to.equal(true);
-
     const annotationsMessage = sink.messages.find((message) => message.type === "hubAnnotations");
     expect(annotationsMessage).to.exist;
-    expect(annotationsMessage.annotations).to.deep.equal(migratedAnnotations);
+    expect(annotationsMessage.annotations).to.deep.equal(currentAnnotations);
+    expect(annotationsMessage.functionAddrs).to.deep.equal(["0x80490a0"]);
   });
 });

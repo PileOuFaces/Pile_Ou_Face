@@ -364,6 +364,61 @@ class TestDecompile(unittest.TestCase):
         self.assertIn("Demo.magic", result["code"])
         self.assertEqual(result["typed_structs"][0]["name"], "Demo.magic")
 
+    def test_decompile_function_rewrites_typed_var_bindings(self):
+        stack = {
+            "arch": "unknown",
+            "abi": "unknown",
+            "frame_size": 0,
+            "vars": [
+                {"name": "param_1", "offset": 0, "source": "abi"},
+                {"name": "param_2", "offset": 8, "source": "abi"},
+            ],
+            "args": [],
+        }
+
+        def fake_run_custom(
+            decompiler, _binary, addr="", func_name="", full=False, **kw
+        ):
+            return {
+                "addr": "0x401000",
+                "code": "int f(void *param_1, void *param_2) "
+                "{ return *(int *)(param_2 + 8) == 2; }",
+                "error": None,
+                "decompiler": decompiler,
+            }
+
+        with (
+            tempfile.TemporaryDirectory() as d,
+            mock.patch(
+                "backends.static.decompile.decompile._run_custom_decompiler",
+                fake_run_custom,
+            ),
+            mock.patch(
+                "backends.static.disasm.stack_frame.analyse_stack_frame",
+                return_value=stack,
+            ),
+            mock.patch(
+                "backends.static.decompile.decompile.build_typed_var_binding_index",
+                return_value={
+                    "field_access_map": {"param:2": {8: "mode"}},
+                    "enum_literal_map": {"param:2->mode": {2: "MODE_READY"}},
+                },
+            ),
+            mock.patch(
+                "backends.static.decompile.decompile.typed_var_binding_signature",
+                return_value="varbindsig",
+            ),
+        ):
+            result = decompile_function(
+                "/bin/ls",
+                "0x401000",
+                decompiler="ghidra",
+                provider="local",
+                cache_dir=Path(d),
+            )
+
+        self.assertIn("param_2->mode == MODE_READY", result["code"])
+
     def test_score_decompile_code_rewards_expected_calls(self):
         plain = _score_decompile_code("int main(){ return 0; }", {"win"})
         with_call = _score_decompile_code("int main(){ win(); return 0; }", {"win"})

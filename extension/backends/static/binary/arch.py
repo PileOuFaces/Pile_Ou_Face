@@ -42,8 +42,13 @@ ARM64_PROLOGUE_PATTERNS: tuple[tuple[str, str], ...] = (
 )
 
 ARM32_PROLOGUE_PATTERNS: tuple[tuple[str, str], ...] = (
-    (r"\bpush\s+\{[^}]*lr[^}]*\}", "push lr"),
-    (r"\bstmdb\s+sp!", "stmdb sp"),
+    (r"\bpush(?:\.[wn])?\s+\{[^}]*(?:lr|r14)[^}]*\}", "push lr"),
+    (r"\bstmdb(?:\.[wn])?\s+(?:sp|r13)!", "stmdb sp"),
+    (r"\bstmfd(?:\.[wn])?\s+(?:sp|r13)!", "stmfd sp"),
+    (
+        r"\bstr(?:\.w)?\s+(?:lr|r14)\s*,\s*\[(?:sp|r13)\s*,\s*#?-(?:0x[0-9a-fA-F]+|\d+)\]!",
+        "str lr preindex",
+    ),
     (r"\bsub\s+sp\s*,\s*sp\s*,\s*#?0x[0-9a-fA-F]+\b", "sub sp"),
 )
 
@@ -96,6 +101,8 @@ ARM64_CONDITIONAL_BRANCHES = frozenset({"cbz", "cbnz", "tbz", "tbnz"})
 ARM64_CONDITIONAL_PREFIXES = ("b.",)
 ARM32_CONDITIONAL_BRANCHES = frozenset(
     {
+        "cbz",
+        "cbnz",
         "beq",
         "bne",
         "bcs",
@@ -111,6 +118,24 @@ ARM32_CONDITIONAL_BRANCHES = frozenset(
         "bgt",
         "ble",
     }
+)
+ARM32_CONDITION_SUFFIXES = (
+    "eq",
+    "ne",
+    "cs",
+    "hs",
+    "cc",
+    "lo",
+    "mi",
+    "pl",
+    "vs",
+    "vc",
+    "hi",
+    "ls",
+    "ge",
+    "lt",
+    "gt",
+    "le",
 )
 
 X86_DATA_REF_MNEMONICS = frozenset(
@@ -296,8 +321,37 @@ class ArchAdapter:
                 return name
         return None
 
+    def _arm32_mnemonic_parts(self, mnemonic: str) -> tuple[str, bool]:
+        """Return an ARM opcode without width/condition suffixes and condition state."""
+        normalized = str(mnemonic or "").strip().lower()
+        if self.family != "arm":
+            return normalized, False
+        if normalized.endswith((".w", ".n")):
+            normalized = normalized[:-2]
+        for suffix in ARM32_CONDITION_SUFFIXES:
+            if normalized.endswith(suffix) and len(normalized) > len(suffix):
+                return normalized[: -len(suffix)], True
+        return normalized, False
+
+    def _arm32_base_mnemonic(self, mnemonic: str) -> str:
+        """Remove ARM condition/width suffixes when they decorate an opcode."""
+        return self._arm32_mnemonic_parts(mnemonic)[0]
+
     def is_call_mnemonic(self, mnemonic: str) -> bool:
-        return mnemonic in self.call_mnemonics
+        normalized = str(mnemonic or "").strip().lower()
+        ppc_mnemonic = normalized.rstrip("+-")
+        return (
+            normalized in self.call_mnemonics
+            or (
+                self.family == "arm"
+                and self._arm32_base_mnemonic(normalized) in self.call_mnemonics
+            )
+            or (
+                self.family == "ppc"
+                and ppc_mnemonic.startswith("b")
+                and ppc_mnemonic.endswith(("lrl", "ctrl"))
+            )
+        )
 
     def is_return_mnemonic(self, mnemonic: str) -> bool:
         return mnemonic in self.return_mnemonics
@@ -305,17 +359,88 @@ class ArchAdapter:
     def is_return_instruction(self, mnemonic: str, operands: str = "") -> bool:
         mnem = str(mnemonic or "").strip().lower()
         ops = re.sub(r"\s+", "", str(operands or "").strip().lower())
+        registers = set(re.findall(r"[a-z][a-z0-9]*", ops))
         if self.is_return_mnemonic(mnem):
             return True
-        if self.family == "arm" and mnem == "bx" and ops == "lr":
+        ppc_mnemonic = mnem.rstrip("+-")
+        if (
+            self.family == "ppc"
+            and ppc_mnemonic.startswith("b")
+            and ppc_mnemonic.endswith("lr")
+            and not ppc_mnemonic.endswith("lrl")
+        ):
             return True
-        if self.family == "arm" and mnem == "pop" and "pc" in ops:
-            return True
-        if self.family == "arm" and mnem in {"ldm", "ldmia", "ldmfd"} and "pc" in ops:
-            return True
+        if self.family == "arm":
+            if mnem == "movs" and ops in {"pc,lr", "r15,r14"}:
+                return True
+            if mnem == "subs" and re.match(
+                r"^(?:pc|r15),(?:lr|r14),#?(?:0x[0-9a-f]+|\d+)$", ops
+            ):
+                return True
+            base, is_conditional = self._arm32_mnemonic_parts(mnem)
+            if is_conditional:
+                return False
+            if base in {"rfe", "rfeia", "rfeib", "rfeda", "rfedb"}:
+                return True
+            if base == "bx" and ops in {"lr", "r14"}:
+                return True
+            if base == "mov" and ops in {"pc,lr", "r15,r14"}:
+                return True
+            if base == "ldr" and re.match(r"^(?:pc|r15),\[(?:sp|r13)(?:,|\])", ops):
+                return True
+            if base == "pop" and registers.intersection({"pc", "r15"}):
+                return True
+            if base in {"ldm", "ldmia", "ldmfd"} and registers.intersection(
+                {"pc", "r15"}
+            ):
+                return True
         if self.family == "sysz" and mnem == "br" and ops in {"r14", "%r14", "14"}:
             return True
+        if self.family == "riscv":
+            if mnem == "jr" and ops in {"ra", "x1"}:
+                return True
+            if mnem == "jalr" and re.fullmatch(
+                r"(?:zero|x0),(?:ra|x1)(?:,(?:0|0x0))?", ops
+            ):
+                return True
+        if self.family == "mips" and mnem == "jalr":
+            fields = [field.strip("$") for field in ops.split(",") if field]
+            return bool(
+                len(fields) >= 2
+                and fields[0] in {"zero", "0", "r0"}
+                and fields[1] in {"ra", "31", "r31"}
+            )
         return bool(self.family == "mips" and mnem == "jr" and ops in {"ra", "$ra"})
+
+    def is_conditional_return_instruction(
+        self, mnemonic: str, operands: str = ""
+    ) -> bool:
+        """Whether an instruction conditionally returns to its caller."""
+        if self.family == "ppc":
+            normalized = str(mnemonic or "").strip().lower().rstrip("+-")
+            return bool(
+                normalized.startswith("b")
+                and normalized.endswith("lr")
+                and not normalized.endswith("lrl")
+                and normalized != "blr"
+            )
+        if self.family != "arm":
+            return False
+        base, is_conditional = self._arm32_mnemonic_parts(mnemonic)
+        if not is_conditional:
+            return False
+        ops = re.sub(r"\s+", "", str(operands or "").strip().lower())
+        registers = set(re.findall(r"[a-z][a-z0-9]*", ops))
+        return bool(
+            (base == "bx" and ops in {"lr", "r14"})
+            or (base == "mov" and ops in {"pc,lr", "r15,r14"})
+            or (base == "ldr" and re.match(r"^(?:pc|r15),\[(?:sp|r13)(?:,|\])", ops))
+            or (base == "pop" and registers.intersection({"pc", "r15"}))
+            or (
+                base in {"ldm", "ldmia", "ldmfd"}
+                and registers.intersection({"pc", "r15"})
+            )
+        )
 
     def is_unconditional_jump_mnemonic(self, mnemonic: str) -> bool:
         return mnemonic in self.unconditional_jump_mnemonics
@@ -323,6 +448,25 @@ class ArchAdapter:
     def is_conditional_branch_mnemonic(self, mnemonic: str) -> bool:
         if mnemonic in self.conditional_branch_mnemonics:
             return True
+        if self.family == "ppc":
+            normalized = str(mnemonic or "").strip().lower().rstrip("+-")
+            if normalized.startswith("b") and (
+                (
+                    normalized.endswith("lr")
+                    and not normalized.endswith("lrl")
+                    and normalized != "blr"
+                )
+                or (
+                    normalized.endswith("ctr")
+                    and not normalized.endswith("ctrl")
+                    and normalized != "bctr"
+                )
+            ):
+                return True
+        if self.family == "arm":
+            base = self._arm32_base_mnemonic(mnemonic)
+            if base in {"b", "bx"} and base != mnemonic:
+                return True
         return any(
             mnemonic.startswith(prefix) for prefix in self.conditional_branch_prefixes
         )
@@ -338,8 +482,40 @@ class ArchAdapter:
             return "jcc"
         return None
 
+    def classify_code_ref_instruction(
+        self, mnemonic: str, operands: str = ""
+    ) -> str | None:
+        """Classify a control transfer, including operand-dependent ISA aliases."""
+        mnem = str(mnemonic or "").strip().lower()
+        if self.is_return_instruction(mnem, operands):
+            return "ret"
+        if self.family == "mips" and mnem == "jalr":
+            fields = [
+                field.strip().lower().lstrip("$")
+                for field in str(operands or "").split(",")
+                if field.strip()
+            ]
+            destination = fields[0] if len(fields) > 1 else "ra"
+            return "jmp" if destination in {"zero", "0", "r0"} else "call"
+        if self.family != "riscv" or mnem not in {"jal", "jalr"}:
+            return self.classify_code_ref_mnemonic(mnem)
+
+        fields = [
+            field.strip().lower()
+            for field in str(operands or "").split(",")
+            if field.strip()
+        ]
+        if not fields:
+            return self.classify_code_ref_mnemonic(mnem)
+        destination = fields[0] if len(fields) > 1 else "ra"
+        return "jmp" if destination in {"zero", "x0"} else "call"
+
     def supports_data_ref_mnemonic(self, mnemonic: str) -> bool:
-        return mnemonic in self.data_ref_mnemonics
+        normalized = str(mnemonic or "").strip().lower()
+        return normalized in self.data_ref_mnemonics or (
+            self.family == "arm"
+            and self._arm32_base_mnemonic(normalized) in self.data_ref_mnemonics
+        )
 
     def support_for(self, feature: str) -> FeatureSupport:
         if self.support and feature in self.support:
@@ -444,7 +620,9 @@ ARM64_ADAPTER = ArchAdapter(
         "xrefs": FeatureSupport("full", "Code refs and ADR/ADRP/LDR/STR data refs"),
         "call_graph": FeatureSupport("full", "Direct BL calls and Mach-O stubs"),
         "stack_frame": FeatureSupport("full", "x29/sp tracking and register args"),
-        "calling_convention": FeatureSupport("partial", "AAPCS64 identification"),
+        "calling_convention": FeatureSupport(
+            "partial", "AAPCS64, Apple Darwin PCS and Windows ARM64 identification"
+        ),
     },
 )
 
@@ -453,7 +631,7 @@ ARM32_ADAPTER = ArchAdapter(
     family="arm",
     display_name="ARM",
     call_mnemonics=frozenset({"bl", "blx"}),
-    unconditional_jump_mnemonics=frozenset({"b", "bx"}),
+    unconditional_jump_mnemonics=frozenset({"b", "bx", "tbb", "tbh"}),
     conditional_branch_mnemonics=ARM32_CONDITIONAL_BRANCHES,
     return_mnemonics=frozenset(),
     prologue_patterns=ARM32_PROLOGUE_PATTERNS,
@@ -465,15 +643,23 @@ ARM32_ADAPTER = ArchAdapter(
     support={
         "disasm": FeatureSupport("full", "Capstone ARM/Thumb"),
         "discover_functions": FeatureSupport(
-            "partial", "BL targets, push-lr prologues and LR returns"
+            "full", "ARM/Thumb prologues, call targets and return patterns"
         ),
         "cfg": FeatureSupport(
-            "partial", "Direct branches/calls and LR return patterns"
+            "full", "ARM/Thumb branches, calls, returns and jump tables"
         ),
-        "xrefs": FeatureSupport("partial", "Code refs and common LDR/STR data refs"),
-        "call_graph": FeatureSupport("partial", "Direct BL/BLX calls"),
-        "stack_frame": FeatureSupport("partial", "SP/FP anchors and register args"),
-        "calling_convention": FeatureSupport("partial", "AAPCS32 identification"),
+        "xrefs": FeatureSupport(
+            "full", "Code refs and ARM/Thumb PC-relative data refs"
+        ),
+        "call_graph": FeatureSupport(
+            "full", "Direct and common literal-pool indirect calls"
+        ),
+        "stack_frame": FeatureSupport(
+            "full", "AAPCS SP/FP tracking, saved registers and arguments"
+        ),
+        "calling_convention": FeatureSupport(
+            "partial", "AAPCS32 soft/hard-float from ELF flags"
+        ),
     },
 )
 
@@ -586,8 +772,8 @@ RISCV_ADAPTER = ArchAdapter(
     key="riscv",
     family="riscv",
     display_name="RISC-V",
-    call_mnemonics=frozenset({"call", "jal", "jalr"}),
-    unconditional_jump_mnemonics=frozenset({"j", "jr", "tail"}),
+    call_mnemonics=frozenset({"call", "c.jal", "jal", "jalr"}),
+    unconditional_jump_mnemonics=frozenset({"c.j", "c.jr", "j", "jr", "tail"}),
     conditional_branch_mnemonics=frozenset(
         {
             "beq",
@@ -606,9 +792,11 @@ RISCV_ADAPTER = ArchAdapter(
             "bltz",
             "bne",
             "bnez",
+            "c.beqz",
+            "c.bnez",
         }
     ),
-    return_mnemonics=frozenset({"ret", "mret", "sret", "uret"}),
+    return_mnemonics=frozenset({"c.jr", "ret", "mret", "sret", "uret"}),
     prologue_patterns=(
         (rf"\baddi(?:w)?\s+sp\s*,\s*sp\s*,\s*{_SIGNED_IMMEDIATE_RE}\b", "addi sp"),
     ),
@@ -920,6 +1108,14 @@ def _cs_mode(name: str | None = None) -> int | None:
     if not name:
         return getattr(capstone, "CS_MODE_LITTLE_ENDIAN", 0)
     return getattr(capstone, f"CS_MODE_{name}", None)
+
+
+def _cs_modes(*names: str) -> int | None:
+    """Combine Capstone mode flags, or fail when one is unavailable."""
+    modes = [_cs_mode(name) for name in names]
+    if any(mode is None for mode in modes):
+        return None
+    return sum(mode or 0 for mode in modes)
 
 
 def _normalize_endian(endian: str | None) -> str:
@@ -1253,7 +1449,7 @@ def get_raw_arch_info(raw_arch: str, endian: str | None = None) -> ArchInfo | No
         "bpf": ("BPF", _cs_mode("BPF_EXTENDED"), 64, 8, "BPF", "BPF", False, "generic"),
         "riscv32": (
             "RISCV",
-            _cs_mode("RISCV32"),
+            _cs_modes("RISCV32", "RISCVC"),
             32,
             4,
             "RISC-V32",
@@ -1263,7 +1459,7 @@ def get_raw_arch_info(raw_arch: str, endian: str | None = None) -> ArchInfo | No
         ),
         "riscv64": (
             "RISCV",
-            _cs_mode("RISCV64"),
+            _cs_modes("RISCV64", "RISCVC"),
             64,
             8,
             "RISC-V64",
@@ -1418,6 +1614,13 @@ def _elf_class_bits(binary) -> int | None:
     return None
 
 
+def _elf_endian(binary) -> str:
+    header = getattr(binary, "header", None)
+    identity_data = getattr(header, "identity_data", None)
+    text = getattr(identity_data, "name", str(identity_data or "")).upper()
+    return "big" if "MSB" in text or "BIG" in text else "little"
+
+
 def detect_binary_arch(binary) -> ArchInfo | None:
     """Resolution d'un objet binaire LIEF en ArchInfo."""
     if not lief:
@@ -1500,6 +1703,7 @@ def detect_binary_arch(binary) -> ArchInfo | None:
         fallback = _detect_arch_from_machine_name(
             machine_name,
             format_kind="elf",
+            endian=_elf_endian(binary),
             bits=_elf_class_bits(binary),
         )
         if fallback is not None:

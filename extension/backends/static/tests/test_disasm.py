@@ -16,11 +16,17 @@ if str(ROOT) not in sys.path:
 
 from backends.shared.exceptions import BinaryNotFoundError
 from backends.static.disasm.disasm import (
+    _DISASM_WINDOW_BYTES,
     _augment_context_with_discovered_functions,
+    _iter_windowed_instructions,
+    _mmap_file_readonly,
+    _normalize_capstone_operands,
     _write_disasm_outputs,
     disassemble,
+    disassemble_raw_blob,
     disassemble_with_capstone,
 )
+from backends.static.disasm.mapping_db import query_window
 from backends.static.tests.util import compile_minimal_elf
 
 try:
@@ -33,8 +39,27 @@ except ImportError:
 
 
 @unittest.skipUnless(_LIEF_AVAILABLE, "lief/capstone not installed")
+def _db_lines(out_map):
+    """Lit les lignes du mapping depuis le SQLite associé au JSON allégé."""
+    lines, _total = query_window(str(out_map)[: -len(".json")] + ".db", None, 100000)
+    return lines
+
+
 class TestDisassembleWithCapstone(unittest.TestCase):
     """Tests de disassemble_with_capstone."""
+
+    @unittest.skipUnless(_LIEF_AVAILABLE, "lief/capstone not installed")
+    def test_riscv_negative_hex_target_is_normalized_to_virtual_address(self):
+        instruction = mock.Mock(
+            address=0x104D8,
+            mnemonic="jal",
+            op_str="-0x18",
+        )
+
+        self.assertEqual(
+            _normalize_capstone_operands(_capstone.CS_ARCH_RISCV, instruction),
+            "0x104c0",
+        )
 
     def test_nonexistent_binary_raises(self):
         """Binaire inexistant lève BinaryNotFoundError."""
@@ -141,7 +166,14 @@ class TestDisassemble(unittest.TestCase):
                 )
 
     def test_real_binary(self):
-        """Compile un binaire minimal, désassemble, vérifie la sortie."""
+        """Compile un binaire minimal, désassemble, vérifie la sortie.
+
+        Un binaire gcc non strippé a typiquement des symboles de fonction,
+        donc `disassemble()` peut emprunter le chemin streaming (#180) — le
+        contrat testé ici est le contenu persisté (.asm + mapping SQLite),
+        pas la clé `result["lines"]` qui n'existe que sur le chemin de repli
+        (voir _stream_write_disasm_outputs).
+        """
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             binary = compile_minimal_elf(tmp_path)
@@ -159,21 +191,16 @@ class TestDisassemble(unittest.TestCase):
 
             self.assertIsNotNone(result)
             self.assertEqual(result["path"], str(out_asm))
-            self.assertIn("lines", result)
-            self.assertGreater(len(result["lines"]), 0)
-
-            # Vérifier que les fichiers sont créés
             self.assertTrue(out_asm.exists())
             self.assertTrue(out_map.exists())
 
-            # Vérifier le format des lignes
-            for line in result["lines"]:
+            db_lines = _db_lines(out_map)
+            self.assertGreater(len(db_lines), 0)
+            for line in db_lines:
                 self.assertIn("addr", line)
                 self.assertIn("text", line)
                 self.assertIn("line", line)
-                # Vérifier que l'adresse est au format 0xhex
                 self.assertTrue(line["addr"].startswith("0x"))
-                # Vérifier que line est un numéro de ligne valide
                 self.assertIsInstance(line["line"], int)
                 self.assertGreater(line["line"], 0)
 
@@ -186,15 +213,17 @@ class TestDisassemble(unittest.TestCase):
                 self.skipTest("gcc non disponible")
 
             out_asm = tmp_path / "out.asm"
+            out_map = tmp_path / "out.json"
 
             result = disassemble(
                 str(binary),
                 str(out_asm),
+                output_mapping=str(out_map),
                 syntax="intel",
             )
 
             self.assertIsNotNone(result)
-            self.assertGreater(len(result["lines"]), 0)
+            self.assertGreater(len(_db_lines(out_map)), 0)
 
     def test_pe_disassembly(self):
         """Désassemble le .text d'un PE64 (nop;ret)."""
@@ -288,6 +317,44 @@ class TestDisassemble(unittest.TestCase):
             self.assertEqual(mapping["arch"]["key"], "x86_64")
             self.assertEqual(mapping["arch"]["support"]["cfg"]["level"], "full")
 
+    def test_mmap_file_readonly_matches_read_bytes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "blob.bin"
+            content = bytes.fromhex("554889e5c3") * 1000
+            path.write_bytes(content)
+            mapped = _mmap_file_readonly(str(path))
+            self.assertEqual(bytes(mapped), content)
+            self.assertEqual(len(mapped), len(content))
+            self.assertEqual(mapped[10:20], content[10:20])
+
+    def test_mmap_file_readonly_empty_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "empty.bin"
+            path.write_bytes(b"")
+            self.assertEqual(_mmap_file_readonly(str(path)), b"")
+
+    def test_raw_blob_empty_file_returns_no_instructions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "empty.bin"
+            path.write_bytes(b"")
+            lines = disassemble_raw_blob(str(path), raw_arch="i386:x86-64")
+            self.assertEqual(lines, [])
+
+    def test_raw_blob_mmap_backed_source_spans_multiple_windows(self):
+        # `mov eax, 1` (5 bytes), repeated past several window boundaries, to
+        # confirm the mmap-backed buffer decodes identically to an in-memory
+        # bytes buffer across _iter_windowed_instructions' soft-limit logic.
+        instr = bytes.fromhex("b801000000")
+        count = (_DISASM_WINDOW_BYTES // len(instr)) * 2 + 3
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "big.bin"
+            path.write_bytes(instr * count)
+            lines = disassemble_raw_blob(str(path), raw_arch="i386:x86-64")
+            self.assertEqual(len(lines), count)
+            self.assertTrue(all(line["mnemonic"] == "mov" for line in lines))
+            addrs = [int(line["addr"], 16) for line in lines]
+            self.assertTrue(all(b - a == len(instr) for a, b in zip(addrs, addrs[1:])))
+
 
 class TestDisasmEnrichmentFormatting(unittest.TestCase):
     def test_write_outputs_include_function_banner_comment_and_stack_hints(self):
@@ -339,15 +406,15 @@ class TestDisasmEnrichmentFormatting(unittest.TestCase):
             )
 
             asm = out_asm.read_text(encoding="utf-8")
-            saved = json.loads(out_map.read_text(encoding="utf-8"))
+            saved_lines = _db_lines(out_map)
 
             self.assertIn("; ===== Function entry_main @ 0x401000 =====", asm)
             self.assertIn("entry_main:", asm)
             self.assertIn("bootstrap", asm)
             self.assertIn("var saved_tmp @ [rsp+0x18]", asm)
             self.assertEqual(mapping["functions"][0]["name"], "entry_main")
-            first_line = saved["lines"][0]
-            second_line = saved["lines"][1]
+            first_line = saved_lines[0]
+            second_line = saved_lines[1]
             self.assertEqual(first_line["function_name"], "entry_main")
             self.assertEqual(second_line["function_addr"], "0x401000")
             self.assertEqual(second_line["stack_hints"][0]["name"], "saved_tmp")
@@ -392,11 +459,83 @@ class TestDisasmEnrichmentFormatting(unittest.TestCase):
             )
 
             asm = out_asm.read_text(encoding="utf-8")
-            saved = json.loads(out_map.read_text(encoding="utf-8"))
+            saved_lines = _db_lines(out_map)
 
             self.assertIn("arg arg_rdi @ rdi", asm)
-            self.assertEqual(saved["lines"][0]["stack_hints"][0]["name"], "arg_rdi")
-            self.assertEqual(saved["lines"][0]["stack_hints"][0]["kind"], "arg")
+            self.assertEqual(saved_lines[0]["stack_hints"][0]["name"], "arg_rdi")
+            self.assertEqual(saved_lines[0]["stack_hints"][0]["kind"], "arg")
+
+    def test_write_outputs_include_typed_var_binding_hints(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out_asm = Path(tmp) / "out.asm"
+            out_map = Path(tmp) / "out.json"
+            lines = [
+                {
+                    "addr": "0x401000",
+                    "text": "89 c7                mov      edi, eax",
+                    "bytes": "89 c7",
+                    "mnemonic": "mov",
+                    "operands": "edi, eax",
+                },
+                {
+                    "addr": "0x401002",
+                    "text": "48 89 44 24 18       mov      qword ptr [rsp + 0x18], rax",
+                    "bytes": "48 89 44 24 18",
+                    "mnemonic": "mov",
+                    "operands": "qword ptr [rsp + 0x18], rax",
+                },
+            ]
+            mapping = _write_disasm_outputs(
+                lines,
+                "/tmp/fake.bin",
+                str(out_asm),
+                str(out_map),
+                function_ranges=[
+                    (
+                        0x401000,
+                        0x401010,
+                        {"addr": "0x401000", "name": "entry_main", "size": 0x10},
+                    )
+                ],
+                stack_frames={
+                    "0x401000": {
+                        "args": [
+                            {"name": "arg_rdi", "location": "rdi", "source": "abi"}
+                        ],
+                        "vars": [
+                            {
+                                "name": "saved_tmp",
+                                "location": "[rsp+0x18]",
+                                "source": "auto",
+                                "offset": 0x18,
+                            }
+                        ],
+                    }
+                },
+                typed_var_binding_map={
+                    "0x401000": {
+                        "param:1": {
+                            "type_name": "Widget",
+                            "type_kind": "struct",
+                            "pointer_level": 1,
+                        },
+                        "local:24": {
+                            "type_name": "Mode",
+                            "type_kind": "enum",
+                            "pointer_level": 0,
+                        },
+                    }
+                },
+            )
+            del mapping
+
+            asm = out_asm.read_text(encoding="utf-8")
+            saved_lines = _db_lines(out_map)
+
+            self.assertIn("arg arg_rdi @ rdi (Widget *)", asm)
+            self.assertIn("var saved_tmp @ [rsp+0x18] (Mode)", asm)
+            self.assertEqual(saved_lines[0]["stack_hints"][0]["type"], "Widget *")
+            self.assertEqual(saved_lines[1]["stack_hints"][0]["type"], "Mode")
 
     def test_generic_macho_header_symbol_falls_back_to_discovered_functions(self):
         lines = [
@@ -485,10 +624,10 @@ class TestDisasmEnrichmentFormatting(unittest.TestCase):
             )
 
             asm = out_asm.read_text(encoding="utf-8")
-            saved = json.loads(out_map.read_text(encoding="utf-8"))
+            saved_lines = _db_lines(out_map)
             self.assertIn("struct Demo.magic", asm)
             self.assertEqual(
-                saved["lines"][0]["typed_struct_hints"][0]["label"], "Demo.magic"
+                saved_lines[0]["typed_struct_hints"][0]["label"], "Demo.magic"
             )
 
     def test_write_outputs_match_arm_memory_stack_hints(self):
@@ -553,12 +692,12 @@ class TestDisasmEnrichmentFormatting(unittest.TestCase):
             )
 
             asm = out_asm.read_text(encoding="utf-8")
-            saved = json.loads(out_map.read_text(encoding="utf-8"))
+            saved_lines = _db_lines(out_map)
 
             self.assertIn("arg arg_saved @ [x29+0x10]", asm)
             self.assertIn("arg arg_fp @ [r11+0x8]", asm)
-            self.assertEqual(saved["lines"][0]["stack_hints"][0]["name"], "arg_saved")
-            self.assertEqual(saved["lines"][1]["stack_hints"][0]["name"], "arg_fp")
+            self.assertEqual(saved_lines[0]["stack_hints"][0]["name"], "arg_saved")
+            self.assertEqual(saved_lines[1]["stack_hints"][0]["name"], "arg_fp")
 
     def test_write_outputs_replaces_non_x86_branch_targets(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -590,6 +729,351 @@ class TestDisasmEnrichmentFormatting(unittest.TestCase):
 
             asm = out_asm.read_text(encoding="utf-8")
             self.assertIn("bnez     a0, done", asm)
+
+
+@unittest.skipUnless(_LIEF_AVAILABLE, "lief/capstone not installed")
+class TestWindowedDisassembly(unittest.TestCase):
+    """_iter_windowed_instructions doit être équivalent à un appel unique."""
+
+    def _make_disassembler(self):
+        import capstone
+
+        md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
+        md.detail = False
+        return md, capstone.CS_ARCH_X86
+
+    def _decode_all(self, md, code_bytes, base_addr):
+        return [
+            (instr.address, instr.mnemonic, instr.op_str, bytes(instr.bytes))
+            for instr in md.disasm(code_bytes, base_addr)
+        ]
+
+    def test_matches_single_call_across_many_forced_window_boundaries(self):
+        # push rbp ; mov rbp, rsp ; mov eax, 0x2a ; leave ; ret  (variable-length x86)
+        pattern = bytes(
+            [0x55, 0x48, 0x89, 0xE5, 0xB8, 0x2A, 0x00, 0x00, 0x00, 0xC9, 0xC3]
+        )
+        code_bytes = (
+            pattern * 5000
+        )  # assez pour traverser des dizaines de petites fenêtres
+        base_addr = 0x401000
+
+        md_ref, _ = self._make_disassembler()
+        reference = self._decode_all(md_ref, code_bytes, base_addr)
+
+        md_windowed, _ = self._make_disassembler()
+        # Fenêtre volontairement minuscule (plus petite qu'un pattern complet)
+        # pour forcer de nombreuses frontières mid-instruction.
+        windowed = [
+            (
+                instr.address,
+                instr.mnemonic,
+                instr.op_str,
+                bytes(
+                    code_bytes[
+                        instr.address - base_addr : instr.address
+                        - base_addr
+                        + instr.size
+                    ]
+                ),
+            )
+            for instr in _iter_windowed_instructions(
+                md_windowed, code_bytes, base_addr, window_bytes=7, overlap_bytes=32
+            )
+        ]
+
+        self.assertEqual(len(windowed), len(reference))
+        self.assertEqual(windowed, reference)
+
+    def test_matches_single_call_when_window_smaller_than_overlap(self):
+        pattern = bytes(
+            [0x55, 0x48, 0x89, 0xE5, 0xB8, 0x2A, 0x00, 0x00, 0x00, 0xC9, 0xC3]
+        )
+        code_bytes = pattern * 200
+        base_addr = 0x1000
+
+        md_ref, _ = self._make_disassembler()
+        reference = self._decode_all(md_ref, code_bytes, base_addr)
+
+        md_windowed, _ = self._make_disassembler()
+        windowed = [
+            (
+                instr.address,
+                instr.mnemonic,
+                instr.op_str,
+                bytes(
+                    code_bytes[
+                        instr.address - base_addr : instr.address
+                        - base_addr
+                        + instr.size
+                    ]
+                ),
+            )
+            for instr in _iter_windowed_instructions(
+                md_windowed, code_bytes, base_addr, window_bytes=3, overlap_bytes=16
+            )
+        ]
+
+        self.assertEqual(windowed, reference)
+
+    def test_stops_like_a_single_call_on_undecodable_trailing_bytes(self):
+        # Instructions valides suivies d'un octet 0x0f seul (préfixe two-byte
+        # incomplet) : capstone doit s'arrêter au même endroit, fenêtré ou non.
+        valid = bytes([0x55, 0x48, 0x89, 0xE5, 0xC3]) * 10
+        code_bytes = valid + bytes([0x0F])
+        base_addr = 0x1000
+
+        md_ref, _ = self._make_disassembler()
+        reference = self._decode_all(md_ref, code_bytes, base_addr)
+        self.assertGreater(len(reference), 0)
+
+        md_windowed, _ = self._make_disassembler()
+        windowed = [
+            (
+                instr.address,
+                instr.mnemonic,
+                instr.op_str,
+                bytes(
+                    code_bytes[
+                        instr.address - base_addr : instr.address
+                        - base_addr
+                        + instr.size
+                    ]
+                ),
+            )
+            for instr in _iter_windowed_instructions(
+                md_windowed, code_bytes, base_addr, window_bytes=6, overlap_bytes=32
+            )
+        ]
+
+        self.assertEqual(windowed, reference)
+
+    def test_full_pipeline_still_produces_identical_asm_with_tiny_windows(self):
+        """Bout en bout via disasm.py, fenêtre forcée minuscule via monkeypatch."""
+        from backends.static.disasm import disasm as disasm_module
+        from backends.static.tests.fixtures.make_elf import make_minimal_elf
+
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = os.path.join(tmp, "test.elf")
+            make_minimal_elf(binary)
+
+            out_asm_windowed = os.path.join(tmp, "windowed.asm")
+            out_map_windowed = os.path.join(tmp, "windowed.mapping.json")
+            out_asm_ref = os.path.join(tmp, "ref.asm")
+            out_map_ref = os.path.join(tmp, "ref.mapping.json")
+
+            disassemble(binary, out_asm_ref, out_map_ref)
+
+            original = disasm_module._DISASM_WINDOW_BYTES
+            disasm_module._DISASM_WINDOW_BYTES = 5
+            try:
+                disassemble(binary, out_asm_windowed, out_map_windowed)
+            finally:
+                disasm_module._DISASM_WINDOW_BYTES = original
+
+            self.assertEqual(
+                Path(out_asm_windowed).read_text(encoding="utf-8"),
+                Path(out_asm_ref).read_text(encoding="utf-8"),
+            )
+
+
+@unittest.skipUnless(_LIEF_AVAILABLE, "lief/capstone not installed")
+class TestStreamWriteDisasmOutputsEquivalence(unittest.TestCase):
+    """_stream_write_disasm_outputs doit produire un .asm et un mapping
+    identiques à _write_disasm_outputs pour le même désassemblage."""
+
+    def _run_both(self, tmp, lines, **kwargs):
+        from backends.static.disasm.disasm import _stream_write_disasm_outputs
+
+        out_asm_old = Path(tmp) / "old.asm"
+        out_map_old = Path(tmp) / "old.mapping.json"
+        out_asm_new = Path(tmp) / "new.asm"
+        out_map_new = Path(tmp) / "new.mapping.json"
+
+        _write_disasm_outputs(
+            list(lines), "/tmp/fake.bin", str(out_asm_old), str(out_map_old), **kwargs
+        )
+        _stream_write_disasm_outputs(
+            lambda: iter(lines),
+            "/tmp/fake.bin",
+            str(out_asm_new),
+            str(out_map_new),
+            **kwargs,
+        )
+
+        self.assertEqual(
+            out_asm_old.read_text(encoding="utf-8"),
+            out_asm_new.read_text(encoding="utf-8"),
+        )
+        old_rows = _db_lines(out_map_old)
+        new_rows, _new_total = query_window(
+            str(out_map_new)[: -len(".json")] + ".db", None, 100000
+        )
+        self.assertEqual(old_rows, new_rows)
+        return out_asm_new.read_text(encoding="utf-8")
+
+    def test_function_banner_comment_and_stack_hints(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            lines = [
+                {
+                    "addr": "0x401000",
+                    "text": "55                   push     rbp",
+                    "bytes": "55",
+                    "mnemonic": "push",
+                    "operands": "rbp",
+                },
+                {
+                    "addr": "0x401001",
+                    "text": "48 89 e5             mov      rbp, rsp",
+                    "bytes": "48 89 e5",
+                    "mnemonic": "mov",
+                    "operands": "rbp, rsp",
+                },
+                {
+                    "addr": "0x401004",
+                    "text": "48 89 44 24 18       mov      qword ptr [rsp + 0x18], rax",
+                    "bytes": "48 89 44 24 18",
+                    "mnemonic": "mov",
+                    "operands": "qword ptr [rsp + 0x18], rax",
+                },
+            ]
+            self._run_both(
+                tmp,
+                lines,
+                label_map={0x401000: "entry_main"},
+                comment_map={0x401004: "save arg"},
+                function_ranges=[
+                    (0x401000, None, {"addr": "0x401000", "name": "entry_main"})
+                ],
+                stack_frames={
+                    "0x401000": {
+                        "args": [],
+                        "vars": [
+                            {
+                                "name": "saved_tmp",
+                                "location": "[rsp+0x18]",
+                                "source": "auto",
+                            }
+                        ],
+                    }
+                },
+            )
+
+    def test_branch_target_replaced_by_label(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            lines = [
+                {
+                    "addr": "0x1000",
+                    "text": "e8 00 10 00 00       call     0x2000",
+                    "bytes": "e8 00 10 00 00",
+                    "mnemonic": "call",
+                    "operands": "0x2000",
+                },
+                {
+                    "addr": "0x2000",
+                    "text": "c3                   ret",
+                    "bytes": "c3",
+                    "mnemonic": "ret",
+                    "operands": "",
+                },
+            ]
+            asm = self._run_both(
+                tmp,
+                lines,
+                label_map={0x2000: "helper"},
+                function_ranges=[
+                    (0x1000, 0x1005, {"addr": "0x1000", "name": "main"}),
+                    (0x2000, None, {"addr": "0x2000", "name": "helper"}),
+                ],
+            )
+            self.assertIn("call     helper", asm)
+
+    def test_no_enrichment_still_matches(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            lines = [
+                {
+                    "addr": "0x1000",
+                    "text": "90                   nop",
+                    "bytes": "90",
+                    "mnemonic": "nop",
+                    "operands": "",
+                },
+            ]
+            self._run_both(tmp, lines)
+
+
+@unittest.skipUnless(_LIEF_AVAILABLE, "lief/capstone not installed")
+class TestDisassembleStreamingPath(unittest.TestCase):
+    """Vérifie disassemble()'s branchement streaming (function_ranges connu)
+    sans dépendre de gcc (indisponible sur macOS) : force le contexte via
+    monkeypatch de _load_disasm_context, comme le ferait un vrai binaire
+    avec table de symboles."""
+
+    def test_streaming_path_matches_legacy_path_and_feeds_cache_sink(self):
+        from backends.static.tests.fixtures.make_elf import make_minimal_elf
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            binary = tmp_path / "test.elf"
+            make_minimal_elf(str(binary))
+
+            forced_context = {
+                "label_map": {},
+                "comment_map": {},
+                "function_ranges": [
+                    (0x400078, None, {"addr": "0x400078", "name": "entry0"})
+                ],
+                "stack_frames": {},
+                "typed_struct_index": None,
+                "typed_var_binding_map": {},
+            }
+
+            out_asm_stream = tmp_path / "stream.asm"
+            out_map_stream = tmp_path / "stream.mapping.json"
+            sunk_rows: list[dict] = []
+
+            with mock.patch(
+                "backends.static.disasm.disasm._load_disasm_context",
+                return_value=dict(forced_context),
+            ):
+                result = disassemble(
+                    str(binary),
+                    str(out_asm_stream),
+                    str(out_map_stream),
+                    disasm_cache_sink=sunk_rows.append,
+                )
+
+            self.assertIsNotNone(result)
+            self.assertNotIn("lines", result)
+            self.assertGreater(result["line_count"], 0)
+            self.assertEqual(len(sunk_rows), result["line_count"])
+            for row in sunk_rows:
+                self.assertIn("addr", row)
+                self.assertIn("line", row)
+
+            # Chemin historique (liste complète + _write_disasm_outputs) sur
+            # les mêmes instructions brutes et le même contexte forcé.
+            lines = disassemble_with_capstone(str(binary))
+            out_asm_legacy = tmp_path / "legacy.asm"
+            out_map_legacy = tmp_path / "legacy.mapping.json"
+            _write_disasm_outputs(
+                lines,
+                str(binary),
+                str(out_asm_legacy),
+                str(out_map_legacy),
+                **forced_context,
+            )
+
+            self.assertEqual(
+                out_asm_stream.read_text(encoding="utf-8"),
+                out_asm_legacy.read_text(encoding="utf-8"),
+            )
+            self.assertEqual(
+                _db_lines(out_map_legacy),
+                query_window(
+                    str(out_map_stream)[: -len(".json")] + ".db", None, 100000
+                )[0],
+            )
 
 
 if __name__ == "__main__":

@@ -38,4 +38,14 @@ describe("hubDecompile stale response guard", () => {
     const guardBlock = handler.slice(staleGuardIndex, firstRenderIndex);
     expect(guardBlock).to.include("return;");
   });
+
+  it("caches auto-mode responses under the automatic request key", () => {
+    const source = messagesSource();
+    const handlerStart = source.indexOf("msg.type === 'hubDecompile'");
+    const handlerEnd = source.indexOf("msg.type === 'hubRecherche'", handlerStart);
+    const handler = source.slice(handlerStart, handlerEnd);
+
+    expect(handler).to.include("pendingDecompileRequests.delete(autoKey)");
+    expect(handler).to.include("if (autoKey !== requestKey) cacheDecompileResult(autoKey, payload)");
+  });
 });

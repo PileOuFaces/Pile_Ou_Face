@@ -54,6 +54,7 @@ def build_diagnostics(
     disasm_lines: list[dict] | None = None,
     crash: dict | None = None,
     max_steps_reached: bool = False,
+    trace_size_reached: bool = False,
 ) -> list[dict]:
     """Build deterministic crash/error diagnostics from trace enrichment."""
     diagnostics: list[dict] = []
@@ -111,6 +112,8 @@ def build_diagnostics(
     # reported when there's already a genuine crash for this run.
     if max_steps_reached and crash is None:
         diagnostics.append(_max_steps_diagnostic(snapshots))
+    if trace_size_reached and crash is None:
+        diagnostics.append(_trace_size_diagnostic(snapshots))
 
     deduped = _dedupe_diagnostics(diagnostics)
     _attach_to_analysis(analysis_by_step, deduped)
@@ -448,12 +451,50 @@ def _diagnose_crash(
             or None
         )
         message = f"Adresse de retour detournee vers une zone executable ({ret_target or 'adresse inconnue'})"
-    elif classification == "fatal_crash":
-        kind = "fatal_crash"
+    elif classification in ("fatal_crash", "runtime_crash"):
+        # Pedagogical specialization (#300), additive only: a plain data
+        # access (never unmapped_fetch -- control-flow crashes keep the
+        # generic fatal_crash message) whose faulting address is *exactly*
+        # 0x0 is unambiguous evidence of a NULL pointer dereference. This
+        # never claims to know which variable/pointer was involved -- only
+        # what was directly observed (an invalid access at address 0).
+        # NULL + offset (e.g. `p->field` faulting at 0x4/0x8) is a known,
+        # deliberately deferred gap: no evidence distinguishes "NULL plus a
+        # small struct offset" from "a plain wild pointer that happens to
+        # be small" without guessing, so only the exact address is matched
+        # (see tmp/audits/pointers-pedagogy-audit.md).
+        fault_addr_value = _parse_int(crash.get("memoryAddress"))
+        if crash_type in ("unmapped_read", "unmapped_write") and fault_addr_value == 0:
+            kind = "null_pointer_dereference"
+            severity = "error"
+            confidence = 0.96
+            ret_target = None
+            message = (
+                "Ecriture memoire invalide via une adresse NULL (0x0)."
+                if crash_type == "unmapped_write"
+                else "Lecture memoire invalide via une adresse NULL (0x0)."
+            )
+        else:
+            kind = classification
+            severity = "error"
+            confidence = 0.96 if classification == "fatal_crash" else 0.88
+            ret_target = None
+            default_message = (
+                "Crash fatal Unicorn."
+                if classification == "fatal_crash"
+                else "Crash runtime Unicorn."
+            )
+            message = str(crash.get("reason") or default_message).strip()
+    elif classification == "stack_chk_fail":
+        # The program's own stack protector detected a corrupted canary and
+        # called __stack_chk_fail -- direct evidence, not a heuristic guess.
+        kind = "stack_chk_fail"
         severity = "error"
-        confidence = 0.96
+        confidence = 0.97
         ret_target = None
-        message = str(crash.get("reason") or "Crash fatal Unicorn.").strip()
+        message = str(
+            crash.get("reason") or "Protecteur de pile declenche (__stack_chk_fail)."
+        ).strip()
     elif classification in ("benign_termination", "emulator_stop"):
         # run_pipeline._build_crash_report already downgraded this from
         # fatal_crash after finding zero corruption evidence (no overflow
@@ -983,6 +1024,27 @@ def _max_steps_diagnostic(snapshots: list[dict]) -> dict:
             "function": _function_name(last_snapshot, {}),
             "instructionAddress": _instruction_address(last_snapshot),
             "message": "Limite de pas d'execution atteinte : le trace a ete tronque, ce n'est pas un crash.",
+            "before": None,
+            "after": None,
+            "bytes": "",
+            "probableSource": None,
+            "payloadOffset": None,
+            "confidence": 1.0,
+        }
+    )
+
+
+def _trace_size_diagnostic(snapshots: list[dict]) -> dict:
+    last_snapshot = snapshots[-1] if isinstance(snapshots, list) and snapshots else {}
+    step = _step_number(last_snapshot, max(0, len(snapshots) - 1)) if snapshots else 0
+    return _clean_diag(
+        {
+            "severity": "info",
+            "kind": "trace_size_limit_reached",
+            "step": step,
+            "function": _function_name(last_snapshot, {}),
+            "instructionAddress": _instruction_address(last_snapshot),
+            "message": "Limite de taille de trace atteinte : la trace partielle reste exploitable, ce n'est pas un crash.",
             "before": None,
             "after": None,
             "bytes": "",

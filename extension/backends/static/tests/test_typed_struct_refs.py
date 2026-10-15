@@ -7,6 +7,7 @@ import unittest
 ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "../../.."))
 sys.path.insert(0, ROOT)
 
+from backends.static.annotations.struct_db import get_struct_db_path
 from backends.static.annotations.typed_struct_refs import (
     build_typed_struct_index,
     collect_typed_struct_hints,
@@ -45,12 +46,22 @@ class TestTypedStructRefs(unittest.TestCase):
             ],
         }
         with tempfile.TemporaryDirectory() as tmp:
-            save_typed_struct_ref("/tmp/demo.bin", applied_struct, workspace_root=tmp)
-            listed = list_typed_struct_refs("/tmp/demo.bin", workspace_root=tmp)
+            storage = os.path.join(tmp, "storage")
+            save_typed_struct_ref(
+                "/tmp/demo.bin", applied_struct, workspace_root=storage
+            )
+            listed = list_typed_struct_refs("/tmp/demo.bin", workspace_root=storage)
             self.assertEqual(len(listed["entries"]), 1)
-            index = build_typed_struct_index("/tmp/demo.bin", workspace_root=tmp)
+            index = build_typed_struct_index("/tmp/demo.bin", workspace_root=storage)
             self.assertEqual(index["exact_by_addr"]["0x402000"]["label"], "Demo.magic")
             self.assertEqual(index["exact_by_addr"]["0x402004"]["label"], "Demo.count")
             hints = collect_typed_struct_hints(index, ["0x402004"])
             self.assertEqual(hints[0]["field_name"], "count")
-            self.assertTrue(typed_struct_signature("/tmp/demo.bin", workspace_root=tmp))
+            self.assertTrue(
+                typed_struct_signature("/tmp/demo.bin", workspace_root=storage)
+            )
+            self.assertEqual(
+                get_struct_db_path(storage),
+                os.path.join(storage, "types.db"),
+            )
+            self.assertFalse(os.path.exists(os.path.join(tmp, ".pile-ou-face")))

@@ -247,8 +247,13 @@ def _is_return_like(line: dict, adapters: tuple[ArchAdapter, ...]) -> bool:
     )
 
 
-def _is_call_mnemonic(mnem: str, adapters: tuple[ArchAdapter, ...]) -> bool:
-    return any(adapter.is_call_mnemonic(mnem) for adapter in adapters)
+def _is_call_instruction(
+    mnem: str, operands: str, adapters: tuple[ArchAdapter, ...]
+) -> bool:
+    return any(
+        adapter.classify_code_ref_instruction(mnem, operands) == "call"
+        for adapter in adapters
+    )
 
 
 def _is_unconditional_jump_mnemonic(
@@ -923,10 +928,11 @@ def _walk_seed_functions(
             line = line_by_addr[addr]
             idx = line_index_by_addr.get(addr, -1)
             mnem = _line_mnemonic(line)
+            operands = _line_operands(line)
             target_int = _extract_direct_target_int(line)
             fallthrough = next_addr.get(addr)
 
-            if _is_call_mnemonic(mnem, adapters):
+            if _is_call_instruction(mnem, operands, adapters):
                 if target_int and target_int in line_by_addr:
                     target_line = line_by_addr[target_int]
                     target_idx = line_index_by_addr.get(target_int, -1)
@@ -1321,8 +1327,10 @@ def main() -> int:
         logger.error("Mapping file not found: %s", args.mapping)
         return 1
 
-    with open(args.mapping, encoding="utf-8") as f:
-        data = json.load(f)
+    # JSON allégé : les lignes vivent dans le SQLite associé.
+    from backends.static.disasm.mapping_db import load_mapping_with_lines
+
+    data = load_mapping_with_lines(args.mapping)
 
     lines = data.get("lines", [])
     known_addrs = set()

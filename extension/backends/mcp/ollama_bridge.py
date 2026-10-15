@@ -71,7 +71,7 @@ class OllamaToolsUnsupportedError(RuntimeError):
 
 
 class McpStdioClient:
-    """Minimal JSON-RPC client over MCP stdio framing."""
+    """Minimal JSON-RPC client over MCP stdio transport (NDJSON)."""
 
     def __init__(self, cmd: list[str], cwd: str, timeout_s: int = 60) -> None:
         self.cmd = cmd
@@ -134,36 +134,17 @@ class McpStdioClient:
 
     def _write_message(self, message: dict[str, Any]) -> None:
         stdin, _ = self._pipes()
-        body = json.dumps(message, ensure_ascii=True, separators=(",", ":")).encode(
-            "utf-8"
-        )
-        frame = f"Content-Length: {len(body)}\r\n\r\n".encode("ascii") + body
-        stdin.write(frame)
+        line = json.dumps(message, ensure_ascii=True, separators=(",", ":")) + "\n"
+        stdin.write(line.encode("utf-8"))
         stdin.flush()
 
     def _read_message(self) -> dict[str, Any]:
         _, stdout = self._pipes()
-        header = b""
-        while b"\r\n\r\n" not in header:
-            chunk = stdout.read(1)
-            if not chunk:
-                raise RuntimeError("EOF while reading MCP headers")
-            header += chunk
-
-        head, _ = header.split(b"\r\n\r\n", 1)
-        content_length = None
-        for line in head.split(b"\r\n"):
-            if line.lower().startswith(b"content-length:"):
-                content_length = int(line.split(b":", 1)[1].strip())
-                break
-        if content_length is None:
-            raise RuntimeError("MCP response missing Content-Length")
-
-        payload = stdout.read(content_length)
-        if len(payload) != content_length:
-            raise RuntimeError("Unexpected EOF while reading MCP payload")
+        line = stdout.readline()
+        if not line:
+            raise RuntimeError("EOF while reading MCP response")
         try:
-            return json.loads(payload.decode("utf-8"))
+            return json.loads(line.decode("utf-8"))
         except json.JSONDecodeError as exc:
             raise RuntimeError("Invalid JSON in MCP response") from exc
 

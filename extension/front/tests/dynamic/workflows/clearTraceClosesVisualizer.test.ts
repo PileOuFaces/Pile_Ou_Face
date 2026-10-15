@@ -106,6 +106,48 @@ describe('dynamic/workflows clear trace history', () => {
     expect((loadedTraces[0] as any).analysisByStep).to.deep.equal(analysisByStepFixture);
   });
 
+  it('runtime-session-ignores-stale-dynamicTraceReady-for-a-previous-binary', () => {
+    const runtimeNavSlot = createElement('div');
+    const documentRef = createDocument({ runtimeNavSlot });
+    const loadedTraces: unknown[] = [];
+    const posted: unknown[] = [];
+    const shownPanels: string[] = [];
+    const controller = loadRuntimeSessionController({
+      POFHubRuntime: {
+        loadTrace: (data: unknown) => loadedTraces.push(data),
+        clearTrace: () => {}
+      }
+    }).initRuntimeSessionController({
+      document: documentRef,
+      postMessage: (message: unknown) => posted.push(message),
+      showPanel: (panel: string) => shownPanels.push(panel),
+      getBinaryPath: () => '/repo/current.bin',
+      fallbackRenderer: { clearPanel: () => {} }
+    });
+
+    expect(controller.handleMessage({
+      type: 'dynamicTraceReady',
+      binaryPath: '/repo/old.bin',
+      traceRunId: '9',
+      tracePath: '/tmp/pof/output.run-9-a.json',
+      snapshots: [{ step: 1, func: 'main' }],
+      meta: { binary: '/repo/old.bin' }
+    })).to.equal(true);
+
+    expect(runtimeNavSlot.children).to.have.length(0);
+    expect(loadedTraces).to.deep.equal([]);
+    expect(shownPanels).to.deep.equal([]);
+    expect(posted).to.deep.equal([{
+      type: 'hubDebugLog',
+      scope: 'dynamic-trace-ready',
+      event: 'ignored-stale-response',
+      details: {
+        currentBinaryPath: '/repo/current.bin',
+        responseBinaryPath: '/repo/old.bin',
+      },
+    }]);
+  });
+
   it('deleting-active-history-trace-notifies-hub-and-standalone-visualizer-clear', async () => {
     const fsMod = require('fs');
     const sinon = require('sinon');

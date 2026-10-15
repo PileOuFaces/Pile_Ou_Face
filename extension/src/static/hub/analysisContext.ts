@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 
 const { getExtensionPath } = require('../../shared/utils');
+const { makeMappingStore } = require('../../shared/mappingStore');
+const { confirmOpenLargeTextFile } = require('../../shared/largeFileGuard');
 
 function createAnalysisContext({
   root,
@@ -34,6 +35,9 @@ function createAnalysisContext({
 }) {
   // In-flight deduplication: concurrent callers for the same disasmPath share one subprocess.
   const _disasmInFlight = new Map<string, Promise<void>>();
+  // Several panels request the same symbol table when a binary becomes active.
+  // Share that immutable extraction instead of starting competing Python processes.
+  const _symbolsInFlight = new Map<string, Promise<any[]>>();
 
   const sanitizeArtifactToken = (value, fallback = 'item') => {
     const text = String(value || '').trim();
@@ -177,7 +181,6 @@ function createAnalysisContext({
     rawArch = null,
     rawBaseAddr = null,
     rawEndian = null,
-    annotationsJson = null,
     dwarfLines = false,
     useCacheDb = false,
     cacheWriteOnly = false,
@@ -193,7 +196,6 @@ function createAnalysisContext({
       mappingPath,
     ];
     if (syntax) args.push('--syntax', syntax);
-    if (annotationsJson) args.push('--annotations-json', annotationsJson);
     if (section) args.push('--section', section);
     if (arch) args.push('--arch', arch);
     if (rawArch) args.push('--raw-arch', rawArch);
@@ -272,14 +274,22 @@ function createAnalysisContext({
     );
   };
 
-  const loadBinaryHeaders = async (binaryPath) => runPythonJson(getHeadersScript(root), ['--binary', binaryPath]);
+  const loadBinaryHeaders = async (binaryPath, { useCache = true } = {}) => {
+    const cached = readAnalysisCacheEntry(binaryPath, useCache, 'info');
+    if (cached && typeof cached === 'object') {
+      logChannel?.appendLine?.('[cache] Infos binaire depuis cache');
+      return cached;
+    }
+    const info = await runPythonJson(getHeadersScript(root), ['--binary', binaryPath]);
+    writeAnalysisCacheEntry(binaryPath, useCache, 'info', info);
+    return info;
+  };
 
   const ensureDisasmArtifacts = async ({
     binaryPath,
     binaryMeta = null,
     section = '',
     syntax = 'intel',
-    annotationsJson = null,
     dwarfLines = false,
     emitProgress = false,
     progressTitle = '',
@@ -301,24 +311,21 @@ function createAnalysisContext({
         await _disasmInFlight.get(inflightKey);
       } else {
         const runDisasm = async () => {
-          let disasmArch = null;
-          if (artifacts.binaryMeta.kind !== 'raw') {
-            try {
-              const info = await loadBinaryHeaders(absPath);
-              disasmArch = (info.arch || '').trim() || null;
-            } catch (_) { /* fallback */ }
-          }
+          // disasm.py auto-détecte l'architecture via lief (--arch est ignoré) :
+          // ne pas bloquer le désassemblage sur headers.py, juste réchauffer le
+          // cache d'infos binaire en parallèle pour les consommateurs suivants.
+          const warmHeaders = artifacts.binaryMeta.kind !== 'raw'
+            ? loadBinaryHeaders(absPath).catch(() => null)
+            : null;
           const args = buildDisasmArgs({
             binaryPath: absPath,
             disasmPath: artifacts.disasmPath,
             mappingPath: artifacts.mappingPath,
             syntax,
             section,
-            arch: disasmArch,
             rawArch: artifacts.binaryMeta.rawConfig?.arch || null,
             rawBaseAddr: artifacts.binaryMeta.rawConfig?.baseAddr || null,
             rawEndian: artifacts.binaryMeta.rawConfig?.endian || null,
-            annotationsJson,
             dwarfLines,
             useCacheDb: shouldUseCacheDb,
             cacheWriteOnly: cacheWriteOnly && !!shouldUseCacheDb,
@@ -332,6 +339,7 @@ function createAnalysisContext({
           } else {
             await runCommand(pythonExe, args, root, logChannel, { PYTHONPATH: getExtensionPath() || root });
           }
+          if (warmHeaders) await warmHeaders;
         };
         const promise = runDisasm().finally(() => { _disasmInFlight.delete(inflightKey); });
         _disasmInFlight.set(inflightKey, promise);
@@ -504,8 +512,13 @@ function createAnalysisContext({
     if (!mappingPath || !fs.existsSync(mappingPath)) {
       throw new Error('Mapping désassemblage introuvable.');
     }
+    // En-tête allégé : les lignes vivent dans le SQLite associé et se
+    // requêtent via mappingStore. Un artefact legacy (avant migration)
+    // porte encore `lines` — toléré tel quel.
     const mapping = JSON.parse(fs.readFileSync(mappingPath, 'utf8'));
-    if (!Array.isArray(mapping?.lines) || mapping.lines.length === 0) {
+    const legacyCount = Array.isArray(mapping?.lines) ? mapping.lines.length : 0;
+    const lineCount = Number(mapping?.line_count || 0) || legacyCount;
+    if (lineCount <= 0) {
       throw new Error('Mapping désassemblage vide.');
     }
     return mapping;
@@ -536,9 +549,21 @@ function createAnalysisContext({
     return lines.find((line) => normalizeAddress(line?.addr || '')?.value === target.value) || null;
   };
 
+  const mappingStore = makeMappingStore({ runPythonJson });
+
+  // Requêtes du mapping SQLite (node:sqlite, repli Python) — jamais de
+  // chargement du mapping complet dans l'extension host.
+  const findMappingEntryByAddr = (mappingPath, addr) =>
+    mappingStore.findEntryByAddr(mappingPath, addr);
+  const queryMappingWindow = (mappingPath, addr, limit) =>
+    mappingStore.queryWindow(mappingPath, addr, limit);
+
   const openDisasmAtLine = async (disasmPath, lineNumber) => {
     if (!disasmPath || !fs.existsSync(disasmPath)) {
       throw new Error('Fichier de désassemblage introuvable.');
+    }
+    if (!await confirmOpenLargeTextFile(disasmPath, { fs, vscode })) {
+      throw new Error('Ouverture annulée (fichier volumineux).');
     }
     const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(disasmPath));
     const editor = await vscode.window.showTextDocument(doc, {
@@ -552,22 +577,26 @@ function createAnalysisContext({
     return { doc, editor };
   };
 
-  const getBinaryAnnotationsJsonPath = (absPath) => {
-    const hash = crypto
-      .createHash('sha256')
-      .update(absPath)
-      .update(fs.existsSync(absPath) ? String(fs.statSync(absPath).mtimeMs) : '')
-      .digest('hex')
-      .slice(0, 16);
-    const effectiveDir = storageDir || (ensureTempDir ? ensureTempDir(root) : '');
-    return path.join(effectiveDir, 'annotations', `${hash}.json`);
-  };
-
-  const loadBinarySymbols = async (binaryPath, { includeAll = false } = {}) => {
-    const args = ['--binary', binaryPath];
-    if (includeAll) args.push('--all');
-    const rawSymbols = await runPythonJson(getSymbolsScript(root), args).catch(() => []);
-    return Array.isArray(rawSymbols) ? rawSymbols : (rawSymbols.symbols || []);
+  const loadBinarySymbols = async (binaryPath, { includeAll = false, useCache = true } = {}) => {
+    const cacheKey = includeAll ? 'symbols_all' : 'symbols';
+    const cached = readAnalysisCacheEntry(binaryPath, useCache, cacheKey);
+    if (Array.isArray(cached)) {
+      logChannel?.appendLine?.(`[cache] Symboles depuis cache (${includeAll ? 'all' : 'default'})`);
+      return cached;
+    }
+    const inflightKey = `${path.resolve(binaryPath)}:${includeAll ? 'all' : 'default'}`;
+    const existing = _symbolsInFlight.get(inflightKey);
+    if (existing) return existing;
+    const extraction = (async () => {
+      const args = ['--binary', binaryPath];
+      if (includeAll) args.push('--all');
+      const rawSymbols = await runPythonJson(getSymbolsScript(root), args).catch(() => []);
+      const symbols = Array.isArray(rawSymbols) ? rawSymbols : (rawSymbols.symbols || []);
+      writeAnalysisCacheEntry(binaryPath, useCache, cacheKey, symbols);
+      return symbols;
+    })().finally(() => { _symbolsInFlight.delete(inflightKey); });
+    _symbolsInFlight.set(inflightKey, extraction);
+    return extraction;
   };
 
   const collectSymbolNames = (symbols) => {
@@ -692,10 +721,11 @@ function createAnalysisContext({
     buildDisasmArgs,
     ensureDisasmArtifacts,
     loadDisasmMapping,
+    findMappingEntryByAddr,
+    queryMappingWindow,
     getMappingEntrySpanLength,
     findDisasmMappingEntryByAddress,
     openDisasmAtLine,
-    getBinaryAnnotationsJsonPath,
     loadBinaryHeaders,
     loadBinarySymbols,
     collectSymbolNames,

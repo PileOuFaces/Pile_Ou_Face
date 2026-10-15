@@ -13,6 +13,10 @@
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
+DEFAULT_MAX_TRACE_BYTES = 64 * 1024 * 1024
+MAX_USER_TRACE_BYTES = 256 * 1024 * 1024
+MAX_USER_TRACE_STEPS = 10_000
+
 
 @dataclass
 class TraceConfig:
@@ -69,3 +73,5 @@ class TraceConfig:
     stack_payload: tuple[int, bytes] | None = None
     # Guest path -> file bytes mapping for simulated libc FILE* calls.
     virtual_files: Mapping[str, bytes] | None = None
+    # Maximum cumulative compact-JSON size of retained snapshots.
+    max_trace_bytes: int = DEFAULT_MAX_TRACE_BYTES

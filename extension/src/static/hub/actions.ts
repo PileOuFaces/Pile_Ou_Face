@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 /**
  * @file hub/actions.ts
  * @brief Handlers UI/misc, disasm, export, scan, rules, compilation, trace init, settings.
@@ -9,6 +8,11 @@
 const crypto = require('crypto');
 const cp = require('child_process');
 const { readArchSupportFromMapping } = require('./archSupport');
+const { makeMappingStore } = require('../../shared/mappingStore');
+const { confirmOpenLargeTextFile } = require('../../shared/largeFileGuard');
+const { recordRuntimeEvent } = require('../../shared/runtimeAudit');
+
+const functionAddrsStore = makeMappingStore();
 
 function createActions({
   panel,
@@ -48,37 +52,114 @@ function createActions({
   // ── Internal helpers ────────────────────────────────────────────────────────
 
   const hubPost = (type, data) => panel.webview.postMessage(Object.assign({ type }, data || {}));
+  const auditPerfStep = (name, durationMs, details = {}) => {
+    recordRuntimeEvent('perf_step', name, {
+      durationMs: Math.max(0, Math.round(durationMs || 0)),
+      ...details,
+    });
+  };
+  const hostMemorySnapshot = () => {
+    const mem = process.memoryUsage();
+    return {
+      rss: mem.rss,
+      heapUsed: mem.heapUsed,
+      heapTotal: mem.heapTotal,
+      external: mem.external,
+      arrayBuffers: mem.arrayBuffers,
+    };
+  };
+  const perfDiagnosticsEnabled = () => {
+    try {
+      return Boolean(vscode.workspace.getConfiguration?.('pileOuFace')?.get?.('perfDiagnostics', false));
+    } catch (_) {
+      return false;
+    }
+  };
+  const normalizeHexAddress = (value) => {
+    const text = String(value || '').trim();
+    if (!text) return '';
+    const raw = text.startsWith('0x') || text.startsWith('0X') ? text.slice(2) : text;
+    if (!/^[0-9a-fA-F]+$/.test(raw)) return text.toLowerCase();
+    return `0x${raw.replace(/^0+/, '') || '0'}`.toLowerCase();
+  };
+  const readFunctionAddrsFromMapping = (mappingPath) => {
+    if (!mappingPath || !fs.existsSync(mappingPath)) return [];
+    // En-tête allégé (function_addrs précalculé) ; repli legacy dans mappingStore.
+    return functionAddrsStore.getFunctionAddrs(mappingPath);
+  };
+
+  const autoTriageAfterDisasmEnabled = () => {
+    try {
+      return Boolean(vscode.workspace.getConfiguration?.('pileOuFace')?.get?.('autoTriage.enabled', false));
+    } catch (_) {
+      return false;
+    }
+  };
 
   const finalizeDisasmOpen = async ({
     disasmPath,
     pathForWebview,
     binaryMeta,
     mappingPath = null,
+    absBinaryPath = null,
     openInEditor = true,
     notifyWebview = true,
+    auditPrefix = 'finalizeDisasmOpen',
+    auditDetails = {},
   }) => {
+    let stepStart = Date.now();
     if (!fs.existsSync(disasmPath)) {
       throw new Error(`Le backend n'a pas généré ${path.basename(disasmPath)}.`);
     }
-    if (openInEditor) {
+    auditPerfStep(`${auditPrefix}.validateArtifact`, Date.now() - stepStart, auditDetails);
+    if (openInEditor && await confirmOpenLargeTextFile(disasmPath, { fs, vscode })) {
+      stepStart = Date.now();
       const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(disasmPath));
+      auditPerfStep(`${auditPrefix}.openTextDocument`, Date.now() - stepStart, auditDetails);
+      stepStart = Date.now();
       await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.One, preview: false });
+      auditPerfStep(`${auditPrefix}.showTextDocument`, Date.now() - stepStart, auditDetails);
     }
     if (notifyWebview) {
+      stepStart = Date.now();
       const archPayload = readArchSupportFromMapping(mappingPath, fs);
+      const functionAddrs = readFunctionAddrsFromMapping(mappingPath);
+      auditPerfStep(`${auditPrefix}.readUiMetadata`, Date.now() - stepStart, {
+        ...auditDetails,
+        functionCount: functionAddrs.length,
+      });
+      stepStart = Date.now();
       panel.webview.postMessage({
         type: 'hubSetBinaryPath',
         binaryPath: pathForWebview,
         binaryMeta,
         skipAutoLoad: true,
       });
+      auditPerfStep(`${auditPrefix}.postHubSetBinaryPath`, Date.now() - stepStart, auditDetails);
+      stepStart = Date.now();
       panel.webview.postMessage({
         type: 'hubDisasmReady',
         binaryPath: pathForWebview,
         arch: archPayload,
+        functionAddrs,
+      });
+      auditPerfStep(`${auditPrefix}.postHubDisasmReady`, Date.now() - stepStart, {
+        ...auditDetails,
+        functionCount: functionAddrs.length,
       });
     }
-    if (refreshSidebar) refreshSidebar(pathForWebview);
+    if (refreshSidebar) {
+      stepStart = Date.now();
+      refreshSidebar(pathForWebview);
+      auditPerfStep(`${auditPrefix}.refreshSidebar`, Date.now() - stepStart, auditDetails);
+    }
+    if (notifyWebview && absBinaryPath && autoTriageAfterDisasmEnabled()) {
+      panel.webview.postMessage({
+        type: 'hubAutoTriageOpenPanel',
+        binaryPath: absBinaryPath,
+        autoStart: true,
+      });
+    }
   };
 
   const resolveDisasmMappingContext = async ({
@@ -114,14 +195,6 @@ function createActions({
     };
   };
 
-  const ensureMappingForBinary = async (binaryPath, binaryMeta = null) => {
-    const { mapping } = await resolveDisasmMappingContext({
-      binaryPath,
-      binaryMeta,
-      logPrefix: 'Mapping',
-    });
-    return mapping;
-  };
 
   // ── Rules helpers ────────────────────────────────────────────────────────────
 
@@ -430,14 +503,22 @@ function createActions({
 
   return {
     hubModeChange: async (message) => {
-      if (setSidebarMode) setSidebarMode(message.mode || 'other');
+      const mode = message.mode || 'other';
+      if (setSidebarMode) setSidebarMode(mode);
+      recordRuntimeEvent('host_effect', 'hubModeChange', { source: 'hub.actions', effect: 'sidebar.mode', mode });
     },
 
     hubDebugLog: async (message) => {
-      const scope = String(message.scope || 'webview').replace(/[^a-z0-9_-]/gi, '_');
+      const rawScope = String(message.scope || 'webview');
+      const scope = rawScope.replace(/[^a-z0-9_.:-]/gi, '_');
       const event = String(message.event || 'event').replace(/[^a-z0-9_.:-]/gi, '_');
       const details = message.details && typeof message.details === 'object' ? message.details : {};
-      logChannel.appendLine(`[${scope}] ${event} ${JSON.stringify(details)}`);
+      if (rawScope === 'perf.webview' && !perfDiagnosticsEnabled()) return;
+      const enriched = rawScope === 'perf.webview'
+        ? { ...details, extensionHostMemory: hostMemorySnapshot() }
+        : details;
+      logChannel.appendLine(`[${scope}] ${event} ${JSON.stringify(enriched)}`);
+      recordRuntimeEvent('host_effect', 'hubDebugLog', { source: 'hub.actions', effect: 'logChannel.appendLine', scope, event });
     },
 
     hubInstallDecompiler: async (message) => {
@@ -458,15 +539,15 @@ function createActions({
         ghidra: [
           'macOS :  brew install ghidra && brew install openjdk@21',
           'Windows: winget install NationalSecurityAgency.Ghidra && winget install EclipseAdoptium.Temurin.21.JDK',
-          'Linux  :  téléchargement manuel → https://ghidra-sre.org',
+          'Linux  :  manual download → https://ghidra-sre.org',
         ],
       };
 
       const label = LABELS[tool] || tool;
       const lines = INSTALL_LINES[tool] || [
-        'Décompilateur custom : ajoutez une entrée dans storageUri/decompilers.json.',
-        'Format : {"decompilers":{"mon-outil":{"command":["mon-outil","--binary","{binary}","--addr","{addr}"]}}}',
-        'Fallback Docker : make decompilers-docker-build puis relancez la décompilation.',
+        'Custom decompiler: add an entry to storageUri/decompilers.json.',
+        'Format: {"decompilers":{"my-tool":{"command":["my-tool","--binary","{binary}","--addr","{addr}"]}}}',
+        'Docker fallback: run make decompilers-docker-build, then retry decompilation.',
       ];
       const detail = lines.join('\n');
 
@@ -479,16 +560,16 @@ function createActions({
         installCmd = 'make decompilers-docker-build';
       }
 
-      const buttons = installCmd ? ['Copier la commande', 'Annuler'] : (tool === 'ghidra' ? ['Ouvrir ghidra-sre.org', 'Annuler'] : ['Annuler']);
+      const buttons = installCmd ? ['Copy command', 'Cancel'] : (tool === 'ghidra' ? ['Open ghidra-sre.org', 'Cancel'] : ['Cancel']);
       const answer = await vscode.window.showInformationMessage(
-        `${label} n'est pas installé`,
+        `${label} is not installed`,
         { modal: true, detail },
         ...buttons
       );
-      if (answer === 'Copier la commande' && installCmd) {
+      if (answer === 'Copy command' && installCmd) {
         await vscode.env.clipboard.writeText(installCmd);
-        vscode.window.showInformationMessage(`Commande copiée : ${installCmd}`);
-      } else if (answer === 'Ouvrir ghidra-sre.org') {
+        vscode.window.showInformationMessage(`Command copied: ${installCmd}`);
+      } else if (answer === 'Open ghidra-sre.org') {
         vscode.env.openExternal(vscode.Uri.parse('https://ghidra-sre.org/'));
       }
     },
@@ -510,7 +591,7 @@ function createActions({
           binaryPath: absPath,
           binaryMeta,
           emitProgress: true,
-          progressTitle: `Désassemblage de ${path.basename(absPath)}`,
+          progressTitle: `Disassembling ${path.basename(absPath)}`,
           useCacheDb: binaryMeta?.kind !== 'raw',
         });
         await finalizeDisasmOpen({
@@ -518,6 +599,7 @@ function createActions({
           pathForWebview,
           binaryMeta: artifacts.binaryMeta,
           mappingPath: artifacts.mappingPath,
+          absBinaryPath: absPath,
           openInEditor: true,
         });
       } catch (err) {
@@ -549,23 +631,23 @@ function createActions({
       });
       disasmPath = fallback.disasmPath;
       if (!disasmPath || !fs.existsSync(disasmPath)) {
-        vscode.window.showWarningMessage('Aucun désassemblage trouvé. Ouvrez d\'abord le désassemblage ou sélectionnez un binaire.');
+        vscode.window.showWarningMessage('No disassembly found. Open the disassembly first or select a binary.');
         return;
       }
       const defaultName = path.basename(disasmPath, '.asm').replace('.disasm', '') + '.disasm.txt';
       const defaultPath = path.join(path.dirname(disasmPath), defaultName);
       vscode.window.showSaveDialog({
-        title: 'Exporter le désassemblage',
+        title: 'Export the disassembly',
         defaultUri: vscode.Uri.file(defaultPath),
-        filters: { 'Texte': ['txt'], 'Tous': ['*'] },
+        filters: { 'Text': ['txt'], 'All files': ['*'] },
       }).then(async (saveUri) => {
         if (!saveUri) return;
         try {
           const text = fs.readFileSync(disasmPath, 'utf8');
           await fs.promises.writeFile(saveUri.fsPath, text, 'utf8');
-          vscode.window.showInformationMessage(`Exporté: ${path.basename(saveUri.fsPath)}`);
+          vscode.window.showInformationMessage(`Exported: ${path.basename(saveUri.fsPath)}`);
         } catch (err) {
-          vscode.window.showErrorMessage(`Export échoué: ${err.message}`);
+          vscode.window.showErrorMessage(`Export failed: ${err.message}`);
         }
       });
     },
@@ -591,8 +673,16 @@ function createActions({
         return;
       }
       try {
-        const mapping = await ensureMappingForBinary(binaryPath);
-        const suggestion = buildCmpPayloadSuggestion(mapping.lines || [], cmpAddr);
+        const { mapping, mappingPath } = await resolveDisasmMappingContext({
+          binaryPath,
+          logPrefix: 'AutoFromCmp',
+        });
+        // Fenêtre centrée sur l'adresse CMP : le back-tracking de registres
+        // remonte au plus 90 lignes, 256 couvrent large.
+        const lines = Array.isArray(mapping?.lines) && mapping.lines.length
+          ? mapping.lines
+          : await analysisCtx.queryMappingWindow(mappingPath, cmpAddr, 256);
+        const suggestion = buildCmpPayloadSuggestion(lines || [], cmpAddr);
         hubPost('hubAutoFromCmpResult', suggestion);
       } catch (err) {
         hubPost('hubAutoFromCmpResult', { error: err.message || String(err) });
@@ -600,6 +690,8 @@ function createActions({
     },
 
     hubOpenDisasm: async (message) => {
+      const totalStart = Date.now();
+      let stepStart = Date.now();
       const {
         binaryPath,
         absPath,
@@ -607,12 +699,26 @@ function createActions({
         isDirectory,
         binaryMeta,
       } = analysisCtx.resolveBinaryInputContext(message.binaryPath, message.binaryMeta || null);
+      const auditCommon = {
+        source: 'hubOpenDisasm',
+        binaryName: path.basename(absPath || binaryPath || ''),
+        section: String(message.section || '').trim(),
+        openInEditor: message.openInEditor !== false,
+        refreshReason: typeof message.refreshReason === 'string' ? message.refreshReason : '',
+      };
+      auditPerfStep('hubOpenDisasm.resolveInput', Date.now() - stepStart, {
+        ...auditCommon,
+        exists,
+        isDirectory,
+      });
       if (!exists || isDirectory) {
-        vscode.window.showErrorMessage(`Binaire introuvable: ${absPath}`);
+        auditPerfStep('hubOpenDisasm.invalidInput', Date.now() - totalStart, auditCommon);
+        vscode.window.showErrorMessage(`Binary not found: ${absPath}`);
         return;
       }
       try {
         const section = (message.section || '').trim();
+        stepStart = Date.now();
         const artifacts = analysisCtx.getArtifactPaths({
           binaryPath: absPath,
           section,
@@ -625,36 +731,77 @@ function createActions({
           && !section
           && (message.syntax || 'intel') === 'intel'
           && !requestedArch;
-        const cacheValid = useCache && cacheEligible && fs.existsSync(disasmPath) && fs.existsSync(mappingPath);
+        const disasmExists = fs.existsSync(disasmPath);
+        const mappingExists = fs.existsSync(mappingPath);
+        const cacheValid = useCache && cacheEligible && disasmExists && mappingExists;
+        const annotationOverlayRefresh = auditCommon.refreshReason === 'annotation-overlay';
+        let rebuildReason = 'cache-valid';
         if (!cacheValid) {
-          const annotationsJsonPath = analysisCtx.getBinaryAnnotationsJsonPath(absPath);
+          if (!useCache) {
+            rebuildReason = annotationOverlayRefresh ? 'annotation-overlay' : 'cache-disabled';
+          } else if (!cacheEligible) {
+            rebuildReason = 'cache-ineligible';
+          } else if (!disasmExists) {
+            rebuildReason = 'missing-disasm';
+          } else if (!mappingExists) {
+            rebuildReason = 'missing-mapping';
+          } else {
+            rebuildReason = 'unknown';
+          }
+        }
+        const auditContext = {
+          ...auditCommon,
+          section,
+          useCache,
+          cacheEligible,
+          cacheValid,
+          rebuildReason,
+          annotationOverlayRefresh,
+          binaryKind: artifacts.binaryMeta.kind,
+        };
+        auditPerfStep('hubOpenDisasm.resolveArtifacts', Date.now() - stepStart, auditContext);
+        if (!cacheValid) {
+          stepStart = Date.now();
           await analysisCtx.ensureDisasmArtifacts({
             binaryPath: absPath,
             binaryMeta: artifacts.binaryMeta,
             section,
             syntax: message.syntax || 'intel',
-            annotationsJson: fs.existsSync(annotationsJsonPath) ? annotationsJsonPath : null,
             dwarfLines: artifacts.binaryMeta.kind !== 'raw',
             emitProgress: true,
-            progressTitle: `Désassemblage de ${path.basename(absPath)}`,
+            progressTitle: `Disassembling ${path.basename(absPath)}`,
             useCacheDb: cacheEligible,
             cacheWriteOnly: !useCache,
             forceRebuild: !useCache,
           });
+          auditPerfStep('hubOpenDisasm.ensureDisasmArtifacts', Date.now() - stepStart, auditContext);
         } else {
           logChannel.appendLine(`[cache] Réutilisation de ${disasmPath}`);
+          auditPerfStep('hubOpenDisasm.cacheReuse', 0, auditContext);
         }
+        stepStart = Date.now();
         const pathForWebview = path.relative(root, absPath).startsWith('..') ? absPath : path.relative(root, absPath);
+        auditPerfStep('hubOpenDisasm.pathForWebview', Date.now() - stepStart, auditContext);
+        stepStart = Date.now();
         await finalizeDisasmOpen({
           disasmPath,
           pathForWebview,
           binaryMeta: artifacts.binaryMeta,
           mappingPath: artifacts.mappingPath,
+          absBinaryPath: absPath,
           openInEditor: message.openInEditor !== false,
           notifyWebview: !section,
+          auditPrefix: 'hubOpenDisasm.finalize',
+          auditDetails: auditContext,
         });
+        auditPerfStep('hubOpenDisasm.finalizeTotal', Date.now() - stepStart, auditContext);
+        auditPerfStep('hubOpenDisasm.total', Date.now() - totalStart, auditContext);
       } catch (err) {
-        vscode.window.showErrorMessage(`Désassemblage: ${err.message}`);
+        auditPerfStep('hubOpenDisasm.error', Date.now() - totalStart, {
+          ...auditCommon,
+          error: err.message || String(err),
+        });
+        vscode.window.showErrorMessage(`Disassembly: ${err.message}`);
       }
     },
 
@@ -671,7 +818,7 @@ function createActions({
       const mode = message.mode || 'text';
       const section = (message.section || '').trim() || null;
       if (!exists || isDirectory || !pattern) {
-        hubPost('hubRecherche', { results: [], error: 'Binaire ou motif manquant.' });
+        hubPost('hubRecherche', { binaryPath: absPath, results: [], error: 'Binaire ou motif manquant.' });
         return;
       }
       const args = [getSearchScript(root), '--binary', absPath, '--pattern', pattern, '--mode', mode];
@@ -687,10 +834,10 @@ function createActions({
       try {
         const data = await runPythonJsonFile(args, { timeout: 30000, maxBuffer: 1024 * 1024, fallback: '[]' });
         const results = Array.isArray(data) ? data : (data.results || []);
-        hubPost('hubRecherche', { results });
+        hubPost('hubRecherche', { binaryPath: absPath, results });
       } catch (err) {
         const stderr = String(err.stderr || '').trim();
-        hubPost('hubRecherche', { results: [], error: stderr || err.message || 'Recherche échouée.' });
+        hubPost('hubRecherche', { binaryPath: absPath, results: [], error: stderr || err.message || 'Recherche échouée.' });
       }
     },
 
@@ -721,7 +868,7 @@ function createActions({
       const isYara = ruleType === 'yara';
       const picked = await vscode.window.showOpenDialog({
         canSelectMany: true,
-        title: `Importer des règles ${ruleType.toUpperCase()}`,
+        title: `Import ${ruleType.toUpperCase()} rules`,
         filters: isYara
           ? { 'YARA Rules': ['yar', 'yara'] }
           : { 'CAPA Rules': ['yml', 'yaml'] },
@@ -838,7 +985,7 @@ function createActions({
         if (refreshSidebar) refreshSidebar(result.pathForWebview);
         vscode.window.showInformationMessage(`Compilation OK: ${result.pathForWebview}`);
       } catch (err) {
-        vscode.window.showErrorMessage(`Compilation échouée: ${err.message || err}`);
+        vscode.window.showErrorMessage(`Compilation failed: ${err.message || err}`);
       } finally {
         panel.webview.postMessage({ type: 'hubStaticCompileDone' });
       }
@@ -857,7 +1004,7 @@ function createActions({
       const picked = await vscode.window.showOpenDialog({
         canSelectFiles: true, canSelectMany: false,
         filters: { 'Python': ['py'] },
-        title: 'Charger un script Python',
+        title: 'Load a Python script',
         defaultUri: vscode.Uri.file(path.join(storageDir, 'scripts')),
       });
       if (picked && picked[0]) {
@@ -872,7 +1019,7 @@ function createActions({
         canSelectFiles: true,
         canSelectMany: false,
         filters: { 'Python': ['py'] },
-        title: 'Importer un script pwntools',
+        title: 'Import a pwntools script',
         defaultUri: vscode.Uri.file(root),
       });
       if (picked && picked[0]) {
@@ -969,23 +1116,23 @@ function createActions({
     hubPickFile: async (message) => {
       const isBinaryTarget = message.fileType === 'binary';
       const isSourceTarget = message.fileType === 'sourceC' || message.target === 'dynamicSourcePath';
-      const dialogOpts = {
+      const dialogOpts: Record<string, any> = {
         canSelectFiles: true, canSelectMany: false,
         defaultUri: vscode.Uri.file(root),
       };
       if (isBinaryTarget) {
-        dialogOpts.title = 'Sélectionner un binaire (ELF, Mach-O, PE)';
-        dialogOpts.filters = { 'Tous les fichiers': ['*'] };
+        dialogOpts.title = 'Select a binary (ELF, Mach-O, PE)';
+        dialogOpts.filters = { 'All files': ['*'] };
       } else if (isSourceTarget) {
-        dialogOpts.title = 'Sélectionner un fichier source C';
-        dialogOpts.filters = { 'Source C': ['c', 'h'], 'Tous les fichiers': ['*'] };
+        dialogOpts.title = 'Select a C source file';
+        dialogOpts.filters = { 'C source': ['c', 'h'], 'All files': ['*'] };
       } else {
-        dialogOpts.title = 'Sélectionner un fichier';
+        dialogOpts.title = 'Select a file';
       }
       const picked = await vscode.window.showOpenDialog(dialogOpts);
       if (picked && picked[0]) {
         if (isBinaryTarget && !isSupportedBinary(picked[0].fsPath)) {
-          vscode.window.showErrorMessage('Format non supporté — sélectionnez un binaire ELF, Mach-O ou PE.');
+          vscode.window.showErrorMessage('Unsupported format — select an ELF, Mach-O, or PE binary.');
           return;
         }
         panel.webview.postMessage({ type: 'hubPickedFile', target: message.target, path: picked[0].fsPath });
@@ -1019,10 +1166,10 @@ function createActions({
 
     selectRunTraceBinary: async (message) => {
       const binaryUri = await vscode.window.showOpenDialog({
-        title: 'Pile ou Face — Sélectionner le binaire du projet',
+        title: 'Pile ou Face — Select the project binary',
         defaultUri: vscode.Uri.file(root),
         canSelectMany: false,
-        filters: { 'Binaires': ['elf', 'out', 'bin'], 'Tous': ['*'] },
+        filters: { 'Binaries': ['elf', 'out', 'bin'], 'All files': ['*'] },
       });
       if (!binaryUri?.length) return;
       const binaryPath = binaryUri[0].fsPath;
@@ -1033,19 +1180,19 @@ function createActions({
       if (refreshSidebar) refreshSidebar(pathForWebview);
     },
 
-    hubGetSettings: async (_message) => {
+    hubGetSettings: async (message) => {
       const settings = context.globalState.get('pof-settings', SETTINGS_DEFAULTS);
-      panel.webview.postMessage({ type: 'hubSettings', settings: { ...SETTINGS_DEFAULTS, ...settings } });
+      panel.webview.postMessage({ type: 'hubSettings', settings: { ...SETTINGS_DEFAULTS, ...settings }, requestId: message.requestId });
     },
 
     hubSaveSettings: async (message) => {
       await context.globalState.update('pof-settings', message.settings);
-      panel.webview.postMessage({ type: 'hubSettingsSaved', ok: true });
+      panel.webview.postMessage({ type: 'hubSettingsSaved', ok: true, requestId: message.requestId });
     },
 
-    hubResetSettings: async (_message) => {
+    hubResetSettings: async (message) => {
       await context.globalState.update('pof-settings', SETTINGS_DEFAULTS);
-      panel.webview.postMessage({ type: 'hubSettings', settings: { ...SETTINGS_DEFAULTS } });
+      panel.webview.postMessage({ type: 'hubSettings', settings: { ...SETTINGS_DEFAULTS }, requestId: message.requestId });
     },
   };
 }

@@ -29,6 +29,9 @@ import {
 } from './stackViewMode.js';
 
 const vscode = window.POFHubMessageBus?.vscode || acquireVsCodeApi();
+const telemetry = window.POFTelemetry
+  || window.POFTelemetryClient?.create((message) => vscode.postMessage(message));
+const telemetrySurface = window.POFHubMessageBus ? 'embedded' : 'standalone';
 const STEP_STORAGE_KEY = 'pile-ou-face-current-step-by-trace';
 const PREVIOUS_TRACE_ID_STORAGE_KEY = 'pile-ou-face-current-trace-id';
 const STACK_VIEW_MODE_STORAGE_KEY = 'pile-ou-face-stack-detail-mode';
@@ -987,14 +990,26 @@ if (dom.showAllTrace) {
 
 if (dom.stackModeFrame) {
   dom.stackModeFrame.addEventListener('click', () => {
+    const changed = state.stackViewMode !== 'frame' || state.stackPanelMode !== 'simple';
     setStackViewMode('frame', { rerender: false });
     setStackPanelMode('simple');
+    if (changed) {
+      telemetry?.trackEvent?.('dynamic.stack_mode.changed', {
+        stackMode: 'simple', surface: telemetrySurface,
+      });
+    }
   });
 }
 
 if (dom.stackModeAdvanced) {
   dom.stackModeAdvanced.addEventListener('click', () => {
+    const changed = state.stackViewMode !== 'advanced';
     setStackViewMode('advanced');
+    if (changed) {
+      telemetry?.trackEvent?.('dynamic.stack_mode.changed', {
+        stackMode: 'advanced', surface: telemetrySurface,
+      });
+    }
   });
 }
 

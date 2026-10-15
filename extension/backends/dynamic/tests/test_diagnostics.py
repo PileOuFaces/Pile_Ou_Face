@@ -386,9 +386,11 @@ class TestDynamicDiagnostics(unittest.TestCase):
             [{"addr": "0x401000"}, {"addr": "0x401100"}],
             crash=crash,
         )
-        runtime = next(diag for diag in diagnostics if diag["kind"] == "runtime_crash")
-        self.assertIsNone(runtime.get("slot"))
-        self.assertEqual(runtime["after"], "0x0")
+        null_deref = next(
+            diag for diag in diagnostics if diag["kind"] == "null_pointer_dereference"
+        )
+        self.assertIsNone(null_deref.get("slot"))
+        self.assertEqual(null_deref["after"], "0x0")
 
     def test_invalid_pointer_read_is_not_attributed_to_saved_bp(self):
         analysis = _base_analysis()
@@ -587,6 +589,97 @@ class TestCrashClassification(unittest.TestCase):
         )
         self.assertIsNotNone(crash)
         self.assertEqual(crash["classification"], "fatal_crash")
+
+    def test_stack_chk_fail_crash_is_classified_as_such_not_as_control_hijack(self):
+        """Regression test (stack-canary PR #2). A raw crash of type
+        "stack_chk_fail" must not fall through _classify_crash's generic
+        ret_target/fault_addr/code-address heuristic: the instruction
+        pointer at the time of the call still sits inside known code (the
+        call site itself), which would otherwise be misread as
+        "control_hijack" -- implying an attacker successfully hijacked
+        control flow, the opposite of what a stack-protector trigger means.
+        No overflow reaching return_address is present here (canary
+        corruption is not tracked by stack_model.py) -- this must classify
+        correctly on `type` alone, not on overflow evidence."""
+        analysis = _base_analysis()
+        meta = {"arch_bits": 64, "word_size": 8}
+        crash = _build_crash_report(
+            {
+                "type": "stack_chk_fail",
+                "step": 1,
+                "instructionAddress": "0x401173",
+                "instructionText": "call __stack_chk_fail",
+                "registers": {
+                    "rip": "0x401173",
+                    "rsp": "0x7fffffffdf80",
+                    "rbp": "0x7fffffffe000",
+                },
+                "rip": "0x401173",
+                "reason": (
+                    "Le protecteur de pile (stack canary) a detecte une "
+                    "corruption et a declenche __stack_chk_fail avant le "
+                    "retour de la fonction."
+                ),
+            },
+            [
+                _snapshot(
+                    step=1,
+                    instr="call __stack_chk_fail",
+                    mnemonic="call",
+                    after_rip="0x401173",
+                )
+            ],
+            {"1": analysis},
+            meta,
+            [{"addr": "0x401000"}, {"addr": "0x401200"}],
+        )
+        self.assertIsNotNone(crash)
+        self.assertEqual(crash["type"], "stack_chk_fail")
+        self.assertEqual(crash["classification"], "stack_chk_fail")
+
+    def test_stack_chk_fail_diagnostic_kind_is_explicit_and_not_duplicated(self):
+        """The diagnostic produced from this crash must be an explicit
+        "stack_chk_fail" kind (never "control_hijack"), and it must be the
+        only diagnostic produced -- _diagnose_invalid_control_flow must stay
+        silent here since no overflow evidence reaches return_address."""
+        analysis = _base_analysis()
+        snap = _snapshot(
+            step=1,
+            instr="call __stack_chk_fail",
+            mnemonic="call",
+            after_rip="0x401173",
+        )
+        meta = {"arch_bits": 64, "word_size": 8}
+        diagnostics = build_diagnostics(
+            [snap],
+            {"1": analysis},
+            meta,
+            [{"addr": "0x401000"}, {"addr": "0x401200"}],
+            crash={
+                "type": "stack_chk_fail",
+                "classification": "stack_chk_fail",
+                "step": 1,
+                "function": "vulnerable",
+                "instructionAddress": "0x401173",
+                "instructionText": "call __stack_chk_fail",
+                "registers": {
+                    "rip": "0x401173",
+                    "rsp": "0x7fffffffdf80",
+                    "rbp": "0x7fffffffe000",
+                },
+                "rip": "0x401173",
+                "reason": (
+                    "Le protecteur de pile (stack canary) a detecte une "
+                    "corruption et a declenche __stack_chk_fail avant le "
+                    "retour de la fonction."
+                ),
+            },
+        )
+        self.assertFalse(any(d.get("kind") == "control_hijack" for d in diagnostics))
+        matches = [d for d in diagnostics if d.get("kind") == "stack_chk_fail"]
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0]["severity"], "error")
+        self.assertIn("stack_chk_fail", matches[0]["message"].lower())
 
     def test_control_hijack_code_address(self):
         # Return address overwritten to a code address (not a win symbol)
@@ -1009,6 +1102,35 @@ class TestBenignTerminationClassification(unittest.TestCase):
             max_steps_reached=True,
         )
         self.assertNotIn("max_steps_reached", {diag["kind"] for diag in diagnostics})
+
+    def test_trace_size_limit_produces_distinct_non_crash_diagnostic(self):
+        snap = _snapshot(step=12, instr="mov eax, ebx", mnemonic="mov")
+        diagnostics = build_diagnostics(
+            [snap],
+            {"12": _base_analysis()},
+            {"arch_bits": 64, "word_size": 8},
+            crash=None,
+            trace_size_reached=True,
+        )
+
+        size_diagnostic = next(
+            diag for diag in diagnostics if diag["kind"] == "trace_size_limit_reached"
+        )
+        self.assertEqual(size_diagnostic["severity"], "info")
+        self.assertIn("trace partielle", size_diagnostic["message"])
+
+    def test_trace_size_limit_is_suppressed_by_real_crash(self):
+        diagnostics = build_diagnostics(
+            [],
+            {},
+            {"arch_bits": 64, "word_size": 8},
+            crash={"type": "unmapped_fetch", "step": 1},
+            trace_size_reached=True,
+        )
+
+        self.assertNotIn(
+            "trace_size_limit_reached", {diag["kind"] for diag in diagnostics}
+        )
 
 
 if __name__ == "__main__":

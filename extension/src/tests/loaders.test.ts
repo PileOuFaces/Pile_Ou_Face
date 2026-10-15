@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 const { expect } = require('chai');
 const sinon = require('sinon');
 const { createLoaders } = require('../static/hub/loaders');
@@ -91,7 +90,7 @@ describe('loaders — resolveCachedBinaryView', () => {
     expect(readCache.calledOnce).to.equal(true);
     expect(compute.called).to.equal(false);
     expect(writeCache.called).to.equal(false);
-    expect(posted[0]).to.deep.equal({ type: 'hubSymbols', symbols: { cached: true } });
+    expect(posted[0]).to.deep.equal({ type: 'hubSymbols', binaryPath: '/repo/demo.bin', symbols: { cached: true } });
     expect(lines).to.include('[cache] Symboles depuis cache');
   });
 
@@ -126,7 +125,7 @@ describe('loaders — resolveCachedBinaryView', () => {
 
     expect(analysisCtx.loadBinarySymbols.calledOnce).to.equal(true);
     expect(writeCache.calledOnce).to.equal(true);
-    expect(posted[0]).to.deep.equal({ type: 'hubSymbols', symbols: freshSymbols });
+    expect(posted[0]).to.deep.equal({ type: 'hubSymbols', binaryPath: '/repo/demo.bin', symbols: freshSymbols });
   });
 
   it('bypasses cache reads but still writes fresh values when useCache is false', async () => {
@@ -161,7 +160,7 @@ describe('loaders — resolveCachedBinaryView', () => {
     expect(readCache.called).to.equal(false);
     expect(writeCache.calledOnce).to.equal(true);
     expect(analysisCtx.loadBinarySymbols.calledOnce).to.equal(true);
-    expect(posted[0]).to.deep.equal({ type: 'hubSymbols', symbols: freshSymbols });
+    expect(posted[0]).to.deep.equal({ type: 'hubSymbols', binaryPath: '/repo/demo.bin', symbols: freshSymbols });
   });
 
   it('calls compute when isCacheUsable rejects the cached value', async () => {
@@ -193,6 +192,7 @@ describe('loaders — resolveCachedBinaryView', () => {
 
     expect(runPythonJsonViaFile.calledOnce).to.equal(true);
     expect(writeCache.calledOnce).to.equal(true);
+    expect(posted[0].binaryPath).to.equal('/repo/demo.bin');
     expect(posted[0].strings).to.deep.equal(freshStrings);
   });
 });
@@ -217,7 +217,7 @@ describe('loaders — hubLoadSymbols', () => {
 
     await loaders.hubLoadSymbols({ binaryPath: '/nonexistent.bin', binaryMeta: null });
 
-    expect(posted).to.deep.equal([{ type: 'hubSymbols', symbols: [] }]);
+    expect(posted).to.deep.equal([{ type: 'hubSymbols', binaryPath: '/nonexistent.bin', symbols: [] }]);
   });
 
   it('posts empty symbols on compute error', async () => {
@@ -237,7 +237,7 @@ describe('loaders — hubLoadSymbols', () => {
 
     await loaders.hubLoadSymbols({ binaryPath: '/repo/demo.bin', binaryMeta: null });
 
-    expect(posted).to.deep.equal([{ type: 'hubSymbols', symbols: [] }]);
+    expect(posted).to.deep.equal([{ type: 'hubSymbols', binaryPath: '/repo/demo.bin', symbols: [] }]);
   });
 });
 
@@ -261,7 +261,7 @@ describe('loaders — hubLoadStrings', () => {
 
     await loaders.hubLoadStrings({ binaryPath: '', minLen: '4', encoding: 'utf-8' });
 
-    expect(posted).to.deep.equal([{ type: 'hubStrings', strings: [] }]);
+    expect(posted).to.deep.equal([{ type: 'hubStrings', binaryPath: '', strings: [] }]);
   });
 
   it('returns cache hit when cached array is non-empty', async () => {
@@ -280,6 +280,7 @@ describe('loaders — hubLoadStrings', () => {
 
     await loaders.hubLoadStrings({ binaryPath: '/repo/demo.bin', minLen: '4', encoding: 'utf-8' });
 
+    expect(posted[0].binaryPath).to.equal('/repo/demo.bin');
     expect(posted[0].strings).to.deep.equal(cachedStrings);
   });
 
@@ -320,6 +321,28 @@ describe('loaders — hubLoadStrings', () => {
 
     const args = runPythonJsonViaFile.firstCall.args[1];
     expect(args).to.not.include('--section');
+  });
+
+  it('bounds cached string extraction to 5000 results', async () => {
+    const { panel } = makePanel();
+    const { logChannel } = makeLogChannel();
+    const runPythonJsonViaFile = sinon.stub().resolves([]);
+    const readCache = sinon.stub().returns(null);
+
+    const loaders = createLoaders({
+      panel, analysisCtx: makeAnalysisCtx(), root: '/root', storageDir: '/storage',
+      runPythonJson: sinon.stub(), runPythonJsonViaFile,
+      logChannel, fs: {}, path: require('path'),
+      readCache, writeCache: sinon.stub(),
+      getStringsScript: () => '/scripts/strings.py', getSectionsScript: () => '', getXrefsScript: () => '',
+    });
+
+    await loaders.hubLoadStrings({ binaryPath: '/repo/demo.bin', minLen: '4', encoding: 'utf-8' });
+
+    const args = runPythonJsonViaFile.firstCall.args[1];
+    const maxResultsIdx = args.indexOf('--max-results');
+    expect(args[maxResultsIdx + 1]).to.equal('5000');
+    expect(readCache.firstCall.args[3]).to.include({ maxResults: 5000 });
   });
 
   it('always extracts with BASE_MIN_LEN=4 regardless of requested minLen', async () => {
@@ -367,6 +390,7 @@ describe('loaders — hubLoadStrings', () => {
     // Python must NOT be called — served from cache
     expect(runPythonJsonViaFile.called).to.equal(false);
     // Extension sends the full base set — minLen filtering is the frontend's responsibility
+    expect(posted[0].binaryPath).to.equal('/repo/demo.bin');
     expect(posted[0].strings).to.deep.equal(cachedStrings);
   });
 
@@ -405,7 +429,7 @@ describe('loaders — hubLoadStrings', () => {
 
     await loaders.hubLoadStrings({ binaryPath: '/repo/demo.bin', minLen: '4', encoding: 'utf-8' });
 
-    expect(posted).to.deep.equal([{ type: 'hubStrings', strings: [] }]);
+    expect(posted).to.deep.equal([{ type: 'hubStrings', binaryPath: '/repo/demo.bin', strings: [] }]);
   });
 });
 
@@ -429,7 +453,7 @@ describe('loaders — hubLoadInfo', () => {
 
     await loaders.hubLoadInfo({ binaryPath: '', binaryMeta: null });
 
-    expect(posted[0]).to.deep.equal({ type: 'hubBinaryInfo', info: { error: 'Indiquez un chemin binaire.' } });
+    expect(posted[0]).to.deep.equal({ type: 'hubBinaryInfo', binaryPath: '', info: { error: 'Indiquez un chemin binaire.' } });
   });
 
   it('posts error when binary does not exist', async () => {
@@ -477,7 +501,7 @@ describe('loaders — hubLoadInfo', () => {
 
     await loaders.hubLoadInfo({ binaryPath: '/raw.bin', binaryMeta: { kind: 'raw', rawConfig } });
 
-    expect(posted[0]).to.deep.equal({ type: 'hubBinaryInfo', info: { format: 'raw', baseAddr: '0x8000' } });
+    expect(posted[0]).to.deep.equal({ type: 'hubBinaryInfo', binaryPath: '/raw.bin', info: { format: 'raw', baseAddr: '0x8000' } });
     expect(analysisCtx.buildPseudoRawInfo.calledOnce).to.equal(true);
   });
 
@@ -570,7 +594,7 @@ describe('loaders — hubLoadSections', () => {
 
     await loaders.hubLoadSections({ binaryPath: '', binaryMeta: null });
 
-    expect(posted[0]).to.deep.equal({ type: 'hubSections', sections: [], error: 'Indiquez un chemin binaire.' });
+    expect(posted[0]).to.deep.equal({ type: 'hubSections', binaryPath: '', sections: [], error: 'Indiquez un chemin binaire.' });
   });
 
   it('posts raw section when kind is raw', async () => {
@@ -735,7 +759,7 @@ describe('loaders — hubLoadXrefs', () => {
     expect(posted[0].mode).to.equal('to');
   });
 
-  it('posts empty xrefs and logs when compute throws', async () => {
+  it('posts a visible xrefs error and logs when compute throws', async () => {
     const { panel, posted } = makePanel();
     const { logChannel, lines } = makeLogChannel();
     const runPythonJson = sinon.stub().rejects(new Error('xrefs error'));
@@ -752,6 +776,7 @@ describe('loaders — hubLoadXrefs', () => {
     await loaders.hubLoadXrefs({ addr: '0x401000', binaryPath: '/repo/demo.bin', mode: 'from' });
 
     expect(posted[0].refs).to.deep.equal([]);
+    expect(posted[0].error).to.equal('xrefs error');
     expect(lines.some((l) => l.includes('[Xrefs]'))).to.equal(true);
   });
 });
@@ -773,7 +798,7 @@ describe('loaders — getSymbols', () => {
 
     await loaders.getSymbols({ binaryPath: '/repo/demo.bin', binaryMeta: null });
 
-    expect(posted[0]).to.deep.equal({ type: 'symbols', symbols: ['main'] });
+    expect(posted[0]).to.deep.equal({ type: 'symbols', binaryPath: '/repo/demo.bin', symbols: ['main'] });
   });
 
   it('returns empty symbols when binary does not exist', async () => {
@@ -793,7 +818,7 @@ describe('loaders — getSymbols', () => {
 
     await loaders.getSymbols({ binaryPath: '/nonexistent.bin', binaryMeta: null });
 
-    expect(posted[0]).to.deep.equal({ type: 'symbols', symbols: [] });
+    expect(posted[0]).to.deep.equal({ type: 'symbols', binaryPath: '/nonexistent.bin', symbols: [] });
   });
 
   it('returns empty symbols when loadBinarySymbols throws', async () => {
@@ -813,6 +838,6 @@ describe('loaders — getSymbols', () => {
 
     await loaders.getSymbols({ binaryPath: '/repo/demo.bin', binaryMeta: null });
 
-    expect(posted[0]).to.deep.equal({ type: 'symbols', symbols: [] });
+    expect(posted[0]).to.deep.equal({ type: 'symbols', binaryPath: '/repo/demo.bin', symbols: [] });
   });
 });

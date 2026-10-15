@@ -79,6 +79,12 @@ function applyRunTraceInit(msg) {
   }
 }
 
+function getAnnotatedFunctionDisplayName(addr, fallbackName = '') {
+  const normalized = typeof normalizeHexAddress === 'function' ? normalizeHexAddress(addr) : String(addr || '').trim();
+  const annotatedName = String(window._annotations?.[normalized]?.name || '').trim();
+  return annotatedName || String(fallbackName || '').trim();
+}
+
 function populateDecompileSelect(symbols) {
   const sel = document.getElementById('decompileAddrSelect');
   if (!sel) return;
@@ -88,10 +94,11 @@ function populateDecompileSelect(symbols) {
     const normalized = normalizeHexAddress(addr);
     if (!normalized) return;
     const current = entriesByAddr.get(normalized);
-    if (!current || sourceRank > current.sourceRank || (!current.name && name)) {
+    const displayName = getAnnotatedFunctionDisplayName(normalized, name);
+    if (!current || sourceRank > current.sourceRank || (!current.name && displayName)) {
       entriesByAddr.set(normalized, {
         addr: normalized,
-        name: String(name || '').trim(),
+        name: displayName,
         sourceRank,
       });
     }
@@ -261,14 +268,14 @@ function updateDecompileSearchUi(count = null) {
   if (!query) {
     if (prevBtn) prevBtn.disabled = true;
     if (nextBtn) nextBtn.disabled = true;
-    label.textContent = 'Recherche inactive';
+    label.textContent = 'Search inactive';
     return;
   }
   if (typeof resolvedCount === 'number') {
     if (resolvedCount <= 0) {
       if (prevBtn) prevBtn.disabled = true;
       if (nextBtn) nextBtn.disabled = true;
-      label.textContent = 'Aucun hit';
+      label.textContent = 'No matches';
       return;
     }
     const active = Number.isFinite(decompileUiState.activeSearchHit) && decompileUiState.activeSearchHit >= 0
@@ -625,7 +632,7 @@ function requestDecompileForCurrentSelection(options = {}) {
   if (pendingDecompileRequests.has(requestKey)) return;
   pendingDecompileRequests.add(requestKey);
   cancelPendingDecompileHighlight();
-  setStaticLoading('decompileContent', 'Décompilation en cours…');
+  setStaticLoading('decompileContent', 'Decompilation in progress…');
   if (addr) {
     vscode.postMessage({ type: 'hubLoadDecompile', binaryPath: bp, addr, funcName, full: false, decompiler, quality, provider, useCache: useCacheChecked });
   } else {

@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 /**
  * @file staticHandlers.js
  * @brief Handlers de messages liés au mode statique (désassemblage, symboles, sections, etc.).
@@ -19,19 +18,71 @@ const { detectPythonExecutable, buildRuntimeEnv, resolveDockerExecutable, logDeb
 const { emptyPluginUiState, summarizePluginRuntimeState } = require('./pluginState');
 const { AuthService } = require('../shared/authService');
 const { resolveAuthServerUrl } = require('../shared/authConfig');
+const { getProductConfig } = require('../shared/productConfig');
 const {
   clearAiProcess,
   registerAiProcess,
 } = require('../shared/aiProcessRegistry');
 const { getKnownOciImagePlatform } = require('./decompilerCommands');
+const { recordRuntimeEvent } = require('../shared/runtimeAudit');
 
 const AUTH_STRICT_LICENSE_ENV = 'BINHOST_DISABLE_LICENSE_FALLBACK';
+const AUTH_CONTENT_KEYS_STDIN_ENV = 'BINHOST_CONTENT_KEYS_STDIN';
+const PLUGIN_AI_FOLLOWUP_VERSION = 1;
+const PLUGIN_AI_MAX_PROMPT_BYTES = 16 * 1024;
+const PLUGIN_AI_MAX_CONTEXT_BYTES = 256 * 1024;
+const PLUGIN_AI_MAX_OUTPUT_BYTES = 1024 * 1024;
+const PLUGIN_AI_MAX_TOKENS = 2048;
 const DOCKER_IMAGE_UPDATE_CACHE_TTL_MS = 10 * 60 * 1000;
 const _dockerImageUpdateCache = new Map();
 let _dockerRuntimeStatusCache = null;
+const _activeTriageRuns = new Map(); // binaryPath -> requestId
 
-function _collectProcessOutput(command, args, options = {}) {
-  return new Promise((resolve) => {
+type LooseMessage = Record<string, any>;
+
+interface ProcessOutput {
+  code: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+interface ProcessOptions {
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+  timeout?: number;
+}
+
+interface DockerStatusOptions {
+  force?: boolean;
+  logChannel?: any;
+}
+
+interface RuntimeOptions {
+  timeout?: number;
+  maxBuffer?: number;
+  onProgress?: (progress: LooseMessage) => void;
+}
+
+interface PythonResult {
+  stdout: string;
+  stderr?: string;
+  meta?: LooseMessage;
+}
+
+type ProcessError = Error & {
+  pythonMeta?: LooseMessage;
+  stderr?: string;
+  stdout?: string;
+};
+
+function encodePluginRuntimeStdin(contentKeys) {
+  const entries = Object.entries(contentKeys || {}).filter(([, value]) => String(value || '').trim());
+  if (!entries.length) return '';
+  return `${JSON.stringify({ content_keys: Object.fromEntries(entries) })}\n`;
+}
+
+function _collectProcessOutput(command, args, options: ProcessOptions = {}): Promise<ProcessOutput> {
+  return new Promise<ProcessOutput>((resolve) => {
     if (typeof cp.spawn !== 'function') {
       resolve({ code: -1, stdout: '', stderr: 'spawn unavailable' });
       return;
@@ -219,7 +270,7 @@ function _readLocalDockerImageMetadata(payload) {
   };
 }
 
-async function _checkDockerRuntimeStatus(options = {}) {
+async function _checkDockerRuntimeStatus(options: DockerStatusOptions = {}) {
   if (!options.force) {
     const cached = _getCachedDockerRuntimeStatus();
     if (cached) return cached;
@@ -252,7 +303,7 @@ async function _checkDockerRuntimeStatus(options = {}) {
   return value;
 }
 
-async function _postDockerRuntimeStatus(panel, options = {}) {
+async function _postDockerRuntimeStatus(panel, options: DockerStatusOptions = {}) {
   const status = await _checkDockerRuntimeStatus(options);
   _logDecompilerDocker(options.logChannel, 'runtime.status', {
     dockerFound: status.dockerFound,
@@ -264,7 +315,7 @@ async function _postDockerRuntimeStatus(panel, options = {}) {
   panel.webview.postMessage({ type: 'hubDockerRuntimeStatus', status });
 }
 
-async function _checkDockerImageUpdate(image, platform = '', options = {}) {
+async function _checkDockerImageUpdate(image, platform = '', options: DockerStatusOptions = {}) {
   if (!options.force) {
     const cached = _getCachedDockerImageUpdate(image, platform);
     if (cached) return cached;
@@ -353,7 +404,7 @@ async function _checkDockerImageUpdate(image, platform = '', options = {}) {
   return value;
 }
 
-async function _postDecompilerImageUpdateStatus(panel, result, options = {}) {
+async function _postDecompilerImageUpdateStatus(panel, result, options: DockerStatusOptions = {}) {
   const meta = result?._meta || {};
   const dockerImages = meta.docker_images || {};
   const dockerAvail = meta.docker_images_available || {};
@@ -362,7 +413,7 @@ async function _postDecompilerImageUpdateStatus(panel, result, options = {}) {
   if (!ids.length) return;
 
   const pendingIds = [];
-  const cached = {};
+  const cached: LooseMessage = {};
   ids.forEach((id) => {
     const image = dockerImages[id];
     const platform = dockerPlatform[id] || '';
@@ -403,9 +454,15 @@ async function _postDecompilerImageUpdateStatus(panel, result, options = {}) {
   panel.webview.postMessage({ type: 'hubDecompilerImageUpdates', updates: Object.fromEntries(entries) });
 }
 
-function staticHandlers(config) {
+function staticHandlers(config: LooseMessage) {
   const { root, panel, context, logChannel, storageDir, globalDir } = config;
+  const productConfig = getProductConfig();
   const extensionPath = context?.extensionPath || root;
+  // Same source of truth as telemetryEvents.ts (extensionVersion): drives the
+  // plugin host min/max_version compatibility check in backends/plugins/registry.py.
+  // Was hardcoded to '0.1.0' and never updated across 7 package.json bumps —
+  // any plugin declaring min_version above 0.1.0 could never attach.
+  const pluginHostVersion = String(context?.extension?.packageJSON?.version || '0.0.0');
   const getSavedSettings = () => {
     try {
       return context?.globalState?.get('pof-settings', {}) || {};
@@ -438,10 +495,31 @@ function staticHandlers(config) {
     const localPaths = settings.decompilerLocalPaths && typeof settings.decompilerLocalPaths === 'object'
       ? settings.decompilerLocalPaths
       : {};
-    const env = buildRuntimeEnv(root, storageDir);
+    const env = buildRuntimeEnv(
+      root,
+      storageDir,
+      globalDir ? { POF_GLOBAL_STORAGE_DIR: globalDir } : {},
+    );
     const ghidraPath = String(localPaths.ghidra || '').trim();
     if (ghidraPath) env.GHIDRA_INSTALL_DIR = ghidraPath;
     return env;
+  };
+  const resolveAutoTriageProviderModel = (message, pythonEnv) => {
+    let provider = String(message.provider || pythonEnv.POF_DEFAULT_AI_PROVIDER || 'ollama').trim() || 'ollama';
+    let model = String(message.model || '').trim();
+    const configuredModel = String(
+      vscode.workspace?.getConfiguration?.('pileOuFace')?.get?.('autoTriage.model', '') || '',
+    ).trim();
+    if (configuredModel) {
+      const atIdx = configuredModel.indexOf('@');
+      provider = atIdx > 0 ? configuredModel.slice(0, atIdx) : 'ollama';
+      model = atIdx > 0 ? configuredModel.slice(atIdx + 1) : configuredModel;
+    }
+    if (!model) {
+      const modelKey = provider === 'ollama' ? 'OLLAMA_MODEL' : `POF_${provider.toUpperCase()}_MODEL`;
+      model = String(pythonEnv[modelKey] || '').trim();
+    }
+    return { provider, model };
   };
   const getPreferredPluginArtifactDir = (artifactKind) => {
     const kind = String(artifactKind || '').trim();
@@ -472,19 +550,69 @@ function staticHandlers(config) {
     return existing || defaultRoot || root;
   };
 
-  const runPython = (argsWithScript, { timeout = 60000, maxBuffer = 4 * 1024 * 1024 } = {}) =>
-    new Promise((resolve, reject) => {
+  const buildPythonMeta = (scriptRelPath, stdout, stderr, elapsedMs, err = null) => {
+    const stdoutText = typeof stdout === 'string' ? stdout : '';
+    const stderrText = typeof stderr === 'string' ? stderr : '';
+    const message = err && err.message ? String(err.message) : '';
+    return {
+      script: scriptRelPath,
+      elapsedMs,
+      stdoutBytes: Buffer.byteLength(stdoutText, 'utf8'),
+      stderrBytes: Buffer.byteLength(stderrText, 'utf8'),
+      stderrTail: stderrText.slice(-4000),
+      code: err && Object.prototype.hasOwnProperty.call(err, 'code') ? err.code : null,
+      signal: err && Object.prototype.hasOwnProperty.call(err, 'signal') ? err.signal : null,
+      killed: !!(err && err.killed),
+      timedOut: !!(err && err.killed && /timed out|timeout/i.test(message)),
+    };
+  };
+
+  const formatPythonFailure = (stepName, err) => {
+    const meta = (err && err.pythonMeta) || {};
+    const lines = [`${stepName}: ${err && err.message ? String(err.message) : String(err)}`];
+    if (meta.elapsedMs != null) lines.push(`elapsed=${meta.elapsedMs}ms`);
+    if (meta.code != null) lines.push(`code=${meta.code}`);
+    if (meta.signal) lines.push(`signal=${meta.signal}`);
+    if (meta.killed) lines.push('killed=true');
+    if (meta.timedOut) lines.push('timeout=true');
+    if (meta.stdoutBytes != null) lines.push(`stdout=${meta.stdoutBytes}B`);
+    if (meta.stderrBytes != null) lines.push(`stderr=${meta.stderrBytes}B`);
+    if (meta.stderrTail) lines.push(`stderr tail:\n${meta.stderrTail}`);
+    return lines.join('\n');
+  };
+
+  const runPython = (argsWithScript, { timeout = 60000, maxBuffer = 4 * 1024 * 1024 }: RuntimeOptions = {}): Promise<PythonResult> =>
+    new Promise<PythonResult>((resolve, reject) => {
       const [scriptRelPath, ...rest] = argsWithScript;
       const scriptPath = path.join(extensionPath, scriptRelPath);
+      const startedAt = Date.now();
       cp.execFile(getPythonExecutable(), [scriptPath, ...rest], {
         encoding: 'utf8', cwd: root, maxBuffer, timeout, env: buildPythonEnv(),
       }, (err, stdout, stderr) => {
-        if (err) { err.stderr = stderr; reject(err); } else resolve({ stdout });
+        const elapsedMs = Date.now() - startedAt;
+        recordRuntimeEvent('python', scriptRelPath, {
+          source: 'staticHandlers.runPython',
+          argc: rest.length,
+          durationMs: elapsedMs,
+          ok: !err,
+          stdoutBytes: Buffer.byteLength(String(stdout || ''), 'utf8'),
+          stderrBytes: Buffer.byteLength(String(stderr || ''), 'utf8'),
+        });
+        const meta = buildPythonMeta(scriptRelPath, stdout, stderr, elapsedMs, err);
+        if (err) {
+          err.stderr = stderr;
+          err.stdout = stdout;
+          err.pythonMeta = meta;
+          reject(err);
+        } else {
+          resolve({ stdout, meta });
+        }
       });
     });
 
-  const buildPluginRuntimeEnv = async () => {
+  const buildPluginRuntimeContext = async () => {
     const base = buildPythonEnv();
+    const contentKeys = {};
     // Injecter le dossier plugins du workspace storage pour que Python le découvre.
     if (storageDir) {
       base['BINHOST_PLUGIN_PATH'] = path.join(storageDir, 'plugins');
@@ -496,60 +624,39 @@ function staticHandlers(config) {
         getAuthServerUrl(),
       );
       const { revoked } = await authSvc.refreshKeysIfStale(24 * 3600_000);
-      if (revoked) {
-        panel.webview.postMessage({ type: 'accountState', loggedIn: false });
-      }
+      if (revoked) panel.webview.postMessage(await buildAccountStatePayload({ loggedIn: false }));
       const keys = await authSvc.getContentKeys();
       const entries = Object.entries(keys);
       if (entries.length > 0) {
         hasOnlineKeys = true;
         for (const [pluginId, key] of entries) {
-          const varName = 'POF_CONTENT_KEY_' + String(pluginId).toUpperCase().replace(/-/g, '_').replace(/\./g, '_');
-          base[varName] = String(key);
+          contentKeys[String(pluginId)] = String(key);
         }
       }
     } catch (_e) {
       // AuthService non disponible — aucune clé injectée.
     }
 
+    // ONLINE_STANDARD refuse toujours les fichiers de licence et les
+    // fallbacks locaux. AIRGAP_ENTERPRISE utilisera une distribution séparée.
+    base[AUTH_STRICT_LICENSE_ENV] = '1';
     if (hasOnlineKeys) {
-      // MODE 1 — en ligne : bloquer les fichiers licence offline.
-      base[AUTH_STRICT_LICENSE_ENV] = '1';
-    } else {
-      // Pas de clés en ligne : vérifier la présence de fichiers licence offline signés.
-      // On cherche dans storageDir/licenses ET dans ~/.pile-ou-face/licenses (même
-      // logique que le runtime Python : default_license_search_paths).
-      const licenseDirs = [
-        ...(storageDir ? [path.join(storageDir, 'licenses')] : []),
-        path.join(os.homedir(), '.pile-ou-face', 'licenses'),
-      ];
-      let hasOfflineLicenses = false;
-      for (const licenseDir of licenseDirs) {
-        try {
-          const files = fs.readdirSync(licenseDir);
-          if (files.some((f) => String(f).endsWith('.license.json'))) {
-            hasOfflineLicenses = true;
-            break;
-          }
-        } catch (_e) {
-          // Répertoire absent → continuer.
-        }
-      }
-
-      if (!hasOfflineLicenses) {
-        // Ni clés en ligne, ni licences offline → plugin verrouillé.
-        // BINHOST_DISABLE_LICENSE_FALLBACK=1 empêche tout fallback fichier.
-        base[AUTH_STRICT_LICENSE_ENV] = '1';
-      }
-      // MODE 3 — offline contractuel : hasOfflineLicenses=true, flag absent,
-      // le runtime Python lira les fichiers .license.json signés.
+      base[AUTH_CONTENT_KEYS_STDIN_ENV] = '1';
     }
 
-    return base;
+    return { env: base, stdin: encodePluginRuntimeStdin(contentKeys) };
   };
 
-  const buildAccountStatePayload = async ({ email = '', fallbackError = '' } = {}) => {
+  const buildAccountStatePayload = async ({ loggedIn = true, email = '', fallbackError = '' } = {}) => {
     const authSvc = AuthService.getInstance(context.secrets, getAuthServerUrl());
+    const deployment = authSvc.getDeploymentStatus(productConfig.deploymentId);
+    const basePayload = {
+      type: 'accountState',
+      loggedIn,
+      deployment,
+      error: fallbackError || '',
+    };
+    if (!loggedIn) return basePayload;
     const resolvedEmail = email || await authSvc.getEmail();
     const keys = await authSvc.getContentKeys();
     const profile = await authSvc.getProfile();
@@ -557,11 +664,9 @@ function staticHandlers(config) {
       ? profile.active_plugin_ids.map((entry) => String(entry || '').trim()).filter(Boolean)
       : Object.keys(keys);
     return {
-      type: 'accountState',
-      loggedIn: true,
+      ...basePayload,
       email: resolvedEmail,
       plugins: activePlugins,
-      error: fallbackError || '',
     };
   };
 
@@ -613,9 +718,9 @@ function staticHandlers(config) {
     };
   };
 
-  const runPluginRuntimeStreaming = async (runtimeArgs, options = {}) => {
+  const runPluginRuntimeStreaming = async (runtimeArgs, options: RuntimeOptions = {}) => {
     if (typeof cp.spawn !== 'function') return runPluginRuntime(runtimeArgs, options);
-    const pluginEnv = await buildPluginRuntimeEnv();
+    const pluginRuntime = await buildPluginRuntimeContext();
     const {
       timeout = 60000,
       maxBuffer = 4 * 1024 * 1024,
@@ -625,7 +730,7 @@ function staticHandlers(config) {
     const args = [
       scriptPath,
       '--host-version',
-      '0.1.0',
+      pluginHostVersion,
       '--api-version',
       '1',
       ...runtimeArgs,
@@ -644,13 +749,17 @@ function staticHandlers(config) {
       return nextSize;
     };
 
-    const stdout = await new Promise((resolve, reject) => {
+    const stdout = await new Promise<string>((resolve, reject) => {
       let settled = false;
       const proc = cp.spawn(getPythonExecutable(), args, {
         cwd: root,
-        env: pluginEnv,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        env: pluginRuntime.env,
+        stdio: ['pipe', 'pipe', 'pipe'],
       });
+      if (pluginRuntime.stdin) {
+        proc.stdin?.write(pluginRuntime.stdin, 'utf8');
+      }
+      proc.stdin?.end();
       const finish = (fn, value) => {
         if (settled) return;
         settled = true;
@@ -663,7 +772,7 @@ function staticHandlers(config) {
         } catch (error) {
           logDebug(`[plugin-progress] kill après timeout ignoré: ${error?.message || error}`);
         }
-        const error = new Error(`Timeout plugin runtime après ${timeout} ms`);
+        const error = new Error(`Timeout plugin runtime après ${timeout} ms`) as ProcessError;
         error.stderr = stderrChunks.join('');
         finish(reject, error);
       }, timeout);
@@ -674,7 +783,7 @@ function staticHandlers(config) {
       proc.stderr?.on('data', (chunk) => {
         stderrSize = append(stderrChunks, stderrFilter.push(chunk), stderrSize);
       });
-      proc.on('error', (error) => {
+      proc.on('error', (error: ProcessError) => {
         error.stderr = stderrChunks.join('');
         finish(reject, error);
       });
@@ -683,7 +792,7 @@ function staticHandlers(config) {
         stderrSize = append(stderrChunks, stderrFilter.flush(), stderrSize);
         const stderr = stderrChunks.join('');
         if (code) {
-          const error = new Error(stderr || `Plugin runtime exited with code ${code}`);
+          const error = new Error(stderr || `Plugin runtime exited with code ${code}`) as ProcessError;
           error.stderr = stderr;
           finish(reject, error);
           return;
@@ -694,18 +803,19 @@ function staticHandlers(config) {
     return JSON.parse(String(stdout || '{}'));
   };
 
-  const runPluginRuntime = async (runtimeArgs, options = {}) => {
-    const pluginEnv = await buildPluginRuntimeEnv();
+  const runPluginRuntime = async (runtimeArgs, options: RuntimeOptions = {}) => {
+    if (typeof cp.spawn === 'function') return runPluginRuntimeStreaming(runtimeArgs, options);
+    const pluginRuntime = await buildPluginRuntimeContext();
     const { timeout = 60000, maxBuffer = 4 * 1024 * 1024 } = options;
     const scriptPath = path.join(extensionPath, 'backends/plugins/runtime.py');
-    const { stdout } = await new Promise((resolve, reject) => {
+    const { stdout } = await new Promise<PythonResult>((resolve, reject) => {
       cp.execFile(getPythonExecutable(), [
         scriptPath,
-        '--host-version', '0.1.0',
+        '--host-version', pluginHostVersion,
         '--api-version', '1',
         ...runtimeArgs,
       ], {
-        encoding: 'utf8', cwd: root, maxBuffer, timeout, env: pluginEnv,
+        encoding: 'utf8', cwd: root, maxBuffer, timeout, env: pluginRuntime.env,
       }, (err, stdout, stderr) => {
         if (err) { err.stderr = stderr; reject(err); } else resolve({ stdout });
       });
@@ -722,10 +832,90 @@ function staticHandlers(config) {
     ...extra,
   });
 
+  const validatePluginAiFollowup = (value, pluginId) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('ai_followup doit être un objet');
+    }
+    if (value.version !== PLUGIN_AI_FOLLOWUP_VERSION) {
+      throw new Error(`Version ai_followup non supportée: ${String(value.version)}`);
+    }
+    const prompt = String(value.prompt || '').trim();
+    const capability = String(value.capability || '').trim();
+    const contextValue = value.context;
+    if (!prompt) throw new Error('ai_followup.prompt est requis');
+    if (Buffer.byteLength(prompt, 'utf8') > PLUGIN_AI_MAX_PROMPT_BYTES) {
+      throw new Error(`ai_followup.prompt dépasse ${PLUGIN_AI_MAX_PROMPT_BYTES} octets`);
+    }
+    if (!contextValue || typeof contextValue !== 'object' || Array.isArray(contextValue)) {
+      throw new Error('ai_followup.context doit être un objet JSON');
+    }
+    const context = JSON.stringify(contextValue);
+    if (Buffer.byteLength(context, 'utf8') > PLUGIN_AI_MAX_CONTEXT_BYTES) {
+      throw new Error(`ai_followup.context dépasse ${PLUGIN_AI_MAX_CONTEXT_BYTES} octets`);
+    }
+    if (!pluginId || !capability.startsWith(`${pluginId}.ai.`)) {
+      throw new Error(`ai_followup.capability doit appartenir au namespace ${pluginId || '(plugin inconnu)'}.ai.*`);
+    }
+    return { version: PLUGIN_AI_FOLLOWUP_VERSION, prompt, context, capability };
+  };
+
+  const callPluginAiProvider = (followup, { provider, model }) => new Promise((resolve, reject) => {
+    const scriptPath = path.join(extensionPath, 'backends/mcp/ai_provider.py');
+    const args = [scriptPath, 'call', '--provider', provider, '--context', followup.context,
+      '--max-tokens', String(PLUGIN_AI_MAX_TOKENS)];
+    if (model) args.push('--model', model);
+    const proc = cp.spawn(getPythonExecutable(), args, {
+      cwd: root,
+      env: buildPythonEnv(),
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn(value);
+    };
+    const timer = setTimeout(() => {
+      try { proc.kill('SIGTERM'); } catch (_) { /* process may already have exited */ }
+      finish(reject, new Error('Timeout appel IA plugin après 120000 ms'));
+    }, 120000);
+    proc.stdout?.on('data', (chunk) => {
+      stdout += chunk.toString('utf8');
+      if (Buffer.byteLength(stdout, 'utf8') > PLUGIN_AI_MAX_OUTPUT_BYTES) {
+        try { proc.kill('SIGTERM'); } catch (_) { /* process may already have exited */ }
+        finish(reject, new Error(`Réponse IA plugin dépasse ${PLUGIN_AI_MAX_OUTPUT_BYTES} octets`));
+      }
+    });
+    proc.stderr?.on('data', (chunk) => { stderr += chunk.toString('utf8'); });
+    proc.on('error', (error) => finish(reject, error));
+    proc.on('close', (code) => {
+      if (code) {
+        finish(reject, new Error(stderr || `Provider IA exited with code ${code}`));
+        return;
+      }
+      try {
+        const response = JSON.parse(stdout || '{}');
+        if (response.ok !== true) throw new Error(response.error || 'Réponse provider IA invalide');
+        finish(resolve, {
+          text: String(response.text || ''),
+          usage: response.usage && typeof response.usage === 'object' ? response.usage : {},
+        });
+      } catch (error) {
+        finish(reject, error);
+      }
+    });
+    proc.stdin?.end(followup.prompt, 'utf8');
+  });
+
   const invokePluginFeature = async (featureId, payload, {
     timeout = 120000,
     onProgress = null,
   } = {}) => {
+    let activePluginId = '';
+    let aiFollowupStarted = false;
     try {
       const response = await runPluginRuntimeStreaming([
         'invoke-feature',
@@ -734,7 +924,74 @@ function staticHandlers(config) {
         JSON.stringify(payload || {}),
       ], { timeout, onProgress });
       if (response?.ok === true) {
-        return { pluginId: String(response.plugin_id || ''), result: response.result ?? {} };
+        const pluginId = String(response.plugin_id || '');
+        activePluginId = pluginId;
+        const firstResult = response.result ?? {};
+        if (!firstResult?.ai_followup) return { pluginId, result: firstResult };
+
+        aiFollowupStarted = true;
+        const followup = validatePluginAiFollowup(firstResult.ai_followup, pluginId);
+        const pythonEnv = buildPythonEnv();
+        const { provider, model } = resolveAutoTriageProviderModel({}, pythonEnv);
+        let consented = false;
+        try {
+          const { stdout } = await runPython(['backends/mcp/ai_consent.py', '--provider', provider, '--check']);
+          consented = JSON.parse(stdout).consented === true;
+        } catch (error) {
+          if (typeof error?.stdout === 'string' && error.stdout.trim()) {
+            try { consented = JSON.parse(error.stdout).consented === true; } catch (_) { consented = false; }
+          } else {
+            throw new Error(`Vérification du consentement IA impossible: ${error.message || error}`);
+          }
+        }
+        if (!consented) {
+          let choice;
+          try {
+            choice = await vscode.window.showWarningMessage(
+              `Plugin ${pluginId} wants to send data to "${provider}" for ${followup.capability}. Continue?`,
+              { modal: true },
+              'Allow',
+            );
+          } catch {
+            // Test hosts and non-interactive environments can reject dialogs.
+            // Treat that as declined consent and keep the deterministic result.
+            choice = undefined;
+          }
+          if (choice !== 'Allow') {
+            // Keep the deterministic analysis usable when the optional AI step
+            // is declined (or unavailable in a non-interactive environment).
+            const deterministicResult = { ...firstResult };
+            delete deterministicResult.ai_followup;
+            return { pluginId, result: deterministicResult };
+          }
+          await runPython(['backends/mcp/ai_consent.py', '--provider', provider, '--grant']);
+        }
+
+        const aiResult = await callPluginAiProvider(followup, { provider, model });
+        const partialResult = { ...firstResult };
+        delete partialResult.ai_followup;
+        const resumeResponse = await runPluginRuntimeStreaming([
+          'invoke-feature',
+          featureId,
+          '--payload-json',
+          JSON.stringify({
+            action: 'ai_resume',
+            ai_result: aiResult,
+            ai_request: { version: followup.version, capability: followup.capability },
+            original_payload: payload || {},
+            partial_result: partialResult,
+          }),
+        ], { timeout, onProgress });
+        if (resumeResponse?.ok !== true) {
+          throw new Error(String(resumeResponse?.error || `Échec reprise IA plugin: ${featureId}`));
+        }
+        if (resumeResponse.result?.ai_followup) {
+          throw new Error('Une seule relance ai_followup est autorisée par invocation');
+        }
+        return {
+          pluginId: String(resumeResponse.plugin_id || pluginId),
+          result: resumeResponse.result ?? {},
+        };
       }
       const available = Array.isArray(response?.available_commands) ? response.available_commands : [];
       if (available.length === 0) {
@@ -751,6 +1008,17 @@ function staticHandlers(config) {
         },
       };
     } catch (error) {
+      if (aiFollowupStarted) {
+        return {
+          pluginId: activePluginId,
+          result: {
+            ok: false,
+            code: 'plugin_ai_followup_failed',
+            error: String(error?.message || error || 'Échec du suivi IA plugin'),
+            feature: featureId,
+          },
+        };
+      }
       return { pluginId: '', result: buildPluginRequiredPayload(featureId) };
     }
   };
@@ -842,7 +1110,7 @@ function staticHandlers(config) {
         });
       }
     },
-    hubGrantPluginConsent: async (message = {}) => {
+    hubGrantPluginConsent: async (message: LooseMessage = {}) => {
       const pluginId = String(message.pluginId || message.plugin_id || '').trim();
       if (!pluginId) return;
       try {
@@ -857,7 +1125,21 @@ function staticHandlers(config) {
       // Re-fetch full state so the freshly-approved plugin flips to "active".
       await handlers.hubLoadPluginState();
     },
-    hubPluginInvoke: async (message = {}) => {
+    hubRevokePluginConsent: async (message: LooseMessage = {}) => {
+      const pluginId = String(message.pluginId || message.plugin_id || '').trim();
+      if (!pluginId) return;
+      try {
+        await runPluginRuntime(['consent-revoke', pluginId]);
+      } catch (error) {
+        panel.webview.postMessage({
+          type: 'hubPluginState',
+          state: emptyPluginUiState(String(error?.message || error || 'runtime indisponible')),
+        });
+        return;
+      }
+      await handlers.hubLoadPluginState();
+    },
+    hubPluginInvoke: async (message: LooseMessage = {}) => {
       const feature = String(message.feature || message.featureId || '').trim();
       const requestId = String(message.requestId || message.id || '');
       if (!feature) {
@@ -876,6 +1158,7 @@ function staticHandlers(config) {
       if (message.binaryPath && payload.binaryPath == null && payload.binary_path == null) {
         payload.binaryPath = message.binaryPath;
       }
+      const responseBinaryPath = String(message.binaryPath || payload.binaryPath || payload.binary_path || '').trim();
       // Inject workspace context so plugins (yara_scan, capa_scan) can locate rules via RulesManager
       if (payload.workspaceRoot == null) payload.workspaceRoot = root;
       if (payload.globalConfigPath == null) {
@@ -884,7 +1167,7 @@ function staticHandlers(config) {
       }
       const featureLabel = feature.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
       let lastPercent = 0;
-      const reportPluginProgress = (progress, update = {}) => {
+      const reportPluginProgress = (progress, update: LooseMessage = {}) => {
         const rawPercent = update.percent;
         const hasPercent = rawPercent !== null
           && rawPercent !== undefined
@@ -904,6 +1187,7 @@ function staticHandlers(config) {
           type: 'hubPluginProgress',
           requestId,
           feature,
+          binaryPath: responseBinaryPath,
           percent: nextPercent,
           message: messageText,
         });
@@ -929,11 +1213,12 @@ function staticHandlers(config) {
         type: 'hubPluginResult',
         requestId,
         feature,
+        binaryPath: responseBinaryPath,
         plugin_id: pluginId,
         result,
       });
     },
-    hubOpenPluginDirectory: async (message = {}) => {
+    hubOpenPluginDirectory: async (message: LooseMessage = {}) => {
       const requestedScope = String(message.scope || 'user').trim() === 'workspace' ? 'workspace' : 'user';
       const pluginDir = getHostArtifactRoot('plugins');
       const scope = storageDir ? 'workspace' : requestedScope;
@@ -956,26 +1241,7 @@ function staticHandlers(config) {
         });
       }
     },
-    hubOpenLicenseDirectory: async () => {
-      const licenseDir = getHostArtifactRoot('licenses');
-      try {
-        await fs.promises.mkdir(licenseDir, { recursive: true });
-        await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(licenseDir));
-        panel.webview.postMessage({
-          type: 'hubLicenseFolderOpened',
-          ok: true,
-          path: licenseDir,
-        });
-      } catch (error) {
-        panel.webview.postMessage({
-          type: 'hubLicenseFolderOpened',
-          ok: false,
-          path: licenseDir,
-          error: String(error?.message || error || `Impossible d'ouvrir le dossier licences.`),
-        });
-      }
-    },
-    hubInstallPlugin: async (message = {}) => {
+    hubInstallPlugin: async (message: LooseMessage = {}) => {
       const requestedScope = String(message.scope || 'user').trim() === 'workspace' ? 'workspace' : 'user';
       const selectedScope = storageDir ? 'workspace' : requestedScope;
       try {
@@ -983,12 +1249,12 @@ function staticHandlers(config) {
           canSelectFiles: true,
           canSelectFolders: true,
           canSelectMany: false,
-          openLabel: 'Installer le plugin',
+          openLabel: 'Install plugin',
           defaultUri: vscode.Uri.file(getPreferredPluginArtifactDir('plugins')),
           filters: {
             'Plugin bundle': ['pofplug', 'zip'],
           },
-          title: 'Sélectionner un plugin compilé ou un dossier plugin',
+          title: 'Select a compiled plugin or plugin folder',
         });
         if (!Array.isArray(picked) || !picked.length) {
           panel.webview.postMessage({
@@ -1020,47 +1286,6 @@ function staticHandlers(config) {
           ok: false,
           scope: selectedScope || 'workspace',
           error: String(details || 'Installation du plugin impossible.'),
-        });
-      }
-    },
-    hubInstallPluginLicense: async () => {
-      try {
-        const picked = await vscode.window.showOpenDialog({
-          canSelectFiles: true,
-          canSelectFolders: false,
-          canSelectMany: false,
-          openLabel: 'Importer la licence',
-          defaultUri: vscode.Uri.file(getPreferredPluginArtifactDir('licenses')),
-          title: 'Sélectionner un fichier de licence plugin',
-        });
-        if (!Array.isArray(picked) || !picked.length) {
-          panel.webview.postMessage({
-            type: 'hubPluginLicenseInstalled',
-            ok: false,
-            cancelled: true,
-          });
-          return;
-        }
-        const sourceUri = picked[0];
-        const targetRoot = getHostArtifactRoot('licenses');
-        const { stdout } = await runPython([
-          'backends/plugins/install_license.py',
-          '--source', sourceUri.fsPath,
-          '--target-root', targetRoot,
-          '--workspace', root,
-        ], { timeout: 120000 });
-        const response = JSON.parse(String(stdout || '{}'));
-        panel.webview.postMessage({
-          type: 'hubPluginLicenseInstalled',
-          source: sourceUri.fsPath,
-          ...response,
-        });
-      } catch (error) {
-        const details = [error?.message || error, error?.stderr].filter(Boolean).join('\n');
-        panel.webview.postMessage({
-          type: 'hubPluginLicenseInstalled',
-          ok: false,
-          error: String(details || 'Installation de la licence impossible.'),
         });
       }
     },
@@ -1263,7 +1488,7 @@ function staticHandlers(config) {
         }
       });
     },
-    hubListDecompilers: async (message = {}) => {
+    hubListDecompilers: async (message: LooseMessage = {}) => {
       const provider = message.provider || 'auto';
       _logDecompilerDocker(logChannel, 'list.start', { provider });
       try {
@@ -1282,7 +1507,7 @@ function staticHandlers(config) {
         });
       }
     },
-    hubPullDecompilerImage: async (message = {}) => {
+    hubPullDecompilerImage: async (message: LooseMessage = {}) => {
       const decompiler = String(message.decompiler || '').trim();
       const image = String(message.image || '').trim();
       const mode = String(message.mode || 'pull').trim();
@@ -1354,7 +1579,240 @@ function staticHandlers(config) {
         }
       });
     },
-    compilerBrowseSource: async (message = {}) => {
+    hubAutoTriageStart: async (message: LooseMessage = {}) => {
+      const requestId = String(message.requestId || '').trim() || `triage-${Date.now()}`;
+      const binaryPath = String(message.binaryPath || '').trim();
+      const pythonEnv = buildPythonEnv();
+      const { provider, model } = resolveAutoTriageProviderModel(message, pythonEnv);
+      const autoTriageConfig = vscode.workspace.getConfiguration('pileOuFace.autoTriage');
+      const configuredMaxFunctions = Number(autoTriageConfig.get('maxFunctions', 200));
+      const configuredMaxSeconds = Number(autoTriageConfig.get('maxSeconds', 600));
+      const configuredMaxTokens = Number(autoTriageConfig.get('maxTokensPerRequest', 2048));
+      const configuredMaxTotalTokens = Number(autoTriageConfig.get('maxTotalTokens', 100000));
+      const maxFunctions = Number.isInteger(message.maxFunctions) && message.maxFunctions > 0
+        ? message.maxFunctions
+        : configuredMaxFunctions;
+      const maxSeconds = Number.isFinite(message.maxSeconds) && message.maxSeconds > 0
+        ? message.maxSeconds
+        : configuredMaxSeconds;
+      const maxTokens = Number.isInteger(message.maxTokens) && message.maxTokens > 0
+        ? message.maxTokens
+        : configuredMaxTokens;
+      const maxTotalTokens = Number.isInteger(message.maxTotalTokens) && message.maxTotalTokens > 0
+        ? message.maxTotalTokens
+        : configuredMaxTotalTokens;
+
+      const fail = (error) => {
+        if (_activeTriageRuns.get(binaryPath) === requestId) _activeTriageRuns.delete(binaryPath);
+        panel.webview.postMessage({ type: 'hubAutoTriageDone', requestId, binaryPath, ok: false, error });
+      };
+
+      if (!binaryPath || !fs.existsSync(binaryPath) || fs.statSync(binaryPath).isDirectory()) {
+        fail('Binaire introuvable.');
+        return;
+      }
+      if (_activeTriageRuns.has(binaryPath)) {
+        fail('Un auto-triage est déjà en cours pour ce binaire.');
+        return;
+      }
+      _activeTriageRuns.set(binaryPath, requestId);
+      const baseName = path.basename(binaryPath, path.extname(binaryPath)) || 'binary';
+      const mappingPath = path.join(storageDir, `${baseName}.disasm.mapping.json`);
+      if (!fs.existsSync(mappingPath)) {
+        fail("Ce binaire n'a pas encore été désassemblé — ouvrez-le dans le hub statique avant de lancer le triage.");
+        return;
+      }
+
+      let consented = false;
+      try {
+        const { stdout } = await runPython(['backends/mcp/ai_consent.py', '--provider', provider, '--check']);
+        consented = JSON.parse(stdout).consented === true;
+      } catch (err) {
+        if (typeof err?.stdout === 'string' && err.stdout.trim()) {
+          try { consented = JSON.parse(err.stdout).consented === true; } catch (_) { consented = false; }
+        } else {
+          fail(`Vérification du consentement impossible: ${err.message || err}`);
+          return;
+        }
+      }
+      if (!consented) {
+        const choice = await vscode.window.showWarningMessage(
+          `This binary's code will be sent to "${provider}" for analysis. Continue?`,
+          { modal: true },
+          'Allow',
+        );
+        if (choice !== 'Allow') {
+          fail('Triage annulé : consentement refusé.');
+          return;
+        }
+        try {
+          await runPython(['backends/mcp/ai_consent.py', '--provider', provider, '--grant']);
+        } catch (err) {
+          fail(`Impossible d'enregistrer le consentement: ${err.message || err}`);
+          return;
+        }
+      }
+
+      const cancelFlagPath = path.join(os.tmpdir(), `pof-triage-cancel-${requestId}.flag`);
+      try { fs.rmSync(cancelFlagPath, { force: true }); } catch (err) {
+        logDebug(`[auto-triage] cleanup cancel flag failed: ${err.message || err}`);
+      }
+      const binaryKey = crypto.createHash('sha256').update(path.resolve(binaryPath)).digest('hex').slice(0, 12);
+      const reportPath = path.join(getHostArtifactRoot('triage-reports'), `${baseName}-${binaryKey}.triage-report.md`);
+
+      const scriptArgs = [
+        '--binary-path', binaryPath,
+        '--mapping-path', mappingPath,
+        '--provider', provider,
+        '--max-functions', String(maxFunctions),
+        '--max-seconds', String(maxSeconds),
+        '--max-tokens', String(maxTokens),
+        '--max-total-tokens', String(maxTotalTokens),
+        '--cancel-flag-path', cancelFlagPath,
+        '--report-out', reportPath,
+        '--language', vscode.env.language,
+      ];
+      if (model) scriptArgs.push('--model', model);
+      logChannel?.appendLine(`[auto-triage] start requestId=${requestId} provider=${provider} model=${model || '(default)'}`);
+      const scriptPath = path.join(extensionPath, 'backends/mcp/auto_triage.py');
+      const proc = cp.spawn(getPythonExecutable(), [scriptPath, ...scriptArgs], { cwd: root, env: pythonEnv });
+
+      let resultSent = false;
+      let stderrBuf = '';
+      let wasCancelled = false;
+      let finalStats = null;
+      let resolvedModel = model;
+      proc.stderr.on('data', (chunk) => { stderrBuf += String(chunk); });
+
+      const cancelRequest = () => {
+        try { fs.writeFileSync(cancelFlagPath, '1', 'utf8'); } catch (err) {
+          logWarning(`[auto-triage] cannot write cancel flag: ${err.message || err}`);
+        }
+        setTimeout(() => {
+          if (!resultSent) {
+            try { proc.kill('SIGTERM'); } catch (err) {
+              logWarning(`[auto-triage] cannot terminate process: ${err.message || err}`);
+            }
+          }
+        }, 5000);
+      };
+      registerAiProcess(requestId, cancelRequest);
+
+      const rl = readline.createInterface({ input: proc.stdout, crlfDelay: Infinity });
+      rl.on('line', (line) => {
+        const trimmed = line.trim();
+        if (!trimmed) return;
+        let event;
+        try { event = JSON.parse(trimmed); } catch { return; }
+        if (event?.type === 'cancelled') wasCancelled = true;
+        if (event?.type === 'selection_done' && event.model) resolvedModel = String(event.model);
+        if (event?.type === 'done') finalStats = event.stats || null;
+        panel.webview.postMessage({ type: 'hubAutoTriageEvent', requestId, binaryPath, event });
+      });
+
+      proc.on('close', (code) => {
+        if (resultSent) return;
+        resultSent = true;
+        clearAiProcess(requestId);
+        if (_activeTriageRuns.get(binaryPath) === requestId) _activeTriageRuns.delete(binaryPath);
+        try { fs.rmSync(cancelFlagPath, { force: true }); } catch (err) {
+          logDebug(`[auto-triage] cleanup cancel flag failed: ${err.message || err}`);
+        }
+        const ok = code === 0;
+        if (ok) {
+          // Persiste au-delà de la session webview (le widget de suivi se
+          // referme apres un delai) pour permettre de rouvrir le rapport
+          // plus tard depuis le dashboard.
+          const reports = context.globalState.get('pof.autoTriage.reports', {} as Record<string, string>);
+          reports[binaryPath] = reportPath;
+          context.globalState.update('pof.autoTriage.reports', reports);
+          const results = context.globalState.get('pof.autoTriage.results', {} as Record<string, unknown>);
+          results[binaryPath] = {
+            reportPath,
+            completedAt: new Date().toISOString(),
+            provider,
+            model: resolvedModel,
+            stats: finalStats,
+            cancelled: wasCancelled,
+          };
+          context.globalState.update('pof.autoTriage.results', results);
+        }
+        panel.webview.postMessage({
+          type: 'hubAutoTriageDone',
+          requestId,
+          binaryPath,
+          ok,
+          cancelled: wasCancelled,
+          reportPath: ok ? reportPath : null,
+          error: ok ? null : (stderrBuf.trim() || `Processus terminé avec le code ${code}`),
+        });
+      });
+
+      proc.on('error', (err) => {
+        if (resultSent) return;
+        resultSent = true;
+        clearAiProcess(requestId);
+        if (_activeTriageRuns.get(binaryPath) === requestId) _activeTriageRuns.delete(binaryPath);
+        fail(String(err.message || err));
+      });
+    },
+    hubAutoTriageOpenReport: async (message: LooseMessage = {}) => {
+      const reportPath = String(message.reportPath || '').trim();
+      if (!reportPath || !fs.existsSync(reportPath)) {
+        vscode.window.showErrorMessage('Triage report not found.');
+        return;
+      }
+      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(reportPath));
+      await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Beside, preview: false });
+    },
+    hubAutoTriageExportReport: async (message: LooseMessage = {}) => {
+      const reportPath = String(message.reportPath || '').trim();
+      if (!reportPath || !fs.existsSync(reportPath)) {
+        vscode.window.showErrorMessage('Triage report not found.');
+        return;
+      }
+      const destination = await vscode.window.showSaveDialog({
+        defaultUri: vscode.Uri.file(path.basename(reportPath)),
+        filters: { Markdown: ['md'] },
+        saveLabel: 'Export report',
+      });
+      if (!destination) return;
+      await fs.promises.copyFile(reportPath, destination.fsPath);
+      vscode.window.showInformationMessage(`Report exported: ${destination.fsPath}`);
+    },
+    hubAutoTriageGetReport: async (message: LooseMessage = {}) => {
+      const binaryPath = String(message.binaryPath || '').trim();
+      const reports = context.globalState.get('pof.autoTriage.reports', {} as Record<string, string>);
+      const reportPath = String(reports[binaryPath] || '').trim();
+      const exists = Boolean(reportPath) && fs.existsSync(reportPath);
+      const results = context.globalState.get('pof.autoTriage.results', {} as Record<string, any>);
+      panel.webview.postMessage({
+        type: 'hubAutoTriageReportInfo',
+        binaryPath,
+        reportPath: exists ? reportPath : null,
+        result: exists ? (results[binaryPath] || null) : null,
+      });
+    },
+    hubAutoTriagePreflight: async (message: LooseMessage = {}) => {
+      const binaryPath = String(message.binaryPath || '').trim();
+      const baseName = binaryPath ? (path.basename(binaryPath, path.extname(binaryPath)) || 'binary') : '';
+      const mappingPath = baseName ? path.join(storageDir, `${baseName}.disasm.mapping.json`) : '';
+      const pythonEnv = buildPythonEnv();
+      const { provider, model } = resolveAutoTriageProviderModel(message, pythonEnv);
+      const config = vscode.workspace.getConfiguration('pileOuFace.autoTriage');
+      panel.webview.postMessage({
+        type: 'hubAutoTriagePreflight',
+        binaryPath,
+        available: Boolean(binaryPath) && fs.existsSync(binaryPath) && Boolean(mappingPath) && fs.existsSync(mappingPath),
+        provider,
+        model: model || 'sélection automatique',
+        maxFunctions: Number(config.get('maxFunctions', 200)),
+        maxSeconds: Number(config.get('maxSeconds', 600)),
+        maxTokens: Number(config.get('maxTokensPerRequest', 2048)),
+        maxTotalTokens: Number(config.get('maxTotalTokens', 100000)),
+      });
+    },
+    compilerBrowseSource: async (message: LooseMessage = {}) => {
       const lang = String(message.lang || 'c');
       const filters: Record<string, string[]> = {
         c:    { 'C source': ['c', 'h'] },
@@ -1364,7 +1822,7 @@ function staticHandlers(config) {
       }[lang] || { 'Source': ['c', 'cpp', 'rs', 'go'] };
       const picked = await vscode.window.showOpenDialog({
         canSelectFiles: true, canSelectFolders: false, canSelectMany: false,
-        openLabel: 'Choisir le fichier source',
+        openLabel: 'Choose source file',
         defaultUri: vscode.Uri.file(root),
         filters,
       });
@@ -1373,7 +1831,7 @@ function staticHandlers(config) {
         path: picked?.[0]?.fsPath || null,
       });
     },
-    compilerBrowseOutput: async (message = {}) => {
+    compilerBrowseOutput: async (message: LooseMessage = {}) => {
       const target = String(message.target || 'elf-x64');
       const ext = target.startsWith('pe-') ? 'exe' : target.startsWith('macho-') ? '' : 'elf';
       const src = String(message.src || '');
@@ -1381,8 +1839,8 @@ function staticHandlers(config) {
       const suggested = ext ? `${stem}.${ext}` : stem;
       const saved = await vscode.window.showSaveDialog({
         defaultUri: vscode.Uri.file(path.join(root, suggested)),
-        filters: ext ? { 'Binaire': [ext] } : { 'Binaire': ['*'] },
-        title: 'Chemin du binaire de sortie',
+        filters: ext ? { 'Binary': [ext] } : { 'Binary': ['*'] },
+        title: 'Output binary path',
       });
       panel.webview.postMessage({
         type: 'compilerBrowseOutputResult',
@@ -1398,7 +1856,7 @@ function staticHandlers(config) {
         panel.webview.postMessage({ type: 'compilerListResult', compilers: [], error: String(err) });
       }
     },
-    compileRequest: async (message = {}) => {
+    compileRequest: async (message: LooseMessage = {}) => {
       const { src, lang, target, output, flags } = message;
       if (!src || !lang || !target) {
         panel.webview.postMessage({ type: 'compileResult', error: 'src, lang et target sont requis.' });
@@ -1415,7 +1873,7 @@ function staticHandlers(config) {
         panel.webview.postMessage({ type: 'compileResult', error: String(err) });
       }
     },
-    hubExecuteCommand: async (message = {}) => {
+    hubExecuteCommand: async (message: LooseMessage = {}) => {
       // Permet au webview de déclencher une commande VS Code enregistrée
       const commandId = String(message?.command || '').trim();
       const requestId = message?.requestId || null;
@@ -1453,11 +1911,159 @@ function staticHandlers(config) {
         }
       }
     },
+    hubAugmentDecompile: async (message: LooseMessage = {}) => {
+      const binaryPath = String(message.binaryPath || '').trim();
+      const backendBinaryPath = path.isAbsolute(binaryPath) ? binaryPath : path.join(root, binaryPath);
+      const addr = String(message.addr || '').trim();
+      const code = String(message.code || '');
+      const pythonEnv = buildPythonEnv();
+      const requestedProvider = String(message.aiProvider || '').trim();
+      const { provider, model } = resolveAutoTriageProviderModel(
+        { provider: requestedProvider && requestedProvider !== 'auto' ? requestedProvider : undefined, model: message.model },
+        pythonEnv,
+      );
+      const respond = (ok, resultOrError) => panel.webview.postMessage(ok
+        ? { type: 'hubDecompileAugmented', ok: true, result: resultOrError }
+        : { type: 'hubDecompileAugmented', ok: false, error: String(resultOrError || 'Augmentation impossible.') });
+      if (!binaryPath || !addr || !code.trim()) {
+        respond(false, 'Sélectionnez une fonction décompilée avant de lancer l’augmentation.');
+        return;
+      }
+      if (!fs.existsSync(backendBinaryPath) || fs.statSync(backendBinaryPath).isDirectory()) {
+        respond(false, 'Binaire introuvable.');
+        return;
+      }
+      let consented = false;
+      try {
+        const { stdout } = await runPython(['backends/mcp/ai_consent.py', '--provider', provider, '--check']);
+        consented = JSON.parse(stdout).consented === true;
+      } catch (err) {
+        if (typeof err?.stdout === 'string' && err.stdout.trim()) {
+          try { consented = JSON.parse(err.stdout).consented === true; } catch (_) { consented = false; }
+        } else {
+          respond(false, `Vérification du consentement impossible : ${err.message || err}`);
+          return;
+        }
+      }
+      if (!consented) {
+        const choice = await vscode.window.showWarningMessage(
+          `This function's pseudocode will be sent to "${provider}" to suggest annotations. Continue?`,
+          { modal: true },
+          'Allow',
+        );
+        if (choice !== 'Allow') {
+          respond(false, 'Augmentation annulée : consentement refusé.');
+          return;
+        }
+        try {
+          await runPython(['backends/mcp/ai_consent.py', '--provider', provider, '--grant']);
+        } catch (err) {
+          respond(false, `Impossible d’enregistrer le consentement : ${err.message || err}`);
+          return;
+        }
+      }
+      const inputPath = path.join(os.tmpdir(), `pof-decompile-augment-${crypto.randomUUID()}.json`);
+      try {
+        fs.writeFileSync(inputPath, JSON.stringify({
+          binary_path: backendBinaryPath,
+          addr,
+          code: code.slice(0, 32000),
+          function_name: String(message.functionName || ''),
+          provider,
+          model,
+          language: vscode.env?.language?.toLowerCase().startsWith('fr') ? 'French' : 'English',
+          cache_dir: getHostArtifactRoot('static_cache'),
+          use_cache: message.useCache !== false,
+        }), { encoding: 'utf8', mode: 0o600 });
+        const { stdout } = await runPython(
+          ['backends/static/decompile/augment.py', '--input', inputPath, '--action', 'suggest'],
+          { timeout: 120000 },
+        );
+        const result = JSON.parse(stdout);
+        if (!result.ok) throw new Error(result.error || 'Réponse invalide');
+        respond(true, result);
+      } catch (err) {
+        respond(false, err.message || err);
+      } finally {
+        try { fs.rmSync(inputPath, { force: true }); } catch (err) {
+          logDebug(`[decompile-augment] cleanup failed: ${err.message || err}`);
+        }
+      }
+    },
+    hubAcceptDecompileAugmentation: async (message: LooseMessage = {}) => {
+      const inputPath = path.join(os.tmpdir(), `pof-decompile-accept-${crypto.randomUUID()}.json`);
+      try {
+        fs.writeFileSync(inputPath, JSON.stringify({
+          cache_key: String(message.cacheKey || ''),
+          selected_ids: Array.isArray(message.selectedIds) ? message.selectedIds : [],
+          cache_dir: getHostArtifactRoot('static_cache'),
+        }), { encoding: 'utf8', mode: 0o600 });
+        const { stdout } = await runPython(
+          ['backends/static/decompile/augment.py', '--input', inputPath, '--action', 'accept'],
+          { timeout: 30000 },
+        );
+        const result = JSON.parse(stdout);
+        if (!result.ok) throw new Error(result.error || 'Réponse invalide');
+        panel.webview.postMessage({
+          type: 'hubDecompileAugmented', ok: true, accepted: true, result,
+          binaryPath: String(message.binaryPath || ''), addr: String(message.addr || ''),
+        });
+      } catch (err) {
+        panel.webview.postMessage({ type: 'hubDecompileAugmented', ok: false, error: String(err.message || err) });
+      } finally {
+        try { fs.rmSync(inputPath, { force: true }); } catch (err) {
+          logDebug(`[decompile-augment] cleanup failed: ${err.message || err}`);
+        }
+      }
+    },
+    hubLoadDecompileAugmentationCache: async (message: LooseMessage = {}) => {
+      const binaryPath = String(message.binaryPath || '').trim();
+      const backendBinaryPath = path.isAbsolute(binaryPath) ? binaryPath : path.join(root, binaryPath);
+      const addr = String(message.addr || '').trim();
+      const code = String(message.code || '');
+      const respond = (ok, resultOrError) => panel.webview.postMessage(ok
+        ? { type: 'hubDecompileAugmentationCache', ok: true, binaryPath, addr, result: resultOrError }
+        : { type: 'hubDecompileAugmentationCache', ok: false, binaryPath, addr, error: String(resultOrError || '') });
+      if (!binaryPath || !addr || !code.trim()) {
+        respond(true, { ok: true, found: false });
+        return;
+      }
+      const pythonEnv = buildPythonEnv();
+      const requestedProvider = String(message.aiProvider || '').trim();
+      const { provider, model } = resolveAutoTriageProviderModel(
+        { provider: requestedProvider && requestedProvider !== 'auto' ? requestedProvider : undefined, model: message.model },
+        pythonEnv,
+      );
+      const inputPath = path.join(os.tmpdir(), `pof-decompile-cache-${crypto.randomUUID()}.json`);
+      try {
+        fs.writeFileSync(inputPath, JSON.stringify({
+          binary_path: backendBinaryPath,
+          addr,
+          code: code.slice(0, 32000),
+          provider,
+          model,
+          cache_dir: getHostArtifactRoot('static_cache'),
+        }), { encoding: 'utf8', mode: 0o600 });
+        const { stdout } = await runPython(
+          ['backends/static/decompile/augment.py', '--input', inputPath, '--action', 'lookup'],
+          { timeout: 30000 },
+        );
+        const result = JSON.parse(stdout);
+        if (!result.ok) throw new Error(result.error || 'Cache invalide');
+        respond(true, result);
+      } catch (err) {
+        respond(false, err.message || err);
+      } finally {
+        try { fs.rmSync(inputPath, { force: true }); } catch (err) {
+          logDebug(`[decompile-augment] cleanup failed: ${err.message || err}`);
+        }
+      }
+    },
     hubLoadDecompile: async (message) => {
       const { binaryPath, addr, funcName, full, decompiler, provider, useCache = true } = message;
       const decompilersJsonPath = storageDir ? path.join(storageDir, 'decompilers.json') : '';
 
-      // Build base args (annotation injection preserved)
+      // Build base args. Decompilers read annotations directly from AnnotationStore.
       const buildArgs = (targetDecompiler) => {
         const args = ['backends/static/decompile/decompile.py', '--binary', binaryPath];
         if (full) args.push('--full');
@@ -1465,14 +2071,6 @@ function staticHandlers(config) {
         if (targetDecompiler) args.push('--decompiler', targetDecompiler);
         if (provider && provider !== 'auto') args.push('--provider', provider);
         if (!useCache) args.push('--no-cache');
-        // annotation injection (keep existing logic)
-        const absPath = path.isAbsolute(binaryPath) ? binaryPath : path.join(root, binaryPath);
-        const annHash = crypto.createHash('sha256')
-          .update(absPath)
-          .update(fs.existsSync(absPath) ? String(fs.statSync(absPath).mtimeMs) : '')
-          .digest('hex').slice(0, 16);
-        const annPath = storageDir ? path.join(storageDir, 'annotations', `${annHash}.json`) : '';
-        if (annPath && fs.existsSync(annPath)) args.push('--annotations-json', annPath);
         return args;
       };
 
@@ -1514,7 +2112,7 @@ function staticHandlers(config) {
       let bestIndex = Infinity;
       let firstResult = true;
 
-      const runOne = (t, targetIndex) => new Promise((resolve) => {
+      const runOne = (t, targetIndex) => new Promise<void>((resolve) => {
         const args = buildArgs(t || '');
         const timeoutMs = ((decompilerTimeouts[t] || 120) + 30) * 1000;
         runPython(args, { timeout: timeoutMs }).then(({ stdout }) => {
@@ -1604,27 +2202,27 @@ function staticHandlers(config) {
       const { binaryPath } = message;
       try {
         const { stdout } = await runPython(['backends/static/binary/imports_analysis.py', '--binary', binaryPath]);
-        panel.webview.postMessage({ type: 'hubImportsDone', data: JSON.parse(stdout) });
+        panel.webview.postMessage({ type: 'hubImportsDone', binaryPath, data: JSON.parse(stdout) });
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubImportsDone', data: { error: String(e) } });
+        panel.webview.postMessage({ type: 'hubImportsDone', binaryPath, data: { error: String(e) } });
       }
     },
     hubLoadExports: async (message) => {
       const { binaryPath } = message;
       try {
         const { stdout } = await runPython(['backends/static/binary/binary_exports.py', '--binary', binaryPath]);
-        panel.webview.postMessage({ type: 'hubExportsDone', data: JSON.parse(stdout) });
+        panel.webview.postMessage({ type: 'hubExportsDone', binaryPath, data: JSON.parse(stdout) });
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubExportsDone', data: { error: String(e) } });
+        panel.webview.postMessage({ type: 'hubExportsDone', binaryPath, data: { error: String(e) } });
       }
     },
     hubLoadImportXrefs: async (message) => {
       const { binaryPath, fnName } = message;
       try {
         const { stdout } = await runPython(['backends/static/disasm/import_xrefs.py', '--binary', binaryPath, '--function', fnName]);
-        panel.webview.postMessage({ type: 'hubImportXrefsDone', data: JSON.parse(stdout) });
+        panel.webview.postMessage({ type: 'hubImportXrefsDone', binaryPath, data: JSON.parse(stdout) });
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubImportXrefsDone', data: { function: fnName, callsites: [], error: String(e) } });
+        panel.webview.postMessage({ type: 'hubImportXrefsDone', binaryPath, data: { function: fnName, callsites: [], error: String(e) } });
       }
     },
     hubLoadHexView: async (message) => {
@@ -1643,10 +2241,11 @@ function staticHandlers(config) {
         if (rawArch) args.push('--raw-arch', String(rawArch));
         if (rawEndian) args.push('--raw-endian', String(rawEndian));
         const { stdout } = await runPython(args);
-        panel.webview.postMessage({ type: 'hubHexView', result: JSON.parse(stdout) });
+        panel.webview.postMessage({ type: 'hubHexView', binaryPath, result: JSON.parse(stdout) });
       } catch (e) {
         panel.webview.postMessage({
           type: 'hubHexView',
+          binaryPath,
           result: { error: String(e), rows: [], sections: [] },
         });
       }
@@ -1662,6 +2261,7 @@ function staticHandlers(config) {
         // Map to the shape the webview expects for hubPatchResult
         panel.webview.postMessage({
           type: 'hubPatchResult',
+          binaryPath,
           result: {
             ok: result.ok,
             written: result.patch ? result.patch.patched_bytes.split(' ').length : 0,
@@ -1672,19 +2272,19 @@ function staticHandlers(config) {
         });
         if (result.ok) {
           const { stdout: ls } = await runPython(['backends/static/patch/patch_manager.py', 'list', '--binary', binaryPath]);
-          panel.webview.postMessage({ type: 'hubPatchesDone', data: JSON.parse(ls) });
+          panel.webview.postMessage({ type: 'hubPatchesDone', binaryPath, data: JSON.parse(ls) });
         }
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubPatchResult', result: { ok: false, error: String(e) } });
+        panel.webview.postMessage({ type: 'hubPatchResult', binaryPath, result: { ok: false, error: String(e) } });
       }
     },
     hubLoadPatches: async (message) => {
       const { binaryPath } = message;
       try {
         const { stdout } = await runPython(['backends/static/patch/patch_manager.py', 'list', '--binary', binaryPath]);
-        panel.webview.postMessage({ type: 'hubPatchesDone', data: JSON.parse(stdout) });
+        panel.webview.postMessage({ type: 'hubPatchesDone', binaryPath, data: JSON.parse(stdout) });
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubPatchesDone', data: { patches: [], error: String(e) } });
+        panel.webview.postMessage({ type: 'hubPatchesDone', binaryPath, data: { patches: [], error: String(e) } });
       }
     },
     hubRevertPatch: async (message) => {
@@ -1693,10 +2293,10 @@ function staticHandlers(config) {
         const { stdout } = await runPython(['backends/static/patch/patch_manager.py', 'revert', '--binary', binaryPath, '--id', patchId]);
         const result = JSON.parse(stdout);
         const { stdout: ls } = await runPython(['backends/static/patch/patch_manager.py', 'list', '--binary', binaryPath]);
-        panel.webview.postMessage({ type: 'hubPatchesDone', data: JSON.parse(ls) });
-        panel.webview.postMessage({ type: 'hubRevertPatchDone', ok: true, patch: result.patch || null });
+        panel.webview.postMessage({ type: 'hubPatchesDone', binaryPath, data: JSON.parse(ls) });
+        panel.webview.postMessage({ type: 'hubRevertPatchDone', binaryPath, ok: true, patch: result.patch || null });
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubRevertPatchDone', ok: false, error: String(e) });
+        panel.webview.postMessage({ type: 'hubRevertPatchDone', binaryPath, ok: false, error: String(e) });
       }
     },
     hubRedoPatch: async (message) => {
@@ -1707,10 +2307,10 @@ function staticHandlers(config) {
         const { stdout } = await runPython(args);
         const result = JSON.parse(stdout);
         const { stdout: ls } = await runPython(['backends/static/patch/patch_manager.py', 'list', '--binary', binaryPath]);
-        panel.webview.postMessage({ type: 'hubPatchesDone', data: JSON.parse(ls) });
-        panel.webview.postMessage({ type: 'hubRedoPatchDone', ok: true, patch: result.patch || null });
+        panel.webview.postMessage({ type: 'hubPatchesDone', binaryPath, data: JSON.parse(ls) });
+        panel.webview.postMessage({ type: 'hubRedoPatchDone', binaryPath, ok: true, patch: result.patch || null });
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubRedoPatchDone', ok: false, error: String(e) });
+        panel.webview.postMessage({ type: 'hubRedoPatchDone', binaryPath, ok: false, error: String(e) });
       }
     },
     hubRevertAllPatches: async (message) => {
@@ -1718,10 +2318,10 @@ function staticHandlers(config) {
       try {
         await runPython(['backends/static/patch/patch_manager.py', 'revert-all', '--binary', binaryPath]);
         const { stdout: ls } = await runPython(['backends/static/patch/patch_manager.py', 'list', '--binary', binaryPath]);
-        panel.webview.postMessage({ type: 'hubPatchesDone', data: JSON.parse(ls) });
-        panel.webview.postMessage({ type: 'hubRevertPatchDone', ok: true });
+        panel.webview.postMessage({ type: 'hubPatchesDone', binaryPath, data: JSON.parse(ls) });
+        panel.webview.postMessage({ type: 'hubRevertPatchDone', binaryPath, ok: true });
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubRevertPatchDone', ok: false, error: String(e) });
+        panel.webview.postMessage({ type: 'hubRevertPatchDone', binaryPath, ok: false, error: String(e) });
       }
     },
     hubLoadStackFrame: async (message) => {
@@ -1755,11 +2355,12 @@ function staticHandlers(config) {
           '--code', code,
           '--binary', binaryPath || '',
         ]);
-        panel.webview.postMessage({ type: 'hubScriptResult', result: JSON.parse(stdout) });
+        panel.webview.postMessage({ type: 'hubScriptResult', binaryPath, result: JSON.parse(stdout) });
       } catch (e) {
         const stderr = e.stderr || String(e);
         panel.webview.postMessage({
           type: 'hubScriptResult',
+          binaryPath,
           result: { ok: false, stdout: '', stderr, duration_ms: 0 },
         });
       }
@@ -1767,44 +2368,138 @@ function staticHandlers(config) {
     hubLoadFunctions: async (message) => {
       const { binaryPath } = message;
       try {
-        const [symRes, ccRes, radarRes] = await Promise.all([
-          runPython(['backends/static/binary/symbols.py', '--binary', binaryPath, '--all']),
-          runPython(['backends/static/disasm/calling_convention.py', '--binary', binaryPath]),
-          runPython(['backends/static/analysis/function_radar.py', '--binary', binaryPath]),
-        ]);
+        const functionSteps = [
+          { name: 'symbols', args: ['backends/static/binary/symbols.py', '--binary', binaryPath, '--all'] },
+          { name: 'calling_convention', args: ['backends/static/disasm/calling_convention.py', '--binary', binaryPath] },
+          { name: 'function_radar', args: ['backends/static/analysis/function_radar.py', '--binary', binaryPath] },
+        ];
+        const settled = await Promise.all(functionSteps.map((step) =>
+          runPython(step.args)
+            .then((res) => ({ ...step, ok: true, res, err: null }))
+            .catch((err) => ({ ...step, ok: false, res: null, err }))
+        ));
+        const diagnostics = settled.map((step) => ({
+          name: step.name,
+          ok: step.ok,
+          ...(step.ok ? step.res.meta : ((step.err && step.err.pythonMeta) || {})),
+        }));
+        const failed = settled.find((step) => !step.ok);
+        if (failed) {
+          panel.webview.postMessage({
+            type: 'hubFunctionsDone',
+            binaryPath,
+            data: {
+              error: formatPythonFailure(failed.name, failed.err),
+              diagnostics,
+            },
+          });
+          return;
+        }
+        const [symRes, ccRes, radarRes] = settled.map((step) => step.res as PythonResult);
         const symbols = JSON.parse(symRes.stdout);
         const cc = JSON.parse(ccRes.stdout);
         const radar = JSON.parse(radarRes.stdout);
-        panel.webview.postMessage({ type: 'hubFunctionsDone', data: { symbols, cc, radar } });
+        panel.webview.postMessage({ type: 'hubFunctionsDone', binaryPath, data: { symbols, cc, radar, diagnostics } });
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubFunctionsDone', data: { error: String(e) } });
+        panel.webview.postMessage({
+          type: 'hubFunctionsDone',
+          binaryPath,
+          data: {
+            error: e && e.message ? String(e.message) : String(e),
+            diagnostics: e && e.pythonMeta ? [e.pythonMeta] : [],
+          },
+        });
+      }
+    },
+    hubNaturalLanguageSearch: async (message: LooseMessage = {}) => {
+      const binaryPath = String(message.binaryPath || '').trim();
+      const backendBinaryPath = path.isAbsolute(binaryPath) ? binaryPath : path.join(root, binaryPath);
+      const query = String(message.query || '').trim();
+      const pythonEnv = buildPythonEnv();
+      const { provider, model } = resolveAutoTriageProviderModel(message, pythonEnv);
+      const respond = (ok, payload) => panel.webview.postMessage({
+        type: 'hubNaturalLanguageSearchDone', binaryPath, query, ok,
+        ...(ok ? { result: payload } : { error: String(payload || 'Recherche impossible.') }),
+      });
+      if (!binaryPath || !fs.existsSync(backendBinaryPath)) {
+        respond(false, 'Binaire introuvable.');
+        return;
+      }
+      if (!query || query.length > 500) {
+        respond(false, 'Saisissez une question de 1 à 500 caractères.');
+        return;
+      }
+      let consented = false;
+      try {
+        const { stdout } = await runPython(['backends/mcp/ai_consent.py', '--provider', provider, '--check']);
+        consented = JSON.parse(stdout).consented === true;
+      } catch (err) {
+        if (typeof err?.stdout === 'string' && err.stdout.trim()) {
+          try { consented = JSON.parse(err.stdout).consented === true; } catch (_) { consented = false; }
+        } else {
+          respond(false, `Vérification du consentement impossible : ${err.message || err}`);
+          return;
+        }
+      }
+      if (!consented) {
+        const choice = await vscode.window.showWarningMessage(
+          `The question and analysis evidence will be sent to "${provider}" to rank functions. Continue?`,
+          { modal: true },
+          'Allow',
+        );
+        if (choice !== 'Allow') {
+          respond(false, 'Recherche annulée : consentement refusé.');
+          return;
+        }
+        try {
+          await runPython(['backends/mcp/ai_consent.py', '--provider', provider, '--grant']);
+        } catch (err) {
+          respond(false, `Impossible d’enregistrer le consentement : ${err.message || err}`);
+          return;
+        }
+      }
+      try {
+        const args = [
+          'backends/mcp/natural_language_search.py',
+          '--binary', backendBinaryPath,
+          '--query', query,
+          '--provider', provider,
+          '--limit', '8',
+        ];
+        if (model) args.push('--model', model);
+        const { stdout } = await runPython(args, { timeout: 120000 });
+        const result = JSON.parse(stdout);
+        if (!result.ok) throw new Error(result.error || 'Réponse de recherche invalide.');
+        respond(true, result);
+      } catch (err) {
+        respond(false, err.message || err);
       }
     },
     hubLoadPeResources: async (message) => {
       const { binaryPath } = message;
       try {
         const { stdout } = await runPython(['backends/static/binary/pe_resources.py', '--binary', binaryPath]);
-        panel.webview.postMessage({ type: 'hubPeResourcesDone', data: JSON.parse(stdout) });
+        panel.webview.postMessage({ type: 'hubPeResourcesDone', binaryPath, data: JSON.parse(stdout) });
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubPeResourcesDone', data: { error: String(e), resources: [], count: 0 } });
+        panel.webview.postMessage({ type: 'hubPeResourcesDone', binaryPath, data: { error: String(e), resources: [], count: 0 } });
       }
     },
     hubLoadExceptionHandlers: async (message) => {
       const { binaryPath } = message;
       try {
         const { stdout } = await runPython(['backends/static/exception_handlers.py', '--binary', binaryPath]);
-        panel.webview.postMessage({ type: 'hubExceptionHandlersDone', data: JSON.parse(stdout) });
+        panel.webview.postMessage({ type: 'hubExceptionHandlersDone', binaryPath, data: JSON.parse(stdout) });
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubExceptionHandlersDone', data: { error: String(e), entries: [], count: 0 } });
+        panel.webview.postMessage({ type: 'hubExceptionHandlersDone', binaryPath, data: { error: String(e), entries: [], count: 0 } });
       }
     },
     hubLoadTypedData: async (message) => {
       const args = buildTypedDataArgs(message);
       try {
         const { stdout } = await runPython(args);
-        panel.webview.postMessage({ type: 'hubTypedDataDone', data: JSON.parse(stdout) });
+        panel.webview.postMessage({ type: 'hubTypedDataDone', binaryPath: message.binaryPath || '', data: JSON.parse(stdout) });
       } catch (e) {
-        panel.webview.postMessage({ type: 'hubTypedDataDone', data: { error: String(e), entries: [], sections: [] } });
+        panel.webview.postMessage({ type: 'hubTypedDataDone', binaryPath: message.binaryPath || '', data: { error: String(e), entries: [], sections: [] } });
       }
     },
     hubPreviewTypedStruct: async (message) => {
@@ -1813,6 +2508,7 @@ function staticHandlers(config) {
         const { stdout } = await runPython(args);
         panel.webview.postMessage({
           type: 'hubTypedStructPreviewDone',
+          binaryPath: message.binaryPath || '',
           data: JSON.parse(stdout),
           request: {
             structName: message.structName || '',
@@ -1823,6 +2519,7 @@ function staticHandlers(config) {
       } catch (e) {
         panel.webview.postMessage({
           type: 'hubTypedStructPreviewDone',
+          binaryPath: message.binaryPath || '',
           data: { error: String(e), entries: [], sections: [] },
           request: {
             structName: message.structName || '',
@@ -1832,9 +2529,12 @@ function staticHandlers(config) {
         });
       }
     },
-    hubLoadStructs: async () => {
+    hubLoadStructs: async (message) => {
       try {
-        const { stdout } = await runPython(['backends/static/annotations/structs.py', 'list']);
+        const { stdout } = await runPython([
+          'backends/static/annotations/structs.py', 'list',
+          '--binary', String(message.binaryPath || ''),
+        ]);
         panel.webview.postMessage({ type: 'hubStructsDone', data: JSON.parse(stdout) });
       } catch (e) {
         panel.webview.postMessage({ type: 'hubStructsDone', data: { error: String(e), structs: [], source: '' } });
@@ -1845,7 +2545,11 @@ function staticHandlers(config) {
       const sourceFile = path.join(tmpDir, 'structs.c');
       try {
         await fs.promises.writeFile(sourceFile, String(message.sourceText || ''), 'utf8');
-        const { stdout } = await runPython(['backends/static/annotations/structs.py', 'save', '--source-file', sourceFile]);
+        const { stdout } = await runPython([
+          'backends/static/annotations/structs.py', 'save',
+          '--binary', String(message.binaryPath || ''),
+          '--source-file', sourceFile,
+        ]);
         panel.webview.postMessage({ type: 'hubStructsSaved', data: JSON.parse(stdout) });
       } catch (e) {
         panel.webview.postMessage({ type: 'hubStructsSaved', data: { error: String(e), structs: [], source: '' } });
@@ -1876,11 +2580,7 @@ function staticHandlers(config) {
     'pof.auth.getState': async (_message) => {
       const authSvc = AuthService.getInstance(context.secrets, getAuthServerUrl());
       const loggedIn = await authSvc.isAuthenticated();
-      if (loggedIn) {
-        panel.webview.postMessage(await buildAccountStatePayload());
-      } else {
-        panel.webview.postMessage({ type: 'accountState', loggedIn: false });
-      }
+      panel.webview.postMessage(await buildAccountStatePayload({ loggedIn }));
     },
     'pof.auth.login': async (message) => {
       const authSvc = AuthService.getInstance(
@@ -1906,11 +2606,10 @@ function staticHandlers(config) {
         if (logChannel?.appendLine) {
           logChannel.appendLine(`[auth] Login failed email="${email}" passwordLength=${passwordLength} url=${getAuthServerUrl()} detail=${detail}`);
         }
-        panel.webview.postMessage({
-          type: 'accountState',
+        panel.webview.postMessage(await buildAccountStatePayload({
           loggedIn: false,
-          error: `${detail} (${getAuthServerUrl()}) [email=${email || 'empty'}, passwordLength=${passwordLength}]`,
-        });
+          fallbackError: `${detail} (${getAuthServerUrl()}) [email=${email || 'empty'}, passwordLength=${passwordLength}]`,
+        }));
       }
     },
     'pof.auth.logout': async (_message) => {
@@ -1919,7 +2618,7 @@ function staticHandlers(config) {
         getAuthServerUrl(),
       );
       await authSvc.logout();
-      panel.webview.postMessage({ type: 'accountState', loggedIn: false });
+      panel.webview.postMessage(await buildAccountStatePayload({ loggedIn: false }));
       await handlers.hubLoadPluginState();
     },
   };

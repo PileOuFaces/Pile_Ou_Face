@@ -1,4 +1,7 @@
 {
+  "deploymentProfile": "OSS_DEVELOPMENT",
+  "deploymentId": "oss-development",
   "authProviderUrl": "",
-  "collabProviderUrl": ""
+  "collabProviderUrl": "",
+  "telemetryProviderUrl": ""
 }

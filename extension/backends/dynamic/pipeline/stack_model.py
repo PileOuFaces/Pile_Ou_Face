@@ -50,6 +50,11 @@ HEX_RE = re.compile(r"^(?:0x)?[0-9a-fA-F]+$")
 SIGNED_HEX_RE = re.compile(r"^[+-]?0x[0-9a-fA-F]+$")
 SIGNED_DEC_RE = re.compile(r"^[+-]?\d+$")
 
+# System V x86-64 ABI-guaranteed red zone: 128 bytes below rsp that a leaf
+# function may use without adjusting rsp (no `sub rsp, N`). Not a heuristic
+# -- this is the exact ABI-defined bound.
+X86_64_RED_ZONE_SIZE = 128
+
 
 def _parse_int(value: Any) -> int | None:
     if value is None:
@@ -373,6 +378,29 @@ def _is_stack_alloc_instruction(instr_text: str) -> bool:
     return register in ("rsp", "esp")
 
 
+def _has_red_zone_write_evidence(snapshot: dict, bp: int | None) -> bool:
+    """True when this step's snapshot proves the callee is genuinely using
+    the red zone for its own frame: a memory write strictly below `bp`,
+    within the ABI-guaranteed bound.
+
+    Only called once `mov rbp, rsp` has already executed (frame_pointer_
+    ready), at which point `bp` is provably this invocation's own `rsp` --
+    nothing else can legitimately write to `[bp-k]` for `0 < k <=
+    X86_64_RED_ZONE_SIZE`, so unlike `sub rsp, N` (a *reservation*), this
+    is direct proof of actual *use*, not just a different way to spell the
+    same guarantee.
+    """
+    if bp is None:
+        return False
+    for access in _access_list(snapshot, "writes"):
+        addr = _parse_int(access.get("addr"))
+        if addr is None:
+            continue
+        if bp - X86_64_RED_ZONE_SIZE <= addr < bp:
+            return True
+    return False
+
+
 def _instruction_text(snapshot: dict) -> str:
     if isinstance(snapshot.get("instruction"), dict):
         return str(snapshot["instruction"].get("text") or "").strip()
@@ -488,6 +516,18 @@ class StaticTraceResolver:
         self._conventions: dict[int, dict] = {}
         self._annotation_names: dict[int, str] | None = None
         self._annotation_comments: dict[int, str] | None = None
+        # Evidence-gated NULL classification (#299): remembers the last
+        # *proven* pointer kind ("stack"/"code") ever observed at a given
+        # (function invocation, address, size). A slot that later reads 0
+        # at that exact key may then be classified "null" -- never from
+        # value == 0 alone. Scoped per StaticTraceResolver instance (one
+        # per trace), same lifetime as the _stack_frames/_conventions
+        # caches above.
+        self._proven_pointer_memory: dict[tuple[str | None, int, int], str] = {}
+        arch_bits = _parse_int(meta.get("arch_bits"))
+        self.word_size = _parse_int(meta.get("word_size")) or (
+            8 if arch_bits == 64 else 4
+        )
         addresses = [_parse_int(line.get("addr")) for line in disasm_lines]
         valid = [addr for addr in addresses if addr is not None]
         self.code_min = min(valid) if valid else None
@@ -707,6 +747,32 @@ class StaticTraceResolver:
             normalized = value - self.load_base if self.load_base else value
             if any(start <= normalized < end for start, end in self.data_ranges):
                 return "global"
+        return None
+
+    def classify_pointer(
+        self, function_key: str | None, addr: int, size: int, value: int
+    ) -> str | None:
+        """Evidence-gated pointerKind, extending `pointer_kind()` with a
+        "null" verdict (#299).
+
+        `value == 0` is never sufficient on its own -- that would
+        misclassify any ordinary zero-valued integer of pointer width
+        (see the anti-`size == word_size` tests in
+        test_null_pointer_classification.py). "null" is only returned
+        when this exact (function invocation, address, size) was
+        *previously* proven "stack" or "code" by `pointer_kind()` earlier
+        in the same trace: real evidence of a NULL assignment, not a
+        guess. Direct `int *p = NULL;` initialization (never observed
+        holding a real address) has no such evidence and stays
+        unclassified -- a known, accepted false negative.
+        """
+        kind = self.pointer_kind(value)
+        if kind is not None:
+            self._proven_pointer_memory[(function_key, addr, size)] = kind
+            return kind
+        if value == 0 and size == self.word_size:
+            if self._proven_pointer_memory.get((function_key, addr, size)) is not None:
+                return "null"
         return None
 
 
@@ -1156,6 +1222,7 @@ def _slot_flags(
     writes: list[dict],
     reads: list[dict],
     buffer_region: dict | None,
+    function_key: str | None = None,
 ) -> tuple[list[str], bool, bool, bool, str | None]:
     recent_write = any(
         (addr := _parse_int(access.get("addr"))) is not None
@@ -1187,7 +1254,9 @@ def _slot_flags(
 
     pointer_kind = None
     if len(data) in (4, 8):
-        pointer_kind = resolver.pointer_kind(_little_int(data))
+        pointer_kind = resolver.classify_pointer(
+            function_key, start, len(data), _little_int(data)
+        )
         if pointer_kind is not None:
             flags.append("pointer_probable")
     if _is_ascii_candidate(data):
@@ -1361,6 +1430,12 @@ def _build_slots(
     bp_actual = regs_after.get(bp_name) if bp_name else None
     bp = frame_bp if frame_bp is not None else bp_actual
     func_addr = _parse_int(function_info.get("addr")) if function_info else None
+    # Same key the build_dynamic_analysis loop uses for its own per-invocation
+    # state (frame_allocated_by_function, stable_frame_bp_by_function) --
+    # reused here so evidence-gated NULL classification (#299) scopes its
+    # "proven pointer" memory to one function invocation, never leaking
+    # across two different functions that happen to reuse an address.
+    function_key = _function_cache_key(function_info, snapshot)
     frame = resolver.frame_for_function(func_addr)
     convention = resolver.convention_for_function(func_addr) or {}
     regions = _static_regions(
@@ -1497,6 +1572,7 @@ def _build_slots(
             writes,
             reads,
             buffer_region,
+            function_key,
         )
         value_int = _little_int(data) if len(data) <= 8 else None
         pointer_sub_kind, pointer_target = _code_pointer_interpretation(
@@ -1884,9 +1960,10 @@ def build_dynamic_analysis(
                 frame_allocated_by_function[function_key] = False
             elif _is_prologue_mov_bp_sp(instr_text):
                 frame_pointer_ready_by_function[function_key] = True
-            elif frame_pointer_ready_by_function.get(
-                function_key
-            ) and _is_stack_alloc_instruction(instr_text):
+            elif frame_pointer_ready_by_function.get(function_key) and (
+                _is_stack_alloc_instruction(instr_text)
+                or _has_red_zone_write_evidence(snapshot, frame_bp)
+            ):
                 frame_allocated_by_function[function_key] = True
         frame_allocated = (
             frame_allocated_by_function.get(function_key, True)

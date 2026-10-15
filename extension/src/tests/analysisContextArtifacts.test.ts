@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// @ts-nocheck
 const { expect } = require('chai');
 const fs = require('fs');
 const os = require('os');
@@ -7,7 +6,7 @@ const path = require('path');
 const sinon = require('sinon');
 const { createAnalysisContext } = require('../static/hub/analysisContext');
 
-function makeContext(root, tempDir, lines) {
+function makeContext(root, tempDir, lines, overrides = {}) {
   return createAnalysisContext({
     root,
     pythonExe: 'python3',
@@ -39,6 +38,7 @@ function makeContext(root, tempDir, lines) {
     getDiscoverFunctionsScript: () => path.join(root, 'discover.py'),
     getExampleCandidates: () => [],
     normalizeAddress: (value) => value,
+    ...overrides,
   });
 }
 
@@ -122,6 +122,73 @@ describe('analysisContext artifact fallback', () => {
     expect(resolved.symbolsPath).to.equal(path.join(tempDir, 'legacy.symbols.json'));
     expect(resolved.discoveredPath).to.equal(path.join(tempDir, 'legacy.discovered.json'));
     expect(lines).to.deep.include('[CFG] Mapping fallback: legacy.disasm.mapping.json');
+
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('reuses cached binary headers and symbols across analysis helpers', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pof-analysis-cache-'));
+    const tempDir = path.join(root, '.pile-ou-face');
+    fs.mkdirSync(tempDir, { recursive: true });
+    const binary = path.join(root, 'sample.elf');
+    fs.writeFileSync(binary, 'ELF');
+
+    const cache = new Map();
+    const readCache = sinon.stub().callsFake((_storageDir, _absPath, type) => cache.get(type) || null);
+    const writeCache = sinon.stub().callsFake((_storageDir, _absPath, type, value) => {
+      cache.set(type, value);
+    });
+    const runPythonJson = sinon.stub().callsFake(async (script, args) => {
+      if (script.endsWith('headers.py')) return { format: 'ELF', arch: 'x86_64' };
+      if (script.endsWith('symbols.py') && args.includes('--all')) return [{ name: '_start' }];
+      if (script.endsWith('symbols.py')) return [{ name: 'main' }];
+      return {};
+    });
+
+    const ctx = makeContext(root, tempDir, [], {
+      readCache,
+      writeCache,
+      runPythonJson,
+    });
+
+    expect(await ctx.loadBinaryHeaders(binary)).to.deep.equal({ format: 'ELF', arch: 'x86_64' });
+    expect(await ctx.loadBinaryHeaders(binary)).to.deep.equal({ format: 'ELF', arch: 'x86_64' });
+    expect(await ctx.loadBinarySymbols(binary)).to.deep.equal([{ name: 'main' }]);
+    expect(await ctx.loadBinarySymbols(binary)).to.deep.equal([{ name: 'main' }]);
+    expect(await ctx.loadBinarySymbols(binary, { includeAll: true })).to.deep.equal([{ name: '_start' }]);
+    expect(await ctx.loadBinarySymbols(binary, { includeAll: true })).to.deep.equal([{ name: '_start' }]);
+
+    expect(runPythonJson.withArgs(path.join(root, 'headers.py'), ['--binary', binary]).calledOnce).to.equal(true);
+    expect(runPythonJson.withArgs(path.join(root, 'symbols.py'), ['--binary', binary]).calledOnce).to.equal(true);
+    expect(runPythonJson.withArgs(path.join(root, 'symbols.py'), ['--binary', binary, '--all']).calledOnce).to.equal(true);
+    expect(writeCache.calledThrice).to.equal(true);
+
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('shares concurrent symbol extraction requests for the same binary', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pof-symbol-inflight-'));
+    const tempDir = path.join(root, '.pile-ou-face');
+    fs.mkdirSync(tempDir, { recursive: true });
+    const binary = path.join(root, 'sample.elf');
+    fs.writeFileSync(binary, 'ELF');
+
+    let resolveExtraction;
+    const runPythonJson = sinon.stub().returns(new Promise((resolve) => {
+      resolveExtraction = resolve;
+    }));
+    const ctx = makeContext(root, tempDir, [], { runPythonJson });
+
+    const first = ctx.loadBinarySymbols(binary, { useCache: false });
+    const second = ctx.loadBinarySymbols(binary, { useCache: false });
+    expect(runPythonJson.calledOnce).to.equal(true);
+    resolveExtraction({ symbols: [{ name: 'main' }] });
+
+    expect(await Promise.all([first, second])).to.deep.equal([
+      [{ name: 'main' }],
+      [{ name: 'main' }],
+    ]);
+    expect(runPythonJson.calledOnce).to.equal(true);
 
     fs.rmSync(root, { recursive: true, force: true });
   });

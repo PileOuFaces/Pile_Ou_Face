@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """MCP server for Pile ou Face.
 
-Transport: stdio (JSON-RPC 2.0 with Content-Length framing).
+Transport: stdio (JSON-RPC 2.0, NDJSON — one JSON message per line).
+Content-Length framing is accepted on read for legacy compatibility, but
+all responses are written as NDJSON.
 """
 
 from __future__ import annotations
@@ -23,6 +25,14 @@ from typing import Any
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
+
+# WORKSPACE_ROOT is the project the calling agent is working in (standalone MCP
+# usage, e.g. Claude Code/Codex on an arbitrary repo). It defaults to the cwd the
+# server was launched from, overridable so a setup CLI can pin it explicitly.
+# ROOT above stays scoped to the extension's own install dir (imports, caches).
+WORKSPACE_ROOT = os.path.abspath(
+    os.environ.get("POF_MCP_WORKSPACE_ROOT") or os.getcwd()
+)
 
 from backends.mcp.ai_provider import (
     call_provider,
@@ -596,6 +606,15 @@ AI_TOOLS: list[dict] = [
                 "provider": {"type": "string"},
                 "model": {"type": "string"},
                 "binary_path": {"type": "string"},
+                "write_annotation": {
+                    "type": "object",
+                    "properties": {
+                        "addr": {"type": "string"},
+                        "kind": {"type": "string", "enum": ["comment", "rename"]},
+                    },
+                    "required": ["addr", "kind"],
+                    "additionalProperties": False,
+                },
             },
             "required": ["prompt", "context"],
             "additionalProperties": False,
@@ -869,7 +888,7 @@ def _cache_db_from_args(args: dict[str, Any]) -> str:
 
 def _iter_workspace_files() -> list[str]:
     paths: list[str] = []
-    for dirpath, dirnames, filenames in os.walk(ROOT):
+    for dirpath, dirnames, filenames in os.walk(WORKSPACE_ROOT):
         dirnames[:] = [d for d in dirnames if d not in SEARCH_SKIP_DIRS]
         for filename in filenames:
             paths.append(os.path.join(dirpath, filename))
@@ -886,7 +905,7 @@ def _find_files(query: str, limit: int = 20) -> dict[str, Any]:
 
     matches: list[tuple[str, str, str]] = []
     for abs_path in _iter_workspace_files():
-        rel_path = os.path.relpath(abs_path, ROOT).replace(os.sep, "/")
+        rel_path = os.path.relpath(abs_path, WORKSPACE_ROOT).replace(os.sep, "/")
         name = os.path.basename(abs_path)
         if wildcard:
             ok = fnmatch.fnmatch(rel_path, q) or fnmatch.fnmatch(name, q)
@@ -918,7 +937,7 @@ def _find_files(query: str, limit: int = 20) -> dict[str, Any]:
         "query": q,
         "count": total,
         "truncated": total > len(limited),
-        "root": ROOT,
+        "root": WORKSPACE_ROOT,
         "results": [
             {"path": abs_path, "relative_path": rel_path}
             for abs_path, rel_path, _ in limited
@@ -979,47 +998,31 @@ def _disassemble_for_mcp(
             "error": "Disassembly failed: mapping file was not produced",
         }
 
+    # Les lignes vivent dans le SQLite associé : requête paginée, jamais de
+    # chargement du mapping complet en mémoire.
+    from backends.static.disasm import mapping_db
+
+    normalized_max = max(1, min(int(max_lines), 5000))
+    db_path = mapping_db.mapping_db_path_for(out_map)
     try:
-        with open(out_map, encoding="utf-8") as f:
-            mapping = json.load(f)
+        selected, total = mapping_db.query_window(
+            db_path,
+            addr if isinstance(addr, str) and addr.strip() else None,
+            normalized_max,
+        )
     except Exception as exc:
         return {
             "ok": False,
             "error": f"Disassembly failed: cannot read mapping ({exc})",
         }
 
-    lines = mapping.get("lines", [])
-    if not isinstance(lines, list):
-        lines = []
-
-    normalized_max = max(1, min(int(max_lines), 5000))
-    selected = lines
-    addr_value = _parse_int_addr(addr)
-    if addr_value is not None and lines:
-        idx = None
-        for i, line in enumerate(lines):
-            line_addr = _parse_int_addr(str(line.get("addr", "")))
-            if line_addr is None:
-                continue
-            if line_addr >= addr_value:
-                idx = i
-                break
-        if idx is None:
-            idx = max(0, len(lines) - 1)
-        half = max(1, normalized_max // 2)
-        start = max(0, idx - half)
-        end = min(len(lines), start + normalized_max)
-        selected = lines[start:end]
-    elif len(lines) > normalized_max:
-        selected = lines[:normalized_max]
-
     return {
         "ok": True,
         "binary_path": binary_path,
         "asm_path": out_asm,
         "mapping_path": out_map,
-        "count": len(lines),
-        "truncated": len(selected) < len(lines),
+        "count": total,
+        "truncated": len(selected) < total,
         "addr_filter": addr if isinstance(addr, str) and addr.strip() else None,
         "lines": selected,
     }
@@ -1035,7 +1038,7 @@ def _resolve_binary_path(raw_value: str) -> str:
         direct_candidates.append(value)
     else:
         direct_candidates.append(os.path.abspath(value))
-        direct_candidates.append(os.path.abspath(os.path.join(ROOT, value)))
+        direct_candidates.append(os.path.abspath(os.path.join(WORKSPACE_ROOT, value)))
 
     for candidate in direct_candidates:
         if os.path.isfile(candidate):
@@ -1184,9 +1187,10 @@ def _parse_float_arg(
 
 
 def _load_mapping_lines(mapping_path: str) -> tuple[list[dict[str, Any]], str | None]:
+    from backends.static.disasm.mapping_db import load_mapping_with_lines
+
     try:
-        with open(mapping_path, encoding="utf-8") as f:
-            payload = json.load(f)
+        payload = load_mapping_with_lines(mapping_path)
     except Exception as exc:
         raise ValueError(f"Cannot read mapping file: {exc}") from exc
 
@@ -1798,16 +1802,30 @@ def _call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             "POF_DEFAULT_AI_PROVIDER", "ollama"
         )
         model = args.get("model")
+        write_annotation = args.get("write_annotation")
         try:
             response = call_provider(
                 provider, args.get("prompt", ""), args.get("context", ""), model
             )
-            return {
+            result = {
                 "ok": True,
                 "provider": provider,
                 "model": model,
                 "response": response,
             }
+            if isinstance(write_annotation, dict):
+                from backends.static.annotations.annotations import AnnotationStore
+
+                addr = _required_string(write_annotation, "addr")
+                kind = _required_string(write_annotation, "kind")
+                binary_path = _binary_path_from(args)
+                with AnnotationStore(binary_path) as store:
+                    if kind == "rename":
+                        written = store.ai_rename(addr, response)
+                    else:
+                        written = store.ai_comment(addr, response)
+                result["written"] = written
+            return result
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
@@ -1941,9 +1959,11 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _read_message(stdin: Any) -> dict[str, Any] | None:
-    """Read one framed JSON-RPC message from stdin.
+    """Read one JSON-RPC message from stdin.
 
-    MCP stdio framing uses HTTP-like headers:
+    NDJSON (one JSON object per line) is the canonical format written by
+    this server and by real MCP clients. For legacy compatibility, LSP-style
+    Content-Length framing is also accepted on read:
         Content-Length: N
 
         {json payload}
@@ -1996,10 +2016,9 @@ def _read_message(stdin: Any) -> dict[str, Any] | None:
 
 
 def _write_message(stdout: Any, message: dict[str, Any]) -> None:
-    body = json.dumps(message, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
-    headers = f"Content-Length: {len(body)}\r\n\r\n".encode("ascii")
-    stdout.write(headers)
-    stdout.write(body)
+    """Write one JSON-RPC message to stdout as a single NDJSON line."""
+    line = json.dumps(message, ensure_ascii=True, separators=(",", ":")) + "\n"
+    stdout.write(line.encode("utf-8"))
     stdout.flush()
 
 

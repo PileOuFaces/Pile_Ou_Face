@@ -36,6 +36,7 @@ Pile ou Face analyse des binaires ELF, PE et Mach-O (x86, x64, ARM64) directemen
 | Fonctionnalité | Description |
 |----------------|-------------|
 | **Assistant IA** | Ollama (streaming + tool calling) + OpenAI, Anthropic, Mistral, Gemini, Groq, DeepSeek |
+| **Auto-triage IA** | Nomme/commente automatiquement les fonctions interessantes, resume executif + rapport Markdown, consentement opt-in, budget borne et annulable |
 | **Serveur MCP** | Expose 49 outils d'analyse aux agents IA (transport stdio + HTTP) |
 | **Contexte auto** | Prompts préparés depuis le désassemblage, le CFG, les strings, les imports |
 

@@ -83,6 +83,25 @@ Pile_Ou_Face/
 - Chaque PR doit avoir au moins un test couvrant la modification
 - Respecter le style existant (Ruff pour Python, ESLint pour TypeScript)
 
+## Textes de l’interface et localisation
+
+Les textes visibles des webviews restent écrits en français dans les fichiers HTML et JavaScript,
+puis sont associés à leur traduction anglaise dans `extension/front/shared/i18n.js`. Les commandes
+et réglages natifs de VS Code utilisent `extension/package.nls.json` et
+`extension/package.nls.fr.json`.
+
+Lors de l’ajout ou de la modification d’un texte utilisateur :
+
+1. ajoutez son entrée anglaise au catalogue `EN` ;
+2. ne cataloguez jamais les adresses, symboles, annotations utilisateur, sorties backend ou autres
+   données techniques ;
+3. vérifiez les deux langues depuis Options → Interface → Langue ;
+4. lancez `cd extension && npm run lint:i18n && npm test`.
+
+`npm run lint:i18n` inspecte les textes et attributs accessibles des fichiers HTML. Il échoue quand
+une chaîne vraisemblablement française n’est pas cataloguée. Les contenus de `code`, `pre`, `script`
+et `style` sont volontairement ignorés pour préserver les données techniques.
+
 ## Licence
 
 Ce repo est sous **AGPL-3.0-only** (voir [`LICENSE`](LICENSE) à la racine).

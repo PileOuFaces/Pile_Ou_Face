@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import builtins
 import concurrent.futures
 import io
 import json
@@ -20,7 +21,7 @@ import sys
 import time
 import traceback
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 _EXEC_TIMEOUT = 30  # seconds — max wall-clock time for user script
 
@@ -55,12 +56,15 @@ def execute_script(code: str, binary_path: str, timeout: int = _EXEC_TIMEOUT) ->
     if ROOT not in sys.path:
         sys.path.insert(0, ROOT)
 
+    from backends.static.compat.ida.shim import patched_ida_runtime
+
     def _run() -> bool:
         old_stdout, old_stderr = sys.stdout, sys.stderr
         try:
             sys.stdout = stdout_buf
             sys.stderr = stderr_buf
-            exec(compiled, exec_globals)
+            with patched_ida_runtime(binary_path):
+                builtins.exec(compiled, exec_globals)
             return True
         except Exception:
             stderr_buf.write(traceback.format_exc())
