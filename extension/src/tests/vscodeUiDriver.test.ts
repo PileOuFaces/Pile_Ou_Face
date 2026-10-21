@@ -688,7 +688,7 @@ describe('VS Code UI E2E driver', () => {
       assert.ok(pluginTarget instanceof CdpTarget);
       assert.equal(readinessChecks, 2, 'plugin webviews do not check the Hub readiness signal');
       assert.equal(runtimeEvaluations, 3, 'the plugin document is accepted as soon as it is found');
-      assert.ok(pluginDocumentProbe.includes('querySelector("[data-plugin-scope=\\\"vulnerability-audit-pro\\\"]:not(iframe)")'), 'plugin target discovery uses the stable plugin scope marker inside the plugin document');
+      assert.ok(pluginDocumentProbe.includes('querySelector("[data-plugin-scope=\\"vulnerability-audit-pro\\"]:not(iframe)")'), 'plugin target discovery uses the stable plugin scope marker inside the plugin document');
       const readyPluginTarget = await connectToHubWebview(
         'http://127.0.0.1:9222',
         1000,
