@@ -28,7 +28,7 @@ describe('official product config generation', () => {
         deploymentId: 'official-saas',
         authProviderUrl: 'https://auth.pileouface.dev',
         collabProviderUrl: '',
-        telemetryProviderUrl: '',
+        telemetryProviderUrl: 'https://telemetry.pileouface.dev',
       });
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
