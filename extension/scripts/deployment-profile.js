@@ -18,7 +18,12 @@ function buildProductConfig(profile, env = process.env) {
     telemetryProviderUrl: '',
   };
   if (profile === 'OFFICIAL_SAAS') {
-    return { ...base, deploymentId: 'official-saas', authProviderUrl: 'https://auth.pileouface.dev' };
+    return {
+      ...base,
+      deploymentId: 'official-saas',
+      authProviderUrl: 'https://auth.pileouface.dev',
+      telemetryProviderUrl: 'https://telemetry.pileouface.dev',
+    };
   }
   if (profile === 'MANAGED_ON_PREM') {
     const deploymentId = String(env.POF_DEPLOYMENT_ID || '').trim();
