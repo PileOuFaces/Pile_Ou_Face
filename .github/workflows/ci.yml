@@ -183,6 +183,7 @@ jobs:
             extension/coverage/
             extension/.pile-ou-face/test-artifacts/coverage-summary.md
           if-no-files-found: warn
+          retention-days: 7
 
   # Chaque profil est préparé, vérifié et empaqueté dans un VSIX distinct.
   # La matrice empêche qu'un profil commercial, OSS ou hors-ligne ne dérive
@@ -512,6 +513,7 @@ jobs:
             extension/.pile-ou-face/test-artifacts/e2e-runtime-audit/*.html
           if-no-files-found: warn
           include-hidden-files: true
+          retention-days: 7
 
   # ══════════════════════════════════════════════════════════════
   # 🔐 Security Scan — PRs uniquement, ubuntu seulement
