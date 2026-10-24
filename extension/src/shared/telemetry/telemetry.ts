@@ -4,10 +4,19 @@ const { createTelemetryTransport } = require('./telemetryTransport');
 const { EVENT_NAMES } = require('./telemetryEvents');
 const { mapPlatform } = require('./telemetryMappings');
 
-function createSender(activeTransport, reportDiagnostic) {
+function normalizeTelemetryEventName(eventName, extensionId) {
+  if (typeof eventName !== 'string' || typeof extensionId !== 'string' || extensionId.length === 0) {
+    return eventName;
+  }
+  const expectedPrefix = `${extensionId}/`;
+  return eventName.startsWith(expectedPrefix) ? eventName.slice(expectedPrefix.length) : eventName;
+}
+
+function createSender(activeTransport, reportDiagnostic, extensionId) {
   return {
     sendEventData(eventName, data) {
-      const sanitized = sanitizeTelemetryEvent(eventName, data || {});
+      const canonicalEventName = normalizeTelemetryEventName(eventName, extensionId);
+      const sanitized = sanitizeTelemetryEvent(canonicalEventName, data || {});
       if (!sanitized.ok) {
         reportDiagnostic('rejected');
         return;
@@ -24,10 +33,10 @@ function createSender(activeTransport, reportDiagnostic) {
   };
 }
 
-function createLogger(vscode, activeTransport, reportDiagnostic) {
+function createLogger(vscode, activeTransport, reportDiagnostic, extensionId) {
   if (!vscode?.env?.createTelemetryLogger || !activeTransport.isConfigured?.()) return null;
   try {
-    return vscode.env.createTelemetryLogger(createSender(activeTransport, reportDiagnostic), {
+    return vscode.env.createTelemetryLogger(createSender(activeTransport, reportDiagnostic, extensionId), {
       ignoreBuiltInCommonProperties: true,
       ignoreUnhandledErrors: true,
     });
@@ -58,7 +67,8 @@ function createTelemetryService({
   const activeTransport = transport || createTelemetryTransport({ endpoint, onDiagnostic: reportDiagnostic });
   const subscriptions = [];
   let disposed = false;
-  const logger = createLogger(vscode, activeTransport, reportDiagnostic);
+  const extensionId = context?.extension?.id || '';
+  const logger = createLogger(vscode, activeTransport, reportDiagnostic, extensionId);
 
   function isProductTelemetryEnabled() {
     try {
@@ -179,4 +189,9 @@ function durationBucket(durationMs) {
   return '>60s';
 }
 
-module.exports = { createTelemetryService, durationBucket, initializeExtensionTelemetry };
+module.exports = {
+  createTelemetryService,
+  durationBucket,
+  initializeExtensionTelemetry,
+  normalizeTelemetryEventName,
+};
