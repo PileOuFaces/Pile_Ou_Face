@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 const DEFAULT_TIMEOUT_MS = 1500;
 const DEFAULT_MAX_IN_FLIGHT = 4;
+const DEFAULT_EVENTS_PATH = '/v1/events';
 
 function normalizeTelemetryEndpoint(endpoint) {
   try {
     const url = new URL(String(endpoint || '').trim());
-    return url.protocol === 'https:' ? url.toString() : '';
+    if (url.protocol !== 'https:') return '';
+    if (url.pathname === '/') url.pathname = DEFAULT_EVENTS_PATH;
+    return url.toString();
   } catch (_) {
     return '';
   }
@@ -16,14 +19,32 @@ function createTelemetryTransport({
   fetchImpl = globalThis.fetch,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   maxInFlight = DEFAULT_MAX_IN_FLIGHT,
+  onDiagnostic = (_status) => {},
 } = {}) {
   const normalizedEndpoint = normalizeTelemetryEndpoint(endpoint);
   const controllers = new Set<AbortController>();
   let disposed = false;
+  const reportedDiagnostics = new Set();
+
+  function reportDiagnostic(status) {
+    if (reportedDiagnostics.has(status)) return;
+    reportedDiagnostics.add(status);
+    try {
+      onDiagnostic(status);
+    } catch (_) {
+      // Diagnostics must not affect best-effort telemetry delivery.
+    }
+  }
 
   async function sendBody(body) {
-    if (disposed || !normalizedEndpoint || typeof fetchImpl !== 'function') return false;
-    if (controllers.size >= maxInFlight) return false;
+    if (disposed || !normalizedEndpoint || typeof fetchImpl !== 'function') {
+      reportDiagnostic('disabled');
+      return false;
+    }
+    if (controllers.size >= maxInFlight) {
+      reportDiagnostic('rejected');
+      return false;
+    }
 
     const controller = new AbortController();
     controllers.add(controller);
@@ -36,8 +57,11 @@ function createTelemetryTransport({
         body,
         signal: controller.signal,
       });
-      return response?.ok === true;
+      if (response?.ok === true) return true;
+      reportDiagnostic('rejected');
+      return false;
     } catch (_) {
+      reportDiagnostic('failed');
       return false;
     } finally {
       clearTimeout(timer);

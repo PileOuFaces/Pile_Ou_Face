@@ -1,17 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 const { sanitizeTelemetryEvent } = require('./telemetrySanitizer');
 const { createTelemetryTransport } = require('./telemetryTransport');
+const { EVENT_NAMES } = require('./telemetryEvents');
+const { mapPlatform } = require('./telemetryMappings');
 
-function createSender(activeTransport) {
+function createSender(activeTransport, reportDiagnostic) {
   return {
     sendEventData(eventName, data) {
       const sanitized = sanitizeTelemetryEvent(eventName, data || {});
-      if (!sanitized.ok) return;
+      if (!sanitized.ok) {
+        reportDiagnostic('rejected');
+        return;
+      }
       try {
         const pending = activeTransport.sendBody(sanitized.body);
-        pending?.catch?.(() => {});
+        pending?.catch?.(() => reportDiagnostic('failed'));
       } catch (_) {
-        // Telemetry is best effort and never reaches the product error path.
+        reportDiagnostic('failed');
       }
     },
     sendErrorData() {},
@@ -19,23 +24,41 @@ function createSender(activeTransport) {
   };
 }
 
-function createLogger(vscode, activeTransport) {
+function createLogger(vscode, activeTransport, reportDiagnostic) {
   if (!vscode?.env?.createTelemetryLogger || !activeTransport.isConfigured?.()) return null;
   try {
-    return vscode.env.createTelemetryLogger(createSender(activeTransport), {
+    return vscode.env.createTelemetryLogger(createSender(activeTransport, reportDiagnostic), {
       ignoreBuiltInCommonProperties: true,
       ignoreUnhandledErrors: true,
     });
   } catch (_) {
+    reportDiagnostic('failed');
     return null;
   }
 }
 
-function createTelemetryService({ vscode = null, context = null, endpoint = '', transport = null } = {}) {
-  const activeTransport = transport || createTelemetryTransport({ endpoint });
+function createTelemetryService({
+  vscode = null,
+  context = null,
+  endpoint = '',
+  transport = null,
+  onDiagnostic = (_status) => {},
+} = {}) {
+  const reportedDiagnostics = new Set();
+  function reportDiagnostic(status) {
+    if (reportedDiagnostics.has(status)) return;
+    reportedDiagnostics.add(status);
+    try {
+      onDiagnostic(status);
+    } catch (_) {
+      // Diagnostics must not affect best-effort telemetry delivery.
+    }
+  }
+
+  const activeTransport = transport || createTelemetryTransport({ endpoint, onDiagnostic: reportDiagnostic });
   const subscriptions = [];
   let disposed = false;
-  const logger = createLogger(vscode, activeTransport);
+  const logger = createLogger(vscode, activeTransport, reportDiagnostic);
 
   function isProductTelemetryEnabled() {
     try {
@@ -50,17 +73,25 @@ function createTelemetryService({ vscode = null, context = null, endpoint = '', 
       && vscode?.env?.isTelemetryEnabled === true
       && isProductTelemetryEnabled()
       && Boolean(logger)
+      && logger.isUsageEnabled === true
       && activeTransport.isConfigured?.() === true;
   }
 
   function trackEvent(eventName, properties = {}) {
-    if (!isEnabled()) return false;
+    if (!isEnabled()) {
+      reportDiagnostic('disabled');
+      return false;
+    }
     const sanitized = sanitizeTelemetryEvent(eventName, properties);
-    if (!sanitized.ok) return false;
+    if (!sanitized.ok) {
+      reportDiagnostic('rejected');
+      return false;
+    }
     try {
       logger.logUsage(sanitized.event.eventName, sanitized.event.properties);
       return true;
     } catch (_) {
+      reportDiagnostic('failed');
       return false;
     }
   }
@@ -79,6 +110,9 @@ function createTelemetryService({ vscode = null, context = null, endpoint = '', 
 
   if (typeof vscode?.env?.onDidChangeTelemetryEnabled === 'function') {
     subscriptions.push(vscode.env.onDidChangeTelemetryEnabled(handleEnablementChange));
+  }
+  if (typeof logger?.onDidChangeEnableStates === 'function') {
+    subscriptions.push(logger.onDidChangeEnableStates(handleEnablementChange));
   }
   if (typeof vscode?.workspace?.onDidChangeConfiguration === 'function') {
     subscriptions.push(vscode.workspace.onDidChangeConfiguration((event) => {
@@ -105,6 +139,37 @@ function createTelemetryService({ vscode = null, context = null, endpoint = '', 
   return service;
 }
 
+function initializeExtensionTelemetry(options: {
+  vscode?: any;
+  context?: any;
+  productConfig?: any;
+  transport?: any;
+  onDiagnostic?: (status: string) => void;
+  platform?: string;
+} = {}) {
+  const {
+    vscode,
+    context,
+    productConfig,
+    transport = null,
+    onDiagnostic,
+    platform = process.platform,
+  } = options;
+  const telemetry = createTelemetryService({
+    vscode,
+    context,
+    endpoint: productConfig?.telemetryProviderUrl || '',
+    transport,
+    onDiagnostic,
+  });
+  telemetry.trackEvent(EVENT_NAMES.EXTENSION_ACTIVATED, {
+    extensionVersion: String(context?.extension?.packageJSON?.version || '0.0.0'),
+    vscodeVersionMajor: String(vscode?.version || '0').split('.')[0],
+    platform: mapPlatform(platform),
+  });
+  return telemetry;
+}
+
 function durationBucket(durationMs) {
   const value = Number(durationMs);
   if (!Number.isFinite(value) || value < 1000) return '<1s';
@@ -114,4 +179,4 @@ function durationBucket(durationMs) {
   return '>60s';
 }
 
-module.exports = { createTelemetryService, durationBucket };
+module.exports = { createTelemetryService, durationBucket, initializeExtensionTelemetry };
