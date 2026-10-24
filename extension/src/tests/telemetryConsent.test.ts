@@ -15,8 +15,17 @@ function createHarness({ globalEnabled = true, productEnabled = true, configured
   };
   let telemetryListener = null;
   let configListener = null;
+  let loggerEnablementListener = null;
   let currentProductEnabled = productEnabled;
-  const logger = { logUsage, dispose: sinon.spy() };
+  const logger = {
+    isUsageEnabled: true,
+    logUsage,
+    onDidChangeEnableStates: (listener) => {
+      loggerEnablementListener = listener;
+      return { dispose: sinon.spy() };
+    },
+    dispose: sinon.spy(),
+  };
   const vscode = {
     env: {
       isTelemetryEnabled: globalEnabled,
@@ -42,6 +51,10 @@ function createHarness({ globalEnabled = true, productEnabled = true, configured
     logger,
     service,
     setProductEnabled(value) { currentProductEnabled = value; },
+    setUsageEnabled(value) {
+      logger.isUsageEnabled = value;
+      loggerEnablementListener(logger);
+    },
     telemetryListener,
     transport,
     vscode,
@@ -99,6 +112,13 @@ describe('privacy telemetry consent', () => {
     const harness = createHarness();
     harness.vscode.env.isTelemetryEnabled = false;
     harness.telemetryListener(false);
+    expect(harness.abortInFlight.calledOnce).to.equal(true);
+  });
+
+  it('uses the logger usage gate and aborts when the telemetry level disables usage events', () => {
+    const harness = createHarness();
+    harness.setUsageEnabled(false);
+    expect(harness.service.isEnabled()).to.equal(false);
     expect(harness.abortInFlight.calledOnce).to.equal(true);
   });
 

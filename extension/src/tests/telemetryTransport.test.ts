@@ -9,6 +9,9 @@ const {
 
 describe('privacy telemetry transport', () => {
   it('accepts HTTPS endpoints only', () => {
+    expect(normalizeTelemetryEndpoint('https://telemetry.example')).to.equal(
+      'https://telemetry.example/v1/events',
+    );
     expect(normalizeTelemetryEndpoint('https://telemetry.example/ingest')).to.equal('https://telemetry.example/ingest');
     expect(normalizeTelemetryEndpoint('http://telemetry.example/ingest')).to.equal('');
     expect(normalizeTelemetryEndpoint('file:///tmp/telemetry')).to.equal('');
@@ -40,11 +43,26 @@ describe('privacy telemetry transport', () => {
   }
 
   it('swallows network failures', async () => {
+    const diagnostics = [];
     const transport = createTelemetryTransport({
       endpoint: 'https://telemetry.example/ingest',
       fetchImpl: sinon.stub().rejects(new Error('/home/alice/challenge')),
+      onDiagnostic: (status) => diagnostics.push(status),
     });
     expect(await transport.sendBody('{}')).to.equal(false);
+    expect(await transport.sendBody('{}')).to.equal(false);
+    expect(diagnostics).to.deep.equal(['failed']);
+  });
+
+  it('diagnoses a rejected response without exposing response or payload data', async () => {
+    const diagnostics = [];
+    const transport = createTelemetryTransport({
+      endpoint: 'https://telemetry.example/ingest',
+      fetchImpl: sinon.stub().resolves({ ok: false, status: 400 }),
+      onDiagnostic: (status) => diagnostics.push(status),
+    });
+    expect(await transport.sendBody('{"private":"not logged"}')).to.equal(false);
+    expect(diagnostics).to.deep.equal(['rejected']);
   });
 
   it('does not call fetch when no valid endpoint is configured', async () => {
