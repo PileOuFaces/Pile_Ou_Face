@@ -2,12 +2,16 @@ const http = require('node:http');
 const { expect } = require('chai');
 const sinon = require('sinon');
 
-const { initializeExtensionTelemetry } = require('../shared/telemetry/telemetry');
+const { initializeExtensionTelemetry, normalizeTelemetryEventName } = require('../shared/telemetry/telemetry');
+const { validateTelemetryEvent } = require('../shared/telemetry/telemetrySchema');
+const extensionPackage = require('../../package.json');
+const EXTENSION_ID = `${extensionPackage.publisher}.${extensionPackage.name}`;
 
-function createVscodeHarness({ telemetryLevel = 'all' } = {}) {
+function createVscodeHarness({ telemetryLevel = 'all', senderEventName = (name) => `${EXTENSION_ID}/${name}` } = {}) {
   const telemetryEnabled = telemetryLevel !== 'off';
   const usageEnabled = telemetryLevel === 'all';
   const logUsage = sinon.spy();
+  const senderEvents = [];
   const vscode = {
     version: '1.120.2',
     env: {
@@ -17,7 +21,9 @@ function createVscodeHarness({ telemetryLevel = 'all' } = {}) {
           isUsageEnabled: usageEnabled,
           logUsage(eventName, properties) {
             logUsage(eventName, properties);
-            sender.sendEventData(eventName, properties);
+            const receivedEventName = senderEventName(eventName);
+            senderEvents.push(receivedEventName);
+            sender.sendEventData(receivedEventName, properties);
           },
           dispose() {},
         };
@@ -31,7 +37,7 @@ function createVscodeHarness({ telemetryLevel = 'all' } = {}) {
       }),
     },
   };
-  return { logUsage, vscode };
+  return { logUsage, senderEvents, vscode };
 }
 
 async function startLocalTelemetryServer() {
@@ -57,11 +63,49 @@ async function startLocalTelemetryServer() {
 }
 
 describe('extension activation telemetry transport', () => {
+  it('preserves direct canonical names and rejects non-exact prefixes', () => {
+    expect(normalizeTelemetryEventName('extension.activated', EXTENSION_ID)).to.equal('extension.activated');
+    expect(normalizeTelemetryEventName(`${EXTENSION_ID}/extension.activated`, EXTENSION_ID))
+      .to.equal('extension.activated');
+    expect(normalizeTelemetryEventName('evil-extension/extension.activated', EXTENSION_ID))
+      .to.equal('evil-extension/extension.activated');
+    expect(normalizeTelemetryEventName(`${EXTENSION_ID}/unknown.event`, EXTENSION_ID))
+      .to.equal('unknown.event');
+    expect(normalizeTelemetryEventName('random/path/extension.activated', EXTENSION_ID))
+      .to.equal('random/path/extension.activated');
+  });
+
+  for (const [label, receivedName] of [
+    ['wrong extension prefix', 'evil-extension/extension.activated'],
+    ['unknown canonical event', `${EXTENSION_ID}/unknown.event`],
+    ['arbitrary path prefix', 'random/path/extension.activated'],
+  ]) {
+    it(`rejects ${label} before HTTP`, () => {
+      let requests = 0;
+      const diagnostics = [];
+      const { vscode } = createVscodeHarness({ senderEventName: () => receivedName });
+      const telemetry = initializeExtensionTelemetry({
+        vscode,
+        context: { extension: { id: EXTENSION_ID, packageJSON: { version: '0.2.0' } }, subscriptions: [] },
+        productConfig: { telemetryProviderUrl: 'https://telemetry.example.test' },
+        transport: require('../shared/telemetry/telemetryTransport').createTelemetryTransport({
+          endpoint: 'https://telemetry.example.test',
+          fetchImpl: async () => { requests += 1; return { ok: true, status: 204 }; },
+        }),
+        onDiagnostic: (status) => diagnostics.push(status),
+      });
+
+      expect(requests).to.equal(0);
+      expect(diagnostics).to.deep.equal(['rejected']);
+      telemetry.dispose();
+    });
+  }
+
   it('sends one allowlisted OFFICIAL_SAAS activation event to the local /v1/events endpoint', async () => {
     const server = await startLocalTelemetryServer();
     const diagnostics = [];
     const outboundUrls = [];
-    const { logUsage, vscode } = createVscodeHarness();
+    const { logUsage, senderEvents, vscode } = createVscodeHarness();
     let completeTransport;
     const transportCompleted = new Promise((resolve) => { completeTransport = resolve; });
     const localFetch = async (url, options) => {
@@ -72,7 +116,7 @@ describe('extension activation telemetry transport', () => {
     };
     const activationTelemetry = initializeExtensionTelemetry({
       vscode,
-      context: { extension: { packageJSON: { version: '0.2.0' } }, subscriptions: [] },
+      context: { extension: { id: EXTENSION_ID, packageJSON: { version: '0.2.0' } }, subscriptions: [] },
       productConfig: {
         deploymentProfile: 'OFFICIAL_SAAS',
         telemetryProviderUrl: 'https://telemetry.example.test',
@@ -93,6 +137,10 @@ describe('extension activation telemetry transport', () => {
         vscodeVersionMajor: '1',
         platform: 'linux',
       })).to.equal(true);
+      expect(senderEvents).to.deep.equal([`${EXTENSION_ID}/extension.activated`]);
+      expect(validateTelemetryEvent(senderEvents[0], {
+        extensionVersion: '0.2.0', vscodeVersionMajor: '1', platform: 'linux',
+      })).to.include({ ok: false, reason: 'unknown_event' });
       const request = await server.requestReceived;
       await transportCompleted;
       expect(outboundUrls).to.deep.equal(['https://telemetry.example.test/v1/events']);
@@ -116,7 +164,7 @@ describe('extension activation telemetry transport', () => {
     const { vscode } = createVscodeHarness({ telemetryLevel: 'off' });
     const telemetry = initializeExtensionTelemetry({
       vscode,
-      context: { extension: { packageJSON: { version: '0.2.0' } }, subscriptions: [] },
+      context: { extension: { id: EXTENSION_ID, packageJSON: { version: '0.2.0' } }, subscriptions: [] },
       productConfig: {
         deploymentProfile: 'OFFICIAL_SAAS',
         telemetryProviderUrl: 'https://telemetry.example.test',
@@ -141,7 +189,7 @@ describe('extension activation telemetry transport', () => {
     const { vscode } = createVscodeHarness({ telemetryLevel: 'error' });
     const telemetry = initializeExtensionTelemetry({
       vscode,
-      context: { extension: { packageJSON: { version: '0.2.0' } }, subscriptions: [] },
+      context: { extension: { id: EXTENSION_ID, packageJSON: { version: '0.2.0' } }, subscriptions: [] },
       productConfig: {
         deploymentProfile: 'OFFICIAL_SAAS',
         telemetryProviderUrl: 'https://telemetry.example.test',
