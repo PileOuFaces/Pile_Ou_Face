@@ -6,14 +6,14 @@ on:
       - 'v*.*.*'
   workflow_dispatch:
     inputs:
-      openvsx_mode:
-        description: 'Open VSX action to run'
+      release_action:
+        description: 'Validate publishing credentials or publish the selected release tag'
         required: true
         default: 'verify'
         type: choice
         options:
           - verify
-          - package
+          - publish
 
 permissions:
   contents: read
@@ -22,7 +22,7 @@ jobs:
   publish-marketplace:
     name: Publish VS Code Marketplace
     needs: openvsx
-    if: github.event_name == 'push'
+    if: github.event_name == 'workflow_dispatch' && inputs.release_action == 'publish'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -32,9 +32,13 @@ jobs:
 
       - name: Check tag is on main
         run: |
+          if [[ ! "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Manual publication requires a version tag ref."
+            exit 1
+          fi
           git fetch origin main
           if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "Tag is not on main — publish aborted."
+            echo "Tag is not on main — publication aborted."
             exit 1
           fi
 
@@ -78,11 +82,15 @@ jobs:
           fetch-depth: 0
 
       - name: Check tag is on main
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.release_action == 'publish')
         run: |
+          if [[ ! "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Publication requires a version tag ref."
+            exit 1
+          fi
           git fetch origin main
           if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "Tag is not on main — Open VSX publish aborted."
+            echo "Tag is not on main — Open VSX publication aborted."
             exit 1
           fi
 
@@ -111,14 +119,14 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Verify Open VSX token
-        if: github.event_name == 'push' || inputs.openvsx_mode == 'verify'
+        if: github.event_name == 'workflow_dispatch'
         working-directory: extension
         env:
           OPEN_VSX_TOKEN: ${{ secrets.OPEN_VSX_TOKEN }}
         run: npx ovsx verify-pat "${{ steps.meta.outputs.publisher }}" -p "$OPEN_VSX_TOKEN"
 
       - name: Package VSIX
-        if: github.event_name == 'push' || inputs.openvsx_mode == 'package'
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.release_action == 'publish')
         working-directory: extension
         env:
           TAG: ${{ github.ref_name }}
@@ -130,7 +138,7 @@ jobs:
           fi
 
       - name: Generate SBOM from the packaged extension
-        if: github.event_name == 'push' || inputs.openvsx_mode == 'package'
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.release_action == 'publish')
         run: |
           mkdir -p release-sbom-input
           unzip -q extension/pile-ou-face.vsix -d release-sbom-input
@@ -139,7 +147,7 @@ jobs:
             -o cyclonedx-json=/workspace/extension/pile-ou-face.cdx.json
 
       - name: Attest the exact VSIX and its SBOM
-        if: github.event_name == 'push' || inputs.openvsx_mode == 'package'
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.release_action == 'publish')
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
         with:
           subject-path: |
@@ -147,7 +155,7 @@ jobs:
             extension/pile-ou-face.cdx.json
 
       - name: Upload VSIX artifact
-        if: github.event_name == 'push' || inputs.openvsx_mode == 'package'
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.release_action == 'publish')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: pile-ou-face-openvsx-${{ github.sha }}
@@ -157,7 +165,7 @@ jobs:
           retention-days: 30
 
       - name: Publish to Open VSX
-        if: github.event_name == 'push'
+        if: github.event_name == 'workflow_dispatch' && inputs.release_action == 'publish'
         working-directory: extension
         env:
           OPEN_VSX_TOKEN: ${{ secrets.OPEN_VSX_TOKEN }}
@@ -175,8 +183,9 @@ jobs:
           {
             echo "## Open VSX"
             echo ""
+            echo "- Source commit: \`${GITHUB_SHA}\`"
             echo "- Extension: \`${{ steps.meta.outputs.publisher }}.${{ steps.meta.outputs.name }}\`"
             echo "- Version: \`${{ steps.meta.outputs.version }}\`"
-            echo "- Mode: \`${{ github.event_name == 'push' && 'publish' || inputs.openvsx_mode }}\`"
+            echo "- Mode: \`${{ github.event_name == 'push' && 'artifact-only' || inputs.release_action }}\`"
             echo "- URL: https://open-vsx.org/extension/${{ steps.meta.outputs.publisher }}/${{ steps.meta.outputs.name }}"
           } >> "$GITHUB_STEP_SUMMARY"
