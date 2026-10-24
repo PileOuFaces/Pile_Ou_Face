@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+## [0.3.1] - 2026-10-25
+
+### Fixed
+
+- Redimensionnement des icônes de l'extension pour respecter les limites d'image du VS Code Marketplace.
+
 ## [0.3.0] - 2026-10-24
 
 ### Added
@@ -11,14 +19,6 @@
 ### Fixed
 
 - Télémétrie de l'offre officielle : configuration de l'endpoint, acheminement des événements vers le service prévu et compatibilité avec le format de nom d'événement utilisé par VS Code.
-
-## [0.3.1] - 2026-10-24
-
-### Fixed
-
-- Redimensionnement des icônes de l'extension pour respecter les limites d'image du VS Code Marketplace.
-
-## [Unreleased]
 
 ## [0.2.0] - 2026-07-13
 
