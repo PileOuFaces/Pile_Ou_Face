@@ -532,6 +532,14 @@ if (window.PluginIframeRouter) {
       }
     }
     var pluginId = frame.dataset.pluginId;
+    // This frame missed the state broadcast that preceded its creation.
+    window.PluginIframeRouter.dispatch(pluginId, { type: 'hubPluginState', state: pluginUiState });
+    // And it may own the tab selected while it did not exist yet.
+    var activeTabId = document.querySelector('.sub-tab.active')?.dataset.subTab;
+    if (activeTabId && getPluginSlugForTab(activeTabId) === frame.dataset.pluginSlug) {
+      frame.classList.add('active');
+      window.PluginIframeRouter.dispatch(pluginId, { type: 'showTab', tabId: activeTabId });
+    }
     if (Object.keys(cssVars).length > 0) {
       window.PluginIframeRouter.dispatch(pluginId, { type: '__cssVars', vars: cssVars });
     }

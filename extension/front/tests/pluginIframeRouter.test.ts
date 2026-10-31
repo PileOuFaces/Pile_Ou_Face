@@ -154,7 +154,7 @@ describe('PluginIframeRouter', () => {
       expect(sent[0].__pofPluginId).to.equal('pof.plugin-a');
     });
 
-    for (const type of ['hubRunScript', 'hubGrantPluginConsent', 'hubRevokePluginConsent', 'hubSaveSettings', 'runTrace', 'hubSyncPluginFrames', '__proto__']) {
+    for (const type of ['hubRunScript', 'hubGrantPluginConsent', 'hubRevokePluginConsent', 'hubSaveSettings', 'runTrace', 'hubLoadPluginState', '__proto__']) {
       it(`refuses ${type} from a plugin frame`, async () => {
         const frame = makeFrame('pof.my-plugin');
         router.register('my-plugin', frame);

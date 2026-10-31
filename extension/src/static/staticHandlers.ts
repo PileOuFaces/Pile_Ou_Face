@@ -1121,7 +1121,6 @@ function staticHandlers(config: LooseMessage) {
   };
 
   const handlers = {
-    hubSyncPluginFrames: syncPluginFrames,
     hubLoadPluginState: async () => {
       try {
         const payload = await runPluginRuntime(['list', '--attach']);

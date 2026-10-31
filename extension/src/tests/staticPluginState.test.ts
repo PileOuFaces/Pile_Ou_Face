@@ -493,10 +493,12 @@ describe("staticHandlers plugin bridge", () => {
       const postMessage = sinon.spy();
       const handlers = createHandlers(loadStaticHandlers(execFile), postMessage);
 
-      const first = handlers.hubSyncPluginFrames();
-      const second = handlers.hubSyncPluginFrames();
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      pending.forEach((callback) => callback(null, JSON.stringify({ plugins: [] }), ""));
+      const first = handlers.hubLoadPluginState();
+      const second = handlers.hubLoadPluginState();
+      for (let round = 0; round < 3; round += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        pending.splice(0).forEach((callback) => callback(null, JSON.stringify({ plugins: [] }), ""));
+      }
       await Promise.all([first, second]);
 
       expect(framesPosted(postMessage)).to.have.length(1);

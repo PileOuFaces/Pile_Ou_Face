@@ -190,11 +190,9 @@ class RulesManager:
         if base_dir is None:
             raise ValueError("Le stockage global des règles n'est pas configuré.")
         name = self._validate_rule_name(name)
-        d = base_dir / rule_type
-        d.mkdir(parents=True, exist_ok=True)
-        self._confined_rule_path(base_dir, rule_type, name).write_text(
-            content, encoding="utf-8"
-        )
+        rule_path = self._confined_rule_path(base_dir, rule_type, name)
+        rule_path.parent.mkdir(parents=True, exist_ok=True)
+        rule_path.write_text(content, encoding="utf-8")
         return self._rule_id(scope, rule_type, name)
 
     def delete_user_rule(self, rule_id: str) -> None:

@@ -549,7 +549,8 @@ function createHub(config) {
     const licenseRecheckTimer = globalThis.setInterval(async () => {
       if (!panel) return;
       // Runs even for a hidden panel, whose plugin frames stay alive, and fails closed.
-      await handlers.hubSyncPluginFrames();
+      // Goes through the full state so a frame never starts before its tabs are known.
+      await handlers.hubLoadPluginState();
       if (!panel.visible) return;
       try {
         const data = await runPluginRuntimeJson(['list', '--json'], { timeout: 30000 });
