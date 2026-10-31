@@ -12,7 +12,8 @@ permissions:
 jobs:
   large-real-corpus:
     name: Large corpus (${{ matrix.arch }})
-    runs-on: ubuntu-latest
+    # gcc-mips-linux-gnu n'existe pas sur Ubuntu 26.04 (ubuntu-latest).
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
