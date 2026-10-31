@@ -29,7 +29,6 @@ import contextlib
 
 from backends.plugins.consent import (
     default_consent_path,
-    ensure_consent_baseline,
     is_plugin_consented,
     load_consent_store,
 )
@@ -392,6 +391,18 @@ def _resolve_effective_plugin_root(manifest: PluginManifest) -> Path:
     return plugin_root
 
 
+def _record_is_consented(
+    record: PluginRecord, consent_store: dict[str, dict[str, Any]]
+) -> bool:
+    return is_plugin_consented(
+        record.plugin_id,
+        record.manifest.version,
+        consent_store,
+        plugin_root=record.manifest.root_path,
+        workspace=Path.cwd(),
+    )
+
+
 def attach_plugins(
     records: list[PluginRecord],
     *,
@@ -408,14 +419,11 @@ def attach_plugins(
     resolved_consent_path = consent_path or default_consent_path()
     consent_store: dict[str, dict[str, Any]] = {}
     if require_consent:
-        ensure_consent_baseline(records, resolved_consent_path)
         consent_store = load_consent_store(resolved_consent_path)
     for record in records:
         if record.state != "active" or record.manifest is None:
             continue
-        if require_consent and not is_plugin_consented(
-            record.plugin_id, record.manifest.version, consent_store
-        ):
+        if require_consent and not _record_is_consented(record, consent_store):
             record.state = "pending_consent"
             record.error = (
                 "Consentement requis avant d'exécuter ce plugin — "
@@ -1068,7 +1076,37 @@ def _consent_path_from_args(args: argparse.Namespace) -> Path:
     override = str(getattr(args, "consent_path", "") or "").strip()
     if override:
         return Path(override).expanduser()
-    return default_consent_path(cwd=Path.cwd())
+    return default_consent_path()
+
+
+def collect_consent_status(
+    records: list[PluginRecord], consent_path: str | Path
+) -> list[dict[str, Any]]:
+    """Report which plugins may load. Must never import plugin code."""
+    store = load_consent_store(consent_path)
+    status: list[dict[str, Any]] = []
+    for record in records:
+        manifest = record.manifest
+        if manifest is None:
+            continue
+        status.append(
+            {
+                "plugin_id": record.plugin_id,
+                "version": manifest.version,
+                "root_path": str(manifest.root_path),
+                "state": record.state,
+                "authorized": record.state == "active"
+                and _record_is_consented(record, store),
+            }
+        )
+    return status
+
+
+def _cmd_consent_status(args: argparse.Namespace) -> int:
+    records = apply_plugin_licensing(_build_registry_from_args(args))
+    payload = collect_consent_status(records, _consent_path_from_args(args))
+    print(json.dumps({"plugins": payload}, indent=2, ensure_ascii=False))
+    return 0
 
 
 def _cmd_consent_list(args: argparse.Namespace) -> int:
@@ -1094,7 +1132,10 @@ def _cmd_consent_grant(args: argparse.Namespace) -> int:
         )
         return 0
     store = grant_plugin_consent(
-        record.plugin_id, record.manifest.version, _consent_path_from_args(args)
+        record.plugin_id,
+        record.manifest.version,
+        _consent_path_from_args(args),
+        plugin_root=record.manifest.root_path,
     )
     print(
         json.dumps(
@@ -1172,6 +1213,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     consent_list_parser.add_argument("--consent-path", default="")
     consent_list_parser.set_defaults(func=_cmd_consent_list)
+
+    consent_status_parser = sub.add_parser(
+        "consent-status",
+        help="Lire les plugins autorisés sans importer leur code",
+    )
+    consent_status_parser.add_argument("--paths", nargs="*", default=[])
+    consent_status_parser.add_argument("--disable", default="")
+    consent_status_parser.add_argument("--consent-path", default="")
+    consent_status_parser.set_defaults(func=_cmd_consent_status)
 
     consent_grant_parser = sub.add_parser(
         "consent-grant", help="Autoriser explicitement un plugin à s'exécuter"

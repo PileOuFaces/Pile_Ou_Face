@@ -4,15 +4,16 @@
 Addresses GitHub issue "[security] Désactiver les plugins tiers par défaut
 en public" (was Azure DevOps #39): a discovered plugin's Python code must
 not execute (register_plugin(context) must not run) until the user has
-explicitly approved it, except for plugins already installed before this
-gate existed (grandfathered on first run so existing users aren't broken).
+explicitly approved it. A checked-out repository can never approve anything.
 """
 
 from __future__ import annotations
 
+import json
+import stat
+
 from backends.plugins.consent import (
     default_consent_path,
-    ensure_consent_baseline,
     grant_plugin_consent,
     is_plugin_consented,
     load_consent_store,
@@ -21,26 +22,19 @@ from backends.plugins.consent import (
 )
 
 
-def test_default_consent_path_prefers_workspace_root_when_present(tmp_path):
-    project = tmp_path / "project"
-    (project / ".pile-ou-face").mkdir(parents=True)
-    path = default_consent_path(cwd=project, home=tmp_path / "home", env={})
-    assert path == project / ".pile-ou-face" / "plugin_consent.json"
-
-
-def test_default_consent_path_falls_back_to_home_without_workspace_root(tmp_path):
-    path = default_consent_path(
-        cwd=tmp_path / "project", home=tmp_path / "home", env={}
-    )
+def test_default_consent_path_is_the_home_store(tmp_path):
+    path = default_consent_path(home=tmp_path / "home", env={})
     assert path == tmp_path / "home" / ".pile-ou-face" / "plugin_consent.json"
 
 
-def test_default_consent_path_workspace_discovery_can_be_disabled(tmp_path):
+def test_default_consent_path_ignores_a_workspace_store(tmp_path, monkeypatch):
     project = tmp_path / "project"
     (project / ".pile-ou-face").mkdir(parents=True)
-    path = default_consent_path(
-        cwd=project, home=tmp_path / "home", env={}, allow_workspace_discovery=False
+    (project / ".pile-ou-face" / "plugin_consent.json").write_text(
+        '{"acme.demo": {"approved": true, "version": "1.0.0"}}', encoding="utf-8"
     )
+    monkeypatch.chdir(project)
+    path = default_consent_path(home=tmp_path / "home", env={})
     assert path == tmp_path / "home" / ".pile-ou-face" / "plugin_consent.json"
 
 
@@ -93,37 +87,71 @@ def test_save_consent_store_creates_parent_directories(tmp_path):
     assert path.exists()
 
 
-class _FakeManifest:
-    def __init__(self, version: str) -> None:
-        self.version = version
-
-
-class _FakeRecord:
-    def __init__(self, plugin_id: str, version: str) -> None:
-        self.plugin_id = plugin_id
-        self.manifest = _FakeManifest(version)
-
-
-def test_ensure_consent_baseline_grandfathers_existing_plugins_on_first_run(tmp_path):
+def test_save_consent_store_is_private_and_leaves_no_temp_file(tmp_path):
     path = tmp_path / "consent.json"
-    records = [_FakeRecord("acme.a", "1.0.0"), _FakeRecord("acme.b", "2.0.0")]
-
-    ensure_consent_baseline(records, path)
-
-    store = load_consent_store(path)
-    assert is_plugin_consented("acme.a", "1.0.0", store) is True
-    assert is_plugin_consented("acme.b", "2.0.0", store) is True
+    save_consent_store(path, {"acme.demo": {"approved": True, "version": "1.0.0"}})
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert [item.name for item in tmp_path.iterdir()] == ["consent.json"]
 
 
-def test_ensure_consent_baseline_is_a_noop_once_the_store_exists(tmp_path):
+def test_save_consent_store_keeps_previous_store_on_failure(tmp_path):
     path = tmp_path / "consent.json"
-    # Store already exists (e.g. from a previous run) without acme.c in it.
     save_consent_store(path, {"acme.a": {"approved": True, "version": "1.0.0"}})
+    before = path.read_text(encoding="utf-8")
+    try:
+        save_consent_store(path, {"acme.b": {"bad": object()}})
+    except TypeError:
+        pass
+    assert path.read_text(encoding="utf-8") == before
 
-    records = [_FakeRecord("acme.a", "1.0.0"), _FakeRecord("acme.c", "1.0.0")]
-    ensure_consent_baseline(records, path)
 
+def test_first_run_baseline_entries_are_not_attested(tmp_path):
+    store = {
+        "acme.a": {
+            "approved": True,
+            "version": "1.0.0",
+            "note": "grandfathered-on-first-run",
+        }
+    }
+    assert is_plugin_consented("acme.a", "1.0.0", store) is False
+
+
+def test_grant_is_bound_to_the_approved_location(tmp_path):
+    path = tmp_path / "consent.json"
+    installed = tmp_path / "home" / "plugins" / "demo"
+    grant_plugin_consent("acme.demo", "1.0.0", path, plugin_root=installed)
     store = load_consent_store(path)
-    # acme.c must NOT be silently grandfathered just by showing up later —
-    # only plugins present before the consent store was first created are.
-    assert is_plugin_consented("acme.c", "1.0.0", store) is False
+    assert is_plugin_consented("acme.demo", "1.0.0", store, plugin_root=installed)
+    assert not is_plugin_consented(
+        "acme.demo", "1.0.0", store, plugin_root=tmp_path / "repo" / "demo"
+    )
+
+
+def test_explicit_grant_without_location_survives_outside_the_workspace(tmp_path):
+    store = {"acme.demo": {"approved": True, "version": "1.0.0"}}
+    workspace = tmp_path / "repo"
+    assert is_plugin_consented(
+        "acme.demo",
+        "1.0.0",
+        store,
+        plugin_root=tmp_path / "home" / "plugins" / "demo",
+        workspace=workspace,
+    )
+
+
+def test_grant_without_location_cannot_vouch_for_a_workspace_copy(tmp_path):
+    store = {"acme.demo": {"approved": True, "version": "1.0.0"}}
+    workspace = tmp_path / "repo"
+    assert not is_plugin_consented(
+        "acme.demo",
+        "1.0.0",
+        store,
+        plugin_root=workspace / ".pile-ou-face" / "plugins" / "demo",
+        workspace=workspace,
+    )
+
+
+def test_store_is_valid_json_after_grant(tmp_path):
+    path = tmp_path / "consent.json"
+    grant_plugin_consent("acme.demo", "1.0.0", path)
+    assert json.loads(path.read_text(encoding="utf-8"))["acme.demo"]["approved"]

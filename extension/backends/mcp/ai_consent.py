@@ -22,6 +22,7 @@ import argparse
 import json
 import os
 import sys
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -31,21 +32,16 @@ _ENV_PREFIX = "BINHOST"
 
 def default_ai_consent_path(
     *,
-    cwd: str | Path | None = None,
     home: str | Path | None = None,
     env: dict[str, str] | None = None,
-    allow_workspace_discovery: bool = True,
 ) -> Path:
     env_map = env or os.environ
     override = str(env_map.get(f"{_ENV_PREFIX}_AI_CONSENT_PATH", "") or "").strip()
     if override:
         return Path(override).expanduser()
+    # Never the workspace: a checked-out repository must not be able to
+    # approve sending the user's binaries to a provider.
     home_path = Path(home or Path.home()).expanduser().resolve()
-    if allow_workspace_discovery:
-        cwd_path = Path(cwd or Path.cwd()).expanduser().resolve()
-        workspace_root = cwd_path / ".pile-ou-face"
-        if workspace_root.is_dir():
-            return workspace_root / "ai_consent.json"
     return home_path / ".pile-ou-face" / "ai_consent.json"
 
 
@@ -63,10 +59,17 @@ def load_ai_consent(path: str | Path) -> dict[str, dict[str, Any]]:
 def save_ai_consent(path: str | Path, store: dict[str, dict[str, Any]]) -> None:
     consent_path = Path(path)
     consent_path.parent.mkdir(parents=True, exist_ok=True)
-    consent_path.write_text(
-        json.dumps(store, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-        encoding="utf-8",
+    content = json.dumps(store, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
+    fd, tmp_name = tempfile.mkstemp(
+        dir=consent_path.parent, prefix=f".{consent_path.name}."
     )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+        os.replace(tmp_name, consent_path)
+    except BaseException:
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
 
 
 def is_provider_consented(provider: str, store: dict[str, dict[str, Any]]) -> bool:
@@ -96,14 +99,13 @@ def main(argv: list[str] | None = None) -> int:
     source of truth — no consent logic is duplicated on the TS side."""
     parser = argparse.ArgumentParser(description="AI-provider consent gate")
     parser.add_argument("--provider", required=True)
-    parser.add_argument("--cwd", default=None)
     action = parser.add_mutually_exclusive_group(required=True)
     action.add_argument("--check", action="store_true")
     action.add_argument("--grant", action="store_true")
     action.add_argument("--revoke", action="store_true")
     args = parser.parse_args(argv)
 
-    path = default_ai_consent_path(cwd=args.cwd)
+    path = default_ai_consent_path()
     if args.grant:
         grant_ai_consent(args.provider, path)
         print(json.dumps({"consented": True}))
