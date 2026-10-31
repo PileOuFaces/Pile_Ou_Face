@@ -485,6 +485,21 @@ describe("staticHandlers plugin bridge", () => {
       expect(framesPosted(postMessage)).to.deep.equal([{ type: "hubPluginFrames", frames: [] }]);
     });
 
+    it("removes frames when the runtime stops authorizing the plugin", async () => {
+      const execFile = sinon.stub().callsFake((_bin, args, _options, callback) => {
+        const plugins = args.includes("consent-status")
+          ? [{ plugin_id: "pof.a", version: "1.0.0", root_path: "/x", state: "locked", authorized: false }]
+          : [];
+        callback(null, JSON.stringify({ plugins }), "");
+      });
+      const postMessage = sinon.spy();
+      const handlers = createHandlers(loadStaticHandlers(execFile), postMessage);
+
+      await handlers.hubLoadPluginState();
+
+      expect(framesPosted(postMessage)).to.deep.equal([{ type: "hubPluginFrames", frames: [] }]);
+    });
+
     it("drops the result of a sync overtaken by a newer one", async () => {
       const pending = [];
       const execFile = sinon.stub().callsFake((_bin, _args, _options, callback) => {
