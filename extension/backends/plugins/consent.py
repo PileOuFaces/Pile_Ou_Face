@@ -17,7 +17,8 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from collections.abc import Iterator
+import time
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -29,6 +30,21 @@ _ENV_PREFIX = "BINHOST"
 # Written by the removed first-run baseline, which approved whatever was
 # discoverable at that moment: the user never agreed to those entries.
 _UNATTESTED_NOTE = "grandfathered-on-first-run"
+
+
+# Windows refuses to replace or open a file another process has open: the store
+# is only busy for an instant, so wait rather than lose a grant or a revocation.
+_BUSY_RETRIES = 100
+_BUSY_DELAY_S = 0.02
+
+
+def _retry_while_busy(operation: Callable[[], Any]) -> Any:
+    for _ in range(_BUSY_RETRIES - 1):
+        try:
+            return operation()
+        except PermissionError:
+            time.sleep(_BUSY_DELAY_S)
+    return operation()
 
 
 def default_consent_path(
@@ -49,7 +65,9 @@ def load_consent_store(path: str | Path) -> dict[str, dict[str, Any]]:
     if not consent_path.exists():
         return {}
     try:
-        raw = json.loads(consent_path.read_text(encoding="utf-8"))
+        raw = json.loads(
+            _retry_while_busy(lambda: consent_path.read_text(encoding="utf-8"))
+        )
     except (OSError, json.JSONDecodeError):
         return {}
     return raw if isinstance(raw, dict) else {}
@@ -67,7 +85,7 @@ def save_consent_store(path: str | Path, store: dict[str, dict[str, Any]]) -> No
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(content)
-        os.replace(tmp_name, consent_path)
+        _retry_while_busy(lambda: os.replace(tmp_name, consent_path))
     except BaseException:
         Path(tmp_name).unlink(missing_ok=True)
         raise

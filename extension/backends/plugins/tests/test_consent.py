@@ -184,3 +184,38 @@ def test_grant_waits_for_a_revoke_in_progress(tmp_path, monkeypatch):
     store = original_load(path)
     assert is_plugin_consented("acme.a", "1.0.0", store) is False
     assert is_plugin_consented("acme.b", "1.0.0", store) is True
+
+
+def test_save_waits_for_a_store_that_is_briefly_busy(tmp_path, monkeypatch):
+    from backends.plugins import consent
+
+    path = tmp_path / "consent.json"
+    original_replace = os.replace
+    attempts = []
+
+    def busy_then_free(source, target):
+        attempts.append(target)
+        if len(attempts) < 3:
+            raise PermissionError(13, "Access is denied")
+        original_replace(source, target)
+
+    monkeypatch.setattr(consent.os, "replace", busy_then_free)
+    monkeypatch.setattr(consent, "_BUSY_DELAY_S", 0)
+    save_consent_store(path, {"acme.demo": {"approved": True, "version": "1.0.0"}})
+
+    assert len(attempts) == 3
+    assert is_plugin_consented("acme.demo", "1.0.0", load_consent_store(path))
+
+
+def test_store_that_stays_unreadable_approves_nothing(tmp_path, monkeypatch):
+    from backends.plugins import consent
+
+    path = tmp_path / "consent.json"
+    save_consent_store(path, {"acme.demo": {"approved": True, "version": "1.0.0"}})
+
+    def always_busy(*_args, **_kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(consent, "_BUSY_DELAY_S", 0)
+    monkeypatch.setattr(consent.Path, "read_text", always_busy)
+    assert load_consent_store(path) == {}

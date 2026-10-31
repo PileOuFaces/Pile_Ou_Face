@@ -23,13 +23,29 @@ import json
 import os
 import sys
 import tempfile
-from collections.abc import Iterator
+import time
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 _ENV_PREFIX = "BINHOST"
+
+
+# Windows refuses to replace or open a file another process has open: the store
+# is only busy for an instant, so wait rather than lose a grant or a revocation.
+_BUSY_RETRIES = 100
+_BUSY_DELAY_S = 0.02
+
+
+def _retry_while_busy(operation: Callable[[], Any]) -> Any:
+    for _ in range(_BUSY_RETRIES - 1):
+        try:
+            return operation()
+        except PermissionError:
+            time.sleep(_BUSY_DELAY_S)
+    return operation()
 
 
 def default_ai_consent_path(
@@ -52,7 +68,9 @@ def load_ai_consent(path: str | Path) -> dict[str, dict[str, Any]]:
     if not consent_path.exists():
         return {}
     try:
-        raw = json.loads(consent_path.read_text(encoding="utf-8"))
+        raw = json.loads(
+            _retry_while_busy(lambda: consent_path.read_text(encoding="utf-8"))
+        )
     except (OSError, json.JSONDecodeError):
         return {}
     return raw if isinstance(raw, dict) else {}
@@ -68,7 +86,7 @@ def save_ai_consent(path: str | Path, store: dict[str, dict[str, Any]]) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(content)
-        os.replace(tmp_name, consent_path)
+        _retry_while_busy(lambda: os.replace(tmp_name, consent_path))
     except BaseException:
         Path(tmp_name).unlink(missing_ok=True)
         raise
