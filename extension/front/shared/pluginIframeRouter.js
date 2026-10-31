@@ -52,6 +52,37 @@
     'navigateTo',
   ]);
 
+  /**
+   * Hub storage keys each plugin may write. The store also holds host settings
+   * such as scriptCode and ollamaBaseUrl, so nothing else goes through.
+   */
+  const PLUGIN_STORAGE_KEYS = {
+    'pof.cross-analysis-pro': [
+      'crossAnalysisQuery',
+      'crossAnalysisRisk',
+      'crossAnalysisSource',
+      'crossAnalysisMode',
+      'crossAnalysisSort',
+      'crossAnalysisCollapsedSections',
+    ],
+    'pof.malware-triage-pro': [
+      'yaraRulesMode',
+      'yaraRulesPath',
+      'detectionCapaCollapsed',
+      'detectionYaraCollapsed',
+      'detectionRulesCollapsed',
+    ],
+    'pof.vulnerability-audit-pro': [
+      'vulnKind',
+      'vulnReview',
+      'vulnCwe',
+      'vulnContext',
+      'vulnComparison',
+      'vulnTriage',
+      'vulnSort',
+    ],
+  };
+
   /** PoF methods whose first argument must be a tab of the calling plugin. */
   const TAB_SCOPED_METHODS = new Set(['getTabCache', 'setTabCache']);
 
@@ -200,6 +231,18 @@
     return null;
   }
 
+  /** Keep only the storage keys the calling plugin owns. */
+  function _allowedStorageUpdates(frame, updates) {
+    const pluginId = frame.dataset.pluginId;
+    if (!updates || typeof updates !== 'object' || Array.isArray(updates)) return {};
+    if (!Object.hasOwn(PLUGIN_STORAGE_KEYS, pluginId)) return {};
+    const allowed = {};
+    for (const key of PLUGIN_STORAGE_KEYS[pluginId]) {
+      if (Object.hasOwn(updates, key)) allowed[key] = updates[key];
+    }
+    return allowed;
+  }
+
   /** Check a message type against the capabilities of a plugin. */
   function _isAllowedMessage(pluginId, type) {
     return BASE_MESSAGE_TYPES.includes(type)
@@ -248,7 +291,10 @@
       return;
     }
     try {
-      const result = await Promise.resolve(pof[method](...(Array.isArray(args) ? args : [])));
+      const callArgs = method === 'saveStorage'
+        ? [_allowedStorageUpdates(frame, firstArg)]
+        : (Array.isArray(args) ? args : []);
+      const result = await Promise.resolve(pof[method](...callArgs));
       _reply(frame.contentWindow, seq, result);
     } catch (_) {
       _reply(frame.contentWindow, seq, undefined);

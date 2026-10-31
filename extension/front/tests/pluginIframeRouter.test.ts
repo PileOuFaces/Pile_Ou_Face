@@ -270,6 +270,59 @@ describe('PluginIframeRouter', () => {
       expect(router.hasTabLoader('my-plugin', 'audit')).to.equal(false);
     });
 
+    describe('saveStorage', () => {
+      const saved = async (pluginId: string, updates: any) => {
+        const calls: any[] = [];
+        const original = mockPoF.saveStorage;
+        mockPoF.saveStorage = (data: any) => { calls.push(data); return Promise.resolve(undefined); };
+        const frame = makeFrame(pluginId);
+        router.register(pluginId.slice(4), frame);
+        emit({ __pof_plugin: true, __pof_call: true, method: 'saveStorage', args: [updates], __seq: 8 }, frame.contentWindow);
+        await tick();
+        mockPoF.saveStorage = original;
+        return calls[0];
+      };
+
+      for (const [pluginId, updates] of Object.entries({
+        'pof.cross-analysis-pro': {
+          crossAnalysisQuery: 'q', crossAnalysisRisk: 'all', crossAnalysisSource: 'all',
+          crossAnalysisMode: 'm', crossAnalysisSort: 's', crossAnalysisCollapsedSections: ['a'],
+        },
+        'pof.malware-triage-pro': {
+          yaraRulesMode: 'builtin', yaraRulesPath: '/rules', detectionCapaCollapsed: true,
+          detectionYaraCollapsed: false, detectionRulesCollapsed: true,
+        },
+        'pof.vulnerability-audit-pro': {
+          vulnKind: 'all', vulnReview: 'all', vulnCwe: 'all', vulnContext: 'all',
+          vulnComparison: 'all', vulnTriage: 'all', vulnSort: 'priority_desc',
+        },
+      })) {
+        it(`keeps every key ${pluginId} really saves`, async () => {
+          expect(await saved(pluginId, updates)).to.deep.equal(updates);
+        });
+      }
+
+      it('drops host settings while keeping legitimate keys', async () => {
+        const result = await saved('pof.vulnerability-audit-pro', {
+          vulnKind: 'all', scriptCode: 'evil()', ollamaBaseUrl: 'http://evil', disabledFamilies: [],
+        });
+        expect(result).to.deep.equal({ vulnKind: 'all' });
+      });
+
+      it('does not let a plugin write the keys of another plugin', async () => {
+        expect(await saved('pof.vulnerability-audit-pro', { yaraRulesPath: '/evil' })).to.deep.equal({});
+      });
+
+      it('gives an unknown plugin no storage access', async () => {
+        expect(await saved('pof.other', { vulnKind: 'all' })).to.deep.equal({});
+      });
+
+      it('ignores values that are not plain objects', async () => {
+        expect(await saved('pof.vulnerability-audit-pro', ['scriptCode'])).to.deep.equal({});
+        expect(await saved('pof.vulnerability-audit-pro', 'scriptCode')).to.deep.equal({});
+      });
+    });
+
     it('hides sandboxed messages from the listeners of the hub', () => {
       const frame = makeFrame('pof.my-plugin');
       router.register('my-plugin', frame);
