@@ -74,10 +74,25 @@ class TestCacheHelpers(unittest.TestCase):
         k2 = _cache_key("/bin/ls", "0x401010")
         self.assertNotEqual(k1, k2)
 
-    def test_cache_key_changes_with_path(self):
-        k1 = _cache_key("/bin/ls", "0x401000")
-        k2 = _cache_key("/bin/cat", "0x401000")
+    def test_cache_key_changes_with_binary_content(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first = Path(tmp) / "first.bin"
+            second = Path(tmp) / "second.bin"
+            first.write_bytes(b"first content")
+            second.write_bytes(b"other content")
+            k1 = _cache_key(str(first), "0x401000")
+            k2 = _cache_key(str(second), "0x401000")
         self.assertNotEqual(k1, k2)
+
+    def test_cache_key_ignores_path_for_identical_content(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first = Path(tmp) / "first.bin"
+            second = Path(tmp) / "second.bin"
+            first.write_bytes(b"same content")
+            second.write_bytes(b"same content")
+            k1 = _cache_key(str(first), "0x401000")
+            k2 = _cache_key(str(second), "0x401000")
+        self.assertEqual(k1, k2)
 
     def test_cache_key_changes_with_decompiler(self):
         k1 = _cache_key("/bin/ls", "0x401000", decompiler="tool_b")
