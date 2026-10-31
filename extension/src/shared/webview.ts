@@ -235,6 +235,7 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
       window.dispatchEvent(new MessageEvent('message', { data: msg }));
     }
   });
+  var _tabLoaderIds = [];
   function _call(method, args) {
     return new Promise(function (resolve) {
       var seq = ++_seq;
@@ -261,6 +262,7 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
     getTabCache:         function (k) { return _call('getTabCache', [k]); },
     setTabCache:         function (k, v) { return _call('setTabCache', [k, v]); },
     registerTabLoader:   function (tabId, fn) {
+      _tabLoaderIds.push(tabId);
       _call('registerTabLoader', [tabId]);
       window.addEventListener('message', function (e) {
         if (e.data && e.data.__pof_host && e.data.payload && e.data.payload.__pof_tabload && e.data.payload.tabId === tabId) {
@@ -324,6 +326,8 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
       if (!tabId) return;
       if (reg.label) window.GROUP_LABELS[tabId] = reg.label;
       if (reg.family) window.PREMIUM_TAB_FAMILY[tabId] = reg.family;
+      // The hub refuses a loader for a tab it does not know yet: claim it again now.
+      if (_tabLoaderIds.indexOf(tabId) !== -1) _call('registerTabLoader', [tabId]);
     });
   });
   window.normalizeHexAddress = function (addr) { return addr ? String(addr).trim() : ''; };

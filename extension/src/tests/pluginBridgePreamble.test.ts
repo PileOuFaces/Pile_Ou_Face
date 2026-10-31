@@ -533,6 +533,19 @@ describe('PLUGIN_BRIDGE_PREAMBLE', () => {
     });
   });
 
+  it('claims a tab loader again once the hub knows the tab', () => {
+    const { win } = makeBridgeWindow();
+    win.PoF.registerTabLoader('audit', () => {});
+    win.parent.postMessage.resetHistory();
+
+    deliverHostMessage(win, { type: 'hubPluginState', state: { tabRegistrations: [{ tabId: 'audit' }, { tabId: 'other' }] } });
+
+    const claims = win.parent.postMessage.getCalls()
+      .map((call: any) => call.args[0])
+      .filter((msg: any) => msg.method === 'registerTabLoader');
+    expect(claims.map((msg: any) => msg.args[0])).to.deep.equal(['audit']);
+  });
+
   describe('sender check', () => {
     const fromWindow = (win: any, source: any, data: unknown) =>
       win.dispatchEvent(new win.MessageEvent('message', { data, source }));
