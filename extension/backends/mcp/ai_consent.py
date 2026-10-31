@@ -63,7 +63,7 @@ def default_ai_consent_path(
     return home_path / ".pile-ou-face" / "ai_consent.json"
 
 
-def load_ai_consent(path: str | Path) -> dict[str, dict[str, Any]]:
+def _read_store(path: str | Path) -> dict[str, dict[str, Any]]:
     consent_path = Path(path)
     if not consent_path.exists():
         return {}
@@ -74,6 +74,18 @@ def load_ai_consent(path: str | Path) -> dict[str, dict[str, Any]]:
     except (OSError, json.JSONDecodeError):
         return {}
     return raw if isinstance(raw, dict) else {}
+
+
+def load_ai_consent(path: str | Path) -> dict[str, dict[str, Any]]:
+    consent_path = Path(path)
+    if not consent_path.parent.is_dir():
+        return {}
+    try:
+        with _store_lock(consent_path):
+            return _read_store(consent_path)
+    except OSError:
+        # A read-only directory cannot hold the lock file; nothing writes there.
+        return _read_store(consent_path)
 
 
 def save_ai_consent(path: str | Path, store: dict[str, dict[str, Any]]) -> None:
@@ -128,7 +140,7 @@ def is_provider_consented(provider: str, store: dict[str, dict[str, Any]]) -> bo
 
 def grant_ai_consent(provider: str, path: str | Path) -> dict[str, dict[str, Any]]:
     with _store_lock(Path(path)):
-        store = load_ai_consent(path)
+        store = _read_store(path)
         store[provider] = {
             "approved": True,
             "approved_at": datetime.now(UTC).isoformat(),
@@ -139,7 +151,7 @@ def grant_ai_consent(provider: str, path: str | Path) -> dict[str, dict[str, Any
 
 def revoke_ai_consent(provider: str, path: str | Path) -> dict[str, dict[str, Any]]:
     with _store_lock(Path(path)):
-        store = load_ai_consent(path)
+        store = _read_store(path)
         store.pop(provider, None)
         save_ai_consent(path, store)
     return store

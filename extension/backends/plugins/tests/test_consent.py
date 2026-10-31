@@ -166,7 +166,7 @@ def test_grant_waits_for_a_revoke_in_progress(tmp_path, monkeypatch):
     path = tmp_path / "consent.json"
     grant_plugin_consent("acme.a", "1.0.0", path)
     reading = threading.Event()
-    original_load = consent.load_consent_store
+    original_load = consent._read_store
 
     def slow_load(store_path):
         store = original_load(store_path)
@@ -174,7 +174,7 @@ def test_grant_waits_for_a_revoke_in_progress(tmp_path, monkeypatch):
         threading.Event().wait(0.1)
         return store
 
-    monkeypatch.setattr(consent, "load_consent_store", slow_load)
+    monkeypatch.setattr(consent, "_read_store", slow_load)
     revoke = threading.Thread(target=revoke_plugin_consent, args=("acme.a", path))
     revoke.start()
     reading.wait(5)

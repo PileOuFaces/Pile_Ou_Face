@@ -60,7 +60,7 @@ def default_consent_path(
     return home_path / ".pile-ou-face" / "plugin_consent.json"
 
 
-def load_consent_store(path: str | Path) -> dict[str, dict[str, Any]]:
+def _read_store(path: str | Path) -> dict[str, dict[str, Any]]:
     consent_path = Path(path)
     if not consent_path.exists():
         return {}
@@ -71,6 +71,18 @@ def load_consent_store(path: str | Path) -> dict[str, dict[str, Any]]:
     except (OSError, json.JSONDecodeError):
         return {}
     return raw if isinstance(raw, dict) else {}
+
+
+def load_consent_store(path: str | Path) -> dict[str, dict[str, Any]]:
+    consent_path = Path(path)
+    if not consent_path.parent.is_dir():
+        return {}
+    try:
+        with _store_lock(consent_path):
+            return _read_store(consent_path)
+    except OSError:
+        # A read-only directory cannot hold the lock file; nothing writes there.
+        return _read_store(consent_path)
 
 
 def save_consent_store(path: str | Path, store: dict[str, dict[str, Any]]) -> None:
@@ -171,7 +183,7 @@ def grant_plugin_consent(
     if plugin_root is not None:
         entry["plugin_root"] = str(_resolved(plugin_root))
     with _store_lock(Path(path)):
-        store = load_consent_store(path)
+        store = _read_store(path)
         store[plugin_id] = entry
         save_consent_store(path, store)
     return store
@@ -181,7 +193,7 @@ def revoke_plugin_consent(
     plugin_id: str, path: str | Path
 ) -> dict[str, dict[str, Any]]:
     with _store_lock(Path(path)):
-        store = load_consent_store(path)
+        store = _read_store(path)
         store.pop(plugin_id, None)
         save_consent_store(path, store)
     return store
