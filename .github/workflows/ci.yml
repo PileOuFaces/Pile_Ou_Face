@@ -361,7 +361,8 @@ jobs:
   # ══════════════════════════════════════════════════════════════
   real-corpus-arm64:
     name: Real Corpus Multi-Arch
-    runs-on: ubuntu-latest
+    # gcc-mips-linux-gnu n'existe pas sur Ubuntu 26.04 (ubuntu-latest).
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     steps:
