@@ -10,6 +10,7 @@ explicitly approved it. A checked-out repository can never approve anything.
 from __future__ import annotations
 
 import json
+import os
 import stat
 import threading
 
@@ -91,7 +92,8 @@ def test_save_consent_store_creates_parent_directories(tmp_path):
 def test_save_consent_store_is_private_and_leaves_no_temp_file(tmp_path):
     path = tmp_path / "consent.json"
     save_consent_store(path, {"acme.demo": {"approved": True, "version": "1.0.0"}})
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    if os.name != "nt":
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert [item.name for item in tmp_path.iterdir()] == ["consent.json"]
 
 
