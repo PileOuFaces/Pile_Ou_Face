@@ -844,6 +844,7 @@ def invoke_plugin_feature(
     api_version: int = HOST_API_VERSION,
     consent_path: str | Path | None = None,
     require_consent: bool = False,
+    expected_plugin_id: str = "",
 ) -> tuple[dict[str, Any], PluginContext, list[PluginRecord]]:
     context, attached_records = attach_plugins(
         records,
@@ -863,6 +864,17 @@ def invoke_plugin_feature(
                 "error": f"Feature plugin introuvable: {feature_name}",
                 "feature": feature_name,
                 "available_commands": sorted(context.commands.keys()),
+            },
+            context,
+            attached_records,
+        )
+    owner = context.command_sources.get(command_name, "")
+    if expected_plugin_id and owner != expected_plugin_id:
+        return (
+            {
+                "ok": False,
+                "error": f"Feature non autorisée pour ce plugin: {feature_name}",
+                "feature": feature_name,
             },
             context,
             attached_records,
@@ -1063,6 +1075,7 @@ def _cmd_invoke_feature(args: argparse.Namespace) -> int:
         host_version=args.host_version,
         api_version=args.api_version,
         require_consent=True,
+        expected_plugin_id=args.expected_plugin,
     )
     response["host_version"] = args.host_version
     response["api_version"] = args.api_version
@@ -1206,6 +1219,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     invoke_feature_parser.add_argument("--payload-file", default="")
     invoke_feature_parser.add_argument("--paths", nargs="*", default=[])
     invoke_feature_parser.add_argument("--disable", default="")
+    invoke_feature_parser.add_argument("--expected-plugin", default="")
     invoke_feature_parser.set_defaults(func=_cmd_invoke_feature)
 
     consent_list_parser = sub.add_parser(

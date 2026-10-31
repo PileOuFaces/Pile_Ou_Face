@@ -551,6 +551,8 @@ function createHub(config) {
       try {
         const data = await runPluginRuntimeJson(['list', '--json'], { timeout: 30000 });
         panel.webview.postMessage({ type: 'pluginStatusRefresh', payload: data });
+        // Expired or changed plugins lose their frame on the same schedule.
+        await handlers.hubSyncPluginFrames();
       } catch (_err) {
         // Non-critical — next check will retry
       }

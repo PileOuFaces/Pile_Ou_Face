@@ -7,9 +7,46 @@
  * Plugin→host:  plugin iframes post {__pof_plugin:true, payload} messages that are
  *               forwarded to vscode.postMessage, or {__pof_call:true} PoF proxy calls
  *               that are resolved against window.PoF and replied to the source frame.
+ *
+ * Plugin views are untrusted: they render analysed binaries. Only frames created
+ * here may reach the host, each is limited to the capabilities listed below, and
+ * the plugin identity always comes from the frame, never from the message.
  */
 (function () {
   'use strict';
+
+  /** Message types every plugin view may send, kept to what plugins really use. */
+  const BASE_MESSAGE_TYPES = [
+    'hubPluginInvoke',
+    'hubError',
+    'hubGoToAddress',
+    'hubGoToFileOffset',
+    'hubLoadDataXrefs',
+    'hubLoadImportXrefs',
+    'hubRevealStringAtAddress',
+  ];
+  /** Extra message types, keyed by plugin id. */
+  const PLUGIN_MESSAGE_TYPES = {
+    'pof.malware-triage-pro': [
+      'hubListRules',
+      'hubGetRuleContent',
+      'hubToggleRule',
+      'hubAddUserRule',
+      'hubUpdateUserRule',
+      'hubDeleteUserRule',
+      'hubBrowseImportRule',
+      'requestRulesSelection',
+    ],
+    'pof.offensive-research-pro': ['hubPickFile'],
+  };
+  /** window.PoF methods reachable through the proxy. */
+  const POF_METHODS = new Set([
+    'getTabCache',
+    'setTabCache',
+    'registerTabLoader',
+    'saveStorage',
+    'navigateTo',
+  ]);
 
   /** @type {any} vscode handle (provides postMessage to the extension host) */
   let _vscode = null;
@@ -32,7 +69,7 @@
   function init(win, vscode) {
     // Remove the previously registered listener, if any
     if (_win && _boundListener && typeof _win.removeEventListener === 'function') {
-      _win.removeEventListener('message', _boundListener);
+      _win.removeEventListener('message', _boundListener, true);
     }
     _frames.clear();
     _tabLoaders.clear();
@@ -44,9 +81,20 @@
     const token = _activeToken;
     _boundListener = function (e) {
       if (token !== _activeToken) return;
+      if (!_isFromSandboxedFrame(e)) return;
+      // Hub listeners treat every message as coming from the extension: a frame
+      // writing straight to the parent must never reach them.
+      if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
       _onMessage(e);
     };
-    win.addEventListener('message', _boundListener);
+    // Capture runs before the hub's own listeners, whatever the script order.
+    win.addEventListener('message', _boundListener, true);
+  }
+
+  /** The extension posts from the VS Code origin; sandboxed frames have an opaque one. */
+  function _isFromSandboxedFrame(e) {
+    if (!e) return false;
+    return e.origin === 'null' || _findFrame(e.source) !== null;
   }
 
   /**
@@ -56,6 +104,51 @@
    */
   function register(slug, frameEl) {
     _frames.set(slug, frameEl);
+  }
+
+  /** Remove a frame and everything it had registered. */
+  function _removeFrame(slug) {
+    const frame = _frames.get(slug);
+    if (frame && typeof frame.remove === 'function') frame.remove();
+    _frames.delete(slug);
+    for (const slugs of _tabLoaders.values()) slugs.delete(slug);
+  }
+
+  /** Create the sandboxed iframe of an authorized plugin. */
+  function _createFrame(spec, hostEl, onLoad) {
+    const frame = hostEl.ownerDocument.createElement('iframe');
+    frame.id = spec.frameId;
+    frame.className = 'plugin-iframe static-panel';
+    frame.dataset.pluginId = spec.pluginId;
+    frame.dataset.pluginSlug = spec.pluginSlug;
+    // Set before srcdoc: the frame must never load without its sandbox.
+    frame.setAttribute('sandbox', 'allow-scripts');
+    frame.setAttribute('srcdoc', spec.srcdoc);
+    if (typeof onLoad === 'function') {
+      frame.addEventListener('load', () => onLoad(frame));
+    }
+    hostEl.appendChild(frame);
+    _frames.set(spec.pluginSlug, frame);
+  }
+
+  /**
+   * Align live iframes with the plugins the extension currently authorizes.
+   * Frames dropped from the list lose their script context immediately.
+   * @param {{pluginId: string, pluginSlug: string, frameId: string, srcdoc: string}[]} specs
+   * @param {HTMLElement} hostEl - Element receiving the iframes
+   * @param {(frame: HTMLIFrameElement) => void} [onLoad]
+   */
+  function syncFrames(specs, hostEl, onLoad) {
+    const wanted = new Map((Array.isArray(specs) ? specs : []).map((spec) => [spec.pluginSlug, spec]));
+    for (const [slug, frame] of Array.from(_frames)) {
+      const spec = wanted.get(slug);
+      if (!spec || spec.pluginId !== frame.dataset.pluginId || spec.srcdoc !== frame.getAttribute('srcdoc')) {
+        _removeFrame(slug);
+      }
+    }
+    for (const [slug, spec] of wanted) {
+      if (!_frames.has(slug)) _createFrame(spec, hostEl, onLoad);
+    }
   }
 
   /**
@@ -92,15 +185,6 @@
     contentWindow.postMessage({ __pof_host: true, payload: { __pof_reply: true, __seq: seq, result } }, '*');
   }
 
-  /**
-   * Send a reply, falling back to sourceWindow when sourceFrame is null so the
-   * plugin is never left waiting forever.
-   */
-  function _replyTo(sourceFrame, sourceWindow, seq, result) {
-    const target = sourceFrame ? sourceFrame.contentWindow : sourceWindow;
-    if (target) _reply(target, seq, result);
-  }
-
   /** Find the iframe element whose contentWindow matches the given window reference. */
   function _findFrame(sourceWindow) {
     for (const [, frame] of _frames) {
@@ -109,70 +193,71 @@
     return null;
   }
 
-  /** Handle an incoming message from any window. */
+  /** Check a message type against the capabilities of a plugin. */
+  function _isAllowedMessage(pluginId, type) {
+    return BASE_MESSAGE_TYPES.includes(type)
+      || (Object.hasOwn(PLUGIN_MESSAGE_TYPES, pluginId) && PLUGIN_MESSAGE_TYPES[pluginId].includes(type));
+  }
+
+  /** Record a plugin tab loader, unless the tab belongs to another plugin. */
+  function _registerTabLoader(frame, pof, tabId) {
+    const slug = frame.dataset.pluginSlug;
+    const owner = typeof _win?.getPluginSlugForTab === 'function' ? _win.getPluginSlugForTab(tabId) : null;
+    if (typeof tabId !== 'string' || !tabId || (owner && owner !== slug)) return;
+    if (!_tabLoaders.has(tabId)) _tabLoaders.set(tabId, new Set());
+    _tabLoaders.get(tabId).add(slug);
+    // Register a real callback in state.js so payload.js callTabLoader still fires
+    pof.registerTabLoader(tabId, function (binaryPath) {
+      const current = _frames.get(slug);
+      if (!current) return;
+      current.contentWindow.postMessage(
+        { __pof_host: true, payload: { __pof_tabload: true, tabId, binaryPath } },
+        '*'
+      );
+    });
+  }
+
+  /** Resolve a PoF proxy call for a registered frame. */
+  async function _handlePofCall(frame, data) {
+    const { method, args, __seq: seq } = data;
+    const pof = (_win && _win.PoF) || (typeof window !== 'undefined' ? window.PoF : null);
+    if (!POF_METHODS.has(method) || !pof || typeof pof[method] !== 'function') {
+      _reply(frame.contentWindow, seq, undefined);
+      return;
+    }
+    if (method === 'registerTabLoader') {
+      _registerTabLoader(frame, pof, (args || [])[0]);
+      _reply(frame.contentWindow, seq, undefined);
+      return;
+    }
+    try {
+      const result = await Promise.resolve(pof[method](...(Array.isArray(args) ? args : [])));
+      _reply(frame.contentWindow, seq, result);
+    } catch (_) {
+      _reply(frame.contentWindow, seq, undefined);
+    }
+  }
+
+  /** Handle a message posted by a sandboxed frame. */
   async function _onMessage(e) {
     try {
-      if (!e || !e.data || e.data.__pof_plugin !== true) return;
-
-      const sourceWindow = e.source;
-      const sourceFrame = _findFrame(sourceWindow);
+      const frame = _findFrame(e.source);
+      if (!frame || !e.data || e.data.__pof_plugin !== true) return;
 
       if (e.data.__pof_call) {
-        // PoF proxy call: resolve method on window.PoF and reply
-        const { method, args, __seq: seq } = e.data;
-        const pof = (_win && _win.PoF) || (typeof window !== 'undefined' ? window.PoF : null);
-
-        if (!pof || typeof pof[method] !== 'function') {
-          _replyTo(sourceFrame, sourceWindow, seq, undefined);
-          return;
-        }
-
-        // registerTabLoader: record the mapping and proxy into host state.js so
-        // callTabLoader(tabId, bp) from payload.js still reaches the plugin iframe.
-        if (method === 'registerTabLoader') {
-          const [tabId] = args;
-          if (!_tabLoaders.has(tabId)) _tabLoaders.set(tabId, new Set());
-          if (sourceFrame) {
-            const slug = sourceFrame.dataset.pluginSlug;
-            _tabLoaders.get(tabId).add(slug);
-            // Register a real callback in state.js so payload.js callTabLoader still fires
-            if (pof && typeof pof.registerTabLoader === 'function') {
-              pof.registerTabLoader(tabId, function (binaryPath) {
-                for (const [, frame] of _frames) {
-                  if (frame.dataset.pluginSlug === slug) {
-                    frame.contentWindow.postMessage(
-                      { __pof_host: true, payload: { __pof_tabload: true, tabId, binaryPath } },
-                      '*'
-                    );
-                    break;
-                  }
-                }
-              });
-            }
-          }
-          _replyTo(sourceFrame, sourceWindow, seq, undefined);
-          return;
-        }
-
-        try {
-          const result = await Promise.resolve(pof[method](...(args || [])));
-          _replyTo(sourceFrame, sourceWindow, seq, result);
-        } catch (_) {
-          _replyTo(sourceFrame, sourceWindow, seq, undefined);
-        }
+        await _handlePofCall(frame, e.data);
         return;
       }
 
-      // Regular vscode.postMessage forward
-      if (_vscode && e.data.payload != null) {
-        _vscode.postMessage(e.data.payload);
-      }
+      const payload = e.data.payload;
+      if (!_vscode || !payload || !_isAllowedMessage(frame.dataset.pluginId, payload.type)) return;
+      _vscode.postMessage({ ...payload, __pofPluginId: frame.dataset.pluginId });
     } catch (_err) {
       // swallow — plugin messages must never crash the host
     }
   }
 
-  const PluginIframeRouter = { init, register, dispatch, broadcast, hasTabLoader };
+  const PluginIframeRouter = { init, register, syncFrames, dispatch, broadcast, hasTabLoader };
 
   // CommonJS (Node / test environment) or browser global
   if (typeof module !== 'undefined' && module.exports) {

@@ -131,3 +131,23 @@ def test_consent_status_reports_pending_and_revoked_plugins(sandbox, capsys):
     capsys.readouterr()
     assert runtime.main(["consent-status"]) == 0
     assert not json.loads(capsys.readouterr().out)["plugins"][0]["authorized"]
+
+
+def test_expected_plugin_blocks_a_feature_owned_by_another_plugin(monkeypatch):
+    context = runtime.PluginContext(host_version="0.1.0", api_version=1, paths={})
+    context.current_plugin_id = "acme.owner"
+    context.register_command("scan.run", lambda _payload: {"ok": True})
+    context.current_plugin_id = ""
+    monkeypatch.setattr(
+        runtime, "attach_plugins", lambda records, **_kwargs: (context, records)
+    )
+    monkeypatch.setattr(
+        runtime, "resolve_plugin_command_for_feature", lambda *_args: "scan.run"
+    )
+
+    response, _context, _records = runtime.invoke_plugin_feature(
+        [], "scan", {}, expected_plugin_id="acme.intruder"
+    )
+
+    assert response["ok"] is False
+    assert "non autorisée" in response["error"]

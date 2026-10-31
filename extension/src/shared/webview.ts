@@ -935,8 +935,25 @@ function _buildPluginSrcdoc(html, inlineJs, pluginCss, hostCss = '') {
   ].join('');
 }
 
-function loadPluginWebviews(options: { storageDir?: string; globalDir?: string; extensionFrontDir?: string } = {}) {
-  const { storageDir = '', globalDir = '', extensionFrontDir = '' } = options;
+type AuthorizedPlugin = { plugin_id: string; version: string; root_path: string };
+
+function _isAuthorizedPlugin(authorized: AuthorizedPlugin[], pluginDir, manifest) {
+  return authorized.some((entry) => entry.plugin_id === manifest.id
+    && entry.version === manifest.version
+    && path.resolve(entry.root_path) === path.resolve(pluginDir));
+}
+
+/**
+ * Build plugin frames. No plugin script is read unless `authorized` lists it, so
+ * the default loads styles only.
+ */
+function loadPluginWebviews(options: {
+  storageDir?: string;
+  globalDir?: string;
+  extensionFrontDir?: string;
+  authorized?: AuthorizedPlugin[];
+} = {}) {
+  const { storageDir = '', globalDir = '', extensionFrontDir = '', authorized = [] } = options;
   let groupStyles = '';
   const frames: { pluginId: string; pluginSlug: string; frameId: string; srcdoc: string }[] = [];
 
@@ -980,6 +997,8 @@ function loadPluginWebviews(options: { storageDir?: string; globalDir?: string; 
         groupStyles += `\n.group-tab.active[data-group="${family}"] { background: ${safeCss(color.bg)}; color: ${safeCss(color.fg)}; border-color: ${safeCss(color.border)}; }`;
       }
 
+      if (!_isAuthorizedPlugin(authorized, pluginDir, manifest)) continue;
+
       // Build srcdoc
       const pluginSlug = _derivePluginSlug(pluginDir, manifest);
       const pluginId = manifest.id || entry;
@@ -1019,12 +1038,7 @@ function loadPluginWebviews(options: { storageDir?: string; globalDir?: string; 
     }
   }
 
-  const framesHtml = frames.map((f) => {
-    const escapedSrcdoc = _escapeHtmlAttr(f.srcdoc);
-    return `<iframe id="${f.frameId}" data-plugin-id="${_escapeHtmlAttr(f.pluginId)}" data-plugin-slug="${_escapeHtmlAttr(f.pluginSlug)}" class="plugin-iframe static-panel" sandbox="allow-scripts" srcdoc="${escapedSrcdoc}"></iframe>`;
-  }).join('\n');
-
-  return { groupStyles: groupStyles.trim(), frames, framesHtml: framesHtml.trim() };
+  return { groupStyles: groupStyles.trim(), frames };
 }
 
 function getWebviewContent(webview, extensionUri) {
@@ -1056,12 +1070,10 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', global
     vscode.Uri.joinPath(extensionUri, ...parts).fsPath, 'utf8'
   );
 
-  const { groupStyles: pluginGroupStyles, framesHtml: pluginFrames } =
-    (storageDir || globalDir) ? loadPluginWebviews({
-      storageDir,
-      globalDir,
-      extensionFrontDir: vscode.Uri.joinPath(extensionUri, 'front').fsPath,
-    }) : { groupStyles: '', framesHtml: '' };
+  // The initial page never carries plugin frames: they arrive through
+  // hubPluginFrames once the extension has checked consent.
+  const { groupStyles: pluginGroupStyles } =
+    (storageDir || globalDir) ? loadPluginWebviews({ storageDir, globalDir }) : { groupStyles: '' };
 
   const html = read('front', 'hub.html')
     .replace('{{panelDashboard}}', read('front', 'shared', 'panel-dashboard.html'))
@@ -1247,7 +1259,6 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', global
     .replace(/{{optionsCssUri}}/g, optionsCssUri.toString())
     .replace(/{{cspSource}}/g, csp)
     .replace('{{pluginGroupStyles}}', pluginGroupStyles)
-    .replace('{{pluginFrames}}', pluginFrames)
     .replace(/{{pluginIframeRouterUri}}/g, pluginIframeRouterUri.toString())
     .replace(/<body>/, `<body data-initial-panel="${initialPanel}">`);
 }

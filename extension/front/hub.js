@@ -517,33 +517,27 @@ requestOllamaModels();
 vscode.postMessage({ type: 'hubReady' });
 window.capturePofWebviewPerfSnapshot?.('hub.ready', { source: 'startup' });
 
-// Initialize plugin iframe router and register all plugin frames
+// Plugin iframes are created later, once the extension reports them as authorized.
 if (window.PluginIframeRouter) {
   window.PluginIframeRouter.init(window, vscode);
-  document.querySelectorAll('iframe.plugin-iframe').forEach(function (frame) {
-    var slug = frame.dataset.pluginSlug;
-    if (slug) window.PluginIframeRouter.register(slug, frame);
-  });
-  // Forward VS Code CSS variables to plugin iframes for correct theme rendering
-  var _pofCssVars = {};
-  var _computedStyle = getComputedStyle(document.documentElement);
-  for (var i = 0; i < _computedStyle.length; i++) {
-    var prop = _computedStyle[i];
-    if (prop.startsWith('--vscode-')) {
-      _pofCssVars[prop] = _computedStyle.getPropertyValue(prop).trim();
+  // Forward VS Code CSS variables and the current binary to each iframe as it
+  // loads, so a frame created after a binary was selected starts with both.
+  window.pofInitPluginFrame = function (frame) {
+    var cssVars = {};
+    var computedStyle = getComputedStyle(document.documentElement);
+    for (var i = 0; i < computedStyle.length; i++) {
+      var prop = computedStyle[i];
+      if (prop.startsWith('--vscode-')) {
+        cssVars[prop] = computedStyle.getPropertyValue(prop).trim();
+      }
     }
-  }
-  if (Object.keys(_pofCssVars).length > 0) {
-    setTimeout(function () {
-      window.PluginIframeRouter.broadcast({ type: '__cssVars', vars: _pofCssVars });
-    }, 200);
-  }
-  // Forward the currently selected binary path so plugin iframes opened after
-  // a binary was already loaded don't see an empty getStaticBinaryPath().
-  setTimeout(function () {
+    var pluginId = frame.dataset.pluginId;
+    if (Object.keys(cssVars).length > 0) {
+      window.PluginIframeRouter.dispatch(pluginId, { type: '__cssVars', vars: cssVars });
+    }
     var bp = typeof getStaticBinaryPath === 'function' ? getStaticBinaryPath() : '';
-    if (bp) window.PluginIframeRouter.broadcast({ type: '__binaryPath', binaryPath: bp });
-  }, 200);
+    if (bp) window.PluginIframeRouter.dispatch(pluginId, { type: '__binaryPath', binaryPath: bp });
+  };
 }
 
 // À l'ouverture : si le panel dynamic n'était pas déjà affiché (auquel cas showPanel l'a déjà init),
