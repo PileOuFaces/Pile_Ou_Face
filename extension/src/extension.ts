@@ -46,9 +46,7 @@ const { AuthService } = require('./shared/authService');
 const { planLegacyAuthUrlMigration, resolveAuthServerUrl } = require('./shared/authConfig');
 const { getProductConfig } = require('./shared/productConfig');
 const { configureRuntimeAudit, recordRuntimeEvent, resetRuntimeAudit } = require('./shared/runtimeAudit');
-const { createTelemetryService } = require('./shared/telemetry/telemetry');
-const { EVENT_NAMES } = require('./shared/telemetry/telemetryEvents');
-const { mapPlatform } = require('./shared/telemetry/telemetryMappings');
+const { initializeExtensionTelemetry } = require('./shared/telemetry/telemetry');
 const logger = require('./shared/logger');
 
 const decorationTypes = new Map();
@@ -106,15 +104,11 @@ function activate(context) {
   setExtensionPath(context.extensionPath);
   _registerGlobalErrorHandlers();
   const productConfig = getProductConfig();
-  const telemetry = createTelemetryService({
+  const telemetry = initializeExtensionTelemetry({
     vscode,
     context,
-    endpoint: productConfig.telemetryProviderUrl,
-  });
-  telemetry.trackEvent(EVENT_NAMES.EXTENSION_ACTIVATED, {
-    extensionVersion: String(context.extension?.packageJSON?.version || '0.0.0'),
-    vscodeVersionMajor: String(vscode.version || '0').split('.')[0],
-    platform: mapPlatform(process.platform),
+    productConfig,
+    onDiagnostic: (status) => logChannel.appendLine(`[Telemetry] ${status}`),
   });
   const storageDir  = ensureStorageDir(context);
   const globalDir   = getGlobalStorageDir(context);

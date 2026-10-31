@@ -2,11 +2,23 @@
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-25
+
+### Fixed
+
+- Redimensionnement des icônes de l'extension pour respecter les limites d'image du VS Code Marketplace.
+
+## [0.3.0] - 2026-10-24
+
 ### Added
 
 - **Système de types** (struct/union/enum, typedefs, prototypes) : catalogue de types par binaire, visible et résilient depuis l'éditeur, avec typedefs et prototypes traités comme des types de premier ordre.
 - Rendu sémantique dans le décompilateur : accès champ `ptr->field` (y compris chaînes multi-niveaux `ptr->inner->field`) et littéraux d'enum symboliques, y compris dans les labels `switch`/`case`.
 - Bindings de types pour paramètres et variables locales (`typed_var_bindings`), appliqués au pseudocode décompilé.
+
+### Fixed
+
+- Télémétrie de l'offre officielle : configuration de l'endpoint, acheminement des événements vers le service prévu et compatibilité avec le format de nom d'événement utilisé par VS Code.
 
 ## [0.2.0] - 2026-07-13
 

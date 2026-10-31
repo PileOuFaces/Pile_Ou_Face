@@ -7,6 +7,7 @@ describe('deployment profile packaging', () => {
     expect(buildProductConfig('OFFICIAL_SAAS')).to.include({
       deploymentId: 'official-saas',
       authProviderUrl: 'https://auth.pileouface.dev',
+      telemetryProviderUrl: 'https://telemetry.pileouface.dev',
     });
   });
 
@@ -15,12 +16,24 @@ describe('deployment profile packaging', () => {
     expect(buildProductConfig('MANAGED_ON_PREM', {
       POF_DEPLOYMENT_ID: 'customer-a',
       POF_AUTH_PROVIDER_URL: 'https://auth.customer.example',
-    })).to.include({ deploymentId: 'customer-a', authProviderUrl: 'https://auth.customer.example' });
+    })).to.include({
+      deploymentId: 'customer-a',
+      authProviderUrl: 'https://auth.customer.example',
+      telemetryProviderUrl: '',
+    });
   });
 
   it('keeps OSS neutral and airgap offline', () => {
-    expect(buildProductConfig('OSS_DEVELOPMENT').authProviderUrl).to.equal('');
-    expect(buildProductConfig('AIRGAP_ENTERPRISE').authProviderUrl).to.equal('');
+    expect(buildProductConfig('OSS_DEVELOPMENT')).to.include({
+      deploymentId: 'oss-development',
+      authProviderUrl: '',
+      telemetryProviderUrl: '',
+    });
+    expect(buildProductConfig('AIRGAP_ENTERPRISE')).to.include({
+      deploymentId: 'airgap-enterprise',
+      authProviderUrl: '',
+      telemetryProviderUrl: '',
+    });
   });
 
   it('exposes the endpoint setting only in OSS artifacts', () => {
