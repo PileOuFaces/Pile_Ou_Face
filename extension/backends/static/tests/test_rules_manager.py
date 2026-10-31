@@ -286,6 +286,27 @@ class TestRulesManager(unittest.TestCase):
             manager.delete_user_rule(f"global:{target}:plugin_consent.json")
         self.assertTrue((target / "plugin_consent.json").exists())
 
+    def test_symlinked_rule_directory_is_refused(self):
+        manager = self._make_rm_for_escape()
+        outside = Path(self.tmpdir) / "outside"
+        outside.mkdir()
+        (outside / "plugin_consent.json").write_text("{}", encoding="utf-8")
+        rules_dir = manager._project_rules_dir
+        rules_dir.mkdir(parents=True)
+        (rules_dir / "yara").symlink_to(outside, target_is_directory=True)
+        rule_id = "user:yara:plugin_consent.json"
+        with self.assertRaises(ValueError):
+            manager.get_rule(rule_id)
+        with self.assertRaises(ValueError):
+            manager.update_user_rule(rule_id, "plugin_consent.json", "changed")
+        with self.assertRaises(ValueError):
+            manager.delete_user_rule(rule_id)
+        with self.assertRaises(ValueError):
+            manager.add_user_rule("plugin_consent.json", "changed", "yara")
+        self.assertEqual(
+            (outside / "plugin_consent.json").read_text(encoding="utf-8"), "{}"
+        )
+
     def test_symlinked_rule_cannot_write_outside(self):
         manager = self._make_rm_for_escape()
         outside = Path(self.tmpdir) / "outside.yar"

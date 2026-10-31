@@ -85,8 +85,12 @@ class RulesManager:
 
     @staticmethod
     def _confined_rule_path(base: Path, rule_type: str, name: str) -> Path:
-        """Refuse a rule file that resolves outside its rules directory."""
-        root = (base / rule_type).resolve()
+        """Refuse a rule file that resolves outside its rules directory.
+
+        The anchor is the storage directory: resolving the rules directory
+        itself would accept a link pointing it somewhere else.
+        """
+        root = base.parent.resolve() / base.name / rule_type
         path = base / rule_type / name
         if not path.resolve().is_relative_to(root):
             raise ValueError(f"Chemin de règle refusé : {name!r}")

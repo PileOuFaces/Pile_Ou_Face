@@ -52,6 +52,9 @@
     'navigateTo',
   ]);
 
+  /** PoF methods whose first argument must be a tab of the calling plugin. */
+  const TAB_SCOPED_METHODS = new Set(['getTabCache', 'setTabCache']);
+
   /** @type {any} vscode handle (provides postMessage to the extension host) */
   let _vscode = null;
   /** @type {any} window-like object owning PoF and addEventListener */
@@ -203,11 +206,16 @@
       || (Object.hasOwn(PLUGIN_MESSAGE_TYPES, pluginId) && PLUGIN_MESSAGE_TYPES[pluginId].includes(type));
   }
 
-  /** Record a plugin tab loader, unless the tab belongs to another plugin. */
+  /** Plugins only touch their own tabs: native tabs have no plugin owner. */
+  function _ownsTab(frame, tabId) {
+    if (typeof tabId !== 'string' || !tabId || typeof _win?.getPluginSlugForTab !== 'function') return false;
+    return _win.getPluginSlugForTab(tabId) === frame.dataset.pluginSlug;
+  }
+
+  /** Record a plugin tab loader. */
   function _registerTabLoader(frame, pof, tabId) {
     const slug = frame.dataset.pluginSlug;
-    const owner = typeof _win?.getPluginSlugForTab === 'function' ? _win.getPluginSlugForTab(tabId) : null;
-    if (typeof tabId !== 'string' || !tabId || (owner && owner !== slug)) return;
+    if (!_ownsTab(frame, tabId)) return;
     if (!_tabLoaders.has(tabId)) _tabLoaders.set(tabId, new Set());
     _tabLoaders.get(tabId).add(slug);
     // Register a real callback in state.js so payload.js callTabLoader still fires
@@ -229,8 +237,13 @@
       _reply(frame.contentWindow, seq, undefined);
       return;
     }
+    const firstArg = Array.isArray(args) ? args[0] : undefined;
     if (method === 'registerTabLoader') {
-      _registerTabLoader(frame, pof, (args || [])[0]);
+      _registerTabLoader(frame, pof, firstArg);
+      _reply(frame.contentWindow, seq, undefined);
+      return;
+    }
+    if (TAB_SCOPED_METHODS.has(method) && !_ownsTab(frame, firstArg)) {
       _reply(frame.contentWindow, seq, undefined);
       return;
     }

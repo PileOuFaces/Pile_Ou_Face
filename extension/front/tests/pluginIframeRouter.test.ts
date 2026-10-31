@@ -12,11 +12,14 @@ const mockPoF = {
   registerTabLoader: (_tabId: string) => Promise.resolve(undefined),
 };
 
+let _tabOwners: Record<string, string> = {};
+
 const mockWindow = {
   addEventListener: (type: string, fn: (e: any) => void) => {
     if (type === 'message') _listeners.push(fn);
   },
   PoF: mockPoF,
+  getPluginSlugForTab: (tabId: string) => _tabOwners[tabId] || null,
 };
 
 function makeFrame(pluginId: string) {
@@ -43,6 +46,7 @@ describe('PluginIframeRouter', () => {
 
   beforeEach(() => {
     _listeners = [];
+    _tabOwners = { audit: 'my-plugin', tab: 'a' };
     // Fresh require each time to reset internal state
     const routerPath = path.resolve(__dirname, '../../front/shared/pluginIframeRouter.js');
     delete require.cache[routerPath];
@@ -225,13 +229,45 @@ describe('PluginIframeRouter', () => {
     });
 
     it('does not let a plugin take the tab of another plugin', async () => {
-      (mockWindow as any).getPluginSlugForTab = (tabId: string) => (tabId === 'audit' ? 'owner' : null);
       const frame = makeFrame('pof.intruder');
       router.register('intruder', frame);
       emit({ __pof_plugin: true, __pof_call: true, method: 'registerTabLoader', args: ['audit'], __seq: 3 }, frame.contentWindow);
       await tick();
-      delete (mockWindow as any).getPluginSlugForTab;
       expect(router.hasTabLoader('intruder', 'audit')).to.equal(false);
+    });
+
+    it('does not let a plugin take over a native tab', async () => {
+      const frame = makeFrame('pof.intruder');
+      router.register('intruder', frame);
+      emit({ __pof_plugin: true, __pof_call: true, method: 'registerTabLoader', args: ['decompile'], __seq: 3 }, frame.contentWindow);
+      await tick();
+      expect(router.hasTabLoader('intruder', 'decompile')).to.equal(false);
+    });
+
+    for (const key of ['decompile', 'audit']) {
+      it(`keeps the cache of ${key} away from a plugin that does not own it`, async () => {
+        let written = false;
+        const original = mockPoF.setTabCache;
+        mockPoF.setTabCache = () => { written = true; return Promise.resolve(undefined); };
+        const frame = makeFrame('pof.intruder');
+        router.register('intruder', frame);
+        emit({ __pof_plugin: true, __pof_call: true, method: 'setTabCache', args: [key, {}], __seq: 4 }, frame.contentWindow);
+        emit({ __pof_plugin: true, __pof_call: true, method: 'getTabCache', args: [key], __seq: 5 }, frame.contentWindow);
+        await tick();
+        mockPoF.setTabCache = original;
+        expect(written).to.equal(false);
+        const reads = frame._received.filter((m: any) => m.payload?.__pof_reply && m.payload.__seq === 5);
+        expect(reads[0].payload.result).to.equal(undefined);
+      });
+    }
+
+    it('refuses tab methods before the plugin tabs are known', async () => {
+      const frame = makeFrame('pof.my-plugin');
+      router.register('my-plugin', frame);
+      _tabOwners = {};
+      emit({ __pof_plugin: true, __pof_call: true, method: 'registerTabLoader', args: ['audit'], __seq: 6 }, frame.contentWindow);
+      await tick();
+      expect(router.hasTabLoader('my-plugin', 'audit')).to.equal(false);
     });
 
     it('hides sandboxed messages from the listeners of the hub', () => {

@@ -65,7 +65,8 @@ describe("staticHandlers plugin bridge", () => {
 
     await handlers.hubLoadPluginState();
 
-    expect(execFile.lastCall.args[1]).to.deep.equal([
+    expect(postMessage.lastCall.args[0].type).to.equal("hubPluginFrames");
+    expect(execFile.firstCall.args[1]).to.deep.equal([
       "/workspace/backends/plugins/runtime.py",
       "--host-version",
       "0.2.0",
@@ -74,12 +75,12 @@ describe("staticHandlers plugin bridge", () => {
       "list",
       "--attach",
     ]);
-    expect(postMessage.lastCall.args[0]).to.include({ type: "hubPluginState" });
-    expect(postMessage.lastCall.args[0].state).to.include({
+    expect(postMessage.firstCall.args[0]).to.include({ type: "hubPluginState" });
+    expect(postMessage.firstCall.args[0].state).to.include({
       loaded: true,
       pluginCount: 1,
     });
-    expect(postMessage.lastCall.args[0].state.attachedCommands).to.deep.equal(["demo.scan.run"]);
+    expect(postMessage.firstCall.args[0].state.attachedCommands).to.deep.equal(["demo.scan.run"]);
   });
 
   it("invokes a plugin feature through the generic bridge", async () => {
@@ -386,8 +387,8 @@ describe("staticHandlers plugin bridge", () => {
 
     expect(execFile.callCount).to.equal(3);
     expect(execFile.firstCall.args[1]).to.include.members(["consent-grant", "acme.new-plugin"]);
-    expect(postMessage.lastCall.args[0]).to.include({ type: "hubPluginState" });
-    expect(postMessage.lastCall.args[0].state.plugins[0]).to.include({
+    expect(postMessage.firstCall.args[0]).to.include({ type: "hubPluginState" });
+    expect(postMessage.firstCall.args[0].state.plugins[0]).to.include({
       id: "acme.new-plugin",
       state: "active",
     });
@@ -438,8 +439,8 @@ describe("staticHandlers plugin bridge", () => {
 
     expect(execFile.callCount).to.equal(3);
     expect(execFile.firstCall.args[1]).to.include.members(["consent-revoke", "acme.new-plugin"]);
-    expect(postMessage.lastCall.args[0]).to.include({ type: "hubPluginState" });
-    expect(postMessage.lastCall.args[0].state.plugins[0]).to.include({
+    expect(postMessage.firstCall.args[0]).to.include({ type: "hubPluginState" });
+    expect(postMessage.firstCall.args[0].state.plugins[0]).to.include({
       id: "acme.new-plugin",
       state: "pending_consent",
     });

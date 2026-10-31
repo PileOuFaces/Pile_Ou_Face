@@ -1123,7 +1123,6 @@ function staticHandlers(config: LooseMessage) {
   const handlers = {
     hubSyncPluginFrames: syncPluginFrames,
     hubLoadPluginState: async () => {
-      await syncPluginFrames();
       try {
         const payload = await runPluginRuntime(['list', '--attach']);
         panel.webview.postMessage({
@@ -1136,6 +1135,8 @@ function staticHandlers(config: LooseMessage) {
           state: emptyPluginUiState(String(error?.message || error || 'runtime indisponible')),
         });
       }
+      // Frames come last: their scripts claim tabs that the state above declares.
+      await syncPluginFrames();
     },
     hubGrantPluginConsent: async (message: LooseMessage = {}) => {
       const pluginId = String(message.pluginId || message.plugin_id || '').trim();

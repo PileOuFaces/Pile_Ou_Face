@@ -92,6 +92,11 @@ function _getPluginSearchDirs(storageDir, _globalDir) {
 
 const PLUGIN_BRIDGE_PREAMBLE = `<script>
 (function () {
+  // Sibling plugin frames can reach this window: only the hub may talk to it.
+  // A null source is the bridge re-dispatching an unwrapped host message.
+  window.addEventListener('message', function (e) {
+    if (e.source && e.source !== window.parent && e.source !== window) e.stopImmediatePropagation();
+  }, true);
   window.onerror = function (message, source, lineno, colno, error) {
     console.error('[PoF-plugin] uncaught error:', message, source, lineno, colno, error && error.stack);
   };
