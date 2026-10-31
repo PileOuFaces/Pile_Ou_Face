@@ -23,6 +23,8 @@ import json
 import os
 import sys
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -72,25 +74,56 @@ def save_ai_consent(path: str | Path, store: dict[str, dict[str, Any]]) -> None:
         raise
 
 
+@contextmanager
+def _store_lock(store_path: Path) -> Iterator[None]:
+    """Serialize a whole read-modify-replace across processes.
+
+    Without it a grant working from an older read can restore an entry that a
+    concurrent revoke just removed. The lock file stays in place on purpose:
+    deleting it would let two processes hold different locks.
+    """
+    store_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(store_path.with_name(f".{store_path.name}.lock"), "a+b") as lock_file:
+        if os.name == "nt":
+            import msvcrt
+
+            lock_file.seek(0)
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
+
+
 def is_provider_consented(provider: str, store: dict[str, dict[str, Any]]) -> bool:
     entry = store.get(provider)
     return bool(isinstance(entry, dict) and entry.get("approved"))
 
 
 def grant_ai_consent(provider: str, path: str | Path) -> dict[str, dict[str, Any]]:
-    store = load_ai_consent(path)
-    store[provider] = {
-        "approved": True,
-        "approved_at": datetime.now(UTC).isoformat(),
-    }
-    save_ai_consent(path, store)
+    with _store_lock(Path(path)):
+        store = load_ai_consent(path)
+        store[provider] = {
+            "approved": True,
+            "approved_at": datetime.now(UTC).isoformat(),
+        }
+        save_ai_consent(path, store)
     return store
 
 
 def revoke_ai_consent(provider: str, path: str | Path) -> dict[str, dict[str, Any]]:
-    store = load_ai_consent(path)
-    store.pop(provider, None)
-    save_ai_consent(path, store)
+    with _store_lock(Path(path)):
+        store = load_ai_consent(path)
+        store.pop(provider, None)
+        save_ai_consent(path, store)
     return store
 
 

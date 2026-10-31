@@ -17,6 +17,8 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -71,6 +73,35 @@ def save_consent_store(path: str | Path, store: dict[str, dict[str, Any]]) -> No
         raise
 
 
+@contextmanager
+def _store_lock(store_path: Path) -> Iterator[None]:
+    """Serialize a whole read-modify-replace across processes.
+
+    Without it a grant working from an older read can restore an entry that a
+    concurrent revoke just removed. The lock file stays in place on purpose:
+    deleting it would let two processes hold different locks.
+    """
+    store_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(store_path.with_name(f".{store_path.name}.lock"), "a+b") as lock_file:
+        if os.name == "nt":
+            import msvcrt
+
+            lock_file.seek(0)
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
+
+
 def _resolved(path: str | Path) -> Path:
     return Path(path).expanduser().resolve()
 
@@ -114,7 +145,6 @@ def grant_plugin_consent(
     *,
     plugin_root: str | Path | None = None,
 ) -> dict[str, dict[str, Any]]:
-    store = load_consent_store(path)
     entry: dict[str, Any] = {
         "approved": True,
         "version": version,
@@ -122,15 +152,18 @@ def grant_plugin_consent(
     }
     if plugin_root is not None:
         entry["plugin_root"] = str(_resolved(plugin_root))
-    store[plugin_id] = entry
-    save_consent_store(path, store)
+    with _store_lock(Path(path)):
+        store = load_consent_store(path)
+        store[plugin_id] = entry
+        save_consent_store(path, store)
     return store
 
 
 def revoke_plugin_consent(
     plugin_id: str, path: str | Path
 ) -> dict[str, dict[str, Any]]:
-    store = load_consent_store(path)
-    store.pop(plugin_id, None)
-    save_consent_store(path, store)
+    with _store_lock(Path(path)):
+        store = load_consent_store(path)
+        store.pop(plugin_id, None)
+        save_consent_store(path, store)
     return store

@@ -246,6 +246,22 @@ describe('loadPluginWebviews', () => {
     expect(framesText(result)).to.include('classList.remove');
   });
 
+  it('matches a symlinked plugin against the resolved path reported by the runtime', () => {
+    const realDir = path.join(tmpDir, 'real-plugin');
+    fs.mkdirSync(path.join(realDir, 'webview'), { recursive: true });
+    fs.mkdirSync(path.join(storageDir(), 'plugins'), { recursive: true });
+    fs.writeFileSync(path.join(realDir, 'plugin.json'), JSON.stringify({
+      id: 'pof.linked',
+      version: '1.0.0',
+      entrypoints: { webview: { tab_html: 'webview/tab.html' } },
+    }));
+    fs.writeFileSync(path.join(realDir, 'webview', 'tab.html'), '<div>linked</div>');
+    fs.symlinkSync(realDir, pluginDir('linked'));
+
+    const authorized = [{ plugin_id: 'pof.linked', version: '1.0.0', root_path: fs.realpathSync(realDir) }];
+    expect(loadFromStorage(authorized).frames).to.have.length(1);
+  });
+
   it('loads no plugin script unless the plugin is authorized', () => {
     const webviewDir = path.join(pluginDir('my-plugin'), 'webview');
     fs.mkdirSync(webviewDir, { recursive: true });

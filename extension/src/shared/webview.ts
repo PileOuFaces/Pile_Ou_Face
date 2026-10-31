@@ -937,10 +937,22 @@ function _buildPluginSrcdoc(html, inlineJs, pluginCss, hostCss = '') {
 
 type AuthorizedPlugin = { plugin_id: string; version: string; root_path: string };
 
+function _realPathOrNull(target) {
+  try {
+    return fs.realpathSync(target);
+  } catch (err) {
+    logDebug(`[loadPluginWebviews] chemin plugin illisible (${target}): ${err.message || err}`);
+    return null;
+  }
+}
+
 function _isAuthorizedPlugin(authorized: AuthorizedPlugin[], pluginDir, manifest) {
+  const realDir = _realPathOrNull(pluginDir);
+  if (!realDir) return false;
+  // Python reports the resolved directory, so symlinked installs must compare resolved too.
   return authorized.some((entry) => entry.plugin_id === manifest.id
     && entry.version === manifest.version
-    && path.resolve(entry.root_path) === path.resolve(pluginDir));
+    && _realPathOrNull(entry.root_path) === realDir);
 }
 
 /**

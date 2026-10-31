@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import stat
+import threading
 
 from backends.plugins.consent import (
     default_consent_path,
@@ -155,3 +156,29 @@ def test_store_is_valid_json_after_grant(tmp_path):
     path = tmp_path / "consent.json"
     grant_plugin_consent("acme.demo", "1.0.0", path)
     assert json.loads(path.read_text(encoding="utf-8"))["acme.demo"]["approved"]
+
+
+def test_grant_waits_for_a_revoke_in_progress(tmp_path, monkeypatch):
+    from backends.plugins import consent
+
+    path = tmp_path / "consent.json"
+    grant_plugin_consent("acme.a", "1.0.0", path)
+    reading = threading.Event()
+    original_load = consent.load_consent_store
+
+    def slow_load(store_path):
+        store = original_load(store_path)
+        reading.set()
+        threading.Event().wait(0.1)
+        return store
+
+    monkeypatch.setattr(consent, "load_consent_store", slow_load)
+    revoke = threading.Thread(target=revoke_plugin_consent, args=("acme.a", path))
+    revoke.start()
+    reading.wait(5)
+    grant_plugin_consent("acme.b", "1.0.0", path)
+    revoke.join(5)
+
+    store = original_load(path)
+    assert is_plugin_consented("acme.a", "1.0.0", store) is False
+    assert is_plugin_consented("acme.b", "1.0.0", store) is True
