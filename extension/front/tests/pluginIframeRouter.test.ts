@@ -193,6 +193,23 @@ describe('PluginIframeRouter', () => {
       }
     });
 
+    it('allows every message the injected bridge sends', async () => {
+      const webviewSource = require('fs').readFileSync(path.resolve(__dirname, '../../src/shared/webview.ts'), 'utf8');
+      const preamble = webviewSource.slice(0, webviewSource.indexOf('function _buildPluginSrcdoc'));
+      const types = Array.from(new Set(
+        Array.from(preamble.matchAll(/postMessage\(\{\s*type:\s*'(\w+)'/g), (m: any) => m[1]),
+      ));
+      expect(types).to.include.members(['hubDebugLog', 'hubLoadXrefs', 'hubSaveFunctionReview']);
+      const frame = makeFrame('pof.my-plugin');
+      router.register('my-plugin', frame);
+      for (const type of types) {
+        sent.length = 0;
+        emit(forward(type), frame.contentWindow);
+        await tick();
+        expect(sent, String(type)).to.have.length(1);
+      }
+    });
+
     it('answers a refused PoF method without calling it', async () => {
       let called = false;
       (mockPoF as any).dangerous = () => { called = true; };

@@ -24,6 +24,10 @@
     'hubLoadDataXrefs',
     'hubLoadImportXrefs',
     'hubRevealStringAtAddress',
+    // Sent by the bridge injected into every plugin frame (see webview.ts).
+    'hubDebugLog',
+    'hubLoadXrefs',
+    'hubSaveFunctionReview',
   ];
   /** Extra message types, keyed by plugin id. */
   const PLUGIN_MESSAGE_TYPES = {
