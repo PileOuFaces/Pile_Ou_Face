@@ -633,7 +633,14 @@ async function run() {
       target = await connectToHubWebview(process.env.POF_E2E_CDP_ENDPOINT);
       const hub = new HubPage(target);
 
-      await hub.openPanel('dashboard');
+      // pileOuFace.goToAddress posts a deferred showPanel that can land after this
+      // click and return to the static panel: open the dashboard until it stays.
+      const dashboardIsActive = 'document.getElementById("panel-dashboard")?.classList.contains("active") === true';
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        await hub.openPanel('dashboard');
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        if (await target.evaluate(dashboardIsActive)) break;
+      }
       const locale = await target.evaluate('document.documentElement.lang');
       const english = String(locale || '').toLowerCase() !== 'fr';
       await hub.topBarBinaryName().waitForText(english ? 'Choose a file' : 'Choisir un fichier', 30000);
