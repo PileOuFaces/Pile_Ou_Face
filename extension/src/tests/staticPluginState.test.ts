@@ -65,6 +65,7 @@ describe("staticHandlers plugin bridge", () => {
 
     await handlers.hubLoadPluginState();
 
+    expect(postMessage.lastCall.args[0].type).to.equal("hubPluginFrames");
     expect(execFile.firstCall.args[1]).to.deep.equal([
       "/workspace/backends/plugins/runtime.py",
       "--host-version",
@@ -384,7 +385,7 @@ describe("staticHandlers plugin bridge", () => {
 
     await handlers.hubGrantPluginConsent({ pluginId: "acme.new-plugin" });
 
-    expect(execFile.callCount).to.equal(2);
+    expect(execFile.callCount).to.equal(3);
     expect(execFile.firstCall.args[1]).to.include.members(["consent-grant", "acme.new-plugin"]);
     expect(postMessage.firstCall.args[0]).to.include({ type: "hubPluginState" });
     expect(postMessage.firstCall.args[0].state.plugins[0]).to.include({
@@ -436,7 +437,7 @@ describe("staticHandlers plugin bridge", () => {
 
     await handlers.hubRevokePluginConsent({ pluginId: "acme.new-plugin" });
 
-    expect(execFile.callCount).to.equal(2);
+    expect(execFile.callCount).to.equal(3);
     expect(execFile.firstCall.args[1]).to.include.members(["consent-revoke", "acme.new-plugin"]);
     expect(postMessage.firstCall.args[0]).to.include({ type: "hubPluginState" });
     expect(postMessage.firstCall.args[0].state.plugins[0]).to.include({
@@ -464,6 +465,88 @@ describe("staticHandlers plugin bridge", () => {
         plugin_required: "",
         feature: "",
       },
+    });
+  });
+
+  describe("plugin frames", () => {
+    const framesPosted = (postMessage) => postMessage.getCalls()
+      .map((call) => call.args[0])
+      .filter((message) => message.type === "hubPluginFrames");
+
+    it("fails closed when the runtime cannot answer", async () => {
+      const execFile = sinon.stub().callsFake((_bin, _args, _options, callback) => {
+        callback(new Error("runtime down"));
+      });
+      const postMessage = sinon.spy();
+      const handlers = createHandlers(loadStaticHandlers(execFile), postMessage);
+
+      await handlers.hubLoadPluginState();
+
+      expect(framesPosted(postMessage)).to.deep.equal([{ type: "hubPluginFrames", frames: [] }]);
+    });
+
+    it("removes frames when the runtime stops authorizing the plugin", async () => {
+      const execFile = sinon.stub().callsFake((_bin, args, _options, callback) => {
+        const plugins = args.includes("consent-status")
+          ? [{ plugin_id: "pof.a", version: "1.0.0", root_path: "/x", state: "locked", authorized: false }]
+          : [];
+        callback(null, JSON.stringify({ plugins }), "");
+      });
+      const postMessage = sinon.spy();
+      const handlers = createHandlers(loadStaticHandlers(execFile), postMessage);
+
+      await handlers.hubLoadPluginState();
+
+      expect(framesPosted(postMessage)).to.deep.equal([{ type: "hubPluginFrames", frames: [] }]);
+    });
+
+    it("drops the result of a sync overtaken by a newer one", async () => {
+      const pending = [];
+      const execFile = sinon.stub().callsFake((_bin, _args, _options, callback) => {
+        pending.push(callback);
+      });
+      const postMessage = sinon.spy();
+      const handlers = createHandlers(loadStaticHandlers(execFile), postMessage);
+
+      const first = handlers.hubLoadPluginState();
+      const second = handlers.hubLoadPluginState();
+      for (let round = 0; round < 3; round += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        pending.splice(0).forEach((callback) => callback(null, JSON.stringify({ plugins: [] }), ""));
+      }
+      await Promise.all([first, second]);
+
+      expect(framesPosted(postMessage)).to.have.length(1);
+    });
+
+    it("forces host paths and the owning plugin on a plugin view invocation", async () => {
+      const execFile = sinon.stub().callsFake((_bin, _args, _options, callback) => {
+        callback(null, JSON.stringify({ ok: true, plugin_id: "pof.a", result: {} }), "");
+      });
+      const handlers = createHandlers(loadStaticHandlers(execFile), sinon.spy());
+
+      await handlers.hubPluginInvoke({
+        feature: "scan",
+        __pofPluginId: "pof.a",
+        payload: { workspaceRoot: "/attacker", globalConfigPath: "/attacker/config.json" },
+      });
+
+      const args = execFile.lastCall.args[1];
+      const payload = JSON.parse(args[args.indexOf("--payload-json") + 1]);
+      expect(payload.workspaceRoot).to.equal("/workspace");
+      expect(payload.globalConfigPath || "").not.to.include("attacker");
+      expect(args).to.include.members(["--expected-plugin", "pof.a"]);
+    });
+
+    it("leaves invocations from the hub itself unrestricted", async () => {
+      const execFile = sinon.stub().callsFake((_bin, _args, _options, callback) => {
+        callback(null, JSON.stringify({ ok: true, plugin_id: "pof.a", result: {} }), "");
+      });
+      const handlers = createHandlers(loadStaticHandlers(execFile), sinon.spy());
+
+      await handlers.hubPluginInvoke({ feature: "scan", payload: {} });
+
+      expect(execFile.lastCall.args[1]).not.to.include("--expected-plugin");
     });
   });
 });

@@ -1314,20 +1314,17 @@ class TestPluginConsentGate(unittest.TestCase):
             self.assertEqual(records[0].state, "pending_consent")
             self.assertNotIn("demo.run", context.commands)
 
-    def test_first_run_grandfathers_already_discovered_plugins(self):
-        from backends.plugins.runtime import attach_plugins
-
+    def test_first_run_does_not_approve_discovered_plugins(self):
         with tempfile.TemporaryDirectory() as tmp:
             consent_path = Path(tmp) / "consent.json"
-            self.assertFalse(consent_path.exists())
             record = self._make_plugin(tmp, "acme.existing-plugin")
 
             context, records = attach_plugins(
                 [record], consent_path=consent_path, require_consent=True
             )
 
-            self.assertEqual(records[0].state, "active")
-            self.assertIn("demo.run", context.commands)
+            self.assertEqual(records[0].state, "pending_consent")
+            self.assertFalse(consent_path.exists())
 
     def test_consent_grant_allows_a_previously_pending_plugin_to_attach(self):
         from backends.plugins.consent import grant_plugin_consent

@@ -325,6 +325,13 @@ window.addEventListener('message', (event) => {
   if (BROADCAST_TO_PLUGINS.has(msg.type) && window.PluginIframeRouter) {
     window.PluginIframeRouter.broadcast(msg);
   }
+  if (msg.type === 'hubPluginFrames') {
+    const frameHost = document.getElementById('pluginFrameHost');
+    if (frameHost && window.PluginIframeRouter) {
+      window.PluginIframeRouter.syncFrames(msg.frames, frameHost, window.pofInitPluginFrame);
+    }
+    return;
+  }
   if (msg.type === 'hubPrefillAiPrompt') {
     prefillOllamaPrompt(String(msg.prompt || ''));
     return;

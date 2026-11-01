@@ -234,6 +234,55 @@ def test_missing_content_key_is_refused(tmp_path, monkeypatch):
         runtime_module._resolve_effective_plugin_root(manifest)
 
 
+def test_expired_lease_takes_the_view_authorization_away(tmp_path, monkeypatch):
+    from backends.plugins.consent import grant_plugin_consent
+
+    content_key_b64 = base64.b64encode(b"\x05" * 32).decode("ascii")
+    manifest = _build_encrypted_bundle(tmp_path, content_key_b64)
+    consent_path = tmp_path / "consent.json"
+    grant_plugin_consent(
+        manifest.plugin_id,
+        manifest.version,
+        consent_path,
+        plugin_root=manifest.root_path,
+    )
+    record = SimpleNamespace(
+        plugin_id=manifest.plugin_id,
+        manifest=manifest,
+        state="active",
+        error="",
+    )
+
+    active = SimpleNamespace(
+        status="active",
+        message="",
+        license_path="",
+        license_id="",
+        licensee="",
+        verified=True,
+        features=[],
+    )
+    monkeypatch.setattr(runtime_module, "evaluate_plugin_license", lambda _m: active)
+    runtime_module.apply_plugin_licensing([record])
+    status = runtime_module.collect_consent_status([record], consent_path)
+    assert status[0]["authorized"] is True
+
+    expired = SimpleNamespace(
+        status="locked",
+        message="Lease expiré",
+        license_path="",
+        license_id="",
+        licensee="",
+        verified=False,
+        features=[],
+    )
+    monkeypatch.setattr(runtime_module, "evaluate_plugin_license", lambda _m: expired)
+    runtime_module.apply_plugin_licensing([record])
+    status = runtime_module.collect_consent_status([record], consent_path)
+    assert status[0]["state"] == "locked"
+    assert status[0]["authorized"] is False
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [
