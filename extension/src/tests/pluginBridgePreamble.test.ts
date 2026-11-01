@@ -532,4 +532,45 @@ describe('PLUGIN_BRIDGE_PREAMBLE', () => {
       expect(received[0].result).to.deep.equal({ ok: true });
     });
   });
+
+  it('claims a tab loader again once the hub knows the tab', () => {
+    const { win } = makeBridgeWindow();
+    win.PoF.registerTabLoader('audit', () => {});
+    win.parent.postMessage.resetHistory();
+
+    deliverHostMessage(win, { type: 'hubPluginState', state: { tabRegistrations: [{ tabId: 'audit' }, { tabId: 'other' }] } });
+
+    const claims = win.parent.postMessage.getCalls()
+      .map((call: any) => call.args[0])
+      .filter((msg: any) => msg.method === 'registerTabLoader');
+    expect(claims.map((msg: any) => msg.args[0])).to.deep.equal(['audit']);
+  });
+
+  describe('sender check', () => {
+    const fromWindow = (win: any, source: any, data: unknown) =>
+      win.dispatchEvent(new win.MessageEvent('message', { data, source }));
+
+    it('ignores messages from a sibling plugin frame', () => {
+      const { win } = makeBridgeWindow();
+      const sibling = new JSDOM('').window;
+      const parent = new JSDOM('').window;
+      win.parent = parent;
+      const received: any[] = [];
+      win.addEventListener('message', (e: any) => received.push(e.data));
+
+      fromWindow(win, sibling, { __pof_host: true, payload: { type: '__binaryPath', binaryPath: '/spoofed' } });
+      fromWindow(win, sibling, { type: 'hubPluginResult', result: { spoofed: true } });
+
+      expect(received).to.deep.equal([]);
+      expect(win.PoF.getBinaryPath()).to.equal('');
+    });
+
+    it('accepts messages from the hub', () => {
+      const { win } = makeBridgeWindow();
+      const parent = new JSDOM('').window;
+      win.parent = parent;
+      fromWindow(win, parent, { __pof_host: true, payload: { type: '__binaryPath', binaryPath: '/real' } });
+      expect(win.PoF.getBinaryPath()).to.equal('/real');
+    });
+  });
 });

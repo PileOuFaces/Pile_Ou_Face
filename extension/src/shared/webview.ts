@@ -92,6 +92,11 @@ function _getPluginSearchDirs(storageDir, _globalDir) {
 
 const PLUGIN_BRIDGE_PREAMBLE = `<script>
 (function () {
+  // Sibling plugin frames can reach this window: only the hub may talk to it.
+  // A null source is the bridge re-dispatching an unwrapped host message.
+  window.addEventListener('message', function (e) {
+    if (e.source && e.source !== window.parent && e.source !== window) e.stopImmediatePropagation();
+  }, true);
   window.onerror = function (message, source, lineno, colno, error) {
     console.error('[PoF-plugin] uncaught error:', message, source, lineno, colno, error && error.stack);
   };
@@ -230,6 +235,7 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
       window.dispatchEvent(new MessageEvent('message', { data: msg }));
     }
   });
+  var _tabLoaderIds = [];
   function _call(method, args) {
     return new Promise(function (resolve) {
       var seq = ++_seq;
@@ -256,6 +262,7 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
     getTabCache:         function (k) { return _call('getTabCache', [k]); },
     setTabCache:         function (k, v) { return _call('setTabCache', [k, v]); },
     registerTabLoader:   function (tabId, fn) {
+      _tabLoaderIds.push(tabId);
       _call('registerTabLoader', [tabId]);
       window.addEventListener('message', function (e) {
         if (e.data && e.data.__pof_host && e.data.payload && e.data.payload.__pof_tabload && e.data.payload.tabId === tabId) {
@@ -319,6 +326,8 @@ const PLUGIN_BRIDGE_PREAMBLE = `<script>
       if (!tabId) return;
       if (reg.label) window.GROUP_LABELS[tabId] = reg.label;
       if (reg.family) window.PREMIUM_TAB_FAMILY[tabId] = reg.family;
+      // The hub refuses a loader for a tab it does not know yet: claim it again now.
+      if (_tabLoaderIds.indexOf(tabId) !== -1) _call('registerTabLoader', [tabId]);
     });
   });
   window.normalizeHexAddress = function (addr) { return addr ? String(addr).trim() : ''; };
@@ -935,8 +944,37 @@ function _buildPluginSrcdoc(html, inlineJs, pluginCss, hostCss = '') {
   ].join('');
 }
 
-function loadPluginWebviews(options: { storageDir?: string; globalDir?: string; extensionFrontDir?: string } = {}) {
-  const { storageDir = '', globalDir = '', extensionFrontDir = '' } = options;
+type AuthorizedPlugin = { plugin_id: string; version: string; root_path: string };
+
+function _realPathOrNull(target) {
+  try {
+    return fs.realpathSync(target);
+  } catch (err) {
+    logDebug(`[loadPluginWebviews] chemin plugin illisible (${target}): ${err.message || err}`);
+    return null;
+  }
+}
+
+function _isAuthorizedPlugin(authorized: AuthorizedPlugin[], pluginDir, manifest) {
+  const realDir = _realPathOrNull(pluginDir);
+  if (!realDir) return false;
+  // Python reports the resolved directory, so symlinked installs must compare resolved too.
+  return authorized.some((entry) => entry.plugin_id === manifest.id
+    && entry.version === manifest.version
+    && _realPathOrNull(entry.root_path) === realDir);
+}
+
+/**
+ * Build plugin frames. No plugin script is read unless `authorized` lists it, so
+ * the default loads styles only.
+ */
+function loadPluginWebviews(options: {
+  storageDir?: string;
+  globalDir?: string;
+  extensionFrontDir?: string;
+  authorized?: AuthorizedPlugin[];
+} = {}) {
+  const { storageDir = '', globalDir = '', extensionFrontDir = '', authorized = [] } = options;
   let groupStyles = '';
   const frames: { pluginId: string; pluginSlug: string; frameId: string; srcdoc: string }[] = [];
 
@@ -980,6 +1018,8 @@ function loadPluginWebviews(options: { storageDir?: string; globalDir?: string; 
         groupStyles += `\n.group-tab.active[data-group="${family}"] { background: ${safeCss(color.bg)}; color: ${safeCss(color.fg)}; border-color: ${safeCss(color.border)}; }`;
       }
 
+      if (!_isAuthorizedPlugin(authorized, pluginDir, manifest)) continue;
+
       // Build srcdoc
       const pluginSlug = _derivePluginSlug(pluginDir, manifest);
       const pluginId = manifest.id || entry;
@@ -1019,12 +1059,7 @@ function loadPluginWebviews(options: { storageDir?: string; globalDir?: string; 
     }
   }
 
-  const framesHtml = frames.map((f) => {
-    const escapedSrcdoc = _escapeHtmlAttr(f.srcdoc);
-    return `<iframe id="${f.frameId}" data-plugin-id="${_escapeHtmlAttr(f.pluginId)}" data-plugin-slug="${_escapeHtmlAttr(f.pluginSlug)}" class="plugin-iframe static-panel" sandbox="allow-scripts" srcdoc="${escapedSrcdoc}"></iframe>`;
-  }).join('\n');
-
-  return { groupStyles: groupStyles.trim(), frames, framesHtml: framesHtml.trim() };
+  return { groupStyles: groupStyles.trim(), frames };
 }
 
 function getWebviewContent(webview, extensionUri) {
@@ -1056,12 +1091,10 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', global
     vscode.Uri.joinPath(extensionUri, ...parts).fsPath, 'utf8'
   );
 
-  const { groupStyles: pluginGroupStyles, framesHtml: pluginFrames } =
-    (storageDir || globalDir) ? loadPluginWebviews({
-      storageDir,
-      globalDir,
-      extensionFrontDir: vscode.Uri.joinPath(extensionUri, 'front').fsPath,
-    }) : { groupStyles: '', framesHtml: '' };
+  // The initial page never carries plugin frames: they arrive through
+  // hubPluginFrames once the extension has checked consent.
+  const { groupStyles: pluginGroupStyles } =
+    (storageDir || globalDir) ? loadPluginWebviews({ storageDir, globalDir }) : { groupStyles: '' };
 
   const html = read('front', 'hub.html')
     .replace('{{panelDashboard}}', read('front', 'shared', 'panel-dashboard.html'))
@@ -1247,7 +1280,6 @@ function getHubContent(webview, extensionUri, initialPanel = 'dashboard', global
     .replace(/{{optionsCssUri}}/g, optionsCssUri.toString())
     .replace(/{{cspSource}}/g, csp)
     .replace('{{pluginGroupStyles}}', pluginGroupStyles)
-    .replace('{{pluginFrames}}', pluginFrames)
     .replace(/{{pluginIframeRouterUri}}/g, pluginIframeRouterUri.toString())
     .replace(/<body>/, `<body data-initial-panel="${initialPanel}">`);
 }

@@ -23,6 +23,7 @@ class RulesManager:
     """Gère les règles custom YARA et CAPA par projet et au niveau global."""
 
     _PROJECT_SCOPE = "project"
+    _RULE_TYPES = ("yara", "capa")
     _GLOBAL_SCOPE = "global"
 
     def __init__(
@@ -83,11 +84,26 @@ class RulesManager:
         return clean
 
     @staticmethod
+    def _confined_rule_path(base: Path, rule_type: str, name: str) -> Path:
+        """Refuse a rule file that resolves outside its rules directory.
+
+        The anchor is the storage directory: resolving the rules directory
+        itself would accept a link pointing it somewhere else.
+        """
+        root = base.parent.resolve() / base.name / rule_type
+        path = base / rule_type / name
+        if not path.resolve().is_relative_to(root):
+            raise ValueError(f"Chemin de règle refusé : {name!r}")
+        return path
+
+    @staticmethod
     def _parse_rule_id(rule_id: str) -> tuple[str, str, str]:
         parts = rule_id.split(":", 2)
         if len(parts) != 3:
             raise ValueError(f"rule_id invalide : {rule_id!r}")
         prefix, rule_type, name = parts
+        if rule_type not in RulesManager._RULE_TYPES:
+            raise ValueError(f"rule_id invalide : {rule_id!r}")
         name = RulesManager._validate_rule_name(name)
         if prefix == "global":
             return RulesManager._GLOBAL_SCOPE, rule_type, name
@@ -174,9 +190,9 @@ class RulesManager:
         if base_dir is None:
             raise ValueError("Le stockage global des règles n'est pas configuré.")
         name = self._validate_rule_name(name)
-        d = base_dir / rule_type
-        d.mkdir(parents=True, exist_ok=True)
-        (d / name).write_text(content, encoding="utf-8")
+        rule_path = self._confined_rule_path(base_dir, rule_type, name)
+        rule_path.parent.mkdir(parents=True, exist_ok=True)
+        rule_path.write_text(content, encoding="utf-8")
         return self._rule_id(scope, rule_type, name)
 
     def delete_user_rule(self, rule_id: str) -> None:
@@ -189,7 +205,7 @@ class RulesManager:
         )
         if base_dir is None:
             raise ValueError("Le stockage global des règles n'est pas configuré.")
-        f = base_dir / rule_type / name
+        f = self._confined_rule_path(base_dir, rule_type, name)
         if not f.exists():
             raise FileNotFoundError(f"Règle introuvable : {f}")
         f.unlink()
@@ -214,7 +230,7 @@ class RulesManager:
         )
         if base_dir is None:
             raise ValueError("Le stockage global des règles n'est pas configuré.")
-        file_path = base_dir / rule_type / name
+        file_path = self._confined_rule_path(base_dir, rule_type, name)
         if not file_path.exists():
             raise FileNotFoundError(f"Règle introuvable : {file_path}")
         return {
@@ -236,12 +252,11 @@ class RulesManager:
         )
         if base_dir is None:
             raise ValueError("Le stockage global des règles n'est pas configuré.")
-        rule_dir = base_dir / rule_type
-        source_path = rule_dir / old_name
+        source_path = self._confined_rule_path(base_dir, rule_type, old_name)
         if not source_path.exists():
             raise FileNotFoundError(f"Règle introuvable : {source_path}")
         target_name = self._validate_rule_name(name or old_name)
-        target_path = rule_dir / target_name
+        target_path = self._confined_rule_path(base_dir, rule_type, target_name)
         if target_path != source_path and target_path.exists():
             raise FileExistsError(f"Une règle existe déjà : {target_path.name}")
         target_path.write_text(content, encoding="utf-8")

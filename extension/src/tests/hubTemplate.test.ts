@@ -17,9 +17,10 @@ describe('hub template placeholders', () => {
     expect(html).not.to.include('{{pluginScripts}}');
   });
 
-  it('panel-static.html uses {{pluginFrames}} not {{pluginPanels}}', () => {
+  it('panel-static.html ships a frame host and no plugin content', () => {
     const html = fs.readFileSync(path.join(frontDir, 'static', 'panel-static.html'), 'utf8');
-    expect(html).to.include('{{pluginFrames}}');
+    expect(html).to.include('id="pluginFrameHost"');
+    expect(html).not.to.include('{{pluginFrames}}');
     expect(html).not.to.include('{{pluginPanels}}');
   });
 });

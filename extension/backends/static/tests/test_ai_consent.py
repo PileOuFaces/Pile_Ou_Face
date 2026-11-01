@@ -30,26 +30,19 @@ from backends.mcp.ai_consent import (
 )
 
 
-def test_default_ai_consent_path_prefers_workspace_root_when_present(tmp_path):
-    project = tmp_path / "project"
-    (project / ".pile-ou-face").mkdir(parents=True)
-    path = default_ai_consent_path(cwd=project, home=tmp_path / "home", env={})
-    assert path == project / ".pile-ou-face" / "ai_consent.json"
-
-
-def test_default_ai_consent_path_falls_back_to_home_without_workspace_root(tmp_path):
-    path = default_ai_consent_path(
-        cwd=tmp_path / "project", home=tmp_path / "home", env={}
-    )
+def test_default_ai_consent_path_is_the_home_store(tmp_path):
+    path = default_ai_consent_path(home=tmp_path / "home", env={})
     assert path == tmp_path / "home" / ".pile-ou-face" / "ai_consent.json"
 
 
-def test_default_ai_consent_path_workspace_discovery_can_be_disabled(tmp_path):
+def test_default_ai_consent_path_ignores_a_workspace_store(tmp_path, monkeypatch):
     project = tmp_path / "project"
     (project / ".pile-ou-face").mkdir(parents=True)
-    path = default_ai_consent_path(
-        cwd=project, home=tmp_path / "home", env={}, allow_workspace_discovery=False
+    (project / ".pile-ou-face" / "ai_consent.json").write_text(
+        '{"openai": {"approved": true}}', encoding="utf-8"
     )
+    monkeypatch.chdir(project)
+    path = default_ai_consent_path(home=tmp_path / "home", env={})
     assert path == tmp_path / "home" / ".pile-ou-face" / "ai_consent.json"
 
 

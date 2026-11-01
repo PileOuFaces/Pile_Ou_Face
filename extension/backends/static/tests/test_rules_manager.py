@@ -17,6 +17,10 @@ from backends.static.rules.rules_manager import RulesManager
 
 
 class TestRulesManager(unittest.TestCase):
+    def _make_rm_for_escape(self):
+        global_cfg = str(Path(self.tmpdir) / "global" / "rules-config.json")
+        return RulesManager(self.tmpdir, global_cfg)
+
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
         self.storage = Path(self.tmpdir) / "storage"
@@ -259,6 +263,60 @@ class TestRulesManager(unittest.TestCase):
         self.assertFalse(target.exists())
         cfg = json.loads(global_cfg.read_text(encoding="utf-8"))
         self.assertNotIn("global:yara:global_rule.yar", cfg.get("rules", {}))
+
+    def test_rule_id_cannot_leave_the_rule_directories(self):
+        manager = self._make_rm_for_escape()
+        outside = Path(self.tmpdir) / "plugin_consent.json"
+        outside.write_text("{}", encoding="utf-8")
+        rule_id = f"user:{'..'}:plugin_consent.json"
+        with self.assertRaises(ValueError):
+            manager.update_user_rule(rule_id, "plugin_consent.json", "changed")
+        with self.assertRaises(ValueError):
+            manager.delete_user_rule(rule_id)
+        with self.assertRaises(ValueError):
+            manager.get_rule(rule_id)
+        self.assertEqual(outside.read_text(encoding="utf-8"), "{}")
+
+    def test_absolute_path_rule_type_is_refused(self):
+        manager = self._make_rm_for_escape()
+        target = Path(self.tmpdir) / "victim"
+        target.mkdir()
+        (target / "plugin_consent.json").write_text("{}", encoding="utf-8")
+        with self.assertRaises(ValueError):
+            manager.delete_user_rule(f"global:{target}:plugin_consent.json")
+        self.assertTrue((target / "plugin_consent.json").exists())
+
+    def test_symlinked_rule_directory_is_refused(self):
+        manager = self._make_rm_for_escape()
+        outside = Path(self.tmpdir) / "outside"
+        outside.mkdir()
+        (outside / "plugin_consent.json").write_text("{}", encoding="utf-8")
+        rules_dir = manager._project_rules_dir
+        rules_dir.mkdir(parents=True)
+        (rules_dir / "yara").symlink_to(outside, target_is_directory=True)
+        rule_id = "user:yara:plugin_consent.json"
+        with self.assertRaises(ValueError):
+            manager.get_rule(rule_id)
+        with self.assertRaises(ValueError):
+            manager.update_user_rule(rule_id, "plugin_consent.json", "changed")
+        with self.assertRaises(ValueError):
+            manager.delete_user_rule(rule_id)
+        with self.assertRaises(ValueError):
+            manager.add_user_rule("plugin_consent.json", "changed", "yara")
+        self.assertEqual(
+            (outside / "plugin_consent.json").read_text(encoding="utf-8"), "{}"
+        )
+
+    def test_symlinked_rule_cannot_write_outside(self):
+        manager = self._make_rm_for_escape()
+        outside = Path(self.tmpdir) / "outside.yar"
+        outside.write_text("original", encoding="utf-8")
+        rule_dir = manager._project_rules_dir / "yara"
+        rule_dir.mkdir(parents=True)
+        (rule_dir / "linked.yar").symlink_to(outside)
+        with self.assertRaises(ValueError):
+            manager.update_user_rule("user:yara:linked.yar", "linked.yar", "changed")
+        self.assertEqual(outside.read_text(encoding="utf-8"), "original")
 
 
 if __name__ == "__main__":
