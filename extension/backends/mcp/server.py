@@ -750,7 +750,7 @@ def _plugin_runtime_records() -> dict[str, Any]:
         search_paths=default_plugin_search_paths(
             cwd=ROOT, allow_workspace_discovery=False
         ),
-        consent_path=default_consent_path(cwd=ROOT, allow_workspace_discovery=False),
+        consent_path=default_consent_path(),
         require_consent=True,
         attach=True,
     )
@@ -1326,9 +1326,7 @@ def _call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             host_version=SERVER_VERSION,
             api_version=plugin_api_version,
         )
-        mcp_consent_path = default_consent_path(
-            cwd=ROOT, allow_workspace_discovery=False
-        )
+        mcp_consent_path = default_consent_path()
         if feature_id:
             response, context, attached_records = invoke_plugin_feature(
                 records,

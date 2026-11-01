@@ -547,7 +547,11 @@ function createHub(config) {
     // ── Periodic license re-evaluation — every 15 minutes ───────────────────────
     const LICENSE_RECHECK_MS = 15 * 60 * 1000;
     const licenseRecheckTimer = globalThis.setInterval(async () => {
-      if (!panel || !panel.visible) return;
+      if (!panel) return;
+      // Runs even for a hidden panel, whose plugin frames stay alive, and fails closed.
+      // Goes through the full state so a frame never starts before its tabs are known.
+      await handlers.hubLoadPluginState();
+      if (!panel.visible) return;
       try {
         const data = await runPluginRuntimeJson(['list', '--json'], { timeout: 30000 });
         panel.webview.postMessage({ type: 'pluginStatusRefresh', payload: data });

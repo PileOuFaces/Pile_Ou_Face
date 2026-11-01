@@ -232,6 +232,28 @@ async function main() {
       JSON.stringify({ content_keys: contentKeys }));
     }
 
+    const consentPath = path.join(tmpPluginRoot, '..', `pof-consent-${Date.now()}.json`);
+
+    async function consentRuntime(args, contentKeys = {}) {
+      const { version: hostVersion } = JSON.parse(fs.readFileSync(path.join(EXTENSION_ROOT, 'package.json'), 'utf8'));
+      return runPythonJson(pythonExe, [
+        '-m', 'backends.plugins.runtime', '--host-version', hostVersion, ...args,
+        ...(args[0] === 'consent-revoke' ? [] : ['--paths', tmpPluginRoot]),
+        '--consent-path', consentPath,
+      ], {
+        ...process.env,
+        BINHOST_CONTENT_KEYS_STDIN: '1',
+        BINHOST_DISABLE_LICENSE_FALLBACK: '1',
+      }, EXTENSION_ROOT, JSON.stringify({ content_keys: contentKeys }));
+    }
+
+    async function viewAuthorization(contentKeys) {
+      const status = await consentRuntime(['consent-status'], contentKeys);
+      const entry = status.plugins.find((plugin) => plugin.plugin_id === pluginId);
+      assert(entry, 'consent-status must report the installed plugin');
+      return entry;
+    }
+
     async function inspectSecretTransport(secretValues) {
       return runPythonJson(pythonExe, [
         '-c',
@@ -500,6 +522,22 @@ async function main() {
     await svc.secrets.store('pof.auth.leaseExpiresAt', realExpiresAt);
     console.log('[authLicensingInteropE2E] PASS: expired lease refuses cached content_keys without offline grace');
 
+    const liveKeys = await svc.getContentKeys();
+    const beforeConsent = await viewAuthorization(liveKeys);
+    assert(beforeConsent.state === 'active', `a valid lease must leave the plugin active (${beforeConsent.state})`);
+    assert(beforeConsent.authorized === false, 'a licensed plugin must stay unauthorized until the user consents');
+    await consentRuntime(['consent-grant', pluginId], liveKeys);
+    assert((await viewAuthorization(liveKeys)).authorized === true, 'consent plus a valid lease must authorize the view');
+    await svc.secrets.store('pof.auth.leaseExpiresAt', String(Date.now() - 1));
+    const expiredView = await viewAuthorization(await svc.getContentKeys());
+    await svc.secrets.store('pof.auth.leaseExpiresAt', realExpiresAt);
+    assert(expiredView.authorized === false, 'an expired lease must remove the view authorization despite consent');
+    assert((await viewAuthorization(await svc.getContentKeys())).authorized === true, 'a renewed lease must restore the approved view');
+    await consentRuntime(['consent-revoke', pluginId]);
+    assert((await viewAuthorization(liveKeys)).authorized === false, 'revoking consent must remove the view authorization');
+    await consentRuntime(['consent-grant', pluginId], liveKeys);
+    console.log('[authLicensingInteropE2E] PASS: consent and lease must both hold for an encrypted plugin view');
+
     // La révocation doit couper l'émission de nouveaux leases — vérifie que le
     // chemin d'erreur (403) interagit correctement de bout en bout lui aussi,
     // pas seulement le chemin nominal ci-dessus.
@@ -526,6 +564,8 @@ async function main() {
     assert(Object.keys(keysAfterAccessWithdrawal).length === 0, 'subscription withdrawal must clear cached plugin keys');
     const runtimeAfterAccessWithdrawal = await runtimeUnlock(keysAfterAccessWithdrawal);
     assert(runtimeAfterAccessWithdrawal.active === false, 'runtime must lock after subscription withdrawal');
+    const withdrawnView = await viewAuthorization(keysAfterAccessWithdrawal);
+    assert(withdrawnView.authorized === false, 'subscription withdrawal must remove the view authorization');
     console.log('[authLicensingInteropE2E] PASS: subscription withdrawal clears keys and locks the runtime');
 
     const secretValues = [

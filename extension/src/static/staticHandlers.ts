@@ -25,6 +25,7 @@ const {
 } = require('../shared/aiProcessRegistry');
 const { getKnownOciImagePlatform } = require('./decompilerCommands');
 const { recordRuntimeEvent } = require('../shared/runtimeAudit');
+const { loadPluginWebviews } = require('../shared/webview');
 
 const AUTH_STRICT_LICENSE_ENV = 'BINHOST_DISABLE_LICENSE_FALLBACK';
 const AUTH_CONTENT_KEYS_STDIN_ENV = 'BINHOST_CONTENT_KEYS_STDIN';
@@ -913,6 +914,7 @@ function staticHandlers(config: LooseMessage) {
   const invokePluginFeature = async (featureId, payload, {
     timeout = 120000,
     onProgress = null,
+    expectedPluginId = '',
   } = {}) => {
     let activePluginId = '';
     let aiFollowupStarted = false;
@@ -922,6 +924,7 @@ function staticHandlers(config: LooseMessage) {
         featureId,
         '--payload-json',
         JSON.stringify(payload || {}),
+        ...(expectedPluginId ? ['--expected-plugin', expectedPluginId] : []),
       ], { timeout, onProgress });
       if (response?.ok === true) {
         const pluginId = String(response.plugin_id || '');
@@ -1095,6 +1098,28 @@ function staticHandlers(config: LooseMessage) {
     req.end();
   });
 
+  let pluginFrameSyncId = 0;
+  // Fails closed: no answer from the runtime means no plugin frame.
+  const syncPluginFrames = async () => {
+    const syncId = ++pluginFrameSyncId;
+    let frames = [];
+    try {
+      const status = await runPluginRuntime(['consent-status']);
+      const authorized = (Array.isArray(status?.plugins) ? status.plugins : [])
+        .filter((plugin) => plugin?.authorized === true);
+      frames = loadPluginWebviews({
+        storageDir,
+        globalDir,
+        extensionFrontDir: path.join(extensionPath, 'front'),
+        authorized,
+      }).frames;
+    } catch (error) {
+      logChannel?.appendLine(`[hub] Plugin frames unavailable: ${error?.message || error}`);
+    }
+    // A slower older sync must not restore a frame that was revoked meanwhile.
+    if (syncId === pluginFrameSyncId) panel.webview.postMessage({ type: 'hubPluginFrames', frames });
+  };
+
   const handlers = {
     hubLoadPluginState: async () => {
       try {
@@ -1109,6 +1134,8 @@ function staticHandlers(config: LooseMessage) {
           state: emptyPluginUiState(String(error?.message || error || 'runtime indisponible')),
         });
       }
+      // Frames come last: their scripts claim tabs that the state above declares.
+      await syncPluginFrames();
     },
     hubGrantPluginConsent: async (message: LooseMessage = {}) => {
       const pluginId = String(message.pluginId || message.plugin_id || '').trim();
@@ -1159,7 +1186,13 @@ function staticHandlers(config: LooseMessage) {
         payload.binaryPath = message.binaryPath;
       }
       const responseBinaryPath = String(message.binaryPath || payload.binaryPath || payload.binary_path || '').trim();
-      // Inject workspace context so plugins (yara_scan, capa_scan) can locate rules via RulesManager
+      const sourcePluginId = String(message.__pofPluginId || '');
+      // Inject workspace context so plugins (yara_scan, capa_scan) can locate rules via RulesManager.
+      // A plugin view does not get to choose these paths.
+      if (sourcePluginId) {
+        delete payload.workspaceRoot;
+        delete payload.globalConfigPath;
+      }
       if (payload.workspaceRoot == null) payload.workspaceRoot = root;
       if (payload.globalConfigPath == null) {
         const gcDir = globalDir || context?.globalStorageUri?.fsPath || '';
@@ -1206,6 +1239,7 @@ function staticHandlers(config: LooseMessage) {
           return invokePluginFeature(feature, payload, {
               timeout: Number(message.timeout || 120000),
               onProgress: (update) => reportPluginProgress(progress, update),
+              expectedPluginId: sourcePluginId,
             });
         },
       );
