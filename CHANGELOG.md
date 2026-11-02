@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-11-02
+
+### Security
+
+- Renforcement du consentement et de l'isolation des plugins. Mise à jour recommandée.
+
+### Changed
+
+- Une nouvelle autorisation peut être demandée une fois pour les plugins déjà installés.
+
 ## [0.3.1] - 2026-10-25
 
 ### Fixed
