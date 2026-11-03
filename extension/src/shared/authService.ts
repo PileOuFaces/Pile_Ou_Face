@@ -163,6 +163,8 @@ class AuthService {
   declare private _secretNamespace: string;
   declare private readonly secrets: SecretStore;
   declare private _refreshTimer: NodeJS.Timeout | null;
+  declare private _refreshInFlight: Promise<RefreshTokenResponse> | null;
+  declare private _sessionEpoch: number;
   declare pluginSearchDirs: string[];
   declare private _serverIdentity: ServerIdentity | null | undefined;
   declare private _jwksCache: { jwks: unknown; fetchedAt: number } | null | undefined;
@@ -179,6 +181,8 @@ class AuthService {
       delete: async (key) => this._rawSecrets.delete(await this._resolveSecretKey(key)),
     } : secrets;
     this._refreshTimer = null;
+    this._refreshInFlight = null;
+    this._sessionEpoch = 0;
     this.pluginSearchDirs = Array.isArray(options.pluginSearchDirs)
       ? options.pluginSearchDirs
       : [];
@@ -220,6 +224,7 @@ class AuthService {
   }
 
   async login(email: string, password: string): Promise<void> {
+    this._beginSession();
     const attempts = this._getCandidateServerUrls();
     let lastError: unknown = null;
     for (const baseUrl of attempts) {
@@ -239,6 +244,7 @@ class AuthService {
   }
 
   async logout(): Promise<void> {
+    this._beginSession();
     const refreshToken = await this.secrets.get(KEY_REFRESH_TOKEN);
     if (refreshToken) {
       fetch(`${this.serverUrl}/auth/logout`, {
@@ -301,6 +307,7 @@ class AuthService {
   }
 
   async refresh(): Promise<boolean> {
+    const epoch = this._sessionEpoch;
     if (this._secretIsolationEnabled) {
       try { await this._ensureServerIdentity(this.serverUrl); }
       catch { return false; }
@@ -309,20 +316,47 @@ class AuthService {
     if (!refreshToken) { return false; }
     try {
       await this._ensureServerIdentity(this.serverUrl);
-      const data = await this._postJson<RefreshTokenResponse>(
-        this.serverUrl,
-        '/auth/refresh',
-        { refresh_token: refreshToken },
-      );
-      // Le serveur peut faire tourner le refresh token (rotation + détection de
-      // réutilisation, cf. Pile_ou_Face_auth#9) — toujours stocker celui renvoyé
-      // s'il y en a un, sinon garder l'ancien (compat avec un serveur qui n'a
-      // pas encore la rotation).
-      await this._store(data.access_token, data.refresh_token || refreshToken);
-      await this._syncLicenseLeases(data.access_token);
+      await this._rotateRefreshToken(refreshToken, epoch);
       this._scheduleRefresh();
       return true;
     } catch { return false; }
+  }
+
+  /**
+   * Single-flight (POF-P1-017) : le serveur consomme le refresh token à chaque
+   * appel et traite un second usage comme un rejeu qui révoque la session.
+   * Les appels concurrents de ce processus partagent donc une seule requête,
+   * synchronisation des leases comprise. Un refresh commencé avant un login ou
+   * un logout (epoch différent) n'écrit rien : il ne ressuscite pas la session.
+   */
+  private _rotateRefreshToken(refreshToken: string, epoch: number): Promise<RefreshTokenResponse> {
+    if (!this._refreshInFlight) {
+      const inFlight: Promise<RefreshTokenResponse> = (async () => {
+        const data = await this._postJson<RefreshTokenResponse>(
+          this.serverUrl,
+          '/auth/refresh',
+          { refresh_token: refreshToken },
+        );
+        if (epoch !== this._sessionEpoch) {
+          throw new Error('Session changed during refresh');
+        }
+        // Toujours stocker le token renvoyé (rotation, Pile_ou_Face_auth#9),
+        // sinon garder l'ancien (serveur sans rotation).
+        await this._store(data.access_token, data.refresh_token || refreshToken);
+        await this._syncLicenseLeases(data.access_token);
+        return data;
+      })().finally(() => {
+        if (this._refreshInFlight === inFlight) this._refreshInFlight = null;
+      });
+      this._refreshInFlight = inFlight;
+    }
+    return this._refreshInFlight;
+  }
+
+  /** Invalide les refresh commencés pour la session précédente. */
+  private _beginSession(): void {
+    this._sessionEpoch += 1;
+    this._refreshInFlight = null;
   }
 
   private async _store(accessToken: string, refreshToken: string, email?: string): Promise<void> {
@@ -341,6 +375,7 @@ class AuthService {
   async refreshKeysIfStale(
     ttlMs = 24 * 3600_000,
   ): Promise<{ refreshed: boolean; revoked: boolean }> {
+    const epoch = this._sessionEpoch;
     const raw = await this.secrets.get(KEY_KEYS_VALIDATED_AT);
     const validatedAt = raw ? Number(raw) : 0;
     const age = Date.now() - validatedAt;
@@ -352,13 +387,7 @@ class AuthService {
       return { refreshed: false, revoked: false };
     }
     try {
-      const data = await this._postJson<RefreshTokenResponse>(
-        this.serverUrl,
-        '/auth/refresh',
-        { refresh_token: refreshToken },
-      );
-      await this._store(data.access_token, data.refresh_token || refreshToken);
-      await this._syncLicenseLeases(data.access_token);
+      await this._rotateRefreshToken(refreshToken, epoch);
       return { refreshed: true, revoked: false };
     } catch (err) {
       const status = err instanceof Error && 'status' in err
