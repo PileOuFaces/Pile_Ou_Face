@@ -316,6 +316,62 @@ describe("AuthService.refresh() — refresh token rotation", () => {
     expect(ok).to.equal(true);
     expect(store["pof.auth.refreshToken"]).to.equal("fake-refresh");
   });
+
+  it("shares one network refresh between concurrent callers (single-flight)", async () => {
+    const { svc, store } = makeAuthService({
+      storedValidatedAt: 0,
+      refreshResponse: { access_token: "new-tok", refresh_token: "rotated-refresh" },
+    });
+    sinon.stub(svc, "_syncLicenseLeases").resolves();
+    sinon.stub(svc, "_scheduleRefresh");
+
+    const results = await Promise.all([
+      svc.refresh(),
+      svc.refresh(),
+      svc.refreshKeysIfStale(24 * 3600_000),
+    ]);
+
+    expect(svc._postJson.callCount).to.equal(1);
+    expect(results.slice(0, 2)).to.deep.equal([true, true]);
+    expect(results[2]).to.deep.equal({ refreshed: true, revoked: false });
+    expect(store["pof.auth.refreshToken"]).to.equal("rotated-refresh");
+  });
+
+  it("starts a new refresh once the previous one has settled", async () => {
+    const { svc } = makeAuthService();
+    sinon.stub(svc, "_syncLicenseLeases").resolves();
+    sinon.stub(svc, "_scheduleRefresh");
+
+    await svc.refresh();
+    await svc.refresh();
+
+    expect(svc._postJson.callCount).to.equal(2);
+  });
+
+  it("does not restore a session when logout happens during a refresh", async () => {
+    const { svc, store } = makeAuthService();
+    let release;
+    svc._postJson.restore();
+    sinon.stub(svc, "_postJson").returns(
+      new Promise((resolve) => {
+        release = () => resolve({ access_token: "late-tok", refresh_token: "late-refresh" });
+      }),
+    );
+    sinon.stub(svc, "_syncLicenseLeases").resolves();
+    sinon.stub(svc, "_scheduleRefresh");
+    const fetchStub = sinon.stub(global, "fetch").resolves(new Response(null, { status: 204 }));
+
+    const refreshing = svc.refresh();
+    await new Promise((resolve) => setImmediate(resolve));
+    await svc.logout();
+    release();
+
+    expect(await refreshing).to.equal(false);
+    expect(store["pof.auth.accessToken"]).to.equal(undefined);
+    expect(store["pof.auth.refreshToken"]).to.equal(undefined);
+    expect(svc._syncLicenseLeases.called).to.equal(false);
+    expect(fetchStub.calledOnce).to.equal(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
