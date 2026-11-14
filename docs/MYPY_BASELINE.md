@@ -11,8 +11,8 @@ uniquement au critère « Baseline documentée » de l'issue #479.
   PileOuFaces/fix/auth-refresh-single-flight »).
 - Méthode : lecture statique des fichiers de configuration et recherche
   textuelle dans l'arbre de travail, propre au moment de la consultation.
-- Le rattachement exact de ce document au SHA ci-dessus doit être confirmé
-  par le runner de confiance (voir « Limites de validation »).
+- Le rattachement de ce document au SHA ci-dessus a été vérifié par le
+  runner (voir « Validations effectuées et limites »).
 
 ## Configuration mypy : `extension/backends/pyproject.toml`
 
@@ -85,10 +85,14 @@ lance le hook depuis cette racine.
 
 Il n'existe aucun répertoire `backends/` à la racine du dépôt. En l'état :
 
-- le motif `files` ne correspond à aucun fichier suivi, donc le hook mypy
-  n'est jamais déclenché sur les fichiers Python existants ;
-- s'il était déclenché, le chemin `--config-file` désignerait un fichier
-  inexistant.
+- le motif `files` ne correspond à aucun fichier suivi : d'après la
+  configuration, le hook mypy ne devrait sélectionner aucun fichier Python
+  existant ;
+- s'il sélectionnait des fichiers, le chemin `--config-file` désignerait un
+  fichier inexistant.
+
+Ces deux points sont déduits de la configuration ; ils n'ont pas été
+observés par exécution de pre-commit.
 
 Le motif ne vise en outre que `backends/static/`, c'est-à-dire précisément
 le périmètre couvert par `ignore_errors = true`.
@@ -112,10 +116,30 @@ occurrence. Workflows suivis examinés sous `.github/workflows/` :
 - `tripartite-scheduled.yml`
 - `vsix.yml`
 
-Conclusion : **mypy n'est exécuté dans aucun workflow CI**. À titre de
-comparaison, `ci.yml` exécute en Python, depuis `./extension`,
+Constat : **aucune invocation de mypy n'a été trouvée dans les workflows
+de `.github/workflows/`** au SHA de base. À titre de comparaison, `ci.yml` exécute en Python, depuis `./extension`,
 `python3 -m ruff check .`, `python3 -m ruff format --check .` et les tests
 `pytest` sous coverage.
+
+## Invocations indirectes de mypy
+
+Recherche textuelle de `mypy` (insensible à la casse) dans tous les fichiers
+suivis au SHA de base : les seules occurrences sont la configuration
+(`extension/backends/pyproject.toml`), le hook de `.pre-commit-config.yaml`,
+la dépendance de `extension/backends/requirements-dev.txt`, l'entrée
+`.mypy_cache/` de `.gitignore` et une liste de répertoires exclus dans
+`extension/backends/mcp/server.py`. Aucun script suivi, ni
+`extension/Makefile`, ne lance mypy par son nom.
+
+Ce constat ne permet pas d'affirmer que mypy n'est jamais exécuté. Ne sont
+pas couverts :
+
+- les hooks pre-commit installés localement par les contributeurs
+  (`CONTRIBUTING.md` recommande `pre-commit install`) : leur effet sur mypy
+  dépend du motif `files` décrit plus haut ;
+- les environnements de développement et extensions d'éditeur ;
+- les outils qui pourraient lancer mypy sans le nommer, ainsi que toute CI
+  ou tout script extérieur au dépôt.
 
 ## Inventaire des commentaires `type: ignore`
 
@@ -188,20 +212,31 @@ Notes :
 
 Cette sous-tâche ne traite que la baseline documentée. Restent ouverts :
 
-- **sous-paquets ciblés vérifiés en CI** : aucun workflow n'exécute mypy ;
+- **sous-paquets ciblés vérifiés en CI** : aucune invocation de mypy n'a
+  été trouvée dans les workflows ;
 - **aucun nouvel ignore** : aucun contrôle n'empêche l'ajout de
   commentaires `type: ignore` ou d'overrides `ignore_errors`.
 
 Cette sous-tâche **ne clôture pas** l'issue #479.
 
-## Limites de validation
+## Validations effectuées et limites
 
-- Contenu établi par lecture statique, sans exécution de mypy, de
-  pre-commit ni de Git par l'auteur du document.
-- Le SHA de base provient du mandat et de l'état Git observé au démarrage
-  de la session ; sa correspondance exacte doit être vérifiée par le
-  runner de confiance, de même que le périmètre du diff et le contrôle
-  `doc_static`.
-- Le comportement décrit pour le hook pre-commit (non-déclenchement,
-  fichier de configuration introuvable) est déduit des chemins ; il n'a
-  pas été observé par exécution.
+Validations effectuées par le runner de la boucle AI Dev Loop, sans exécuter
+de code du dépôt :
+
+- base résolue par Git : `main` = `ba9d2c2ef2a35277d8749b8272347ec02fa08a76`,
+  identique au SHA approuvé par l'opérateur pour cette sous-tâche ;
+- périmètre du diff : seul `docs/MYPY_BASELINE.md` est ajouté, aucun chemin
+  interdit (CI, code, configuration, dépendances) n'est modifié ;
+- contrôle statique du Markdown (UTF-8, titre, espaces en fin de ligne,
+  blocs de code fermés) et `git diff --check` : réussis ;
+- revue automatique indépendante : verdict PASS, liée aux SHA de base et de
+  tête ; puis approbation humaine.
+
+Non effectué :
+
+- mypy n'a été exécuté ni par le runner ni par les agents : aucun nombre
+  d'erreurs n'est mesuré ;
+- pre-commit et la CI du dépôt n'ont pas été lancés ;
+- les constats reposent sur une lecture statique des fichiers au SHA de
+  base, et les comptages sur une recherche textuelle.
