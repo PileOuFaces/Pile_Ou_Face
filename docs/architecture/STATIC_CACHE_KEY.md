@@ -33,7 +33,12 @@ Le namespace est la chaîne passée en argument `type` ; la fonction de cache ne
 - `info` (`extension/src/static/hub/loaders.ts:146`) ;
 - `sections` (`extension/src/static/hub/loaders.ts:199`) ;
 - `discovered` (`extension/src/static/hub/graphRenderers.ts:325`) ;
-- d'autres valeurs fournies par `cacheKey` dans `extension/src/static/hub/analysisContext.ts:459` et `extension/src/static/hub/analysisContext.ts:465`, non énumérées ici.
+- `cfg` ou `cfg_<funcAddr>` (`extension/src/static/hub/graphRenderers.ts:129`) ;
+- `callgraph` (`extension/src/static/hub/graphRenderers.ts:256`, `extension/src/static/hub/graphRenderers.ts:269`) ;
+- `info` (`extension/src/static/hub/analysisContext.ts:278`, `extension/src/static/hub/analysisContext.ts:284`) ;
+- `symbols` ou `symbols_all` (`extension/src/static/hub/analysisContext.ts:581-595`).
+
+Ces valeurs transitent par `readAnalysisCacheEntry` et `writeAnalysisCacheEntry` (`extension/src/static/hub/analysisContext.ts:456-467`), qui transmettent `cacheKey` à `readCache` et `writeCache` comme paramètre `type` (`extension/src/static/hub/analysisContext.ts:459`, `extension/src/static/hub/analysisContext.ts:465`). Ces deux fonctions ne produisent aucune cible quand `allowCache` est faux, quand le chemin n'existe pas ou quand c'est un répertoire (`extension/src/static/hub/analysisContext.ts:447-454`).
 
 ### Valeurs du variant
 
@@ -43,7 +48,7 @@ Le namespace est la chaîne passée en argument `type` ; la fonction de cache ne
 
 ### Version de l'analyseur
 
-Aucune version de l'analyseur n'entre dans la clé dans le périmètre étudié. Les composants de `cache_key`, `namespace` et `variant` listés ci-dessus sont les seuls. Aucun des trois fichiers ne lit ni ne transmet une version, un hash de code ou une version d'outil. Le seul marqueur de version est le littéral `_v2` du variant des `strings` (`extension/src/shared/staticCache.ts:86`).
+Aucune version de l'analyseur n'entre dans la clé dans le périmètre étudié. Les composants de `cache_key`, `namespace` et `variant` listés ci-dessus sont les seuls. Aucun des trois fichiers ne lit ni ne transmet une version, un hash de code ou une version d'outil. Le seul marqueur de version est le littéral `_v2` du variant des `strings` (`extension/src/shared/staticCache.ts:86`). Les champs `_cache_meta` (section 2.1) sont des signatures `<mtimeMs>:<size>` de fichiers et ne contiennent pas non plus de version d'analyseur (`extension/src/static/hub/graphRenderers.ts:35`).
 
 ## 2. Métadonnées stockées (hors clé)
 
@@ -63,6 +68,20 @@ Le `stat` de `writeCache` est lu deux fois : une fois dans `getCacheKey` (`exten
 
 Aucune de ces métadonnées n'est relue ni comparée lors d'un `get` (`extension/backends/static/cache/cache_store.py:62-65`). Elles servent au listage, à la purge et à la suppression par binaire (section 4).
 
+### 2.1 Métadonnées `_cache_meta` dans le payload (CFG et callgraph)
+
+Pour deux familles de payload, l'appelant ajoute lui-même une métadonnée à l'intérieur de `payload_json`. Elle n'appartient ni à la clé SQLite ni aux colonnes de la section 2. Elle est calculée côté TypeScript dans `extension/src/static/hub/graphRenderers.ts`.
+
+| Namespace | Champ `_cache_meta` | Calcul | Référence |
+| --- | --- | --- | --- |
+| `cfg` ou `cfg_<funcAddr>` | `mapping_sig` | `getFileSignature(mappingPath)` | `extension/src/static/hub/graphRenderers.ts:128`, `extension/src/static/hub/graphRenderers.ts:143` |
+| `callgraph` | `mapping_sig` | `getFileSignature(mappingPath)` | `extension/src/static/hub/graphRenderers.ts:254`, `extension/src/static/hub/graphRenderers.ts:271` |
+| `callgraph` | `symbols_sig` | `getFileSignature(resolvedSymbolsPath)` | `extension/src/static/hub/graphRenderers.ts:255`, `extension/src/static/hub/graphRenderers.ts:271` |
+
+`getFileSignature` renvoie la chaîne `<mtimeMs>:<size>` du fichier passé en argument, lue par `fs.statSync` (`extension/src/static/hub/graphRenderers.ts:31-35`). Elle renvoie la chaîne vide si le chemin est vide, si le fichier n'existe pas ou si `statSync` échoue (`extension/src/static/hub/graphRenderers.ts:32`, `extension/src/static/hub/graphRenderers.ts:36-37`).
+
+Ces signatures portent sur le fichier de mapping et sur le fichier de symboles, et non sur le binaire. Le contenu de ces fichiers n'est pas haché dans le périmètre étudié. Les autres namespaces (`symbols`, `strings`, `info`, `sections`, `discovered`) n'ont pas de `_cache_meta` dans les appelants observés.
+
 ## 3. Péremption et remplacement
 
 ### Conditions de péremption à la lecture
@@ -75,6 +94,24 @@ Aucune de ces métadonnées n'est relue ni comparée lors d'un `get` (`extension
 - Côté TypeScript, une erreur de lancement, un code retour non nul ou une sortie non analysable donnent `null` (`extension/src/shared/staticCache.ts:74-79`), donc un échec de cache. Le délai maximal d'un appel est de 10 000 ms (`extension/src/shared/staticCache.ts:71`).
 - Un appelant peut ajouter son propre test d'usage : `isCacheUsable` dans `extension/src/static/hub/loaders.ts:42`. Il ne fait pas partie de la clé.
 - Un appelant peut contourner la lecture avec `useCache` à faux (`extension/src/static/hub/loaders.ts:40`). Il écrit tout de même le résultat (`extension/src/static/hub/loaders.ts:48`).
+
+### Rejet par les appelants CFG et callgraph (hors `get_payload`)
+
+Pour `cfg`, `cfg_<funcAddr>` et `callgraph`, une ligne SQLite trouvée par `get_payload` n'est pas forcément utilisée. `get_payload` ne rejette rien, mais l'appelant compare ensuite les signatures de la section 2.1 :
+
+- CFG : le payload lu n'est utilisé que si `cachedCfg._cache_meta?.mapping_sig === mappingSig` (`extension/src/static/hub/graphRenderers.ts:130-131`). Sinon, le script CFG est relancé (`extension/src/static/hub/graphRenderers.ts:137-139`).
+- Callgraph : le payload lu n'est utilisé que si `mapping_sig` et `symbols_sig` sont tous deux égaux aux signatures actuelles (`extension/src/static/hub/graphRenderers.ts:256-261`). Sinon, le script de callgraph est relancé (`extension/src/static/hub/graphRenderers.ts:267`).
+- La lecture n'est tentée que si `allowCache` est vrai (`extension/src/static/hub/graphRenderers.ts:130`, `extension/src/static/hub/graphRenderers.ts:256`).
+- Un payload sans `_cache_meta` donne `undefined` à la comparaison. Il est rejeté, car `getFileSignature` renvoie toujours une chaîne et jamais `undefined` (`extension/src/static/hub/graphRenderers.ts:31-39`).
+- Le CFG n'est lu que si le fichier de mapping existe (`extension/src/static/hub/graphRenderers.ts:127`) et le callgraph que si le mapping et le fichier de symboles existent (`extension/src/static/hub/graphRenderers.ts:253`).
+
+Une ligne SQLite rejetée de cette façon reste en base. Elle n'est pas supprimée par ce rejet.
+
+### Réécriture après recalcul (CFG et callgraph)
+
+Après un rejet ou un défaut de cache, l'appelant recalcule puis écrit le résultat avec les signatures actuelles dans `_cache_meta` (`extension/src/static/hub/graphRenderers.ts:140-145`, `extension/src/static/hub/graphRenderers.ts:268-273`). Comme `(namespace, cache_key, variant)` est inchangé tant que le binaire n'a pas changé de chemin, de `mtimeMs` ou de taille, cette écriture remplace la ligne existante par le `DO UPDATE` décrit plus bas. Cette réécriture dépend de `writeAnalysisCache` / `writeCallGraphCache`, vrai sauf quand `artifacts?.binaryMeta?.kind === 'raw'` (`extension/src/static/hub/graphRenderers.ts:117`, `extension/src/static/hub/graphRenderers.ts:226`). Ce booléen est passé à la place de `allowCache` dans `writeAnalysisCacheEntry` (`extension/src/static/hub/graphRenderers.ts:141`, `extension/src/static/hub/graphRenderers.ts:269`).
+
+Le chemin d'appel `hubLoadCfgForAddr` ne lit ni n'écrit le cache : il lance directement le script CFG (`extension/src/static/hub/graphRenderers.ts:189-190`).
 
 ### Remplacement à l'écriture
 
@@ -111,6 +148,8 @@ Les appelants de ces opérations dans `extension/src/` sont :
 ## 5. Cas sans invalidation
 
 - **Contenu modifié avec `mtimeMs` et taille identiques.** `cache_key` est un hachage du chemin, de `mtimeMs` et de la taille uniquement (`extension/src/shared/staticCache.ts:26-28`). Le contenu du fichier n'est jamais lu ni haché dans le périmètre étudié. Si ces trois valeurs sont inchangées, la clé est identique. `get_payload` renvoie alors l'ancien payload (`extension/backends/static/cache/cache_store.py:62-65`). `_list_entry` renvoie `ok` dans ce cas, car il compare les mêmes métadonnées (`extension/backends/static/cache/cache_store.py:167-172`), donc `prune` ne supprime pas la ligne non plus.
+- **Contenu du mapping ou des symboles modifié avec `mtimeMs` et taille identiques (CFG, callgraph).** `mapping_sig` et `symbols_sig` sont de la forme `<mtimeMs>:<size>` (`extension/src/static/hub/graphRenderers.ts:35`). Si ces deux valeurs sont inchangées, la comparaison réussit (`extension/src/static/hub/graphRenderers.ts:131`, `extension/src/static/hub/graphRenderers.ts:259-260`) et le payload stocké est servi. Le contenu de ces fichiers n'est pas lu pour cette comparaison.
+- **Rôle respectif de la clé et de `_cache_meta` pour les CFG et callgraph.** La clé SQLite est calculée à partir du binaire (`effectiveAbsPath`, `extension/src/static/hub/graphRenderers.ts:130`, `extension/src/static/hub/graphRenderers.ts:256`), et `_cache_meta` à partir du mapping et des symboles. Un contenu de binaire modifié à chemin, `mtimeMs` et taille identiques reste donc sans effet sur la clé, comme décrit ci-dessus. Le code de ces appelants ne compare aucune information sur le binaire à `_cache_meta`.
 - **Changement de l'analyseur ou de ses outils.** Aucune version n'est dans la clé (section 1). Une entrée existante est donc servie tant que la clé est identique, quelle que soit la version de l'analyseur qui l'a produite.
 - **Lecture d'une ligne ancienne.** Une ligne dont la clé ne correspond plus à l'état du fichier n'est pas supprimée par une lecture. Elle reste jusqu'à `prune`, `delete-binary`, `clear` ou éviction par limites (section 3).
 
@@ -140,3 +179,11 @@ Les appelants de ces opérations dans `extension/src/` sont :
 | `readAnalysisCacheEntry` | `extension/src/static/hub/analysisContext.ts:456` | Appelant : `readCache` (ligne 459) pour un fichier non répertoire |
 | `writeAnalysisCacheEntry` | `extension/src/static/hub/analysisContext.ts:462` | Appelant : `writeCache` (ligne 465) |
 | `listCacheEntries` (fileManager) | `extension/src/shared/fileManager.ts:251` | Appelant : liste le cache et trie par `mtime` décroissant |
+| `getAnalysisCacheTarget` | `extension/src/static/hub/analysisContext.ts:447` | Renvoie le chemin de cache, ou `null` si le cache est désactivé, le chemin absent ou un répertoire |
+| `loadBinaryHeaders` | `extension/src/static/hub/analysisContext.ts:277` | Appelant : lecture (ligne 278) puis écriture (ligne 284) du namespace `info` |
+| `loadBinarySymbols` | `extension/src/static/hub/analysisContext.ts:580` | Appelant : lecture (ligne 582) puis écriture (ligne 595) des namespaces `symbols` ou `symbols_all` |
+| `resolveCachedAnalysisView` | `extension/src/static/hub/analysisContext.ts:469` | Appelant : lecture (ligne 476), calcul puis écriture (ligne 482) ; utilisé pour `discovered` (`extension/src/static/hub/graphRenderers.ts:322`) |
+| `getFileSignature` | `extension/src/static/hub/graphRenderers.ts:31` | Calcule la signature `<mtimeMs>:<size>` d'un fichier, chaîne vide si absent ou en erreur |
+| `stripCacheMeta` | `extension/src/static/hub/graphRenderers.ts:41` | Retire `_cache_meta` du payload avant de le publier |
+| `hubLoadCfg` | `extension/src/static/hub/graphRenderers.ts:96` | Appelant : lit le cache (ligne 130), compare `mapping_sig` (ligne 131), recalcule et écrit (lignes 140-145) |
+| `hubLoadCallGraph` | `extension/src/static/hub/graphRenderers.ts:203` | Appelant : lit le cache (ligne 256), compare `mapping_sig` et `symbols_sig` (lignes 257-261), recalcule et écrit (lignes 268-273) |
