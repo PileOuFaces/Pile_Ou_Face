@@ -48,8 +48,10 @@ Appels indirects à ceux-ci dans le même fichier :
   (`listCacheEntries`), `extension/src/shared/staticCache.ts:122` (`pruneCacheEntries`),
   `extension/src/shared/staticCache.ts:125-127` (`clearCacheEntries`) et
   `extension/src/shared/staticCache.ts:130` (`deleteCacheEntriesForBinary`).
-- Chaque appel à `runCacheStore` qui atteint la ligne 63 bloque donc jusqu'à la fin du sous-processus
-  ou jusqu'à l'expiration du `timeout` (voir section 4).
+- Chaque appel à `runCacheStore` qui atteint la ligne 63 exécute `cp.spawnSync`, appel synchrone qui bloque
+  en attendant la terminaison du sous-processus. L'appel configure `timeout: 10000` (ms) en
+  `extension/src/shared/staticCache.ts:71` (voir section 4). Ce document ne garantit aucune durée maximale
+  de blocage : elle n'a pas été mesurée.
 
 ## 2. Fonctions exportées et appelants
 
@@ -192,7 +194,7 @@ Délais et bornes explicitement présents dans le code lu :
 
 | Élément | Référence | Portée |
 | --- | --- | --- |
-| `timeout: 10000` (valeur en millisecondes de l'option de `spawnSync`) | `extension/src/shared/staticCache.ts:71` | Appliqué à chaque appel `cp.spawnSync` de `runCacheStore` (63), donc à toutes les opérations (`get`, `put`, `list`, `prune`, `clear`, `delete-binary`). |
+| `timeout: 10000` (valeur en millisecondes de l'option de `spawnSync`) | `extension/src/shared/staticCache.ts:71` | Configuré sur chaque appel `cp.spawnSync` de `runCacheStore` (63), donc pour toutes les opérations (`get`, `put`, `list`, `prune`, `clear`, `delete-binary`). Valeur configurée, non démontrée comme borne stricte de la durée de blocage. |
 | Sortie en erreur ou statut non nul traitée comme absence de résultat | `extension/src/shared/staticCache.ts:74` | `runCacheStore` retourne `null`. |
 | `try/catch` retournant `null` ou `false` | `extension/src/shared/staticCache.ts:77-79`, `extension/src/shared/staticCache.ts:29-31`, `extension/src/shared/staticCache.ts:111-113` | Les exceptions (dont `JSON.parse`) sont absorbées. |
 | Limite de 5000 chaînes demandée au backend (`MAX_CACHED_STRINGS`) | `extension/src/static/hub/loaders.ts:19`, `extension/src/static/hub/loaders.ts:91`, `extension/src/static/hub/loaders.ts:106` | Transmise comme `maxResults` et `--max-results=5000`. Le résultat de `runPythonJsonViaFile` est retourné tel quel (`extension/src/static/hub/loaders.ts:110`) puis sérialisé par `writeCache` sans validation de longueur (`extension/src/shared/staticCache.ts:109`). Le backend n'a pas été inspecté : son application effective n'est pas démontrée. |
