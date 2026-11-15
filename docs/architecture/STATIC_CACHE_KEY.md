@@ -38,7 +38,10 @@ Le namespace est la chaîne passée en argument `type` ; la fonction de cache ne
 - `info` (`extension/src/static/hub/analysisContext.ts:278`, `extension/src/static/hub/analysisContext.ts:284`) ;
 - `symbols` ou `symbols_all` (`extension/src/static/hub/analysisContext.ts:581-595`).
 
-Ces valeurs transitent par `readAnalysisCacheEntry` et `writeAnalysisCacheEntry` (`extension/src/static/hub/analysisContext.ts:456-467`), qui transmettent `cacheKey` à `readCache` et `writeCache` comme paramètre `type` (`extension/src/static/hub/analysisContext.ts:459`, `extension/src/static/hub/analysisContext.ts:465`). Ces deux fonctions ne produisent aucune cible quand `allowCache` est faux, quand le chemin n'existe pas ou quand c'est un répertoire (`extension/src/static/hub/analysisContext.ts:447-454`).
+Deux chemins d'appel distincts transmettent ces valeurs à `readCache` et `writeCache` :
+
+- **Appels directs de `resolveCachedBinaryView`** (`extension/src/static/hub/loaders.ts:30-50`). Les namespaces `symbols`, `strings`, `info` et `sections` de `loaders.ts` passent par cette fonction. Elle appelle `readCache` (`extension/src/static/hub/loaders.ts:41`) puis `writeCache` (`extension/src/static/hub/loaders.ts:48`) directement, avec `storageDir` et `absPath`. Elle n'appelle ni `readAnalysisCacheEntry`, ni `writeAnalysisCacheEntry`, ni `getAnalysisCacheTarget`. Son seul interrupteur est `useCache` (`extension/src/static/hub/loaders.ts:37`, `extension/src/static/hub/loaders.ts:40`).
+- **Appels par les wrappers de `analysisContext.ts`.** `readAnalysisCacheEntry` et `writeAnalysisCacheEntry` (`extension/src/static/hub/analysisContext.ts:456-467`) transmettent `cacheKey` à `readCache` et `writeCache` comme paramètre `type` (`extension/src/static/hub/analysisContext.ts:459`, `extension/src/static/hub/analysisContext.ts:465`). Ils passent par `getAnalysisCacheTarget`, qui ne produit aucune cible quand `allowCache` est faux, quand le chemin est absent ou n'existe pas, ou quand c'est un répertoire (`extension/src/static/hub/analysisContext.ts:447-454`). Ce chemin sert aux namespaces `info` (`extension/src/static/hub/analysisContext.ts:278`, `extension/src/static/hub/analysisContext.ts:284`) et `symbols`/`symbols_all` (`extension/src/static/hub/analysisContext.ts:582`, `extension/src/static/hub/analysisContext.ts:595`) de `analysisContext.ts`, à `discovered` via `resolveCachedAnalysisView` (`extension/src/static/hub/analysisContext.ts:476-482`, `extension/src/static/hub/graphRenderers.ts:322`), et à `cfg`/`callgraph` dans `graphRenderers.ts` (`extension/src/static/hub/graphRenderers.ts:130`, `extension/src/static/hub/graphRenderers.ts:141`, `extension/src/static/hub/graphRenderers.ts:256`, `extension/src/static/hub/graphRenderers.ts:269`).
 
 ### Valeurs du variant
 
@@ -92,8 +95,26 @@ Ces signatures portent sur le fichier de mapping et sur le fichier de symboles, 
 - Si la base n'existe pas, `get_payload` renvoie `None` (`extension/backends/static/cache/cache_store.py:59-60`).
 - Si `payload_json` est illisible, la ligne est supprimée et `None` est renvoyé (`extension/backends/static/cache/cache_store.py:72-79`).
 - Côté TypeScript, une erreur de lancement, un code retour non nul ou une sortie non analysable donnent `null` (`extension/src/shared/staticCache.ts:74-79`), donc un échec de cache. Le délai maximal d'un appel est de 10 000 ms (`extension/src/shared/staticCache.ts:71`).
-- Un appelant peut ajouter son propre test d'usage : `isCacheUsable` dans `extension/src/static/hub/loaders.ts:42`. Il ne fait pas partie de la clé.
 - Un appelant peut contourner la lecture avec `useCache` à faux (`extension/src/static/hub/loaders.ts:40`). Il écrit tout de même le résultat (`extension/src/static/hub/loaders.ts:48`).
+
+### Rejet par `isCacheUsable` dans `resolveCachedBinaryView` (hors `get_payload`)
+
+Pour les namespaces passant par `resolveCachedBinaryView`, une ligne trouvée par `get_payload` n'est servie que si `cached` est truthy et si `isCacheUsable(cached)` est vrai (`extension/src/static/hub/loaders.ts:41-45`). Ce prédicat ne fait pas partie de la clé. Sinon, la fonction appelle `compute()` (`extension/src/static/hub/loaders.ts:47`) puis `writeCache` (`extension/src/static/hub/loaders.ts:48`), même si la clé `(namespace, cache_key, variant)` est inchangée. Le prédicat par défaut renvoie toujours vrai (`extension/src/static/hub/loaders.ts:35`).
+
+| Namespace | Condition de rejet d'une valeur lue | Référence |
+| --- | --- | --- |
+| `symbols` | Valeur `cached` falsy uniquement ; le prédicat par défaut accepte toute valeur truthy | `extension/src/static/hub/loaders.ts:35`, `extension/src/static/hub/loaders.ts:62-68` |
+| `strings` | `cached` n'est pas un tableau ou est un tableau vide | `extension/src/static/hub/loaders.ts:99` |
+| `info` | `cached.stripped` falsy ou égal à `'—'`, ou `cached.endianness` qui n'est pas une chaîne ou qui est une chaîne vide | `extension/src/static/hub/loaders.ts:149-155` |
+| `sections` | Valeur `cached` falsy uniquement ; le prédicat par défaut accepte toute valeur truthy | `extension/src/static/hub/loaders.ts:35`, `extension/src/static/hub/loaders.ts:197-206` |
+
+Dans ces cas, le recalcul et la tentative de remplacement sont les suivants :
+
+- Le rejet seul ne supprime pas la ligne : `get_payload` n'a rien supprimé (sauf `payload_json` illisible, voir plus haut) et `resolveCachedBinaryView` n'appelle aucune opération de suppression.
+- La valeur recalculée est écrite par `writeCache` avec la même clé (`extension/src/static/hub/loaders.ts:48`). Si l'écriture aboutit, `put_payload` remplace la ligne existante par le `DO UPDATE` décrit dans la section « Remplacement à l'écriture » (`extension/backends/static/cache/cache_store.py:99-107`).
+- Le retour de `writeCache` n'est pas lu par `resolveCachedBinaryView` (`extension/src/static/hub/loaders.ts:48`). Si `writeCache` renvoie `false` (`stat` en échec, payload de plus de 16 Mio, code retour non nul), l'ancienne ligne reste en base (`extension/src/shared/staticCache.ts:98-111`, `extension/backends/static/cache/cache_store.py:95-96`).
+- La valeur recalculée est écrite sans repasser par `isCacheUsable` ; elle est aussi renvoyée à l'appelant (`extension/src/static/hub/loaders.ts:47-49`). Une valeur recalculée que le prédicat rejetterait encore est donc écrite, puis rejetée de nouveau à la lecture suivante, qui déclenche un nouveau recalcul.
+- Quand `useCache` est faux, la lecture et donc le prédicat sont contournés, mais le recalcul et l'écriture ont lieu (`extension/src/static/hub/loaders.ts:40-48`).
 
 ### Rejet par les appelants CFG et callgraph (hors `get_payload`)
 
@@ -175,7 +196,7 @@ Les appelants de ces opérations dans `extension/src/` sont :
 | `prune_entries` | `extension/backends/static/cache/cache_store.py:186` | Supprime les groupes dont le statut n'est pas `ok` |
 | `delete_binary` | `extension/backends/static/cache/cache_store.py:201` | Supprime par `binary_path` |
 | `clear_entries` | `extension/backends/static/cache/cache_store.py:212` | Supprime toutes les lignes |
-| `resolveCachedBinaryView` | `extension/src/static/hub/loaders.ts:30` | Appelant : `readCache` (ligne 41), puis `writeCache` (ligne 48) |
+| `resolveCachedBinaryView` | `extension/src/static/hub/loaders.ts:30` | Appelant direct : `readCache` (ligne 41) ; sert la valeur si elle est truthy et acceptée par `isCacheUsable` (ligne 42) ; sinon `compute()` puis `writeCache` (lignes 47-48), sans lire le retour |
 | `readAnalysisCacheEntry` | `extension/src/static/hub/analysisContext.ts:456` | Appelant : `readCache` (ligne 459) pour un fichier non répertoire |
 | `writeAnalysisCacheEntry` | `extension/src/static/hub/analysisContext.ts:462` | Appelant : `writeCache` (ligne 465) |
 | `listCacheEntries` (fileManager) | `extension/src/shared/fileManager.ts:251` | Appelant : liste le cache et trie par `mtime` décroissant |
