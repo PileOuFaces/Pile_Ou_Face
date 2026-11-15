@@ -8,19 +8,10 @@ on:
       - '.github/workflows/ci.yml'
       - '.github/workflows/publish.yml'
       - '.github/workflows/tripartite-scheduled.yml'
+  # Pas de filtre `paths` : le check obligatoire « CI Success » doit exister pour
+  # toute PR. Le job `changes` décide (fail-closed) si les suites lourdes tournent.
   pull_request:
     branches: [main, develops]
-    paths:
-      - 'extension/**'
-      - 'tooling/loadtest/**'
-      - '.github/workflows/ci.yml'
-      - '.github/workflows/trivy.yml'
-      - '.github/workflows/large-real-corpus-loadtest.yml'
-      - '.github/workflows/publish.yml'
-      - '.github/workflows/tripartite-scheduled.yml'
-      - 'security/**'
-      - 'tooling/security_baseline.py'
-      - 'tooling/tests/test_security_baseline.py'
 
 permissions:
   contents: read
@@ -34,6 +25,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Classe les fichiers modifiés de la PR. `docs_only=true` uniquement si TOUS sont
+  # de la documentation (docs/** ou *.md à la racine) ; sinon, ou en cas de doute,
+  # toutes les suites tournent. Un échec de ce job fait échouer « CI Success ».
+  changes:
+    name: Classify changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+
+      - name: Classifier self-test
+        run: python3 -m unittest tooling.tests.test_ci_change_scope tooling.tests.test_ci_workflow
+
+      - name: Classify changed files
+        id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" != "pull_request" ]]; then
+            echo "docs_only=false" | tee -a "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git diff --name-status -z --no-renames "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/changes.bin"
+          python3 -m tooling.ci_change_scope < "$RUNNER_TEMP/changes.bin" | tee -a "$GITHUB_OUTPUT"
+
   security-baseline:
     name: Security baseline policy
     runs-on: ubuntu-latest
@@ -52,6 +76,8 @@ jobs:
   # le runtime, le corpus ou ses budgets changent.
   large-real-corpus-changes:
     name: Detect large corpus changes
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -84,6 +110,8 @@ jobs:
   # ══════════════════════════════════════════════════════════════
   lint:
     name: Lint
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -113,6 +141,8 @@ jobs:
   # ══════════════════════════════════════════════════════════════
   full-test:
     name: ${{ matrix.os }} / Node ${{ matrix.node }}
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
 
@@ -189,6 +219,8 @@ jobs:
   # silencieusement de son identité et de sa politique d'endpoint.
   deployment-profile-artifacts:
     name: Deployment artifact / ${{ matrix.profile }}
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -259,6 +291,8 @@ jobs:
   # ══════════════════════════════════════════════════════════════
   auth-licensing-windows:
     name: Auth Licensing Windows Unit Tests
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: windows-latest
     timeout-minutes: 10
 
@@ -310,6 +344,8 @@ jobs:
   # ══════════════════════════════════════════════════════════════
   dynamic-unicorn:
     name: Dynamic Unicorn Regression
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -361,6 +397,8 @@ jobs:
   # ══════════════════════════════════════════════════════════════
   real-corpus-arm64:
     name: Real Corpus Multi-Arch
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     # gcc-mips-linux-gnu n'existe pas sur Ubuntu 26.04 (ubuntu-latest).
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -433,6 +471,8 @@ jobs:
   # ══════════════════════════════════════════════════════════════
   e2e-runtime-audit:
     name: E2E Runtime Audit
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -520,6 +560,8 @@ jobs:
   # ══════════════════════════════════════════════════════════════
   security-scan:
     name: Security Scan
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -593,6 +635,8 @@ jobs:
   # ══════════════════════════════════════════════════════════════
   auth-licensing-e2e:
     name: Auth Licensing Interop E2E
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -700,6 +744,8 @@ jobs:
   # ══════════════════════════════════════════════════════════════
   backend-loadtest:
     name: Backend Performance Budgets
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -741,12 +787,15 @@ jobs:
   ci-success:
     name: CI Success
     if: always()
-    needs: [security-baseline, lint, full-test, dynamic-unicorn, real-corpus-arm64, e2e-runtime-audit, backend-loadtest, security-scan, auth-licensing-e2e, auth-licensing-windows, large-real-corpus-changes, large-real-corpus]
+    needs: [changes, security-baseline, lint, full-test, dynamic-unicorn, real-corpus-arm64, e2e-runtime-audit, backend-loadtest, security-scan, auth-licensing-e2e, auth-licensing-windows, large-real-corpus-changes, large-real-corpus]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Check results
         shell: bash
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
         run: |
           LINT="${{ needs.lint.result }}"
           SECURITY_BASELINE="${{ needs.security-baseline.result }}"
@@ -780,8 +829,26 @@ jobs:
             fi
           }
 
-          fail_if_bad "$LINT" "Lint"
+          # Classification obligatoire et sans ambiguïté (fail-closed).
+          if [[ "$CHANGES" != "success" ]]; then
+            echo "❌ Change classification did not succeed ($CHANGES)" && exit 1
+          fi
           fail_if_bad "$SECURITY_BASELINE" "Security Baseline Policy"
+          if [[ "$DOCS_ONLY" == "true" ]]; then
+            # PR documentaire : chaque suite doit avoir été SAUTÉE, jamais en échec ni annulée.
+            for result in "$LINT" "$FULL" "$DYNAMIC_UNICORN" "$REAL_CORPUS" "$E2E_AUDIT" "$BACKEND_LOADTEST" \
+                          "$SECURITY" "$AUTH_LICENSING_E2E" "$AUTH_LICENSING_WINDOWS" "$LARGE_CORPUS_CHANGES" "$LARGE_CORPUS"; do
+              if [[ "$result" != "skipped" ]]; then
+                echo "❌ Documentation-only PR but a suite reported '$result'" && exit 1
+              fi
+            done
+            echo "✅ Documentation-only PR: heavy suites skipped by design (docs/** and root *.md only)"
+            exit 0
+          elif [[ "$DOCS_ONLY" != "false" ]]; then
+            echo "❌ Unexpected change classification: '$DOCS_ONLY'" && exit 1
+          fi
+
+          fail_if_bad "$LINT" "Lint"
           fail_if_bad "$FULL" "Full test"
           fail_if_bad "$DYNAMIC_UNICORN" "Dynamic Unicorn Regression"
           fail_if_bad "$REAL_CORPUS" "Real Corpus ARM64"
