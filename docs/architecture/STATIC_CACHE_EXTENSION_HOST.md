@@ -17,8 +17,11 @@
 - L'enregistrement et la répartition des messages vers ces gestionnaires n'ont pas été inspectés.
 - Le fait que chaque appelant s'exécute dans le processus Extension Host est donc une déduction
   à partir de l'emplacement du code et des objets manipulés, non une preuve d'exécution.
-- Les fonctions appelantes sont déclarées `async`, mais l'appel synchrone qu'elles contiennent
-  s'exécute sans `await` : le fil qui l'exécute est occupé pendant la durée de l'appel.
+- Certains gestionnaires appelants sont déclarés `async`, d'autres non (par exemple `listGeneratedFiles`,
+  `extension/src/shared/sharedHandlers.ts:592`, et les appelants directs
+  `extension/src/shared/fileManager.ts:251` et `extension/src/static/hub/analysisContext.ts:456`).
+  Quelle que soit cette déclaration, l'appel synchrone s'exécute sans `await` : le fil qui l'exécute
+  est occupé pendant la durée de l'appel.
 - `getExtensionPath` est importé de `./utils` (`extension/src/shared/staticCache.ts:8`) ; son
   implémentation n'a pas été lue.
 
@@ -192,7 +195,7 @@ Délais et bornes explicitement présents dans le code lu :
 | `timeout: 10000` (valeur en millisecondes de l'option de `spawnSync`) | `extension/src/shared/staticCache.ts:71` | Appliqué à chaque appel `cp.spawnSync` de `runCacheStore` (63), donc à toutes les opérations (`get`, `put`, `list`, `prune`, `clear`, `delete-binary`). |
 | Sortie en erreur ou statut non nul traitée comme absence de résultat | `extension/src/shared/staticCache.ts:74` | `runCacheStore` retourne `null`. |
 | `try/catch` retournant `null` ou `false` | `extension/src/shared/staticCache.ts:77-79`, `extension/src/shared/staticCache.ts:29-31`, `extension/src/shared/staticCache.ts:111-113` | Les exceptions (dont `JSON.parse`) sont absorbées. |
-| Plafond de 5000 chaînes (`MAX_CACHED_STRINGS`) | `extension/src/static/hub/loaders.ts:19`, `extension/src/static/hub/loaders.ts:91`, `extension/src/static/hub/loaders.ts:106` | Borne le nombre de chaînes extraites, donc la taille de la donnée passée à `writeCache` pour la clé `strings`. |
+| Limite de 5000 chaînes demandée au backend (`MAX_CACHED_STRINGS`) | `extension/src/static/hub/loaders.ts:19`, `extension/src/static/hub/loaders.ts:91`, `extension/src/static/hub/loaders.ts:106` | Transmise comme `maxResults` et `--max-results=5000`. Le résultat de `runPythonJsonViaFile` est retourné tel quel (`extension/src/static/hub/loaders.ts:110`) puis sérialisé par `writeCache` sans validation de longueur (`extension/src/shared/staticCache.ts:109`). Le backend n'a pas été inspecté : son application effective n'est pas démontrée. |
 | `minLen` borné entre 1 et 64 | `extension/src/static/hub/loaders.ts:77` | Paramètre d'extraction des chaînes. |
 
 Absences constatées dans le périmètre inspecté :
@@ -201,8 +204,9 @@ Absences constatées dans le périmètre inspecté :
   dans `staticCache.ts`.
 - Aucune option `maxBuffer` ni `killSignal` explicite dans l'appel `spawnSync`
   (`extension/src/shared/staticCache.ts:63-73`).
-- Aucune limite de taille explicite sur la donnée sérialisée à la ligne 109 pour les clés autres que `strings`
-  dans le code lu.
+- Aucune borne en octets sur la donnée sérialisée à la ligne 109 n'est démontrée dans le périmètre inspecté,
+  y compris pour la clé `strings` : une limite sur le nombre de chaînes demandée au backend ne borne pas
+  leur taille cumulée, et aucune validation de longueur ou de taille n'est faite avant `JSON.stringify`.
 - Aucun mécanisme d'annulation ni de délai propre aux appelants autour de `readCache` et `writeCache` dans
   `extension/src/static/hub/loaders.ts:41-48` et `extension/src/static/hub/analysisContext.ts:459-465`.
 - Aucune limite de fréquence ni de concurrence sur les appels au cache. La déduplication `_symbolsInFlight`
