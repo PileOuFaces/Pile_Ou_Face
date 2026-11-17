@@ -4,12 +4,14 @@
 import base64
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
 
 import pytest
 
+from backends.static.repl import repl
 from backends.static.repl.repl import execute_script
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
@@ -131,6 +133,40 @@ def test_timeout_kills_spawned_subprocess():
     while _pid_alive(pid) and time.monotonic() < deadline:
         time.sleep(0.1)
     assert not _pid_alive(pid)
+
+
+SURVIVOR_SLEEP_S = 60
+FAST_DRAIN_S = 1
+
+
+def test_output_kept_when_survivor_holds_pipes(monkeypatch):
+    """A descendant that escapes the kill keeps stdout/stderr open (EOF never
+    comes); output printed before the stop must still be returned. On POSIX
+    the descendant leaves the process group to mimic the Windows behaviour."""
+    monkeypatch.setattr(repl, "_DRAIN_TIMEOUT", FAST_DRAIN_S)
+    code = (
+        "import os, subprocess, sys, time\n"
+        "kw = {'start_new_session': True} if os.name == 'posix' else {}\n"
+        "p = subprocess.Popen([sys.executable, '-c',"
+        f" 'import time; time.sleep({SURVIVOR_SLEEP_S})'], **kw)\n"
+        "print(f'marker PID={p.pid}', flush=True)\n"
+        "while True:\n"
+        "    time.sleep(0.1)\n"
+    )
+    start = time.monotonic()
+    result = execute_script(code, "", timeout=SHORT_TIMEOUT_S)
+    elapsed = time.monotonic() - start
+    pid = int(result["stdout"].split("PID=", 1)[1].split()[0])
+    try:
+        assert elapsed < MAX_RETURN_S
+        assert result["ok"] is False
+        assert "marker" in result["stdout"]
+        assert "TimeoutError" in result["stderr"]
+    finally:
+        if os.name == "posix":
+            os.kill(pid, signal.SIGKILL)
+        else:
+            subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
 
 
 def test_success_and_binary_injected_without_demo():

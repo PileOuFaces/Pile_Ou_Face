@@ -26,6 +26,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 import traceback
 
@@ -88,13 +89,56 @@ def _kill_child(proc: subprocess.Popen) -> None:
         proc.kill()
 
 
-def _drain_after_kill(proc: subprocess.Popen) -> tuple[bytes, bytes]:
-    """Collect output left in the pipes; bounded in case a survivor holds them."""
+class _PipeCollector:
+    """Read a pipe in a background thread, keeping every chunk as it arrives.
+
+    Unlike ``Popen.communicate``, whose ``TimeoutExpired`` carries no partial
+    output on Windows, the data read so far stays available even if a
+    surviving descendant keeps the pipe open and EOF never comes.
+    """
+
+    _CHUNK = 65536
+
+    def __init__(self, stream) -> None:
+        self._stream = stream
+        self._chunks: list[bytes] = []
+        self._lock = threading.Lock()
+        self._thread = threading.Thread(target=self._pump, daemon=True)
+        self._thread.start()
+
+    def _pump(self) -> None:
+        try:
+            for chunk in iter(lambda: self._stream.read1(self._CHUNK), b""):
+                with self._lock:
+                    self._chunks.append(chunk)
+        except (OSError, ValueError):
+            pass  # pipe closed under us after a kill: keep what was read
+
+    def join(self, timeout: float) -> bool:
+        """Wait up to *timeout* s for EOF; return True if the pipe was closed."""
+        self._thread.join(max(0.0, timeout))
+        return not self._thread.is_alive()
+
+    def data(self) -> bytes:
+        with self._lock:
+            return b"".join(self._chunks)
+
+
+def _feed_stdin(proc: subprocess.Popen, payload: bytes) -> None:
     try:
-        return proc.communicate(timeout=_DRAIN_TIMEOUT)
-    except subprocess.TimeoutExpired as exc:
-        # A process escaped the kill (e.g. Windows grandchild) and keeps the pipes open.
-        return exc.stdout or b"", exc.stderr or b""
+        proc.stdin.write(payload)
+        proc.stdin.close()
+    except (BrokenPipeError, OSError):
+        pass  # child died before reading its input; its stderr explains why
+
+
+def _wait_until(proc: subprocess.Popen, readers: list, deadline: float) -> bool:
+    """Wait for the child to exit and both pipes to close; False on deadline."""
+    try:
+        proc.wait(timeout=max(0.0, deadline - time.monotonic()))
+    except subprocess.TimeoutExpired:
+        return False
+    return all(r.join(deadline - time.monotonic()) for r in readers)
 
 
 def _decode(data: bytes | None) -> str:
@@ -125,19 +169,24 @@ def execute_script(code: str, binary_path: str, timeout: int = _EXEC_TIMEOUT) ->
     proc = _spawn_child()
     timeout_msg = ""
     try:
-        out, err = proc.communicate(input=payload, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        _kill_child(proc)
-        out, err = _drain_after_kill(proc)
-        timeout_msg = f"TimeoutError: script exceeded the {timeout}s limit and was stopped.\n"
+        readers = [_PipeCollector(proc.stdout), _PipeCollector(proc.stderr)]
+        threading.Thread(target=_feed_stdin, args=(proc, payload), daemon=True).start()
+        if not _wait_until(proc, readers, start + timeout):
+            _kill_child(proc)
+            proc.wait()
+            # Bounded: a process that escaped the kill (e.g. a Windows
+            # grandchild) may keep the pipes open forever.
+            for reader in readers:
+                reader.join(_DRAIN_TIMEOUT)
+            timeout_msg = f"TimeoutError: script exceeded the {timeout}s limit and was stopped.\n"
     finally:
         if proc.poll() is None:
             _kill_child(proc)
 
     return {
         "ok": not timeout_msg and proc.returncode == 0,
-        "stdout": _decode(out),
-        "stderr": _decode(err) + timeout_msg,
+        "stdout": _decode(readers[0].data()),
+        "stderr": _decode(readers[1].data()) + timeout_msg,
         "duration_ms": _elapsed_ms(start),
     }
 
