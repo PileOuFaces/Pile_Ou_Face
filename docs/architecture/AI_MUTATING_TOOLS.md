@@ -32,7 +32,10 @@ Dans le dépôt, `ai_consent.py` n'est appelé que depuis l'hôte VS Code
 
 Effet :
 
-- **Lecture** : aucune écriture repérée dans le chemin cité.
+- **Lecture** : aucune écriture repérée dans le chemin cité. Les créations
+  implicites de base SQLite (répertoire, fichier, schéma) au premier accès
+  ont été relevées pour les outils cités au §6 ; leur absence n'a pas été
+  vérifiée exhaustivement dans les dépendances des autres outils « Lecture ».
 - **Artefact** : écrit des fichiers dérivés ou un cache d'analyse, sans
   toucher au binaire ni aux annotations.
 - **Modification** : modifie une donnée de l'utilisateur, une configuration,
@@ -52,7 +55,7 @@ Déclenchement par un contenu analysé (dernière colonne) :
 
 | Outil | Déclaration | Implémentation | Effet | Autorisation | Contenu → appel |
 |---|---|---|---|---|---|
-| `annotations_list` | `extension/backends/mcp/server.py:74` | `extension/backends/mcp/server.py:1231-1240` | Lecture | Aucune | [A] |
+| `annotations_list` | `extension/backends/mcp/server.py:74` | `extension/backends/mcp/server.py:1231-1240` | Lecture des annotations, mais **initialisation persistante** : `AnnotationStore` ouvre `AnnotationDb` (`extension/backends/static/annotations/annotations.py:55`), qui crée le répertoire, la base `~/.pile-ou-face/annotations.db` et son schéma s'ils sont absents (`extension/backends/static/annotations/annotation_db.py:18-20`, `42-79`), et migre une ancienne base en ajoutant la colonne `source` (`extension/backends/static/annotations/annotation_db.py:81-94`) | Aucune | [A] |
 | `annotations_save` | `extension/backends/mcp/server.py:87` | `extension/backends/mcp/server.py:1242-1259` | **Modification** : écrit commentaire et/ou renommage (`extension/backends/mcp/server.py:1252`, `1255`) avec la source par défaut `"user"` (`extension/backends/static/annotations/annotations.py:57`, `70`) | Aucune | [A] |
 | `annotations_delete` | `extension/backends/mcp/server.py:102` | `extension/backends/mcp/server.py:1261-1272` | **Modification** : supprime des annotations (`extension/backends/mcp/server.py:1271`) | Aucune | [A] |
 | `simulate_asm` | `extension/backends/mcp/server.py:116` | `extension/backends/mcp/server.py:1274-1286` | Lecture (simulation en mémoire) | Aucune | [A] |
@@ -73,7 +76,7 @@ Déclenchement par un contenu analysé (dernière colonne) :
 | `export_results` | `extension/backends/mcp/server.py:310` | `extension/backends/mcp/server.py:1527-1615` | **Modification** : écrit (écrase) le fichier `output_path` fourni par l'appelant, sans contrôle de chemin dans `server.py` (`extension/backends/mcp/server.py:1535`) ; ouverture en `"w"` (`extension/backends/static/export/export.py:38`, `63`, `103`, `162`) | Aucune | [A] |
 | `get_binary_info` | `extension/backends/mcp/server.py:327` | `extension/backends/mcp/server.py:1617-1620` | Lecture | Aucune | [A] |
 | `hex_dump` | `extension/backends/mcp/server.py:337` | `extension/backends/mcp/server.py:1622-1628` | Lecture | Aucune | [A] |
-| `find_import_callsites` | `extension/backends/mcp/server.py:351` | `extension/backends/mcp/server.py:1630-1635` | Lecture | Aucune | [A] |
+| `find_import_callsites` | `extension/backends/mcp/server.py:351` | `extension/backends/mcp/server.py:1630-1635` | Artefact : en l'absence de cache, enregistre le désassemblage et la map de xrefs dans le cache d'analyse du binaire (`extension/backends/static/disasm/import_xrefs.py:78-79`, `103-104`) | Aucune | [A] |
 | `analyze_imports` | `extension/backends/mcp/server.py:364` | `extension/backends/mcp/server.py:1637-1640` | Lecture | Aucune | [A] |
 | `offset_to_vaddr` | `extension/backends/mcp/server.py:374` | `extension/backends/mcp/server.py:1642-1652` | Lecture | Aucune | [A] |
 | `execute_script` | `extension/backends/mcp/server.py:387` | `extension/backends/mcp/server.py:1654-1665` | **Modification** potentiellement totale : `exec` de code Python fourni par l'appelant, dans le processus serveur, avec les builtins complets (`extension/backends/static/repl/repl.py:51-67`). Fichiers, réseau et processus sont accessibles | Aucune | [A] |
@@ -83,7 +86,7 @@ Déclenchement par un contenu analysé (dernière colonne) :
 | `rules_delete` | `extension/backends/mcp/server.py:437` | `extension/backends/mcp/server.py:1695-1701` | **Modification** : supprime le fichier de règle et met à jour la config (`extension/backends/static/rules/rules_manager.py:198-215`) | Aucune | [A] |
 | `search_binary` | `extension/backends/mcp/server.py:447` | `extension/backends/mcp/server.py:1703-1716` | Lecture | Aucune | [A] |
 | `get_sections` | `extension/backends/mcp/server.py:462` | `extension/backends/mcp/server.py:1718-1721` | Lecture | Aucune | [A] |
-| `analyze_stack_frame` | `extension/backends/mcp/server.py:472` | `extension/backends/mcp/server.py:1723-1729` | Lecture | Aucune | [A] |
+| `analyze_stack_frame` | `extension/backends/mcp/server.py:472` | `extension/backends/mcp/server.py:1723-1729` | Artefact : en l'absence de cache valide, enregistre le résultat dans le cache d'analyse du binaire (`extension/backends/static/disasm/stack_frame.py:878-882`) ; une erreur d'écriture est ignorée silencieusement | Aucune | [A] |
 | `extract_strings` | `extension/backends/mcp/server.py:485` | `extension/backends/mcp/server.py:1731-1744` | Lecture | Aucune | [A] |
 | `get_symbols` | `extension/backends/mcp/server.py:495` | `extension/backends/mcp/server.py:1746-1751` | Lecture | Aucune | [A] |
 | `get_xrefs` | `extension/backends/mcp/server.py:505` | `extension/backends/mcp/server.py:1753-1782` | Artefact si `mapping_path` absent (`extension/backends/mcp/server.py:1762`) | Aucune | [A] |
@@ -95,7 +98,7 @@ Déclenchement par un contenu analysé (dernière colonne) :
 
 | Outil | Déclaration | Implémentation | Effet | Autorisation | Contenu → appel |
 |---|---|---|---|---|---|
-| `ai_providers_list` | `extension/backends/mcp/server.py:575` | `extension/backends/mcp/server.py:1789-1790` | Lecture ; peut interroger les fournisseurs pour lister les modèles (`extension/backends/mcp/ai_provider.py:90`, `154`) | Aucune | [A] |
+| `ai_providers_list` | `extension/backends/mcp/server.py:575` | `extension/backends/mcp/server.py:1789-1790` | Lecture locale ; **Réseau** : interroge l'API de liste des modèles de chaque fournisseur cloud dont la clé est configurée, en transmettant cette clé dans un en-tête d'authentification, et interroge toujours `OLLAMA_BASE_URL` (`extension/backends/mcp/ai_provider.py:90-150`, `154-173`) | Aucune | [A] |
 | `ai_providers_set` | `extension/backends/mcp/server.py:585` | `extension/backends/mcp/server.py:1792-1796` | **Modification** de configuration : écrit la clé API et/ou le modèle dans `~/.pile-ou-face/.env` et dans l'environnement du processus (`extension/backends/mcp/ai_provider.py:657-665`, `extension/backends/mcp/env_loader.py:4`, `22`) | Aucune | [A] |
 | `ai_analyze` | `extension/backends/mcp/server.py:599` | `extension/backends/mcp/server.py:1798-1828` | **Réseau** : envoie `prompt` et `context` au fournisseur (par défaut `POF_DEFAULT_AI_PROVIDER`, sinon `ollama`, `extension/backends/mcp/server.py:1799-1807`). **Modification** si `write_annotation` est fourni : écrit la réponse du modèle comme renommage ou commentaire IA (`extension/backends/mcp/server.py:1814-1825`), sans écraser une annotation manuelle (`extension/backends/static/annotations/annotations.py:98-127`) | Aucune (`ai_consent` absent de `server.py`) | [A] ; [B] pour la valeur écrite |
 
@@ -112,7 +115,7 @@ non vérifiée par exécution.
 | Outil | Définition | Effet | Autorisation | Contenu → appel |
 |---|---|---|---|---|
 | `binary_patch.patch_bytes` | `extension/backends/static/patch/binary_patch.py:22` | **Modification du binaire** en place, sans historique (`extension/backends/static/patch/binary_patch.py:53-55`) | Aucune | [A] |
-| `patch_manager.list_patches` | `extension/backends/static/patch/patch_manager.py:78` | Lecture | Aucune | [A] |
+| `patch_manager.list_patches` | `extension/backends/static/patch/patch_manager.py:78` | Lecture de l'historique, mais **initialisation persistante** : `_load` ouvre `PatchDb` (`extension/backends/static/patch/patch_manager.py:37-39`), qui crée le répertoire, la base (`POF_PATCHES_DB` ou `~/.pile-ou-face/patches.db`) et son schéma s'ils sont absents (`extension/backends/static/patch/patch_db.py:16-56`) | Aucune | [A] |
 | `patch_manager.apply_patch` | `extension/backends/static/patch/patch_manager.py:83` | **Modification du binaire** + historique SQLite (`extension/backends/static/patch/patch_manager.py:118`, `132`) | Aucune | [A] |
 | `patch_manager.revert_patch` | `extension/backends/static/patch/patch_manager.py:137` | **Modification du binaire** + historique (`extension/backends/static/patch/patch_manager.py:157-161`) | Aucune | [A] |
 | `patch_manager.redo_patch` | `extension/backends/static/patch/patch_manager.py:166` | **Modification du binaire** + historique (`extension/backends/static/patch/patch_manager.py:194-198`) | Aucune | [A] |
@@ -256,6 +259,7 @@ consentement plugin, ni confirmation utilisateur dans le chemin de code cité.
 | `ai_analyze` | `prompt` et `context` vers le fournisseur configuré |
 | Pont Ollama (`hubOllamaPrompt`) | Conversation et sorties d'outils vers l'URL Ollama fournie par la webview |
 | `decompile_function`, `decompile_binary` | Binaire vers le décompilateur configuré (processus local, Docker ou HTTP) |
+| `ai_providers_list` | Requête de liste des modèles vers chaque fournisseur cloud configuré, avec la clé API configurée en en-tête d'authentification ; requête vers `OLLAMA_BASE_URL` (sans clé) |
 
 **Artefacts et cache d'analyse (données dérivées)**
 
@@ -264,6 +268,15 @@ consentement plugin, ni confirmation utilisateur dans le chemin de code cité.
 | `disassemble` ; `build_call_graph`, `build_cfg`, `build_cfg_for_function`, `discover_functions`, `get_xrefs` sans `mapping_path` | Fichiers `.asm` et mapping sous `ROOT/.pile-ou-face/mcp` |
 | `decompile_function` | Cache de décompilation |
 | `function_radar.build_function_radar`, `analysis_index.build_analysis_index` | Cache d'analyse SQLite |
+| `analyze_stack_frame` | Cache d'analyse : résultat du cadre de pile |
+| `find_import_callsites` | Cache d'analyse : désassemblage et map de xrefs |
+
+**Initialisation ou migration de bases persistantes**
+
+| Outil | Ce qui est créé ou modifié |
+|---|---|
+| `annotations_list` | Répertoire, base `annotations.db` et schéma s'ils sont absents ; ajout de la colonne `source` sur une ancienne base |
+| `patch_manager.list_patches` | Répertoire, base `patches.db` et schéma s'ils sont absents |
 
 **Accord partiel**
 
