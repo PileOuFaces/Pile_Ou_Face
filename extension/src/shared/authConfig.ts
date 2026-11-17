@@ -14,6 +14,8 @@ const path = require('path');
 const { DEPLOYMENT_PROFILES, getProductConfig, validateProductConfig } = require('./productConfig');
 
 const DEFAULT_LOCAL_AUTH_URL = 'http://localhost:8000';
+// WHATWG URL keeps IPv6 brackets in `hostname` ('[::1]'); '::1' is kept for parity with authService.
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 
 type ExistsSync = (filePath: string) => boolean;
 
@@ -52,8 +54,7 @@ function normalizeAuthUrl(value: unknown = ''): string {
 
 function isLoopbackUrl(value: string): boolean {
   try {
-    const hostname = new URL(value).hostname.toLowerCase();
-    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+    return LOOPBACK_HOSTS.has(new URL(value).hostname.toLowerCase());
   } catch (_) {
     return false;
   }

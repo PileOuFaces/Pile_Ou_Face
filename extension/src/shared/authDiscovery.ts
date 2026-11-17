@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
+// WHATWG URL keeps IPv6 brackets in `hostname` ('[::1]'); '::1' is kept for parity with authService.
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 const DISCOVERY_PATH = '/.well-known/pile-ou-face-auth/v1';
 
 interface AuthDiscoveryPayload {
