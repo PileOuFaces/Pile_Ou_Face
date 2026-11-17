@@ -20,8 +20,11 @@ function argsOf(call) {
 describe("ensurePythonDependencies", () => {
   let existing;
   let execStub;
+  let previousExtensionPath;
 
   beforeEach(() => {
+    // Shared singleton: other suites (e.g. staticCache) set it at load time.
+    previousExtensionPath = utils.getExtensionPath();
     utils.setExtensionPath(EXT_DIR_WITH_SPACES);
     existing = new Set([REQUIREMENTS]);
     sinon.stub(fs, "existsSync").callsFake((p) => existing.has(p));
@@ -30,7 +33,7 @@ describe("ensurePythonDependencies", () => {
 
   afterEach(() => {
     sinon.restore();
-    utils.setExtensionPath("");
+    utils.setExtensionPath(previousExtensionPath);
   });
 
   it("checks imports via execFile with an executable path containing spaces as a single argument", async () => {
