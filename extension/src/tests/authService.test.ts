@@ -1074,4 +1074,31 @@ describe("AuthService network timeouts and typed errors (POF-P1-011)", () => {
     expect(cancel.calledOnce).to.equal(true);
     expect(String(warn.firstCall.args[0])).to.match(/logout échouée: Auth logout failed: 500/);
   });
+  it("rejects a login answer without tokens and leaves the stored secrets untouched", async () => {
+    const { AuthRequestError } = require("../shared/authService");
+    const { svc, store } = makeAuthService();
+    svc._postJson.restore();
+    sinon.stub(svc, "_postJson").resolves({});
+    sinon.stub(svc, "_getCandidateServerUrls").returns(["http://localhost:8000"]);
+    sinon.stub(svc, "_scheduleRefresh");
+    const before = { ...store };
+
+    const err = await captureError(svc.login("user@example.test", "pw"));
+
+    expect(err).to.be.instanceOf(AuthRequestError);
+    expect(err.kind).to.equal("invalid_response");
+    expect(store).to.deep.equal(before);
+    expect(svc._scheduleRefresh.called).to.equal(false);
+  });
+
+  it("reports a connection lost while reading the body as a network error", async () => {
+    const { AuthRequestError } = require("../shared/authService");
+    const { svc } = unstubbedService();
+    sinon.stub(global, "fetch").resolves({
+      ok: true, status: HTTP_OK, json: () => Promise.reject(new TypeError("terminated")),
+    });
+    const err = await captureError(svc._postJson("http://localhost:8000", "/auth/refresh", {}));
+    expect(err).to.be.instanceOf(AuthRequestError);
+    expect(err.kind).to.equal("network");
+  });
 });

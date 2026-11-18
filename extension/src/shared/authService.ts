@@ -87,9 +87,17 @@ async function readJsonBody<T>(res: Response): Promise<T> {
   }
   try {
     return await res.json() as T;
-  } catch {
-    throw new AuthRequestError('invalid_response', 'Auth server returned an invalid response');
+  } catch (err) {
+    throw bodyReadError(err, 'Auth server returned an invalid response');
   }
+}
+
+/** JSON illisible : réponse invalide ; coupure pendant le transfert du corps : réseau. */
+function bodyReadError(err: unknown, invalidMessage: string): Error {
+  if (err instanceof SyntaxError) return new AuthRequestError('invalid_response', invalidMessage);
+  if (err instanceof Error && err.name === 'AbortError') return err;
+  const reason = err instanceof Error ? err.message : String(err);
+  return new AuthRequestError('network', `Auth server connection lost: ${reason}`);
 }
 
 /**
@@ -155,7 +163,7 @@ async function discoverWithTimeout(origin: string): Promise<ServerIdentity> {
         return await res.json();
       } catch (err) {
         if (controller.signal.aborted) throw err;
-        throw new AuthRequestError('invalid_response', 'Auth discovery returned an invalid response');
+        throw bodyReadError(err, 'Auth discovery returned an invalid response');
       }
     };
     return { ok: res.ok, status: res.status, json: parseJson } as unknown as Response;
@@ -171,6 +179,10 @@ async function discoverWithTimeout(origin: string): Promise<ServerIdentity> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
 }
 
 function joinUrl(baseUrl: string, requestPath: string): string {
@@ -369,6 +381,9 @@ class AuthService {
         await this._ensureServerIdentity(baseUrl);
         const data = await this._postJson<AuthTokenResponse>(baseUrl, '/auth/login', { email, password });
         this._assertSessionEpoch(epoch);
+        if (!isNonEmptyString(data?.access_token) || !isNonEmptyString(data?.refresh_token)) {
+          throw new AuthRequestError('invalid_response', 'Login response has no tokens');
+        }
         this.serverUrl = baseUrl;
         await this._store(epoch, data.access_token, data.refresh_token, email);
         await this._syncLicenseLeases(data.access_token, epoch);
