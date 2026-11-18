@@ -2,11 +2,12 @@
   "all": true,
   "include": [
     "src/**/*.ts",
-    "webview/**/*.js"
+    "front/**/*.js"
   ],
   "exclude": [
     "test/**",
-    "webview/shared/elk.bundled.js"
+    "front/tests/**",
+    "front/shared/elk.bundled.js"
   ],
   "reporter": [
     "text",

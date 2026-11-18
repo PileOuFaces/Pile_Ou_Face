@@ -38,10 +38,14 @@ branch = true
 source = [
     "backends/static",
     "backends/plugins",
+    "backends/dynamic",
+    "backends/mcp",
 ]
 omit = [
     "backends/static/tests/*",
     "backends/plugins/tests/*",
+    "backends/dynamic/tests/*",
+    "backends/mcp/tests/*",
 ]
 
 [tool.coverage.report]
