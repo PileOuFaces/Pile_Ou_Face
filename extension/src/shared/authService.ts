@@ -42,6 +42,87 @@ const SECRET_KEYS = Object.freeze([
   KEY_LEASE_EXPIRES_AT,
 ]);
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+/** Délai maximal d'une requête vers le serveur d'authentification (corps compris). */
+const AUTH_REQUEST_TIMEOUT_MS = 15_000;
+/** Délai de la révocation best-effort envoyée à la déconnexion. */
+const AUTH_LOGOUT_TIMEOUT_MS = 5_000;
+const HTTP_STATUS_UNAUTHORIZED = 401;
+const HTTP_STATUS_FORBIDDEN = 403;
+const HTTP_STATUS_CLIENT_ERROR_MIN = 400;
+const HTTP_STATUS_SERVER_ERROR_MIN = 500;
+
+type AuthErrorKind = 'network' | 'timeout' | 'unauthorized' | 'client' | 'server' | 'invalid_response';
+
+/**
+ * Erreur réseau typée (POF-P1-011). Garde `message` (« Auth failed: <status> »
+ * ou `detail` du serveur) et `status` pour les appelants existants.
+ */
+class AuthRequestError extends Error {
+  readonly kind: AuthErrorKind;
+  readonly status?: number;
+
+  constructor(kind: AuthErrorKind, message: string, status?: number) {
+    super(message);
+    this.name = 'AuthRequestError';
+    this.kind = kind;
+    if (status !== undefined) this.status = status;
+  }
+}
+
+function httpErrorKind(status: number): AuthErrorKind {
+  if (status === HTTP_STATUS_UNAUTHORIZED || status === HTTP_STATUS_FORBIDDEN) return 'unauthorized';
+  if (status >= HTTP_STATUS_SERVER_ERROR_MIN) return 'server';
+  return 'client';
+}
+
+async function readJsonBody<T>(res: Response): Promise<T> {
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({})) as Record<string, unknown>;
+    const status = Number(res.status);
+    throw new AuthRequestError(
+      httpErrorKind(status),
+      String(err?.detail ?? `Auth failed: ${res.status}`),
+      Number.isFinite(status) ? status : undefined,
+    );
+  }
+  try {
+    return await res.json() as T;
+  } catch {
+    throw new AuthRequestError('invalid_response', 'Auth server returned an invalid response');
+  }
+}
+
+/**
+ * Exécute `fetch` puis `read` sous un même délai : un serveur muet (en-têtes
+ * ou corps) est interrompu et produit une AuthRequestError de type `timeout`.
+ */
+async function requestWithTimeout<T>(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  read: (res: Response) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await read(await fetch(url, { ...init, signal: controller.signal }));
+  } catch (err) {
+    // Un statut HTTP déjà reçu prime ; sinon l'abandon (corps compris) est un délai.
+    const hasStatus = err instanceof AuthRequestError && err.status !== undefined;
+    if (controller.signal.aborted && !hasStatus) {
+      throw new AuthRequestError('timeout', `Auth request timed out after ${timeoutMs} ms`);
+    }
+    if (err instanceof AuthRequestError) throw err;
+    const reason = err instanceof Error ? err.message : String(err);
+    throw new AuthRequestError('network', `Auth server unreachable: ${reason}`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function joinUrl(baseUrl: string, requestPath: string): string {
+  return `${String(baseUrl || '').replace(/\/+$/, '')}${requestPath}`;
+}
 
 type ServerIdentity = Awaited<ReturnType<typeof discoverAuthServer>>;
 
@@ -225,18 +306,23 @@ class AuthService {
 
   async login(email: string, password: string): Promise<void> {
     this._beginSession();
+    const epoch = this._sessionEpoch;
     const attempts = this._getCandidateServerUrls();
     let lastError: unknown = null;
     for (const baseUrl of attempts) {
       try {
         await this._ensureServerIdentity(baseUrl);
         const data = await this._postJson<AuthTokenResponse>(baseUrl, '/auth/login', { email, password });
+        this._assertSessionEpoch(epoch);
         this.serverUrl = baseUrl;
         await this._store(data.access_token, data.refresh_token, email);
         await this._syncLicenseLeases(data.access_token);
+        this._assertSessionEpoch(epoch);
         this._scheduleRefresh();
         return;
       } catch (error) {
+        // Session remplacée (logout/révocation) : ne pas retenter un autre hôte.
+        if (epoch !== this._sessionEpoch) throw error;
         lastError = error;
       }
     }
@@ -247,18 +333,15 @@ class AuthService {
     this._beginSession();
     const refreshToken = await this.secrets.get(KEY_REFRESH_TOKEN);
     if (refreshToken) {
-      fetch(`${this.serverUrl}/auth/logout`, {
+      // Best-effort borné : la session locale est effacée sans attendre le serveur.
+      requestWithTimeout(joinUrl(this.serverUrl, '/auth/logout'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refresh_token: refreshToken }),
-      }).catch(() => {});
+      }, AUTH_LOGOUT_TIMEOUT_MS, async () => undefined)
+        .catch((err) => this._log(`révocation serveur au logout échouée: ${err.message}`));
     }
-    await this.secrets.delete(KEY_ACCESS_TOKEN);
-    await this.secrets.delete(KEY_REFRESH_TOKEN);
-    await this.secrets.delete(KEY_CONTENT_KEYS);
-    await this.secrets.delete(KEY_EMAIL);
-    await this.secrets.delete(KEY_KEYS_VALIDATED_AT);
-    await this.secrets.delete(KEY_LEASE_EXPIRES_AT);
+    await this._clearSessionSecrets();
     // La paire de clés d'installation (KEY_DEVICE_*) N'EST PAS effacée : c'est une
     // identité de machine, pas une session utilisateur. Se reconnecter avec un
     // autre compte ré-enrôle le même device_id (voir _syncLicenseLeases).
@@ -337,13 +420,15 @@ class AuthService {
           '/auth/refresh',
           { refresh_token: refreshToken },
         );
-        if (epoch !== this._sessionEpoch) {
-          throw new Error('Session changed during refresh');
+        this._assertSessionEpoch(epoch);
+        if (typeof data?.access_token !== 'string' || !data.access_token) {
+          throw new AuthRequestError('invalid_response', 'Refresh response has no access_token');
         }
         // Toujours stocker le token renvoyé (rotation, Pile_ou_Face_auth#9),
         // sinon garder l'ancien (serveur sans rotation).
         await this._store(data.access_token, data.refresh_token || refreshToken);
         await this._syncLicenseLeases(data.access_token);
+        this._assertSessionEpoch(epoch);
         return data;
       })().finally(() => {
         if (this._refreshInFlight === inFlight) this._refreshInFlight = null;
@@ -357,6 +442,39 @@ class AuthService {
   private _beginSession(): void {
     this._sessionEpoch += 1;
     this._refreshInFlight = null;
+  }
+
+  /** Une réponse arrivée après logout, login ou révocation n'écrit rien. */
+  private _assertSessionEpoch(epoch: number): void {
+    if (epoch !== this._sessionEpoch) {
+      throw new Error('Session changed during request');
+    }
+  }
+
+  private async _clearSessionSecrets(): Promise<void> {
+    await this.secrets.delete(KEY_ACCESS_TOKEN);
+    await this.secrets.delete(KEY_REFRESH_TOKEN);
+    await this.secrets.delete(KEY_CONTENT_KEYS);
+    await this.secrets.delete(KEY_EMAIL);
+    await this.secrets.delete(KEY_KEYS_VALIDATED_AT);
+    await this.secrets.delete(KEY_LEASE_EXPIRES_AT);
+  }
+
+  /**
+   * Révocation = 4xx du serveur. Les erreurs typées réseau, délai, 5xx ou
+   * réponse invalide gardent la session (mode gracieux). Les erreurs non typées
+   * conservent l'ancienne heuristique (statut 4xx ou « Auth failed »).
+   */
+  private static _isRevocation(err: unknown): boolean {
+    if (err instanceof AuthRequestError) {
+      return err.kind === 'unauthorized' || err.kind === 'client';
+    }
+    const status = err instanceof Error && 'status' in err
+      ? Number((err as StatusError).status || 0)
+      : 0;
+    const message = err instanceof Error ? err.message : String(err || '');
+    return (status >= HTTP_STATUS_CLIENT_ERROR_MIN && status < HTTP_STATUS_SERVER_ERROR_MIN)
+      || message.includes('Auth failed');
   }
 
   private async _store(accessToken: string, refreshToken: string, email?: string): Promise<void> {
@@ -390,21 +508,14 @@ class AuthService {
       await this._rotateRefreshToken(refreshToken, epoch);
       return { refreshed: true, revoked: false };
     } catch (err) {
-      const status = err instanceof Error && 'status' in err
-        ? Number((err as StatusError).status || 0)
-        : 0;
-      const message = err instanceof Error ? err.message : String(err || '');
-      const isAuthError = (status >= 400 && status < 500) || message.includes('Auth failed');
-      if (isAuthError) {
-        await this.secrets.delete(KEY_ACCESS_TOKEN);
-        await this.secrets.delete(KEY_REFRESH_TOKEN);
-        await this.secrets.delete(KEY_CONTENT_KEYS);
-        await this.secrets.delete(KEY_EMAIL);
-        await this.secrets.delete(KEY_KEYS_VALIDATED_AT);
-        await this.secrets.delete(KEY_LEASE_EXPIRES_AT);
+      // Une révocation invalide tout refresh concurrent, comme un logout.
+      if (epoch === this._sessionEpoch && AuthService._isRevocation(err)) {
+        this._beginSession();
+        this._clearRefreshTimer();
+        await this._clearSessionSecrets();
         return { refreshed: false, revoked: true };
       }
-      // Erreur réseau — mode gracieux, on garde les clés existantes
+      // Erreur réseau, délai, 5xx — mode gracieux, on garde les clés existantes
       return { refreshed: false, revoked: false };
     }
   }
@@ -421,6 +532,7 @@ class AuthService {
    */
   private async _syncLicenseLeases(accessToken: string): Promise<void> {
     if (!accessToken) return;
+    const epoch = this._sessionEpoch;
     try {
       const { deviceId, privateKeyPem, publicKeyPem } = await this._getOrCreateDeviceIdentity();
       const enrollmentChallenge = await this._postJsonAuthenticated<EnrollmentChallengeResponse>(
@@ -442,6 +554,7 @@ class AuthService {
         Object.entries(installedArtifacts).map(([pluginId, artifact]) => [pluginId, artifact.releaseId]),
       );
       if (Object.keys(installedReleases).length === 0) {
+        this._assertSessionEpoch(epoch);
         await this.secrets.store(KEY_CONTENT_KEYS, JSON.stringify({}));
         await this.secrets.delete(KEY_LEASE_EXPIRES_AT);
         return;
@@ -489,6 +602,7 @@ class AuthService {
       }
       // Remplace aussi le cache par un objet vide : une release installée sans
       // clé correspondante ne doit jamais continuer à utiliser le DEK précédent.
+      this._assertSessionEpoch(epoch);
       await this.secrets.store(KEY_CONTENT_KEYS, JSON.stringify(contentKeys));
       if (leaseExpirations.length > 0) {
         await this.secrets.store(KEY_LEASE_EXPIRES_AT, String(Math.min(...leaseExpirations)));
@@ -536,9 +650,12 @@ class AuthService {
       return this._jwksCache.jwks;
     }
     await this._ensureServerIdentity(this.serverUrl);
-    const res = await fetch(this._serverIdentity.jwks_uri);
-    if (!res.ok) throw new Error(`jwks fetch failed: ${res.status}`);
-    const jwks = await res.json();
+    const jwks = await requestWithTimeout<unknown>(
+      this._serverIdentity.jwks_uri,
+      { method: 'GET' },
+      AUTH_REQUEST_TIMEOUT_MS,
+      readJsonBody,
+    );
     this._jwksCache = { jwks, fetchedAt: Date.now() };
     return jwks;
   }
@@ -631,19 +748,14 @@ class AuthService {
     accessToken: string,
     payload: unknown,
   ): Promise<T> {
-    const res = await fetch(`${String(baseUrl || '').replace(/\/+$/, '')}${requestPath}`, {
+    return requestWithTimeout(joinUrl(baseUrl, requestPath), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${accessToken}`,
       },
       body: JSON.stringify(payload),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({})) as Record<string, unknown>;
-      throw Object.assign(new Error(String(err.detail ?? `Auth failed: ${res.status}`)), { status: res.status });
-    }
-    return res.json() as Promise<T>;
+    }, AUTH_REQUEST_TIMEOUT_MS, readJsonBody<T>);
   }
 
   private _scheduleRefresh(): void {
@@ -684,16 +796,11 @@ class AuthService {
   }
 
   private async _postJson<T>(baseUrl: string, requestPath: string, payload: unknown): Promise<T> {
-    const res = await fetch(`${String(baseUrl || '').replace(/\/+$/, '')}${requestPath}`, {
+    return requestWithTimeout(joinUrl(baseUrl, requestPath), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({})) as Record<string, unknown>;
-      throw Object.assign(new Error(String(err.detail ?? `Auth failed: ${res.status}`)), { status: res.status });
-    }
-    return res.json() as Promise<T>;
+    }, AUTH_REQUEST_TIMEOUT_MS, readJsonBody<T>);
   }
 
   private async _getJsonAuthenticated<T = unknown>(
@@ -701,21 +808,19 @@ class AuthService {
     requestPath: string,
     accessToken: string,
   ): Promise<T> {
-    const res = await fetch(`${String(baseUrl || '').replace(/\/+$/, '')}${requestPath}`, {
+    return requestWithTimeout(joinUrl(baseUrl, requestPath), {
       method: 'GET',
       headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({})) as Record<string, unknown>;
-      throw new Error(String(err.detail ?? `Auth failed: ${res.status}`));
-    }
-    return res.json() as Promise<T>;
+    }, AUTH_REQUEST_TIMEOUT_MS, readJsonBody<T>);
   }
 }
 
 AuthService._instance = null;
 
 module.exports = {
+  AUTH_LOGOUT_TIMEOUT_MS,
+  AUTH_REQUEST_TIMEOUT_MS,
+  AuthRequestError,
   AuthService,
   KEY_SERVER_BINDING,
   discoverInstalledPluginReleases,

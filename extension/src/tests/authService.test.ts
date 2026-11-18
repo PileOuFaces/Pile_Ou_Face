@@ -745,3 +745,197 @@ describe("AuthService SecretStorage server isolation", () => {
     mod.AuthService._instance = null;
   });
 });
+
+// ---------------------------------------------------------------------------
+// POF-P1-011 — délais, erreurs typées et réponses tardives
+// ---------------------------------------------------------------------------
+describe("AuthService network timeouts and typed errors (POF-P1-011)", () => {
+  const TTL = 24 * 3600_000;
+  const HTTP_OK = 200;
+  const HTTP_NO_CONTENT = 204;
+
+  function abortableSilentFetch() {
+    return sinon.stub(global, "fetch").callsFake(
+      (_url, init) => new Promise((_resolve, reject) => {
+        init.signal.addEventListener("abort", () => {
+          reject(Object.assign(new Error("This operation was aborted"), { name: "AbortError" }));
+        });
+      }),
+    );
+  }
+
+  function jsonResponse(status, body) {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  async function captureError(promise) {
+    try {
+      await promise;
+    } catch (err) {
+      return err;
+    }
+    throw new Error("expected the request to fail");
+  }
+
+  function unstubbedService(options) {
+    const ctx = makeAuthService(options);
+    ctx.svc._postJson.restore();
+    return ctx;
+  }
+
+  // Bloque l'enrôlement de licence jusqu'à release() pour simuler une réponse tardive.
+  function stubPendingEnrollment(svc) {
+    const gate = { release: null };
+    sinon.stub(svc, "_postJsonAuthenticated").callsFake(async (_baseUrl, requestPath) => {
+      if (requestPath !== "/plugins/enroll/challenge") return {};
+      return new Promise((resolve) => {
+        gate.release = () => resolve({
+          challenge: Buffer.from("challenge").toString("base64"),
+          challenge_id: "challenge-1",
+        });
+      });
+    });
+    return gate;
+  }
+
+  async function waitFor(predicate) {
+    while (!predicate()) await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  afterEach(() => {
+    sinon.restore();
+    const mod = require("../shared/authService");
+    mod.AuthService._instance = null;
+  });
+
+  it("aborts a silent server within the configured delay with a timeout error", async () => {
+    const { AUTH_REQUEST_TIMEOUT_MS, AuthRequestError } = require("../shared/authService");
+    const { svc } = unstubbedService();
+    const clock = sinon.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const fetchStub = abortableSilentFetch();
+
+    let settled = false;
+    const pending = captureError(svc._postJson("http://localhost:8000", "/auth/refresh", {}))
+      .finally(() => { settled = true; });
+    await clock.tickAsync(AUTH_REQUEST_TIMEOUT_MS - 1);
+    expect(settled).to.equal(false);
+    await clock.tickAsync(1);
+
+    const err = await pending;
+    expect(err).to.be.instanceOf(AuthRequestError);
+    expect(err.kind).to.equal("timeout");
+    expect(fetchStub.firstCall.args[1].signal.aborted).to.equal(true);
+  });
+
+  it("keeps the session when the refresh times out", async () => {
+    const { AUTH_REQUEST_TIMEOUT_MS } = require("../shared/authService");
+    const { svc, store } = unstubbedService({ storedValidatedAt: 0 });
+    const clock = sinon.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    abortableSilentFetch();
+
+    const result = svc.refreshKeysIfStale(TTL);
+    await clock.tickAsync(AUTH_REQUEST_TIMEOUT_MS);
+
+    expect(await result).to.deep.equal({ refreshed: false, revoked: false });
+    expect(store["pof.auth.refreshToken"]).to.equal("fake-refresh");
+  });
+
+  it("distinguishes offline, 401, 403, 5xx and invalid responses", async () => {
+    const { AuthRequestError } = require("../shared/authService");
+    const { svc } = unstubbedService();
+    const responses = [
+      () => Promise.reject(new TypeError("fetch failed")),
+      () => Promise.resolve(jsonResponse(401, { detail: "Invalid refresh token" })),
+      () => Promise.resolve(jsonResponse(403, {})),
+      () => Promise.resolve(jsonResponse(503, {})),
+      () => Promise.resolve(new Response("<html>proxy</html>", { status: HTTP_OK })),
+    ];
+    const expectedCount = responses.length;
+    sinon.stub(global, "fetch").callsFake(() => responses.shift()());
+
+    const errors = [];
+    for (let i = 0; i < expectedCount; i += 1) {
+      errors.push(await captureError(svc._postJson("http://localhost:8000", "/auth/refresh", {})));
+    }
+
+    errors.forEach((err) => expect(err).to.be.instanceOf(AuthRequestError));
+    expect(errors.map((err) => err.kind)).to.deep.equal([
+      "network", "unauthorized", "unauthorized", "server", "invalid_response",
+    ]);
+    expect(errors.map((err) => err.status)).to.deep.equal([undefined, 401, 403, 503, undefined]);
+    expect(errors[1].message).to.equal("Invalid refresh token");
+    expect(errors[2].message).to.equal("Auth failed: 403");
+  });
+
+  it("keeps the session on 5xx and revokes it on 401", async () => {
+    const serverDown = unstubbedService({ storedValidatedAt: 0 });
+    const fetchStub = sinon.stub(global, "fetch").resolves(jsonResponse(503, {}));
+    expect(await serverDown.svc.refreshKeysIfStale(TTL)).to.deep.equal({ refreshed: false, revoked: false });
+    expect(serverDown.store["pof.auth.refreshToken"]).to.equal("fake-refresh");
+
+    fetchStub.resolves(jsonResponse(401, {}));
+    const revoked = unstubbedService({ storedValidatedAt: 0 });
+    expect(await revoked.svc.refreshKeysIfStale(TTL)).to.deep.equal({ refreshed: false, revoked: true });
+    expect(revoked.store["pof.auth.refreshToken"]).to.equal(undefined);
+  });
+
+  it("returns the parsed body unchanged when the server answers normally", async () => {
+    const { svc } = unstubbedService();
+    sinon.stub(global, "fetch").resolves(jsonResponse(HTTP_OK, { email: "user@example.test" }));
+
+    expect(await svc.getProfile()).to.deep.equal({ email: "user@example.test" });
+  });
+
+  it("does not restore a session from a refresh that completes after logout", async () => {
+    const { svc, store } = makeAuthService({
+      refreshResponse: { access_token: "new-tok", refresh_token: "rotated-refresh" },
+    });
+    const gate = stubPendingEnrollment(svc);
+    sinon.stub(svc, "_scheduleRefresh");
+    sinon.stub(global, "fetch").resolves(new Response(null, { status: HTTP_NO_CONTENT }));
+    sinon.stub(console, "warn");
+
+    const refreshing = svc.refresh();
+    await waitFor(() => gate.release);
+    await svc.logout();
+    gate.release();
+
+    expect(await refreshing).to.equal(false);
+    expect(store["pof.auth.accessToken"]).to.equal(undefined);
+    expect(store["pof.auth.refreshToken"]).to.equal(undefined);
+    expect(store["pof.auth.contentKeys"]).to.equal(undefined);
+    expect(svc._scheduleRefresh.called).to.equal(false);
+  });
+
+  it("does not restore a session from a login that completes after a revocation", async () => {
+    const { svc, store } = makeAuthService();
+    svc._postJson.restore();
+    sinon.stub(svc, "_postJson").callsFake(async (_baseUrl, requestPath) => {
+      if (requestPath === "/auth/login") {
+        return { access_token: "login-tok", refresh_token: "login-refresh" };
+      }
+      throw Object.assign(new Error("Auth failed: 401"), { status: 401 });
+    });
+    const gate = stubPendingEnrollment(svc);
+    sinon.stub(svc, "_scheduleRefresh");
+    sinon.stub(console, "warn");
+
+    const loggingIn = svc.login("user@example.test", "pw");
+    await waitFor(() => gate.release);
+    expect(await svc.refreshKeysIfStale(0)).to.deep.equal({ refreshed: false, revoked: true });
+    gate.release();
+    const loginError = await captureError(loggingIn);
+
+    expect(loginError.message).to.equal("Session changed during request");
+    const loginCalls = svc._postJson.getCalls().filter((call) => call.args[1] === "/auth/login");
+    expect(loginCalls).to.have.length(1);
+
+    expect(store["pof.auth.accessToken"]).to.equal(undefined);
+    expect(store["pof.auth.refreshToken"]).to.equal(undefined);
+    expect(store["pof.auth.contentKeys"]).to.equal(undefined);
+    expect(svc._scheduleRefresh.called).to.equal(false);
+  });
+});
