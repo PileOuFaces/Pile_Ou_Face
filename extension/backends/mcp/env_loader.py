@@ -130,10 +130,9 @@ def _write_env_key(key: str, value: str, path: Path = _DEFAULT_ENV_PATH) -> None
         # Resserrer l'inode existant avant de le remplacer : un lien physique vers
         # l'ancien fichier garderait sinon ses anciennes clés en lecture.
         os.chmod(path, _FILE_MODE)
+        _log.warning(_TOO_OPEN_MESSAGE, path, previous_mode, _FILE_MODE)
     content = "\n".join(_updated_lines(lines, key, value)) + "\n"
     _atomic_write_private(path, content)
-    if previous_mode is not None:
-        _log.warning(_TOO_OPEN_MESSAGE, path, previous_mode, _FILE_MODE)
 
 
 def load_pof_env() -> None:
