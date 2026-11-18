@@ -120,6 +120,28 @@ async function requestWithTimeout<T>(
   }
 }
 
+/**
+ * Découverte bornée par AUTH_REQUEST_TIMEOUT_MS (en-têtes et corps) : le signal
+ * est injecté via `fetchImpl`, les erreurs de validation restent inchangées.
+ */
+async function discoverWithTimeout(origin: string): Promise<ServerIdentity> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), AUTH_REQUEST_TIMEOUT_MS);
+  const fetchImpl = (url: string | URL | Request, init: RequestInit = {}) => (
+    fetch(url, { ...init, signal: controller.signal })
+  );
+  try {
+    return await discoverAuthServer(origin, { fetchImpl });
+  } catch (err) {
+    if (controller.signal.aborted) {
+      throw new AuthRequestError('timeout', `Auth discovery timed out after ${AUTH_REQUEST_TIMEOUT_MS} ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function joinUrl(baseUrl: string, requestPath: string): string {
   return `${String(baseUrl || '').replace(/\/+$/, '')}${requestPath}`;
 }
@@ -246,6 +268,7 @@ class AuthService {
   declare private _refreshTimer: NodeJS.Timeout | null;
   declare private _refreshInFlight: Promise<RefreshTokenResponse> | null;
   declare private _sessionEpoch: number;
+  declare private _sessionWriteQueue: Promise<void>;
   declare pluginSearchDirs: string[];
   declare private _serverIdentity: ServerIdentity | null | undefined;
   declare private _jwksCache: { jwks: unknown; fetchedAt: number } | null | undefined;
@@ -264,6 +287,7 @@ class AuthService {
     this._refreshTimer = null;
     this._refreshInFlight = null;
     this._sessionEpoch = 0;
+    this._sessionWriteQueue = Promise.resolve();
     this.pluginSearchDirs = Array.isArray(options.pluginSearchDirs)
       ? options.pluginSearchDirs
       : [];
@@ -315,7 +339,7 @@ class AuthService {
         const data = await this._postJson<AuthTokenResponse>(baseUrl, '/auth/login', { email, password });
         this._assertSessionEpoch(epoch);
         this.serverUrl = baseUrl;
-        await this._store(data.access_token, data.refresh_token, email);
+        await this._store(epoch, data.access_token, data.refresh_token, email);
         await this._syncLicenseLeases(data.access_token);
         this._assertSessionEpoch(epoch);
         this._scheduleRefresh();
@@ -426,7 +450,7 @@ class AuthService {
         }
         // Toujours stocker le token renvoyé (rotation, Pile_ou_Face_auth#9),
         // sinon garder l'ancien (serveur sans rotation).
-        await this._store(data.access_token, data.refresh_token || refreshToken);
+        await this._store(epoch, data.access_token, data.refresh_token || refreshToken);
         await this._syncLicenseLeases(data.access_token);
         this._assertSessionEpoch(epoch);
         return data;
@@ -451,13 +475,43 @@ class AuthService {
     }
   }
 
-  private async _clearSessionSecrets(): Promise<void> {
-    await this.secrets.delete(KEY_ACCESS_TOKEN);
-    await this.secrets.delete(KEY_REFRESH_TOKEN);
-    await this.secrets.delete(KEY_CONTENT_KEYS);
-    await this.secrets.delete(KEY_EMAIL);
-    await this.secrets.delete(KEY_KEYS_VALIDATED_AT);
-    await this.secrets.delete(KEY_LEASE_EXPIRES_AT);
+  /**
+   * Sérialise les écritures de session : un effacement (logout, révocation)
+   * passe toujours après une écriture déjà commencée, jamais au milieu.
+   */
+  private _enqueueSessionWrite<T>(task: () => Promise<T>): Promise<T> {
+    const run = this._sessionWriteQueue.then(task);
+    this._sessionWriteQueue = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  /**
+   * Écrit (valeur) ou supprime (`undefined`) des secrets de session pour
+   * `epoch`. L'epoch est revérifié avant chaque écriture : une session
+   * invalidée pendant la séquence n'est jamais réécrite après son effacement.
+   */
+  private _writeSessionSecrets(
+    epoch: number,
+    entries: ReadonlyArray<readonly [string, string | undefined]>,
+  ): Promise<void> {
+    return this._enqueueSessionWrite(async () => {
+      for (const [key, value] of entries) {
+        this._assertSessionEpoch(epoch);
+        if (value === undefined) await this.secrets.delete(key);
+        else await this.secrets.store(key, value);
+      }
+    });
+  }
+
+  private _clearSessionSecrets(): Promise<void> {
+    return this._enqueueSessionWrite(async () => {
+      await this.secrets.delete(KEY_ACCESS_TOKEN);
+      await this.secrets.delete(KEY_REFRESH_TOKEN);
+      await this.secrets.delete(KEY_CONTENT_KEYS);
+      await this.secrets.delete(KEY_EMAIL);
+      await this.secrets.delete(KEY_KEYS_VALIDATED_AT);
+      await this.secrets.delete(KEY_LEASE_EXPIRES_AT);
+    });
   }
 
   /**
@@ -477,11 +531,14 @@ class AuthService {
       || message.includes('Auth failed');
   }
 
-  private async _store(accessToken: string, refreshToken: string, email?: string): Promise<void> {
-    await this.secrets.store(KEY_ACCESS_TOKEN, accessToken);
-    await this.secrets.store(KEY_REFRESH_TOKEN, refreshToken);
-    if (email) await this.secrets.store(KEY_EMAIL, email);
-    await this.secrets.store(KEY_KEYS_VALIDATED_AT, String(Date.now()));
+  private _store(epoch: number, accessToken: string, refreshToken: string, email?: string): Promise<void> {
+    const entries: Array<readonly [string, string]> = [
+      [KEY_ACCESS_TOKEN, accessToken],
+      [KEY_REFRESH_TOKEN, refreshToken],
+    ];
+    if (email) entries.push([KEY_EMAIL, email]);
+    entries.push([KEY_KEYS_VALIDATED_AT, String(Date.now())]);
+    return this._writeSessionSecrets(epoch, entries);
   }
 
   /**
@@ -554,9 +611,10 @@ class AuthService {
         Object.entries(installedArtifacts).map(([pluginId, artifact]) => [pluginId, artifact.releaseId]),
       );
       if (Object.keys(installedReleases).length === 0) {
-        this._assertSessionEpoch(epoch);
-        await this.secrets.store(KEY_CONTENT_KEYS, JSON.stringify({}));
-        await this.secrets.delete(KEY_LEASE_EXPIRES_AT);
+        await this._writeSessionSecrets(epoch, [
+          [KEY_CONTENT_KEYS, JSON.stringify({})],
+          [KEY_LEASE_EXPIRES_AT, undefined],
+        ]);
         return;
       }
       const leaseData = await this._postJsonAuthenticated<LeaseResponse>(
@@ -602,13 +660,13 @@ class AuthService {
       }
       // Remplace aussi le cache par un objet vide : une release installée sans
       // clé correspondante ne doit jamais continuer à utiliser le DEK précédent.
-      this._assertSessionEpoch(epoch);
-      await this.secrets.store(KEY_CONTENT_KEYS, JSON.stringify(contentKeys));
-      if (leaseExpirations.length > 0) {
-        await this.secrets.store(KEY_LEASE_EXPIRES_AT, String(Math.min(...leaseExpirations)));
-      } else {
-        await this.secrets.delete(KEY_LEASE_EXPIRES_AT);
-      }
+      await this._writeSessionSecrets(epoch, [
+        [KEY_CONTENT_KEYS, JSON.stringify(contentKeys)],
+        [
+          KEY_LEASE_EXPIRES_AT,
+          leaseExpirations.length > 0 ? String(Math.min(...leaseExpirations)) : undefined,
+        ],
+      ]);
     } catch (err) {
       this._log(`sync licence par installation échouée: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -668,7 +726,7 @@ class AuthService {
       }
       return this._serverIdentity;
     }
-    this._serverIdentity = await discoverAuthServer(normalized);
+    this._serverIdentity = await discoverWithTimeout(normalized);
     this.serverUrl = this._serverIdentity.origin;
     this._jwksCache = null;
     if (this._secretIsolationEnabled) await this._bindSecretNamespace(this._serverIdentity);

@@ -938,4 +938,60 @@ describe("AuthService network timeouts and typed errors (POF-P1-011)", () => {
     expect(store["pof.auth.contentKeys"]).to.equal(undefined);
     expect(svc._scheduleRefresh.called).to.equal(false);
   });
+
+  it("does not rewrite tokens when logout happens while a refresh is storing them", async () => {
+    const { svc, secrets, store } = makeAuthService({
+      refreshResponse: { access_token: "new-tok", refresh_token: "rotated-refresh" },
+    });
+    // Suspend l'écriture de l'access token rafraîchi jusqu'à release().
+    const gate = { release: null };
+    secrets.store.callsFake(async (key, value) => {
+      if (key === "pof.auth.accessToken" && value === "new-tok") {
+        await new Promise((resolve) => { gate.release = resolve; });
+      }
+      store[key] = value;
+    });
+    sinon.stub(svc, "_scheduleRefresh");
+    sinon.stub(global, "fetch").resolves(new Response(null, { status: HTTP_NO_CONTENT }));
+    sinon.stub(console, "warn");
+
+    const refreshing = svc.refresh();
+    await waitFor(() => gate.release);
+    const loggingOut = svc.logout();
+    gate.release();
+    await loggingOut;
+
+    expect(await refreshing).to.equal(false);
+    expect(store["pof.auth.accessToken"]).to.equal(undefined);
+    expect(store["pof.auth.refreshToken"]).to.equal(undefined);
+    expect(store["pof.auth.keysValidatedAt"]).to.equal(undefined);
+    expect(await svc.isAuthenticated()).to.equal(false);
+    expect(svc._scheduleRefresh.called).to.equal(false);
+  });
+
+  it("bounds server discovery during login with a timeout error", async () => {
+    const mod = require("../shared/authService");
+    const { AUTH_REQUEST_TIMEOUT_MS, AuthRequestError } = mod;
+    const { secrets } = makeAuthService();
+    // Instance sans identité en cache : login() doit passer par la découverte.
+    const svc = new mod.AuthService(secrets, "https://auth.example");
+    const clock = sinon.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const fetchStub = abortableSilentFetch();
+
+    let settled = false;
+    const pending = captureError(svc.login("user@example.test", "pw"))
+      .finally(() => { settled = true; });
+    await clock.tickAsync(AUTH_REQUEST_TIMEOUT_MS - 1);
+    expect(settled).to.equal(false);
+    await clock.tickAsync(1);
+
+    const err = await pending;
+    expect(err).to.be.instanceOf(AuthRequestError);
+    expect(err.kind).to.equal("timeout");
+    expect(fetchStub.callCount).to.equal(1);
+    expect(String(fetchStub.firstCall.args[0])).to.equal(
+      "https://auth.example/.well-known/pile-ou-face-auth/v1",
+    );
+    expect(fetchStub.firstCall.args[1].signal.aborted).to.equal(true);
+  });
 });
