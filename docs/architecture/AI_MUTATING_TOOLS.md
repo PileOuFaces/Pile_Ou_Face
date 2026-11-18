@@ -67,7 +67,7 @@ Déclenchement par un contenu analysé (dernière colonne) :
 | `build_call_graph` | `extension/backends/mcp/server.py:186` | `extension/backends/mcp/server.py:1390-1414` | Artefact si `mapping_path` absent : désassemblage écrit sous `.pile-ou-face/mcp` (`extension/backends/mcp/server.py:1137-1138`, `954-962`) | Aucune | [A] |
 | `build_cfg` | `extension/backends/mcp/server.py:198` | `extension/backends/mcp/server.py:1416-1429` | Artefact (même mécanisme, `extension/backends/mcp/server.py:1419`) | Aucune | [A] |
 | `build_cfg_for_function` | `extension/backends/mcp/server.py:210` | `extension/backends/mcp/server.py:1431-1445` | Artefact (`extension/backends/mcp/server.py:1434`) | Aucune | [A] |
-| `decompile_function` | `extension/backends/mcp/server.py:224` | `extension/backends/mcp/server.py:1447-1461` | Artefact : écrit le cache de décompilation (`extension/backends/static/decompile/decompile.py:2998`) ; lance des processus locaux/Docker ou un appel HTTP selon le décompilateur configuré (`extension/backends/static/decompile/decompile.py:908`, `1221`) | Aucune | [A] |
+| `decompile_function` | `extension/backends/mcp/server.py:224` | `extension/backends/mcp/server.py:1447-1461` | Artefact : écrit le cache de décompilation (`extension/backends/static/decompile/decompile.py:2998`) ; pour un binaire existant, charge les annotations via `AnnotationDb` (`extension/backends/static/decompile/decompile.py:2902-2904`, `extension/backends/static/decompile/decompile.py:1544`), ce qui crée ou migre la base d'annotations, même sans décompilateur disponible ; lance des processus locaux/Docker ou un appel HTTP selon le décompilateur configuré (`extension/backends/static/decompile/decompile.py:908`, `1221`) | Aucune | [A] |
 | `decompile_binary` | `extension/backends/mcp/server.py:243` | `extension/backends/mcp/server.py:1463-1468` | Processus externes (même module) ; écriture de cache non établie (`extension/backends/static/decompile/decompile.py:3104`) | Aucune | [A] |
 | `disassemble` | `extension/backends/mcp/server.py:260` | `extension/backends/mcp/server.py:1470-1477` | Artefact : crée `.asm` et mapping sous `ROOT/.pile-ou-face/mcp` et lance un sous-processus (`extension/backends/mcp/server.py:954-987`) | Aucune | [A] |
 | `discover_functions` | `extension/backends/mcp/server.py:274` | `extension/backends/mcp/server.py:1479-1506` | Artefact si `mapping_path` absent (`extension/backends/mcp/server.py:1483`) | Aucune | [A] |
@@ -258,7 +258,7 @@ consentement plugin, ni confirmation utilisateur dans le chemin de code cité.
 |---|---|
 | `ai_analyze` | `prompt` et `context` vers le fournisseur configuré |
 | Pont Ollama (`hubOllamaPrompt`) | Conversation et sorties d'outils vers l'URL Ollama fournie par la webview |
-| `decompile_function`, `decompile_binary` | Binaire vers le décompilateur configuré (processus local, Docker ou HTTP) |
+| `decompile_function`, `decompile_binary` | Binaire vers le décompilateur configuré : processus local ou Docker ; en HTTP, une requête part toujours, mais le contenu du binaire n'est transmis que si le modèle de corps contient `{binary_b64}` (`extension/backends/static/decompile/decompile.py:877-895`) |
 | `ai_providers_list` | Requête de liste des modèles vers chaque fournisseur cloud configuré, avec la clé API configurée en en-tête d'authentification ; requête vers `OLLAMA_BASE_URL` (sans clé) |
 
 **Artefacts et cache d'analyse (données dérivées)**
@@ -279,6 +279,7 @@ consentement plugin, ni confirmation utilisateur dans le chemin de code cité.
 | `annotations_list` | Répertoire, base `annotations.db` et schéma s'ils sont absents ; ajout de la colonne `source` sur une ancienne base |
 | `patch_manager.list_patches` | Répertoire, base `patches.db` et schéma s'ils sont absents |
 | `get_xrefs` (mode `to`, binaire existant) | Base d'annotations et cache de désassemblage (WAL), avec leur schéma, s'ils sont absents |
+| `decompile_function` (binaire existant) | Base d'annotations et son schéma s'ils sont absents ; migration d'une ancienne base |
 | `structs.load_struct_store`, `structs.list_struct_store`, `typed_data.get_typed_data` | Sur une base `types.db` existante : passage en WAL et création des tables manquantes |
 
 **Accord partiel**
