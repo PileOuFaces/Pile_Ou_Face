@@ -120,6 +120,14 @@ async function requestWithTimeout<T>(
   }
 }
 
+/** Réponse du logout : statut vérifié, corps annulé (aucune ressource gardée au-delà du délai). */
+async function readLogoutResponse(res: Response): Promise<void> {
+  await res.body?.cancel().catch(() => undefined);
+  if (!res.ok) {
+    throw new AuthRequestError(httpErrorKind(res.status), `Auth logout failed: ${res.status}`, res.status);
+  }
+}
+
 /**
  * Découverte bornée par AUTH_REQUEST_TIMEOUT_MS (en-têtes et corps) : le signal
  * est injecté via `fetchImpl`, les erreurs de validation restent inchangées.
@@ -127,13 +135,36 @@ async function requestWithTimeout<T>(
 async function discoverWithTimeout(origin: string): Promise<ServerIdentity> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), AUTH_REQUEST_TIMEOUT_MS);
-  const fetchImpl = (url: string | URL | Request, init: RequestInit = {}) => (
-    fetch(url, { ...init, signal: controller.signal })
-  );
+  // Les échecs réseau, HTTP et JSON sont classés comme ceux des autres requêtes ;
+  // les erreurs de validation du document de découverte restent inchangées.
+  const fetchImpl = async (url: string | URL | Request, init: RequestInit = {}): Promise<Response> => {
+    let res: Response;
+    try {
+      res = await fetch(url, { ...init, signal: controller.signal });
+    } catch (err) {
+      if (controller.signal.aborted) throw err;
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new AuthRequestError('network', `Auth server unreachable: ${reason}`);
+    }
+    if (!res.ok) {
+      await res.body?.cancel().catch(() => undefined);
+      throw new AuthRequestError(httpErrorKind(res.status), `auth discovery failed: ${res.status}`, res.status);
+    }
+    const parseJson = async () => {
+      try {
+        return await res.json();
+      } catch (err) {
+        if (controller.signal.aborted) throw err;
+        throw new AuthRequestError('invalid_response', 'Auth discovery returned an invalid response');
+      }
+    };
+    return { ok: res.ok, status: res.status, json: parseJson } as unknown as Response;
+  };
   try {
     return await discoverAuthServer(origin, { fetchImpl });
   } catch (err) {
-    if (controller.signal.aborted) {
+    const hasStatus = err instanceof AuthRequestError && err.status !== undefined;
+    if (controller.signal.aborted && !hasStatus) {
       throw new AuthRequestError('timeout', `Auth discovery timed out after ${AUTH_REQUEST_TIMEOUT_MS} ms`);
     }
     throw err;
@@ -340,7 +371,7 @@ class AuthService {
         this._assertSessionEpoch(epoch);
         this.serverUrl = baseUrl;
         await this._store(epoch, data.access_token, data.refresh_token, email);
-        await this._syncLicenseLeases(data.access_token);
+        await this._syncLicenseLeases(data.access_token, epoch);
         this._assertSessionEpoch(epoch);
         this._scheduleRefresh();
         return;
@@ -362,7 +393,7 @@ class AuthService {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refresh_token: refreshToken }),
-      }, AUTH_LOGOUT_TIMEOUT_MS, async () => undefined)
+      }, AUTH_LOGOUT_TIMEOUT_MS, readLogoutResponse)
         .catch((err) => this._log(`révocation serveur au logout échouée: ${err.message}`));
     }
     await this._clearSessionSecrets();
@@ -451,7 +482,7 @@ class AuthService {
         // Toujours stocker le token renvoyé (rotation, Pile_ou_Face_auth#9),
         // sinon garder l'ancien (serveur sans rotation).
         await this._store(epoch, data.access_token, data.refresh_token || refreshToken);
-        await this._syncLicenseLeases(data.access_token);
+        await this._syncLicenseLeases(data.access_token, epoch);
         this._assertSessionEpoch(epoch);
         return data;
       })().finally(() => {
@@ -587,9 +618,10 @@ class AuthService {
    * Un échec réseau n'autorise aucune fenêtre supplémentaire : un DEK déjà
    * reçu reste utilisable uniquement jusqu'à l'expiration de son lease.
    */
-  private async _syncLicenseLeases(accessToken: string): Promise<void> {
+  // `epoch` est celui de la session qui a obtenu `accessToken` (login ou refresh) :
+  // le relire ici laisserait un logout survenu entre-temps autoriser ces écritures.
+  private async _syncLicenseLeases(accessToken: string, epoch: number): Promise<void> {
     if (!accessToken) return;
-    const epoch = this._sessionEpoch;
     try {
       const { deviceId, privateKeyPem, publicKeyPem } = await this._getOrCreateDeviceIdentity();
       const enrollmentChallenge = await this._postJsonAuthenticated<EnrollmentChallengeResponse>(

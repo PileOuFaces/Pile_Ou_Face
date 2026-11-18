@@ -994,4 +994,84 @@ describe("AuthService network timeouts and typed errors (POF-P1-011)", () => {
     );
     expect(fetchStub.firstCall.args[1].signal.aborted).to.equal(true);
   });
+  it("classifies discovery failures during the first login", async () => {
+    const mod = require("../shared/authService");
+    const { AuthRequestError } = mod;
+    const { secrets } = makeAuthService();
+    const cases = [
+      [() => Promise.reject(new TypeError("fetch failed")), "network", undefined],
+      [() => Promise.resolve(jsonResponse(401, {})), "unauthorized", 401],
+      [() => Promise.resolve(jsonResponse(403, {})), "unauthorized", 403],
+      [() => Promise.resolve(jsonResponse(503, {})), "server", 503],
+      [() => Promise.resolve(new Response("<html>proxy</html>", { status: HTTP_OK })), "invalid_response", undefined],
+    ];
+    const fetchStub = sinon.stub(global, "fetch");
+    for (const [respond, kind, status] of cases) {
+      fetchStub.callsFake(respond);
+      // Instance sans identité en cache : login() passe par la découverte.
+      const svc = new mod.AuthService(secrets, "https://auth.example");
+      const err = await captureError(svc.login("user@example.test", "pw"));
+      expect(err, kind).to.be.instanceOf(AuthRequestError);
+      expect([err.kind, err.status], kind).to.deep.equal([kind, status]);
+    }
+  });
+
+  it("keeps discovery validation errors unchanged", async () => {
+    const mod = require("../shared/authService");
+    const { secrets } = makeAuthService();
+    sinon.stub(global, "fetch").resolves(jsonResponse(HTTP_OK, {
+      protocol_version: "1", deployment_id: "d", issuer: "https://other.example",
+    }));
+    const svc = new mod.AuthService(secrets, "https://auth.example");
+    const err = await captureError(svc.login("user@example.test", "pw"));
+    expect(err.message).to.equal("auth issuer mismatch");
+    expect(err).to.not.be.instanceOf(mod.AuthRequestError);
+  });
+
+  it("writes no licence data when logout happens during the last token write of a refresh", async () => {
+    const { svc, secrets, store } = makeAuthService({
+      refreshResponse: { access_token: "new-tok", refresh_token: "rotated-refresh" },
+    });
+    // Suspend la dernière écriture de _store (keysValidatedAt) jusqu'à release().
+    const gate = { release: null };
+    secrets.store.callsFake(async (key, value) => {
+      if (key === "pof.auth.keysValidatedAt" && !gate.release) {
+        await new Promise((resolve) => { gate.release = resolve; });
+      }
+      store[key] = value;
+    });
+    sinon.stub(svc, "_postJsonAuthenticated").callsFake(async (_baseUrl, requestPath) => (
+      requestPath === "/plugins/enroll/challenge"
+        ? { challenge: Buffer.from("challenge").toString("base64"), challenge_id: "challenge-1" }
+        : {}
+    ));
+    sinon.stub(svc, "_scheduleRefresh");
+    sinon.stub(global, "fetch").resolves(new Response(null, { status: HTTP_NO_CONTENT }));
+    sinon.stub(console, "warn");
+
+    const refreshing = svc.refresh();
+    await waitFor(() => gate.release);
+    const loggingOut = svc.logout();
+    gate.release();
+    await loggingOut;
+
+    expect(await refreshing).to.equal(false);
+    expect(store["pof.auth.contentKeys"]).to.equal(undefined);
+    expect(store["pof.auth.leaseExpiresAt"]).to.equal(undefined);
+    expect(store["pof.auth.accessToken"]).to.equal(undefined);
+    expect(svc._scheduleRefresh.called).to.equal(false);
+  });
+
+  it("logs a failed server-side logout and releases its response body", async () => {
+    const { svc } = makeAuthService();
+    const cancel = sinon.stub().resolves();
+    sinon.stub(global, "fetch").resolves({ ok: false, status: 500, body: { cancel } });
+    const warn = sinon.stub(console, "warn");
+
+    await svc.logout();
+    await waitFor(() => warn.called);
+
+    expect(cancel.calledOnce).to.equal(true);
+    expect(String(warn.firstCall.args[0])).to.match(/logout échouée: Auth logout failed: 500/);
+  });
 });
