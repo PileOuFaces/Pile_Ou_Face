@@ -185,6 +185,23 @@ def test_runtime_error_in_child():
     assert "TimeoutError" not in result["stderr"]
 
 
+def test_stopped_collector_keeps_nothing_more_and_its_thread_ends():
+    read_fd, write_fd = os.pipe()
+    with (
+        os.fdopen(read_fd, "rb") as stream,
+        os.fdopen(write_fd, "wb", buffering=0) as writer,
+    ):
+        collector = repl._PipeCollector(stream)
+        writer.write(b"before")
+        deadline = time.monotonic() + MAX_RETURN_S
+        while collector.data() != b"before" and time.monotonic() < deadline:
+            time.sleep(0.01)
+        collector.stop()
+        writer.write(b"after")  # a survivor still writing after the result was returned
+        assert collector.join(MAX_RETURN_S) is True
+        assert collector.data() == b"before"
+
+
 def test_cli_exits_zero_with_a_failed_result_so_the_extension_keeps_the_output():
     """The extension (runPython) rejects a non-zero exit and drops stdout: the CLI
     reports a failed script in its JSON, with exit code 0."""

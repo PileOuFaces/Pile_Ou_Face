@@ -103,16 +103,25 @@ class _PipeCollector:
         self._stream = stream
         self._chunks: list[bytes] = []
         self._lock = threading.Lock()
+        self._stopped = threading.Event()
         self._thread = threading.Thread(target=self._pump, daemon=True)
         self._thread.start()
 
     def _pump(self) -> None:
         try:
             for chunk in iter(lambda: self._stream.read1(self._CHUNK), b""):
+                if self._stopped.is_set():
+                    break  # result already returned: keep nothing more
                 with self._lock:
                     self._chunks.append(chunk)
         except (OSError, ValueError):
             pass  # pipe closed under us after a kill: keep what was read
+
+    def stop(self) -> None:
+        """Stop collecting: a survivor that keeps the pipe open and writes no
+        longer grows memory. Closing the stream from here could deadlock on
+        the buffered reader's lock, so the thread exits at its next read."""
+        self._stopped.set()
 
     def join(self, timeout: float) -> bool:
         """Wait up to *timeout* s for EOF; return True if the pipe was closed."""
@@ -178,6 +187,7 @@ def execute_script(code: str, binary_path: str, timeout: int = _EXEC_TIMEOUT) ->
             # grandchild) may keep the pipes open forever.
             for reader in readers:
                 reader.join(_DRAIN_TIMEOUT)
+                reader.stop()
             timeout_msg = (
                 f"TimeoutError: script exceeded the {timeout}s limit and was stopped.\n"
             )
