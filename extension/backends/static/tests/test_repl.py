@@ -138,14 +138,13 @@ def test_timeout_kills_spawned_subprocess():
 
 
 SURVIVOR_SLEEP_S = 60
-FAST_DRAIN_S = 1
 
 
-def test_output_kept_when_survivor_holds_pipes(monkeypatch):
+def test_output_kept_when_survivor_holds_pipes():
     """A descendant that escapes the kill keeps stdout/stderr open (EOF never
     comes); output printed before the stop must still be returned. On POSIX
     the descendant leaves the process group to mimic the Windows behaviour."""
-    monkeypatch.setattr(repl, "_DRAIN_TIMEOUT", FAST_DRAIN_S)
+    # Real drain budget: both pipes share it, so the return stays well bounded.
     code = (
         "import os, subprocess, sys, time\n"
         "kw = {'start_new_session': True} if os.name == 'posix' else {}\n"

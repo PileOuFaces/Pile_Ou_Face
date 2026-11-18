@@ -123,6 +123,13 @@ class _PipeCollector:
         the buffered reader's lock, so the thread exits at its next read."""
         self._stopped.set()
 
+    def discard(self) -> None:
+        """Drop the kept output once it has been returned: a silent survivor may
+        keep this collector (and its thread) alive."""
+        self.stop()
+        with self._lock:
+            self._chunks.clear()
+
     def join(self, timeout: float) -> bool:
         """Wait up to *timeout* s for EOF; return True if the pipe was closed."""
         self._thread.join(max(0.0, timeout))
@@ -185,8 +192,11 @@ def execute_script(code: str, binary_path: str, timeout: int = _EXEC_TIMEOUT) ->
             proc.wait()
             # Bounded: a process that escaped the kill (e.g. a Windows
             # grandchild) may keep the pipes open forever.
+            drain_deadline = (
+                time.monotonic() + _DRAIN_TIMEOUT
+            )  # one budget for both pipes
             for reader in readers:
-                reader.join(_DRAIN_TIMEOUT)
+                reader.join(drain_deadline - time.monotonic())
                 reader.stop()
             timeout_msg = (
                 f"TimeoutError: script exceeded the {timeout}s limit and was stopped.\n"
@@ -195,12 +205,15 @@ def execute_script(code: str, binary_path: str, timeout: int = _EXEC_TIMEOUT) ->
         if proc.poll() is None:
             _kill_child(proc)
 
-    return {
+    result = {
         "ok": not timeout_msg and proc.returncode == 0,
         "stdout": _decode(readers[0].data()),
         "stderr": _decode(readers[1].data()) + timeout_msg,
         "duration_ms": _elapsed_ms(start),
     }
+    for reader in readers:
+        reader.discard()
+    return result
 
 
 def main() -> int:
