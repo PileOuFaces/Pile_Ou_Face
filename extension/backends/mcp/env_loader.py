@@ -5,6 +5,9 @@ Protection du fichier :
 - POSIX : le dossier est créé en ``0700`` et le fichier en ``0600`` dès leur
   création ; un dossier ou un fichier existant trop ouvert est resserré à
   l'écriture et un avertissement est journalisé (sans la valeur des clés).
+- Lien symbolique : si ``.env`` est un lien, l'écriture porte sur sa cible
+  (passée en ``0600``), le lien est conservé ; le dossier de la cible n'est pas
+  modifié. Un lien cassé provoque une erreur explicite.
 - Windows : les bits de mode POSIX ne s'appliquent pas. Le fichier hérite des
   ACL du dossier parent (par défaut le profil utilisateur ``%USERPROFILE%``) ;
   aucune ACL spécifique n'est posée et aucune vérification n'est faite.
@@ -96,13 +99,28 @@ def _updated_lines(lines: list[str], key: str, value: str) -> list[str]:
     return lines
 
 
+def _resolve_write_target(path: Path) -> Path:
+    """Return the real file to write: the symlink target if path is a symlink.
+
+    Replacing the link itself would leave the target (and its old keys) with
+    its previous permissions. A dangling link raises FileNotFoundError rather
+    than being silently replaced by a regular file.
+    """
+    if not path.is_symlink():
+        return path
+    return path.resolve(strict=True)
+
+
 def _write_env_key(key: str, value: str, path: Path = _DEFAULT_ENV_PATH) -> None:
     """Write or update a single key in the .env file. Creates the file if absent.
 
     The write is atomic; on POSIX the file ends up in 0600 inside a 0700
-    directory (see the module docstring for the Windows strategy).
+    directory (see the module docstring for the Windows strategy). A symlinked
+    .env is written through to its target, which gets 0600; the target's own
+    directory is left unchanged.
     """
     _ensure_private_dir(path.parent)
+    path = _resolve_write_target(path)
     lines: list[str] = []
     previous_mode: int | None = None
     if path.is_file():

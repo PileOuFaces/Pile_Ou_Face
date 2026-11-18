@@ -115,6 +115,38 @@ def test_write_tightens_existing_open_dir(tmp_path, caplog):
     assert "Permissions trop ouvertes" in caplog.text
 
 
+@posix_only
+def test_write_through_symlink_tightens_target(tmp_path, caplog):
+    external = tmp_path / "external" / "config.env"
+    external.parent.mkdir()
+    external.write_text("OLD_KEY=old-secret\n")
+    os.chmod(external, WORLD_READABLE_MODE)
+    link = tmp_path / "pof" / ".env"
+    link.parent.mkdir()
+    link.symlink_to(external)
+    with caplog.at_level(logging.WARNING, logger=env_loader.__name__):
+        _write_env_key("OPENAI_API_KEY", SECRET, link)
+    assert link.is_symlink()
+    assert link.resolve() == external.resolve()
+    assert _mode(external) == PRIVATE_FILE_MODE
+    content = external.read_text()
+    assert "OLD_KEY=old-secret" in content
+    assert f"OPENAI_API_KEY={SECRET}" in content
+    assert "Permissions trop ouvertes" in caplog.text
+    assert SECRET not in caplog.text
+    assert [p.name for p in external.parent.iterdir()] == ["config.env"]
+
+
+@posix_only
+def test_write_refuses_dangling_symlink(tmp_path):
+    link = tmp_path / ".env"
+    link.symlink_to(tmp_path / "missing.env")
+    with pytest.raises(FileNotFoundError):
+        _write_env_key("OPENAI_API_KEY", SECRET, link)
+    assert link.is_symlink()
+    assert not (tmp_path / "missing.env").exists()
+
+
 def test_write_is_atomic_on_error(tmp_path, monkeypatch):
     env_file = tmp_path / ".env"
     env_file.write_text("MY_KEY=old\n")

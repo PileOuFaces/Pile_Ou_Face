@@ -18,6 +18,10 @@ Protection de `~/.pile-ou-face/.env` (clés API IA locales) :
   un fichier existant accessible au groupe ou aux autres est resserré à la
   prochaine écriture et un avertissement est journalisé (chemin et modes
   uniquement, jamais la valeur des clés).
+- Lien symbolique : si `.env` est un lien, l'écriture atomique porte sur le
+  fichier cible, qui passe en `0600` ; le lien est conservé et le dossier de la
+  cible n'est pas modifié. Un lien cassé provoque une erreur explicite au lieu
+  d'être remplacé par un fichier ordinaire.
 - Windows : les modes POSIX ne s'appliquent pas. Le fichier hérite des ACL du
   dossier parent (par défaut le profil utilisateur) ; aucune ACL spécifique
   n'est posée ni vérifiée.
