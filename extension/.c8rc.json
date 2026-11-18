@@ -6,8 +6,7 @@
   ],
   "exclude": [
     "test/**",
-    "front/tests/**",
-    "front/shared/elk.bundled.js"
+    "front/tests/**"
   ],
   "reporter": [
     "text",
