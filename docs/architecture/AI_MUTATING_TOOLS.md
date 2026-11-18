@@ -89,7 +89,7 @@ Déclenchement par un contenu analysé (dernière colonne) :
 | `analyze_stack_frame` | `extension/backends/mcp/server.py:472` | `extension/backends/mcp/server.py:1723-1729` | Artefact : en l'absence de cache valide, enregistre le résultat dans le cache d'analyse du binaire (`extension/backends/static/disasm/stack_frame.py:878-882`) ; une erreur d'écriture est ignorée silencieusement | Aucune | [A] |
 | `extract_strings` | `extension/backends/mcp/server.py:485` | `extension/backends/mcp/server.py:1731-1744` | Lecture | Aucune | [A] |
 | `get_symbols` | `extension/backends/mcp/server.py:495` | `extension/backends/mcp/server.py:1746-1751` | Lecture | Aucune | [A] |
-| `get_xrefs` | `extension/backends/mcp/server.py:505` | `extension/backends/mcp/server.py:1753-1782` | Artefact si `mapping_path` absent (`extension/backends/mcp/server.py:1762`) | Aucune | [A] |
+| `get_xrefs` | `extension/backends/mcp/server.py:505` | `extension/backends/mcp/server.py:1753-1782` | Artefact si `mapping_path` absent (`extension/backends/mcp/server.py:1762`). En mode `to` (`extension/backends/mcp/server.py:1781`), **même avec un `mapping_path` fourni**, l'enrichissement ouvre `AnnotationDb` et `DisasmCache` si le binaire existe (`extension/backends/static/disasm/xrefs.py:359-365`). Leur ouverture crée la base et son schéma s'ils sont absents (`extension/backends/static/annotations/annotation_db.py:45-49`, `extension/backends/static/cache/cache.py:260-270`) | Aucune | [A] |
 | `plugins_list` | `extension/backends/mcp/server.py:520` | `extension/backends/mcp/server.py:1293-1299` | Attache les plugins consentis (`attach=True`, `extension/backends/mcp/server.py:747-756`). Effets du runtime de plugin à l'attache : non établis | Consentement plugin (`require_consent=True`, `extension/backends/mcp/server.py:754`) | [A] |
 | `plugin_invoke` | `extension/backends/mcp/server.py:529` | `extension/backends/mcp/server.py:1301-1352` | Dépend du plugin : non établi par lecture du Host | Consentement plugin (`extension/backends/mcp/server.py:1338`, `1348` ; contrôle : `extension/backends/plugins/runtime.py:421-430`). Ce n'est pas le consentement IA d'`ai_consent.py` | [A] |
 | `find_files` | `extension/backends/mcp/server.py:542` | `extension/backends/mcp/server.py:1784-1787` | Lecture (parcours de `WORKSPACE_ROOT`, `extension/backends/mcp/server.py:889-895`) | Aucune | [A] |
@@ -123,12 +123,12 @@ non vérifiée par exécution.
 | `patch_manager.delete_history` | `extension/backends/static/patch/patch_manager.py:229` | **Modification** : supprime l'historique de patchs d'un binaire, donc la possibilité d'annuler (`extension/backends/static/patch/patch_manager.py:231-232`) | Aucune | [A] |
 | `patch_manager.purge_missing` | `extension/backends/static/patch/patch_manager.py:235` | **Modification** : purge les historiques des binaires absents sous `workspace_root` (`extension/backends/static/patch/patch_manager.py:237-238`) | Aucune | [A] |
 | `structs.parse_struct_definitions` | `extension/backends/static/annotations/structs.py:284` | Lecture (analyse de texte) | Aucune | [A] |
-| `structs.load_struct_store` | `extension/backends/static/annotations/structs.py:374` | Lecture | Aucune | [A] |
-| `structs.list_struct_store` | `extension/backends/static/annotations/structs.py:381` | Lecture | Aucune | [A] |
+| `structs.load_struct_store` | `extension/backends/static/annotations/structs.py:374` | Lecture ; si `types.db` existe, son ouverture passe la base en WAL et crée les tables manquantes (`extension/backends/static/annotations/struct_db.py:140-142`, `extension/backends/static/annotations/struct_db.py:43-44`) | Aucune | [A] |
+| `structs.list_struct_store` | `extension/backends/static/annotations/structs.py:381` | Lecture, via `load_struct_store` (`extension/backends/static/annotations/structs.py:385`) : mêmes effets sur une base `types.db` existante | Aucune | [A] |
 | `structs.save_struct_source` | `extension/backends/static/annotations/structs.py:398` | **Modification** : remplace les définitions de types du binaire (`extension/backends/static/annotations/structs.py:404`) | Aucune | [A] |
 | `structs.import_type_definitions` | `extension/backends/static/annotations/structs.py:430` | **Modification** : fusionne des définitions dans le catalogue (`extension/backends/static/annotations/structs.py:452-454`) | Aucune | [A] |
 | `structs.compute_struct_layout` | `extension/backends/static/annotations/structs.py:527` | Lecture (calcul) | Aucune | [A] |
-| `typed_data.get_typed_data` | `extension/backends/static/annotations/typed_data.py:705` | Lecture (`extension/backends/static/annotations/typed_data.py:182`) | Aucune | [A] |
+| `typed_data.get_typed_data` | `extension/backends/static/annotations/typed_data.py:705` | Lecture (`extension/backends/static/annotations/typed_data.py:182`) ; appelle `load_struct_store` (`extension/backends/static/annotations/typed_data.py:719`) : mêmes effets sur une base `types.db` existante | Aucune | [A] |
 | `function_radar.build_function_radar` | `extension/backends/static/analysis/function_radar.py:609` | Artefact : remplit le cache d'analyse (`extension/backends/static/analysis/function_radar.py:167`, `177`, `202`, `212`, `234`, `245`, `256`) | Aucune | [A] |
 | `analysis_index.build_analysis_index` | `extension/backends/static/analysis/analysis_index.py:126` | Artefact : remplit le cache d'analyse (`extension/backends/static/analysis/analysis_index.py:150-161`) ; `cache_db` libre (`extension/backends/static/analysis/analysis_index.py:128`) | Aucune | [A] |
 | `calling_convention.analyze_calling_conventions` | `extension/backends/static/disasm/calling_convention.py:317` | Lecture (aucune écriture directe repérée dans le module) | Aucune | [A] |
@@ -266,6 +266,7 @@ consentement plugin, ni confirmation utilisateur dans le chemin de code cité.
 | Outil | Ce qui est écrit |
 |---|---|
 | `disassemble` ; `build_call_graph`, `build_cfg`, `build_cfg_for_function`, `discover_functions`, `get_xrefs` sans `mapping_path` | Fichiers `.asm` et mapping sous `ROOT/.pile-ou-face/mcp` |
+| `get_xrefs` en mode `to`, avec ou sans `mapping_path` | Ouverture d'`AnnotationDb` et du cache de désassemblage (§6, tableau suivant) |
 | `decompile_function` | Cache de décompilation |
 | `function_radar.build_function_radar`, `analysis_index.build_analysis_index` | Cache d'analyse SQLite |
 | `analyze_stack_frame` | Cache d'analyse : résultat du cadre de pile |
@@ -277,6 +278,8 @@ consentement plugin, ni confirmation utilisateur dans le chemin de code cité.
 |---|---|
 | `annotations_list` | Répertoire, base `annotations.db` et schéma s'ils sont absents ; ajout de la colonne `source` sur une ancienne base |
 | `patch_manager.list_patches` | Répertoire, base `patches.db` et schéma s'ils sont absents |
+| `get_xrefs` (mode `to`, binaire existant) | Base d'annotations et cache de désassemblage (WAL), avec leur schéma, s'ils sont absents |
+| `structs.load_struct_store`, `structs.list_struct_store`, `typed_data.get_typed_data` | Sur une base `types.db` existante : passage en WAL et création des tables manquantes |
 
 **Accord partiel**
 
