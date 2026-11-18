@@ -6,7 +6,8 @@ process with the `binary` variable pre-set to the binary path.
 
 Guarantees: a wall-clock timeout and a hard stop. When the timeout expires,
 the child is killed (on POSIX its whole process group, so subprocesses it
-spawned die too) and the output produced before the stop is returned.
+spawned die too, unless they left the group, e.g. with start_new_session) and
+the output produced before the stop is returned.
 
 Non-guarantees: this is NOT a sandbox. The script runs with the same user,
 filesystem, network and environment access as the extension. On Windows only
