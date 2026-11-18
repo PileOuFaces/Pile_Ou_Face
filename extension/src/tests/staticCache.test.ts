@@ -41,14 +41,24 @@ describe('getCacheKey', () => {
 
   it('changes the key when only the size changes and mtime is restored', () => {
     const bin = binary(tempDir(), 'short');
-    fs.utimesSync(bin, FIXED_TIME_SECONDS, FIXED_TIME_SECONDS);
-    const before = fs.statSync(bin);
-    const keyBefore = cache.getCacheKey(bin);
+    // One open file for every check and change: no path re-resolved between them.
+    const fd = fs.openSync(bin, 'r+');
+    let before;
+    let after;
+    let keyBefore;
+    let keyAfter;
+    try {
+      fs.futimesSync(fd, FIXED_TIME_SECONDS, FIXED_TIME_SECONDS);
+      before = fs.fstatSync(fd);
+      keyBefore = cache.getCacheKey(bin);
 
-    fs.writeFileSync(bin, 'a-much-longer-content');
-    fs.utimesSync(bin, FIXED_TIME_SECONDS, FIXED_TIME_SECONDS);
-    const after = fs.statSync(bin);
-    const keyAfter = cache.getCacheKey(bin);
+      fs.writeSync(fd, 'a-much-longer-content', 0);
+      fs.futimesSync(fd, FIXED_TIME_SECONDS, FIXED_TIME_SECONDS);
+      after = fs.fstatSync(fd);
+      keyAfter = cache.getCacheKey(bin);
+    } finally {
+      fs.closeSync(fd);
+    }
 
     expect(after.size).to.not.equal(before.size);
     expect(after.mtimeMs).to.equal(before.mtimeMs);
