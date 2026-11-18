@@ -112,7 +112,9 @@ def test_infinite_loop_is_stopped_and_output_kept():
 
 
 def test_unflushed_output_before_loop_is_kept():
-    result = execute_script('print("no-flush")\nwhile True: pass\n', "", timeout=SHORT_TIMEOUT_S)
+    result = execute_script(
+        'print("no-flush")\nwhile True: pass\n', "", timeout=SHORT_TIMEOUT_S
+    )
     assert result["ok"] is False
     assert "no-flush" in result["stdout"]
 
@@ -181,6 +183,23 @@ def test_runtime_error_in_child():
     assert result["ok"] is False
     assert "ZeroDivisionError" in result["stderr"]
     assert "TimeoutError" not in result["stderr"]
+
+
+def test_cli_exits_zero_with_a_failed_result_so_the_extension_keeps_the_output():
+    """The extension (runPython) rejects a non-zero exit and drops stdout: the CLI
+    reports a failed script in its JSON, with exit code 0."""
+    code = base64.b64encode(b"print('before-error')\n1/0\n").decode()
+    proc = subprocess.run(
+        [PYTHON, REPL, "--code", code, "--binary", ""],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert proc.returncode == 0, proc.stderr
+    result = json.loads(proc.stdout)
+    assert result["ok"] is False
+    assert "before-error" in result["stdout"]
+    assert "ZeroDivisionError" in result["stderr"]
 
 
 def test_syntax_error_without_demo():

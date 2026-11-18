@@ -178,7 +178,9 @@ def execute_script(code: str, binary_path: str, timeout: int = _EXEC_TIMEOUT) ->
             # grandchild) may keep the pipes open forever.
             for reader in readers:
                 reader.join(_DRAIN_TIMEOUT)
-            timeout_msg = f"TimeoutError: script exceeded the {timeout}s limit and was stopped.\n"
+            timeout_msg = (
+                f"TimeoutError: script exceeded the {timeout}s limit and was stopped.\n"
+            )
     finally:
         if proc.poll() is None:
             _kill_child(proc)
@@ -217,7 +219,9 @@ def main() -> int:
 
     result = execute_script(code, args.binary)
     print(json.dumps(result))
-    return 0 if result["ok"] else 1
+    # Le résultat (ok, stdout, stderr) est dans le JSON : un code non nul ferait
+    # rejeter l'appel par l'extension, qui perdrait alors la sortie conservée.
+    return 0
 
 
 if __name__ == "__main__":
