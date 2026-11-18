@@ -123,7 +123,7 @@ async function ensurePythonDependencies(pythonExe, root, options: { quiet?: bool
       logChannel.appendLine('[venv] Création du venv…');
       try {
         await new Promise<void>((resolve, reject) => {
-          cp.exec(`${pythonExe} -m venv ${venvPath}`, (error, stdout, stderr) =>
+          cp.execFile(pythonExe, ['-m', 'venv', venvPath], (error, stdout, stderr) =>
             error ? reject(new Error(stderr)) : resolve());
         });
         const candidates = [
@@ -152,7 +152,7 @@ async function ensurePythonDependencies(pythonExe, root, options: { quiet?: bool
   for (const dep of coreDeps) {
     try {
       await new Promise<void>((resolve, reject) => {
-        cp.exec(`${pythonExe} -c "import ${dep}"`, (error) => (error ? reject(error) : resolve()));
+        cp.execFile(pythonExe, ['-c', `import ${dep}`], (error) => (error ? reject(error) : resolve()));
       });
     } catch {
       needInstall = true;
