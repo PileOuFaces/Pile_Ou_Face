@@ -1101,4 +1101,31 @@ describe("AuthService network timeouts and typed errors (POF-P1-011)", () => {
     expect(err).to.be.instanceOf(AuthRequestError);
     expect(err.kind).to.equal("network");
   });
+  it("times out when the headers arrive but the body never completes", async () => {
+    const mod = require("../shared/authService");
+    const { AUTH_REQUEST_TIMEOUT_MS, AuthRequestError } = mod;
+    const { secrets } = makeAuthService();
+    const clock = sinon.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    sinon.stub(global, "fetch").callsFake((_url, init) => Promise.resolve({
+      ok: true,
+      status: HTTP_OK,
+      json: () => new Promise((_resolve, reject) => {
+        init.signal.addEventListener("abort", () => {
+          reject(Object.assign(new Error("This operation was aborted"), { name: "AbortError" }));
+        });
+      }),
+    }));
+    const { svc } = unstubbedService();
+    const fresh = new mod.AuthService(secrets, "https://auth.example");
+    for (const request of [
+      () => svc._postJson("http://localhost:8000", "/auth/refresh", {}),
+      () => fresh.login("user@example.test", "pw"),
+    ]) {
+      const pending = captureError(request());
+      await clock.tickAsync(AUTH_REQUEST_TIMEOUT_MS);
+      const err = await pending;
+      expect(err).to.be.instanceOf(AuthRequestError);
+      expect(err.kind).to.equal("timeout");
+    }
+  });
 });
