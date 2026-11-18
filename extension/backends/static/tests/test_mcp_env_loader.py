@@ -12,8 +12,8 @@ from backends.mcp.env_loader import _load_env_file, _write_env_key
 SECRET = "sk-test-secret-value"
 PRIVATE_FILE_MODE = 0o600
 PRIVATE_DIR_MODE = 0o700
-WORLD_READABLE_MODE = 0o644
-WORLD_READABLE_DIR_MODE = 0o755
+GROUP_READABLE_MODE = 0o640  # trop ouvert pour une clé, sans être lisible par tous
+GROUP_READABLE_DIR_MODE = 0o750
 posix_only = pytest.mark.skipif(os.name != "posix", reason="POSIX permissions")
 
 
@@ -95,7 +95,7 @@ def test_write_creates_private_file_and_dir(tmp_path):
 def test_write_tightens_existing_open_file(tmp_path, caplog):
     env_file = tmp_path / ".env"
     env_file.write_text("OTHER=x\n")
-    os.chmod(env_file, WORLD_READABLE_MODE)
+    os.chmod(env_file, GROUP_READABLE_MODE)
     with caplog.at_level(logging.WARNING, logger=env_loader.__name__):
         _write_env_key("OPENAI_API_KEY", SECRET, env_file)
     assert _mode(env_file) == PRIVATE_FILE_MODE
@@ -105,10 +105,25 @@ def test_write_tightens_existing_open_file(tmp_path, caplog):
 
 
 @posix_only
+def test_write_tightens_the_old_inode_kept_by_a_hard_link(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("OLD_KEY=old-secret\n")
+    os.chmod(env_file, GROUP_READABLE_MODE)
+    hard_link = tmp_path / "elsewhere.env"
+    os.link(env_file, hard_link)
+    _write_env_key("OPENAI_API_KEY", SECRET, env_file)
+    assert _mode(env_file) == PRIVATE_FILE_MODE
+    assert (
+        _mode(hard_link) == PRIVATE_FILE_MODE
+    )  # l'ancien contenu n'est plus lisible par le groupe
+    assert "OLD_KEY=old-secret" in hard_link.read_text()
+
+
+@posix_only
 def test_write_tightens_existing_open_dir(tmp_path, caplog):
     env_dir = tmp_path / "pof"
     env_dir.mkdir()
-    os.chmod(env_dir, WORLD_READABLE_DIR_MODE)
+    os.chmod(env_dir, GROUP_READABLE_DIR_MODE)
     with caplog.at_level(logging.WARNING, logger=env_loader.__name__):
         _write_env_key("OPENAI_API_KEY", SECRET, env_dir / ".env")
     assert _mode(env_dir) == PRIVATE_DIR_MODE
@@ -120,7 +135,7 @@ def test_write_through_symlink_tightens_target(tmp_path, caplog):
     external = tmp_path / "external" / "config.env"
     external.parent.mkdir()
     external.write_text("OLD_KEY=old-secret\n")
-    os.chmod(external, WORLD_READABLE_MODE)
+    os.chmod(external, GROUP_READABLE_MODE)
     link = tmp_path / "pof" / ".env"
     link.parent.mkdir()
     link.symlink_to(external)
@@ -177,7 +192,7 @@ def test_written_keys_are_reloaded(tmp_path):
 def test_write_does_not_log_secret(tmp_path, caplog):
     env_file = tmp_path / ".env"
     env_file.write_text("")
-    os.chmod(env_file, WORLD_READABLE_MODE)
+    os.chmod(env_file, GROUP_READABLE_MODE)
     with caplog.at_level(logging.DEBUG):
         _write_env_key("ANTHROPIC_API_KEY", SECRET, env_file)
     assert SECRET not in caplog.text

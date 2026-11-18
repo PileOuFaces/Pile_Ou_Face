@@ -126,6 +126,10 @@ def _write_env_key(key: str, value: str, path: Path = _DEFAULT_ENV_PATH) -> None
     if path.is_file():
         lines = path.read_text(encoding="utf-8").splitlines()
         previous_mode = _too_open_mode(path)
+    if previous_mode is not None:
+        # Resserrer l'inode existant avant de le remplacer : un lien physique vers
+        # l'ancien fichier garderait sinon ses anciennes clés en lecture.
+        os.chmod(path, _FILE_MODE)
     content = "\n".join(_updated_lines(lines, key, value)) + "\n"
     _atomic_write_private(path, content)
     if previous_mode is not None:
