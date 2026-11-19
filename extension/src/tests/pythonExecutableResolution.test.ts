@@ -148,12 +148,23 @@ describe('hub Python executable', () => {
   });
   afterEach(() => sinon.restore());
 
-  const openHubWith = (globalState) => {
+  const HUB_ROOT = '/repo';
+  const PROBE_SCRIPT = path.join(HUB_ROOT, 'probe.py');
+
+  // Ouvre le hub puis déclenche un lancement Python réel (runPythonJson) et
+  // renvoie l'exécutable reçu par child_process.execFile.
+  const launchedPythonFor = (globalState) => {
+    const execFile = sinon.stub();
+    const { createAnalysisContext } = require('../static/hub/analysisContext');
+    let analysisCtx = null;
     const { createHub } = proxyquire('../static/hub', {
+      child_process: { execFile },
       '../shared/webview': { getHubContent: () => '<!doctype html>' },
       './handlers': { createHandlers: () => ({}) },
+      './hub/analysisContext': {
+        createAnalysisContext: (ctx) => { analysisCtx = ctx; return createAnalysisContext(ctx); },
+      },
     });
-    const detectPythonExecutable = sinon.spy(utils.detectPythonExecutable);
     createHub({
       context: {
         extensionUri: {},
@@ -165,7 +176,7 @@ describe('hub Python executable', () => {
       getTempDir: () => '/tmp/pof',
       ensureTempDir: () => '/tmp/pof',
       runCommand: sinon.stub(),
-      detectPythonExecutable,
+      detectPythonExecutable: utils.detectPythonExecutable,
       ensureStaticAsm: sinon.stub().returns({ ok: true }),
       readTraceJson: sinon.stub(),
       writeTraceJson: sinon.spy(),
@@ -175,28 +186,101 @@ describe('hub Python executable', () => {
       check32BitToolchain: () => ({ ok: true }),
       openVisualizerWebview: sinon.spy(),
     })();
-    return detectPythonExecutable;
+    expect(analysisCtx, 'analysis context').to.not.equal(null);
+    // La promesse ne se résout jamais (execFile est un stub) : seul l'appel compte.
+    analysisCtx.runPythonJson(PROBE_SCRIPT, []);
+    const launch = execFile.getCalls().find((call) => call.args[1]?.[0] === PROBE_SCRIPT);
+    expect(launch, 'runPythonJson launch').to.not.equal(undefined);
+    return launch.args[0];
   };
 
-  it('resolves the configured pythonPath', () => {
-    const detect = openHubWith(CONFIGURED_STORE);
-    expect(detect.called).to.equal(true);
-    expect(detect.firstCall.returnValue).to.equal(CONFIGURED_PYTHON);
+  it('launches the configured pythonPath', () => {
+    expect(launchedPythonFor(CONFIGURED_STORE)).to.equal(CONFIGURED_PYTHON);
   });
 
   it('keeps the current detection without a setting', () => {
-    const detect = openHubWith(EMPTY_STORE);
-    expect(detect.firstCall.returnValue).to.equal(utils.detectPythonExecutable(detect.firstCall.args[0]));
+    expect(launchedPythonFor(EMPTY_STORE))
+      .to.equal(utils.detectPythonExecutable(utils.resolveProjectRoot(HUB_ROOT)));
   });
 });
 
 describe('extension activation Python executable', () => {
-  // activate() wires the whole extension; this guards the call sites statically.
-  const source = fs.readFileSync(path.join(__dirname, '..', 'extension.ts'), 'utf8');
+  let vscode;
+  let previousVscode;
+  let previousExtensionPath;
+  let workspaceDir;
+  let extension;
+  let ensurePythonDependencies;
+  let staticProviders;
 
-  it('registers the settings store and resolves Python through the setting', () => {
-    expect(source).to.match(/setSettingsStore\(context\.globalState\)/);
-    expect(source).to.not.match(/detectPythonExecutable\(root\)/);
-    expect(source.match(/resolvePythonExecutable\(root, context\.globalState\)/g)).to.have.length(2);
+  beforeEach(() => {
+    vscode = require('vscode');
+    previousVscode = {
+      folders: vscode.workspace.workspaceFolders,
+      onDidChangeConfiguration: vscode.workspace.onDidChangeConfiguration,
+    };
+    previousExtensionPath = utils.getExtensionPath();
+    workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pof-activate-python-'));
+    vscode.workspace.workspaceFolders = [{ uri: { fsPath: workspaceDir } }];
+    vscode.workspace.onDidChangeConfiguration = () => ({ dispose: () => {} });
+  });
+  afterEach(() => {
+    extension?._unregisterGlobalErrorHandlers();
+    vscode.workspace.workspaceFolders = previousVscode.folders;
+    vscode.workspace.onDidChangeConfiguration = previousVscode.onDidChangeConfiguration;
+    utils.setExtensionPath(previousExtensionPath);
+    utils.setSettingsStore(null);
+    fs.rmSync(workspaceDir, { recursive: true, force: true });
+  });
+
+  // Exécute le vrai activate() en neutralisant le câblage sans rapport avec Python.
+  const activateWith = (globalState) => {
+    ensurePythonDependencies = sinon.stub().resolves();
+    staticProviders = null;
+    extension = proxyquire('../extension', {
+      './shared/utils': { ensurePythonDependencies, ensureStorageDir: () => workspaceDir },
+      './shared/telemetry/telemetry': { initializeExtensionTelemetry: () => ({}) },
+      './shared/runtimeAudit': { configureRuntimeAudit: () => {} },
+      './shared/productConfig': { getProductConfig: () => ({}) },
+      './shared/authConfig': {
+        planLegacyAuthUrlMigration: () => ({ removeLegacy: false }),
+        resolveAuthServerUrl: () => '',
+      },
+      './shared/authService': { AuthService: { getInstance: () => ({ refresh: async () => {} }) } },
+      './dynamic/visualizer': { createVisualizer: () => () => {} },
+      './static/hub': { createHub: () => () => {} },
+      './shared/commands': { registerSharedCommands: () => [] },
+      './static/commands': {
+        registerStaticCommands: (_ctx, _deps, providers) => { staticProviders = providers; return []; },
+      },
+      './static/decompilerCommands': { registerDecompilerCommands: () => [] },
+      './shared/mcpSetupBridge': { makeMcpSetupBridge: () => ({}) },
+      './static/mcpAgentsPanel': { createMcpAgentsPanel: () => ({}) },
+      './static/mcpAgentCommands': {
+        registerMcpAgentCommands: () => [],
+        createMcpStatusBarItem: () => ({ dispose: () => {} }),
+      },
+    });
+    extension.activate({
+      extensionPath: EXTENSION_ROOT,
+      globalState: { ...globalState, update: async () => {} },
+      subscriptions: [],
+      secrets: {},
+    });
+  };
+
+  it('prepares Python dependencies with the configured pythonPath', () => {
+    activateWith(CONFIGURED_STORE);
+    expect(ensurePythonDependencies.calledOnce).to.equal(true);
+    expect(ensurePythonDependencies.firstCall.args[0]).to.equal(CONFIGURED_PYTHON);
+    expect(staticProviders.pythonExe).to.equal(CONFIGURED_PYTHON);
+  });
+
+  it('keeps the current detection without a setting', () => {
+    activateWith(EMPTY_STORE);
+    const detected = utils.detectPythonExecutable(utils.resolveProjectRoot(workspaceDir));
+    expect(ensurePythonDependencies.calledOnce).to.equal(true);
+    expect(ensurePythonDependencies.firstCall.args[0]).to.equal(detected);
+    expect(staticProviders.pythonExe).to.equal(detected);
   });
 });
