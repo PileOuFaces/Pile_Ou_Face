@@ -10,7 +10,9 @@ const path = require('path');
 const crypto = require('crypto');
 const cp = require('child_process');
 const { getHubContent } = require('../shared/webview');
-const { buildRuntimeEnv, resolveProjectRoot, getExtensionPath, logDebug } = require('../shared/utils');
+const {
+  buildRuntimeEnv, resolveProjectRoot, getExtensionPath, getConfiguredPythonPath, logDebug,
+} = require('../shared/utils');
 const { AuthService } = require('../shared/authService');
 const { resolveAuthServerUrl } = require('../shared/authConfig');
 const {
@@ -285,7 +287,7 @@ function createHub(config) {
     const workspaceRoot = folders[0].uri.fsPath;
     const root = resolveProjectRoot(folders[0].uri.fsPath);
     const backendRoot = getExtensionPath() || root;
-    const pythonExe = detectPythonExecutable(root);
+    const pythonExe = detectPythonExecutable(root, getConfiguredPythonPath(context.globalState));
     const pythonEnv = buildRuntimeEnv(
       root,
       storageDir,

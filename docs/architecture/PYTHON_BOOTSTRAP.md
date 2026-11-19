@@ -33,7 +33,7 @@
 
 ### 2.1 Au démarrage (préparation)
 
-- `detectPythonExecutable(root)` est appelé avec un seul argument (`src/extension.ts:133`). Le paramètre `settingsPythonPath` vaut donc `undefined` et le réglage utilisateur `pythonPath` n'est pas pris en compte pour la préparation (déduit de `src/shared/utils.ts:184-185`).
+- L'exécutable est obtenu par `resolvePythonExecutable(root, context.globalState)` (`src/extension.ts`), qui lit `pythonPath` dans `pof-settings` puis délègue à `detectPythonExecutable(root, settingsPythonPath)` (`src/shared/utils.ts`). Le réglage utilisateur est donc pris en compte dès la préparation (#519).
 - `detectPythonExecutable` (`src/shared/utils.ts:184-196`) :
   1. retourne `settingsPythonPath` s'il est renseigné (`src/shared/utils.ts:185`) ;
   2. sinon calcule `backendBase` = chemin de l'extension (`_extensionPath`) ou, s'il est vide, `path.resolve(root)` (`src/shared/utils.ts:186`) ;
@@ -43,8 +43,8 @@
 
 ### 2.2 À l'exécution des fonctionnalités
 
-- Le réglage `pythonPath` n'est consulté que plus tard : `savedSettings.pythonPath || detectPythonExecutable(root)` (`src/extension.ts:202`, `src/shared/sharedHandlers.ts:761`, `src/static/staticHandlers.ts:474`). Sa valeur par défaut est la chaîne vide (`src/static/hub.ts:153`).
-- Conséquence déduite : si l'utilisateur renseigne `pythonPath`, la préparation au démarrage peut avoir ciblé un autre interpréteur que celui utilisé ensuite.
+- Le point unique de résolution est `resolvePythonExecutable` (`src/shared/utils.ts`) : réglage `pythonPath` s'il est renseigné (chaîne non vide), sinon détection du venv puis `python3`. Il est utilisé par `src/extension.ts`, `src/shared/sharedHandlers.ts` (bridges annotations, historique de chat, historique de patchs et handlers IA) et `src/shared/staticCache.ts`. `src/static/hub.ts` passe `getConfiguredPythonPath(context.globalState)` au `detectPythonExecutable` injecté. `src/static/staticHandlers.ts:474` conserve sa lecture directe, équivalente. Sa valeur par défaut est la chaîne vide (`src/static/hub.ts:153`).
+- `staticCache.ts` n'a pas accès au contexte VS Code : il lit le `globalState` enregistré à l'activation par `setSettingsStore(context.globalState)` (`src/extension.ts`).
 - Un autre résolveur existe pour le décompilateur : `_findPythonExe` teste `backends/.venv/bin/python3`, `backends/.venv/bin/python`, puis `python3`, puis `python` (`src/static/decompilerCommands.ts:1061-1074`). La boucle retourne le premier candidat sans séparateur de chemin sans le tester, donc `python3` en pratique si aucun venv n'existe (déduit de `src/static/decompilerCommands.ts:1069-1072`).
 
 ## 3. Séquence de préparation, étape par étape

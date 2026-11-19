@@ -195,6 +195,33 @@ function detectPythonExecutable(root, settingsPythonPath) {
   return 'python3';
 }
 
+const SETTINGS_STATE_KEY = 'pof-settings';
+
+// Store des réglages persistés (context.globalState), enregistré à l'activation pour les
+// modules qui n'ont pas accès au contexte VS Code (ex. staticCache).
+type SettingsStore = { get: (key: string, fallback?: unknown) => any };
+let _settingsStore: SettingsStore | null = null;
+
+function setSettingsStore(store) {
+  _settingsStore = store && typeof store.get === 'function' ? store : null;
+}
+
+function getConfiguredPythonPath(store = _settingsStore) {
+  if (!store || typeof store.get !== 'function') return '';
+  try {
+    const value = (store.get(SETTINGS_STATE_KEY, {}) || {}).pythonPath;
+    return typeof value === 'string' && value.trim() ? value : '';
+  } catch (err) {
+    logWarning(`[Python] Lecture du réglage pythonPath impossible : ${err?.message || err}`);
+    return '';
+  }
+}
+
+/** Point unique de résolution de l'exécutable Python : réglage pythonPath, sinon détection. */
+function resolvePythonExecutable(root, store = _settingsStore) {
+  return detectPythonExecutable(root, getConfiguredPythonPath(store));
+}
+
 function resolveDockerExecutable() {
   const envCandidate = String(process.env.POF_DOCKER_BIN || '').trim();
   const candidates = [
@@ -397,6 +424,9 @@ module.exports = {
   ensureStorageDir,
   ensurePythonDependencies,
   detectPythonExecutable,
+  resolvePythonExecutable,
+  getConfiguredPythonPath,
+  setSettingsStore,
   resolveProjectRoot,
   resolveDockerExecutable,
   buildRuntimeEnv,
