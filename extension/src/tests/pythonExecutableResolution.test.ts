@@ -128,9 +128,18 @@ describe('sharedHandlers Python executable', () => {
 
 describe('hub Python executable', () => {
   let vscode;
+  let previous;
 
   beforeEach(() => {
     vscode = require('vscode');
+    // Shared vscode mock: everything changed below is restored after each test.
+    previous = {
+      ViewColumn: vscode.ViewColumn,
+      Uri: vscode.Uri,
+      workspaceFolders: vscode.workspace.workspaceFolders,
+      onDidChangeTextEditorSelection: vscode.window.onDidChangeTextEditorSelection,
+      createWebviewPanel: vscode.window.createWebviewPanel,
+    };
     vscode.ViewColumn = { Beside: 2 };
     vscode.workspace.workspaceFolders = [{ uri: { fsPath: '/repo' } }];
     vscode.Uri = { file: (p) => ({ fsPath: p, scheme: 'file' }) };
@@ -146,7 +155,14 @@ describe('hub Python executable', () => {
       },
     });
   });
-  afterEach(() => sinon.restore());
+  afterEach(() => {
+    vscode.ViewColumn = previous.ViewColumn;
+    vscode.Uri = previous.Uri;
+    vscode.workspace.workspaceFolders = previous.workspaceFolders;
+    vscode.window.onDidChangeTextEditorSelection = previous.onDidChangeTextEditorSelection;
+    vscode.window.createWebviewPanel = previous.createWebviewPanel;
+    sinon.restore();
+  });
 
   const HUB_ROOT = '/repo';
   const PROBE_SCRIPT = path.join(HUB_ROOT, 'probe.py');
