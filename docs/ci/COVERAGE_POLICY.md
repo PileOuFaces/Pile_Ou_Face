@@ -16,8 +16,8 @@ Les seuils sont définis dans `extension/pyproject.toml`.
 
 - **Script :** les gates par composant sont vérifiées par `extension/scripts/check_coverage_gates.py`, à partir de `[tool.pof.coverage_gates]`.
 - **Gate sans données :** une gate nommée par un job mais sans données mesurées échoue. Une gate ne peut donc jamais passer parce que son code n'a pas été mesuré.
-- **unicorn installé dans les deux jobs** (`unicorn==2.1.4`) : les tests dynamic sont exécutés, et non ignorés.
-- **Job `Dynamic Unicorn Regression` :** il lance tout `backends/dynamic/tests` et mesure `backends/dynamic` seul.
+- **Mesure de `dynamic` :** elle est faite par le job `Dynamic Unicorn Regression`. Ce job installe `unicorn==2.1.4`, lance tout `backends/dynamic/tests` et mesure `backends/dynamic` seul. Il tourne pour toute modification de `extension/backends/**`, car la pipeline dynamic utilise aussi des analyses static.
+- **unicorn dans `full-test` :** le job installe la même version. Les tests dynamic n'y seront exécutés qu'une fois collectés par `testpaths` (#524). Sans unicorn, ils y seraient ignorés et feraient baisser le taux global.
 
 ### JavaScript
 

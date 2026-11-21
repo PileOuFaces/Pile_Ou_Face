@@ -175,8 +175,8 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r extension/backends/requirements-ci.txt
-          # Same pin as the Dynamic Unicorn job: the dynamic tests are run, not skipped,
-          # so the coverage of backends/dynamic is real (docs/ci/COVERAGE_POLICY.md).
+          # Same pin as the Dynamic Unicorn job, so that the dynamic tests are run rather
+          # than skipped once pyproject collects them (#524) (docs/ci/COVERAGE_POLICY.md).
           pip install unicorn==2.1.4
           cd extension && npm ci
 
@@ -363,8 +363,9 @@ jobs:
         with:
           filters: |
             relevant:
-              - 'extension/backends/dynamic/**'
-              - 'extension/backends/requirements-ci.txt'
+              # Whole backend: the dynamic pipeline also uses static analyses
+              # (e.g. stack_frame.py, checked by test_pointer_slot_fragmentation.py).
+              - 'extension/backends/**'
               - 'extension/pyproject.toml'
               - 'extension/scripts/check_coverage_gates.py'
               - '.github/workflows/ci.yml'
