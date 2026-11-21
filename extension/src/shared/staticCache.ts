@@ -16,7 +16,7 @@ const cp = require('child_process');
 const { getExtensionPath, resolvePythonExecutable, logDebug, logWarning } = require('./utils');
 const { createBoundedSerialQueue, QUEUE_FULL_CODE } = require('./boundedSerialQueue');
 const {
-  currentInvalidationSeq, markInvalidated, isInvalidatedSince, binaryIdentity, binaryIdentitySync,
+  currentInvalidationSeq, markInvalidated, isInvalidatedSince, binaryIdentitySync,
 } = require('./staticCacheInvalidation');
 
 const CACHE_DIR_NAME = 'static_cache';
@@ -190,14 +190,19 @@ async function statCacheTarget(absPath) {
   }
 }
 
-// Captured at submission: the data describes the binary as it was when the caller handed it over.
-async function captureWriteTarget(absPath) {
-  const target = await statCacheTarget(absPath);
-  return target && { ...target, identity: await binaryIdentity(absPath) };
+// Captured synchronously at submission (two cheap syscalls, no Python): an async stat could
+// resolve after the binary is replaced and file the caller's data under the new binary's key.
+function captureWriteTarget(absPath) {
+  try {
+    const stat = fs.statSync(absPath);
+    return { stat, key: hashCacheKey(absPath, stat), identity: binaryIdentitySync(absPath) };
+  } catch {
+    return null;
+  }
 }
 
 async function storeQueuedWrite(storageDir, absPath, submission, putOptions) {
-  const target = await submission.target;
+  const { target } = submission;
   if (!target) return false;
   const current = await statCacheTarget(absPath);
   if (current?.key !== target.key) {

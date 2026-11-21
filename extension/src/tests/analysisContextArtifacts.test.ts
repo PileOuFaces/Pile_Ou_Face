@@ -181,6 +181,8 @@ describe('analysisContext artifact fallback', () => {
 
     const first = ctx.loadBinarySymbols(binary, { useCache: false });
     const second = ctx.loadBinarySymbols(binary, { useCache: false });
+    // The cache lookup is awaited (POF-P1-010): let both calls reach the extraction step.
+    await new Promise((resolve) => setImmediate(resolve));
     expect(runPythonJson.calledOnce).to.equal(true);
     resolveExtraction({ symbols: [{ name: 'main' }] });
 

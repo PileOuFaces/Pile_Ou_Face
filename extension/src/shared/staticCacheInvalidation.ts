@@ -46,18 +46,10 @@ function isInvalidatedSince(dbPath, identity, seq) {
   return state.all > seq || (state.binaries.get(identity) || 0) > seq;
 }
 
-// Both mirror the backend's Path.resolve(): symlinks are followed when the path exists.
+// Mirrors the backend's Path.resolve(): symlinks are followed when the path exists.
 function binaryIdentitySync(binaryPath) {
   try {
     return fs.realpathSync(binaryPath);
-  } catch {
-    return path.resolve(binaryPath);
-  }
-}
-
-async function binaryIdentity(binaryPath) {
-  try {
-    return await fs.promises.realpath(binaryPath);
   } catch {
     return path.resolve(binaryPath);
   }
@@ -67,6 +59,5 @@ module.exports = {
   currentInvalidationSeq,
   markInvalidated,
   isInvalidatedSince,
-  binaryIdentity,
   binaryIdentitySync,
 };

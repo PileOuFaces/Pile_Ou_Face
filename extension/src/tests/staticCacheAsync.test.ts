@@ -159,6 +159,23 @@ describe('static cache async API (POF-P1-010)', function () {
     expect(await cache.readCacheAsync(dir, bin, 'info')).to.equal(null);
   });
 
+  it('keeps the signature of the binary as submitted when it is replaced right away', async () => {
+    // Holds every async stat until B is in place: a signature read asynchronously would be B's.
+    let releaseStats;
+    const statsReleased = new Promise((resolve) => { releaseStats = resolve; });
+    const realStat = fs.promises.stat;
+    fs.promises.stat = async (...args) => { await statsReleased; return realStat(...args); };
+    try {
+      const stale = cache.writeCacheAsync(dir, bin, 'info', { from: 'A' });
+      fs.writeFileSync(bin, 'replacement binary B');
+      releaseStats();
+      expect(await stale).to.equal(false);
+    } finally {
+      fs.promises.stat = realStat;
+    }
+    expect(await cache.readCacheAsync(dir, bin, 'info')).to.equal(null);
+  });
+
   it('does not recreate entries cleared while a write was queued', async () => {
     expect(await cache.writeCacheAsync(dir, bin, 'info', { v: 0 })).to.equal(true);
     // The queued task cannot start before the synchronous clear below returns.

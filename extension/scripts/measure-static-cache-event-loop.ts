@@ -20,8 +20,11 @@ const DEFAULT_ITERATIONS = 20;
 const HISTOGRAM_RESOLUTION_MS = 1;
 const NS_PER_MS = 1e6;
 const PAYLOAD_ITEMS = 2000;
+// Several histogram periods, so at least one sample exists before the load starts.
+const WARMUP_MS = 5 * HISTOGRAM_RESOLUTION_MS;
 
 const payload = Array.from({ length: PAYLOAD_ITEMS }, (_, i) => ({ name: `sym_${i}`, addr: i }));
+const payloadJson = JSON.stringify(payload);
 
 function parseIterations(raw) {
   const value = Number.parseInt(raw ?? String(DEFAULT_ITERATIONS), 10);
@@ -29,10 +32,15 @@ function parseIterations(raw) {
   return value;
 }
 
+// A failed put/get returns quickly: without this check the figures could measure only failures.
+function checkRoundTrip(mode, stored, readBack) {
+  if (stored !== true) throw new Error(`${mode} : écriture non stockée (Python ou SQLite indisponible ?)`);
+  if (JSON.stringify(readBack) !== payloadJson) throw new Error(`${mode} : relecture différente de l'écriture`);
+}
+
 async function runSync(dir, bin, iterations) {
   for (let i = 0; i < iterations; i += 1) {
-    cache.writeCache(dir, bin, 'symbols', payload);
-    cache.readCache(dir, bin, 'symbols');
+    checkRoundTrip('sync', cache.writeCache(dir, bin, 'symbols', payload), cache.readCache(dir, bin, 'symbols'));
     // Yield so the histogram timer can record the delay caused by each blocking pair.
     await new Promise((resolve) => setImmediate(resolve));
   }
@@ -40,8 +48,8 @@ async function runSync(dir, bin, iterations) {
 
 async function runAsync(dir, bin, iterations) {
   for (let i = 0; i < iterations; i += 1) {
-    await cache.writeCacheAsync(dir, bin, 'symbols', payload);
-    await cache.readCacheAsync(dir, bin, 'symbols');
+    const stored = await cache.writeCacheAsync(dir, bin, 'symbols', payload);
+    checkRoundTrip('async', stored, await cache.readCacheAsync(dir, bin, 'symbols'));
   }
 }
 
@@ -53,15 +61,19 @@ async function measure(label, run, iterations) {
   const started = process.hrtime.bigint();
   histogram.enable();
   try {
+    // Let the histogram timer fire once before the load, so the first blocking pair is sampled.
+    await new Promise((resolve) => setTimeout(resolve, WARMUP_MS));
     await run(dir, bin, iterations);
   } finally {
     histogram.disable();
     fs.rmSync(dir, { recursive: true, force: true });
   }
+  if (histogram.count === 0) throw new Error(`${label} : aucun échantillon de latence enregistré`);
   const toMs = (ns) => (Number(ns) / NS_PER_MS).toFixed(1);
   return {
     mode: label,
     iterations,
+    samples: histogram.count,
     p50_ms: toMs(histogram.percentile(50)),
     p95_ms: toMs(histogram.percentile(95)),
     max_ms: toMs(histogram.max),
