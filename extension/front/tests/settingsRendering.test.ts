@@ -154,13 +154,13 @@ describe('settings rendering and pythonPath ownership', () => {
     const { dom } = fixture;
     dom.window._applySettings({ interfaceMode: 'advanced', pythonPath: '' }, 0);
     dom.window._scheduleSave();
-    dom.window._pythonPathSelected({ type: 'hubPythonPathSelected', pythonPath: SELECTED_PYTHON });
+    dom.window._pythonPathSelected({ type: 'hubPythonPathSelected', changed: true, pythonPath: SELECTED_PYTHON });
     expect(dom.window.document.getElementById('settingPythonPath').value).to.equal(SELECTED_PYTHON);
   });
 
   for (const [label, interrupt] of [
     ['a reset', (window) => window._resetSettings()],
-    ['a native selection', (window) => window._pythonPathSelected({ pythonPath: SELECTED_PYTHON })],
+    ['a native selection', (window) => window._pythonPathSelected({ changed: true, pythonPath: SELECTED_PYTHON })],
   ]) {
     it(`does not replay a clear request cancelled by ${label}`, () => {
       fixture = mountSettings();
@@ -180,4 +180,17 @@ describe('settings rendering and pythonPath ownership', () => {
       for (const save of saves) expect(save.settings).to.not.have.property('pythonPath');
     });
   }
+
+  it('keeps a pending "Auto" request when the native selection is cancelled', () => {
+    fixture = mountSettings();
+    const { dom, clock, messages } = fixture;
+    const { document } = dom.window;
+    dom.window._applySettings({ interfaceMode: 'advanced', pythonPath: SELECTED_PYTHON }, 0);
+    document.querySelector('[data-clear-python-path]').click();
+    dom.window._pythonPathSelected({ type: 'hubPythonPathSelected', changed: false, pythonPath: SELECTED_PYTHON });
+    clock.tick(500);
+    const save = messages.find((message) => message.type === 'hubSaveSettings');
+    expect(save.settings.pythonPath).to.equal('');
+    expect(document.getElementById('settingPythonPath').value).to.equal('');
+  });
 });

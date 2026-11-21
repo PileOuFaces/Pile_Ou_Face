@@ -214,7 +214,7 @@ describe('hub settings handlers', () => {
     expect(selectPythonExecutable.calledOnce).to.equal(true);
     expect(store.current()).to.deep.equal({ lang: 'en', pythonPath: SELECTED_PYTHON });
     expect(store.attested()).to.equal(SELECTED_PYTHON);
-    expect(posted[0]).to.deep.equal({ type: 'hubPythonPathSelected', pythonPath: SELECTED_PYTHON });
+    expect(posted[0]).to.deep.equal({ type: 'hubPythonPathSelected', changed: true, pythonPath: SELECTED_PYTHON });
     expect(posted[1]).to.include({ type: 'hubSettings', requestId: 9 });
     expect(posted[1].settings.pythonPath).to.equal(SELECTED_PYTHON);
   });
@@ -265,7 +265,7 @@ describe('hub settings handlers', () => {
     await actions.hubSelectPythonPath({ requestId: 31 });
     expect(readStoredSettings(store).pythonPath).to.equal(SELECTED_PYTHON);
     expect(vscode.window.showErrorMessage.calledOnce).to.equal(true);
-    expect(posted[0]).to.deep.equal({ type: 'hubPythonPathSelected', pythonPath: SELECTED_PYTHON });
+    expect(posted[0]).to.deep.equal({ type: 'hubPythonPathSelected', changed: false, pythonPath: SELECTED_PYTHON });
   });
 
   it('acknowledges a save that the storage rejects, so the form can reload', async () => {
@@ -289,7 +289,7 @@ describe('hub settings handlers', () => {
     const store = makeStore({ lang: 'fr' });
     const { actions, posted } = makeActions(store, sinon.stub().resolves({ ok: true, path: SELECTED_PYTHON }));
     await actions.hubSelectPythonPath({ requestId: null });
-    expect(posted).to.deep.equal([{ type: 'hubPythonPathSelected', pythonPath: SELECTED_PYTHON }]);
+    expect(posted).to.deep.equal([{ type: 'hubPythonPathSelected', changed: true, pythonPath: SELECTED_PYTHON }]);
   });
 
   it('keeps a save acknowledged while the native picker was open', async () => {

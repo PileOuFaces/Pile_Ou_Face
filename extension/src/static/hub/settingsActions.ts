@@ -82,6 +82,7 @@ function createSettingsActions({
     hubSelectPythonPath: async (message) => {
       const defaultPath = readStoredSettings(store).pythonPath || root;
       const selection = await selectPythonExecutable(vscode, { defaultPath });
+      let changed = false;
       if (selection.ok) {
         // Le sélecteur est ouvert hors de la file : les sauvegardes restent possibles pendant ce
         // temps. L'écriture, elle, relit les réglages dans la file, après toute sauvegarde acquittée.
@@ -96,6 +97,7 @@ function createSettingsActions({
             await store.update(SETTINGS_STATE_KEY, { ...readStoredSettings(store), pythonPath: selection.path });
             await store.update(PYTHON_PATH_ATTESTATION_KEY, selection.path);
           });
+          changed = true;
           logChannel?.appendLine?.(`[Settings] pythonPath set to ${selection.path}`);
         } catch (err) {
           reportWriteFailure('saving pythonPath', err);
@@ -106,7 +108,8 @@ function createSettingsActions({
       }
       // Toujours appliqué par le formulaire, même si une sauvegarde locale était en attente
       // (requestId absent) : le champ affiche l'interpréteur réellement utilisé.
-      panel.webview.postMessage({ type: 'hubPythonPathSelected', pythonPath: readStoredSettings(store).pythonPath || '' });
+      // `changed` : seule une sélection enregistrée remplace une demande « Auto » encore en attente.
+      panel.webview.postMessage({ type: 'hubPythonPathSelected', changed, pythonPath: readStoredSettings(store).pythonPath || '' });
       if (message?.requestId != null) postSettings(message.requestId);
     },
   };

@@ -24,6 +24,8 @@ function _settingsSaved(message) {
 
 /** Host answer to the native picker: shows the interpreter really in use, whatever the pending request. */
 function _pythonPathSelected(message) {
+  // A cancelled or failed selection changes nothing, not even a pending "Auto" request.
+  if (message?.changed !== true) return;
   const value = typeof message?.pythonPath === 'string' ? message.pythonPath : '';
   const input = document.getElementById('settingPythonPath');
   if (input) input.value = value;
