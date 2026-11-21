@@ -654,14 +654,19 @@ def set_provider_configuration(
     known = set(_PROVIDER_ENV_KEYS) | {"ollama"}
     if provider not in known:
         return {"ok": False, "error": f"Unknown provider: {provider}"}
+    updates: list[tuple[str, str]] = []
     if provider in _PROVIDER_ENV_KEYS and api_key:
-        env_key = _PROVIDER_ENV_KEYS[provider]
-        _write_env_key(env_key, api_key)
-        os.environ[env_key] = api_key
+        updates.append((_PROVIDER_ENV_KEYS[provider], api_key))
     if model:
-        model_env = _provider_model_env(provider)
-        _write_env_key(model_env, model)
-        os.environ[model_env] = model
+        updates.append((_provider_model_env(provider), model))
+    for env_name, value in updates:
+        try:
+            _write_env_key(env_name, value)
+        except OSError as exc:
+            # Only the variable name and the OS reason: never the value.
+            reason = exc.strerror or type(exc).__name__
+            return {"ok": False, "error": f"Cannot save {env_name}: {reason}"}
+        os.environ[env_name] = value
     return {"ok": True, "provider": provider, "written_to": "~/.pile-ou-face/.env"}
 
 
@@ -722,6 +727,9 @@ if __name__ == "__main__":
         result = set_provider_configuration(args.provider, api_key, args.model)
         print(json.dumps(result))
         if not result.get("ok"):
+            # The extension host shows stderr when the command fails; the message is
+            # already sanitized (variable name and OS reason, never the key).
+            print(result.get("error", "Unknown error"), file=sys.stderr)
             sys.exit(1)
     elif args.cmd == "call":
         prompt = sys.stdin.read().strip()
