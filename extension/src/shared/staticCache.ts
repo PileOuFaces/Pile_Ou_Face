@@ -5,7 +5,8 @@
  * Sync functions block the Extension Host while Python runs; they remain for the
  * maintenance paths (list, prune, clear, delete). Hot paths use readCacheAsync and
  * writeCacheAsync: one bounded FIFO queue per database keeps reads and writes in
- * submission order without blocking the event loop.
+ * submission order without blocking the event loop. clear and delete-binary bypass the queue but
+ * invalidate writes submitted before them (see staticCacheInvalidation.ts).
  */
 
 const fs = require('fs');
@@ -14,6 +15,9 @@ const crypto = require('crypto');
 const cp = require('child_process');
 const { getExtensionPath, resolvePythonExecutable, logDebug, logWarning } = require('./utils');
 const { createBoundedSerialQueue, QUEUE_FULL_CODE } = require('./boundedSerialQueue');
+const {
+  currentInvalidationSeq, markInvalidated, isInvalidatedSince, binaryIdentity, binaryIdentitySync,
+} = require('./staticCacheInvalidation');
 
 const CACHE_DIR_NAME = 'static_cache';
 const CACHE_DB_NAME = 'static-cache.sqlite3';
@@ -186,6 +190,32 @@ async function statCacheTarget(absPath) {
   }
 }
 
+// Captured at submission: the data describes the binary as it was when the caller handed it over.
+async function captureWriteTarget(absPath) {
+  const target = await statCacheTarget(absPath);
+  return target && { ...target, identity: await binaryIdentity(absPath) };
+}
+
+async function storeQueuedWrite(storageDir, absPath, submission, putOptions) {
+  const target = await submission.target;
+  if (!target) return false;
+  const current = await statCacheTarget(absPath);
+  if (current?.key !== target.key) {
+    logDebug(`[static-cache] put ignoré : binaire modifié pendant l'attente (${absPath})`);
+    return false;
+  }
+  const dbPath = getStaticCacheDbPath(storageDir);
+  if (isInvalidatedSince(dbPath, target.identity, submission.seq)) return false;
+  const args = putArgs(absPath, target.key, target.stat, putOptions.type, putOptions.options);
+  const result = await runCacheStoreAsync(storageDir, args, { input: JSON.stringify(putOptions.data) });
+  if (isInvalidatedSince(dbPath, target.identity, submission.seq)) {
+    // A clear/delete ran while this put was in flight and may have committed before it.
+    await runCacheStoreAsync(storageDir, deleteBinaryArgs(target.identity));
+    return false;
+  }
+  return result?.stored === true;
+}
+
 /** Non-blocking readCache; queued after every earlier async read or write on the same database. */
 function readCacheAsync(storageDir, absPath, type, options: CacheVariantOptions = {}) {
   return enqueueCacheTask(storageDir, async () => {
@@ -198,13 +228,10 @@ function readCacheAsync(storageDir, absPath, type, options: CacheVariantOptions 
 
 /** Non-blocking writeCache; resolves false (never rejects) when the entry is not stored. */
 function writeCacheAsync(storageDir, absPath, type, data, options: CacheVariantOptions = {}) {
-  return enqueueCacheTask(storageDir, async () => {
-    const target = await statCacheTarget(absPath);
-    if (!target) return false;
-    const args = putArgs(absPath, target.key, target.stat, type, options);
-    const result = await runCacheStoreAsync(storageDir, args, { input: JSON.stringify(data) });
-    return result?.stored === true;
-  }).then((stored) => stored === true, (err) => {
+  const submission = { seq: currentInvalidationSeq(), target: captureWriteTarget(absPath) };
+  return enqueueCacheTask(storageDir, () => (
+    storeQueuedWrite(storageDir, absPath, submission, { type, data, options })
+  )).then((stored) => stored === true, (err) => {
     // JSON.stringify may throw (cycle, BigInt): same outcome as writeCache, but logged.
     logDebug(`[static-cache] put en échec : ${err?.message || err}`);
     return false;
@@ -220,14 +247,18 @@ function pruneCacheEntries(storageDir) {
   return Number(runCacheStore(storageDir, ['prune'])?.removed || 0);
 }
 
+function deleteBinaryArgs(binaryPath) {
+  return ['delete-binary', '--binary-path', path.resolve(binaryPath)];
+}
+
 function clearCacheEntries(storageDir) {
+  markInvalidated(getStaticCacheDbPath(storageDir));
   return Number(runCacheStore(storageDir, ['clear'])?.removed || 0);
 }
 
 function deleteCacheEntriesForBinary(storageDir, binaryPath) {
-  return Number(runCacheStore(storageDir, [
-    'delete-binary', '--binary-path', path.resolve(binaryPath),
-  ])?.removed || 0);
+  markInvalidated(getStaticCacheDbPath(storageDir), binaryIdentitySync(binaryPath));
+  return Number(runCacheStore(storageDir, deleteBinaryArgs(binaryPath))?.removed || 0);
 }
 
 module.exports = {

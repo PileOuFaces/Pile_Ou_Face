@@ -253,8 +253,16 @@ Les sections 1 à 6 décrivent l'état au commit de base. Depuis POF-P1-010 :
 - Les fonctions synchrones (`readCache`, `writeCache`, `listCacheEntries`, `pruneCacheEntries`,
   `clearCacheEntries`, `deleteCacheEntriesForBinary`) restent exportées et inchangées. Elles servent encore
   aux chemins de maintenance de `extension/src/shared/fileManager.ts` (section 2.6 à 2.9), qui bloquent
-  toujours l'Extension Host et ne passent pas par la file : leur ordre relatif aux écritures asynchrones en
-  attente n'est pas garanti.
+  toujours l'Extension Host et ne passent pas par la file.
+- `writeCacheAsync` relève la signature du binaire (chemin, mtime, taille) au moment de la soumission.
+  Juste avant l'écriture, la signature est relue : si le binaire a changé pendant l'attente, l'écriture
+  est abandonnée (`false`) au lieu d'enregistrer l'ancien résultat sous la nouvelle signature.
+- `clearCacheEntries` et `deleteCacheEntriesForBinary` enregistrent une invalidation
+  (`extension/src/shared/staticCacheInvalidation.ts`) avant d'agir. Une écriture asynchrone soumise avant
+  cette invalidation, pour la même base (ou le même binaire), est abandonnée si elle n'a pas encore démarré ;
+  si elle était déjà en cours, elle est suivie d'un `delete-binary` pour ce binaire, afin qu'aucune
+  entrée supprimée ne soit recréée. `pruneCacheEntries` n'invalide rien : il ne retire que des entrées
+  dont le binaire a changé, et une écriture valide n'en fait pas partie.
 
 ### Mesure de l'event loop
 
@@ -273,4 +281,5 @@ Il affiche, pour l'API synchrone puis asynchrone, le p50, le p95 et le maximum d
 - `extension/src/tests/boundedSerialQueue.test.ts` : ordre FIFO, reprise après erreur, borne.
 - `extension/src/tests/staticCacheAsync.test.ts` : aller-retour, ordre lecture/écriture entrelacées,
   event loop actif pendant les opérations, contention SQLite (verrou d'écriture externe tenu 1,5 s,
-  écrivains concurrents dans d'autres processus).
+  écrivains concurrents dans d'autres processus), binaire remplacé pendant l'attente, `clear` et
+  `delete-binary` exécutés pendant qu'une écriture est en attente ou en cours.

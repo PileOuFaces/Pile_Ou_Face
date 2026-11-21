@@ -17,6 +17,10 @@ const LOCK_HOLD_MS = 1500;
 const CONCURRENT_WRITES = 8;
 const EXTERNAL_WRITERS = 4;
 const TICK_INTERVAL_MS = 1;
+// Lets the submission-time stat (and an already started put) settle; far below LOCK_HOLD_MS.
+const SETTLE_MS = 200;
+
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Holds an exclusive SQLite write lock, prints "locked", then releases it after a delay.
 const HOLD_LOCK_SCRIPT = [
@@ -141,5 +145,51 @@ describe('static cache async API (POF-P1-010)', function () {
     expect(externalResults.every((result) => result.stored === true)).to.equal(true);
     expect(internalResults).to.deep.equal(Array(CONCURRENT_WRITES).fill(true));
     expect(finalValue).to.deep.equal({ v: CONCURRENT_WRITES - 1 });
+  });
+
+  it('drops a queued write when the binary is replaced before it runs', async () => {
+    expect(await cache.writeCacheAsync(dir, bin, 'init', {})).to.equal(true);
+    const lock = await holdWriteLock(cache.getStaticCacheDbPath(dir));
+    const blocker = cache.writeCacheAsync(dir, bin, 'blocker', {});
+    const stale = cache.writeCacheAsync(dir, bin, 'info', { from: 'A' });
+    await delay(SETTLE_MS);
+    fs.writeFileSync(bin, 'replacement binary B');
+    expect(await stale).to.equal(false);
+    await Promise.all([blocker, lock.released]);
+    expect(await cache.readCacheAsync(dir, bin, 'info')).to.equal(null);
+  });
+
+  it('does not recreate entries cleared while a write was queued', async () => {
+    expect(await cache.writeCacheAsync(dir, bin, 'info', { v: 0 })).to.equal(true);
+    // The queued task cannot start before the synchronous clear below returns.
+    const pending = cache.writeCacheAsync(dir, bin, 'info', { v: 1 });
+    expect(cache.clearCacheEntries(dir)).to.equal(1);
+    expect(await pending).to.equal(false);
+    expect(await cache.readCacheAsync(dir, bin, 'info')).to.equal(null);
+    expect(cache.listCacheEntries(dir)).to.deep.equal([]);
+  });
+
+  it('drops queued writes only for the binary deleted from the cache', async () => {
+    const other = path.join(dir, 'other.bin');
+    fs.writeFileSync(other, 'other');
+    const pendingDeleted = cache.writeCacheAsync(dir, bin, 'info', { v: 1 });
+    const pendingOther = cache.writeCacheAsync(dir, other, 'info', { v: 2 });
+    cache.deleteCacheEntriesForBinary(dir, bin);
+    expect(await pendingDeleted).to.equal(false);
+    expect(await pendingOther).to.equal(true);
+    expect(await cache.readCacheAsync(dir, bin, 'info')).to.equal(null);
+    expect(await cache.readCacheAsync(dir, other, 'info')).to.deep.equal({ v: 2 });
+  });
+
+  it('removes the entry of a write that was in flight during a clear', async () => {
+    expect(await cache.writeCacheAsync(dir, bin, 'info', { v: 0 })).to.equal(true);
+    const lock = await holdWriteLock(cache.getStaticCacheDbPath(dir));
+    const inFlight = cache.writeCacheAsync(dir, bin, 'info', { v: 1 });
+    await delay(SETTLE_MS);
+    // Both the put and the clear wait for the lock; either may commit first.
+    cache.clearCacheEntries(dir);
+    expect(await inFlight).to.equal(false);
+    await lock.released;
+    expect(await cache.readCacheAsync(dir, bin, 'info')).to.equal(null);
   });
 });
