@@ -28,12 +28,16 @@ function _pythonPathSelected(message) {
   const input = document.getElementById('settingPythonPath');
   if (input) input.value = value;
   if (_settingsCache) _settingsCache = { ..._settingsCache, pythonPath: value };
+  // The native selection supersedes an earlier, not yet sent, request to clear it.
+  _settingsPythonPathClearRequested = false;
 }
 
 function _resetSettings() {
   clearTimeout(_settingsDebounce);
   _settingsDebounce = null;
   _settingsSavePending = false;
+  // The cancelled save must not leave its clear request behind for a later save.
+  _settingsPythonPathClearRequested = false;
   document.documentElement.dataset.hubSettingsSavePending = 'false';
   document.documentElement.dataset.hubSettingsReady = 'false';
   vscode.postMessage({ type: 'hubResetSettings', requestId: ++_settingsRequestId });

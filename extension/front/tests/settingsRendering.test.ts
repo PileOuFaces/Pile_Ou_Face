@@ -157,4 +157,27 @@ describe('settings rendering and pythonPath ownership', () => {
     dom.window._pythonPathSelected({ type: 'hubPythonPathSelected', pythonPath: SELECTED_PYTHON });
     expect(dom.window.document.getElementById('settingPythonPath').value).to.equal(SELECTED_PYTHON);
   });
+
+  for (const [label, interrupt] of [
+    ['a reset', (window) => window._resetSettings()],
+    ['a native selection', (window) => window._pythonPathSelected({ pythonPath: SELECTED_PYTHON })],
+  ]) {
+    it(`does not replay a clear request cancelled by ${label}`, () => {
+      fixture = mountSettings();
+      const { dom, clock, messages } = fixture;
+      const { document } = dom.window;
+      dom.window._applySettings({ interfaceMode: 'advanced', pythonPath: SELECTED_PYTHON }, 0);
+      document.querySelector('[data-clear-python-path]').click();
+      interrupt(dom.window);
+      clock.tick(500);
+      dom.window._applySettings({ interfaceMode: 'advanced', pythonPath: SELECTED_PYTHON }, dom.window._settingsRequestId);
+      document.getElementById('settingLang').value = 'en';
+      dom.window._scheduleSave();
+      clock.tick(500);
+      const saves = messages.filter((message) => message.type === 'hubSaveSettings');
+      expect(saves[saves.length - 1].settings.lang).to.equal('en');
+      // Neither the pending save nor a later one may clear the interpreter.
+      for (const save of saves) expect(save.settings).to.not.have.property('pythonPath');
+    });
+  }
 });
