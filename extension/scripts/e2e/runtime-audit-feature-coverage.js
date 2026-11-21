@@ -13,6 +13,7 @@ const HOST_HANDLER_FILES = [
   'src/static/hub/graphRenderers.ts',
   'src/static/hub/loaders.ts',
   'src/static/hub/navigation.ts',
+  'src/static/hub/settingsActions.ts',
   'src/static/hub/traceHistory.ts',
   'src/static/staticHandlers.ts',
   'src/shared/sharedHandlers.ts',
