@@ -46,7 +46,14 @@ except SystemExit as exc:  # pragma: no cover - optional dependency in local env
 else:
     UNICORN_SKIP_REASON = ""
 
+import pytest
 from backends.dynamic.pipeline.run_pipeline import run_pipeline
+
+# The corpus is compiled with the host gcc and traced as x86-64 ELF: on macOS gcc is
+# clang and produces Mach-O, so these tests only make sense on Linux.
+pytestmark = pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="needs gcc producing x86-64 ELF"
+)
 
 
 def _gcc_compile(tmpdir: str, name: str, source: str, extra_flags: tuple = ()) -> Path:

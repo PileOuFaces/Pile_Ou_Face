@@ -46,6 +46,7 @@ except SystemExit as exc:  # pragma: no cover - optional dependency in local env
     UNICORN_SKIP_REASON = str(exc)
 else:
     UNICORN_SKIP_REASON = ""
+import pytest
 
 
 class _FakeUc:
@@ -167,6 +168,11 @@ def _canary_config(argv1: str | None) -> TraceConfig:
 
 
 @unittest.skipIf(trace_binary is None, UNICORN_SKIP_REASON)
+# The corpus is compiled with the host gcc and traced as x86-64 ELF: on macOS gcc is
+# clang and produces Mach-O. The _FakeUc tests of this module stay portable.
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="needs gcc producing x86-64 ELF"
+)
 class TestStackChkFailCorpus(unittest.TestCase):
     """canary_intact / canary_corrupted, same source, only argv1 differs."""
 
