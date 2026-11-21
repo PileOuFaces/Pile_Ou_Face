@@ -161,6 +161,18 @@ function readCurrentAuditEvents(userDataDir) {
   return events;
 }
 
+const CONDITION_POLL_MS = 50;
+
+/** Polls a synchronous predicate until it holds; returns false on timeout so the next assertion reports it. */
+async function waitForCondition(predicate, timeoutMs, pollMs = CONDITION_POLL_MS) {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) return false;
+    await sleep(pollMs);
+  }
+  return true;
+}
+
 async function waitForAuditQuiet(userDataDir, { quietMs = 100, timeoutMs = 1000, pollMs = 50 } = {}) {
   const startedAt = Date.now();
   let lastCount = readCurrentAuditEvents(userDataDir).length;
@@ -759,6 +771,9 @@ async function run() {
         await hub.aiProviderModel('ollama').fill('qwen-e2e');
         await hub.aiProviderSaveButton('ollama').click();
         await hub.aiProviderModel('ollama').waitForValue('qwen-e2e', 30000);
+        // The field already holds the typed value: wait for the save itself to reach the
+        // backend (mocked process), otherwise the assertion races the click handler.
+        await waitForCondition(() => ollamaModel === 'qwen-e2e', 30000);
         assert.equal(ollamaModel, 'qwen-e2e', 'the Ollama model selected through the UI must be persisted');
 
         await hub.setAiDefaultProvider('openai');
