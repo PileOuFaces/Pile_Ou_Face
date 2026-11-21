@@ -95,12 +95,20 @@ describe('sharedHandlers Python executable', () => {
   const bridgeOptions = {};
   let execFile;
 
+  let spawn;
+  const fakeProcess = () => {
+    const { PassThrough } = require('stream');
+    const proc = new (require('events').EventEmitter)();
+    Object.assign(proc, { stdout: new PassThrough(), stderr: new PassThrough(), stdin: new PassThrough(), kill: () => {} });
+    return proc;
+  };
   const loadHandlers = (globalState) => {
-    execFile = sinon.stub();
+    execFile = sinon.stub().callsFake(() => ({ stdin: { write: () => {}, end: () => {} } }));
+    spawn = sinon.stub().callsFake(fakeProcess);
     const captureBridge = (name) => (options) => { bridgeOptions[name] = options; return {}; };
     const sharedHandlers = proxyquire('../shared/sharedHandlers', {
       vscode: { window: {}, Uri: { file: (value) => ({ fsPath: value }) } },
-      child_process: { execFile },
+      child_process: { execFile, spawn },
       './annotationsBridge': { makeAnnotationsBridge: captureBridge('annotations') },
       './chatHistoryBridge': { makeChatHistoryBridge: captureBridge('chatHistory') },
       './patchHistoryBridge': { makePatchHistoryBridge: captureBridge('patchHistory') },
@@ -122,6 +130,40 @@ describe('sharedHandlers Python executable', () => {
     handlers.hubAiProvidersGet();
     expect(execFile.firstCall.args[0]).to.equal(CONFIGURED_PYTHON);
   });
+
+  // Every AI handler that starts Python, with a message it accepts.
+  const AI_HANDLER_CALLS = [
+    ['hubAiProvidersGet', {}],
+    ['hubAiProviderSet', { provider: 'openai', api_key: 'k', model: 'm' }],
+    ['hubAiProviderTest', { provider: 'openai' }],
+    ['hubAiProviderDefaultSet', { provider: 'openai' }],
+    ['hubAiProviderPrompt', { requestId: 'r1', provider: 'openai', model: 'm' }],
+  ];
+  const launchedPython = () => (execFile.called ? execFile.firstCall.args[0] : spawn.firstCall.args[0]);
+
+  for (const [handlerName, message] of AI_HANDLER_CALLS) {
+    it(`${handlerName}: runs the attested pythonPath, then a newly saved one without recreating the hub`, () => {
+      let saved = { pythonPath: CONFIGURED_PYTHON };
+      const handlers = loadHandlers(liveStoreFor(() => saved));
+      handlers[handlerName](message);
+      expect(launchedPython()).to.equal(CONFIGURED_PYTHON);
+
+      // Same handlers object (hub still open): the next launch reads the setting again.
+      saved = {};
+      execFile.resetHistory();
+      spawn.resetHistory();
+      handlers[handlerName](message);
+      expect(launchedPython()).to.equal(utils.detectPythonExecutable(ROOT));
+    });
+
+    it(`${handlerName}: never runs a pythonPath that no native selection attested`, () => {
+      const unattested = path.join(os.tmpdir(), 'injected', 'bin', 'python3');
+      const handlers = loadHandlers(storeWith({ pythonPath: unattested }));
+      handlers[handlerName](message);
+      expect(launchedPython()).to.not.equal(unattested);
+      expect(launchedPython()).to.equal(utils.detectPythonExecutable(ROOT));
+    });
+  }
 
   it('keeps the current detection without a setting', () => {
     const handlers = loadHandlers(EMPTY_STORE);

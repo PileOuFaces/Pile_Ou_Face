@@ -41,6 +41,34 @@ function makeActions(store, selectPythonExecutable = sinon.stub().resolves({ ok:
 }
 
 describe('settings schema (validateSettingsUpdate)', () => {
+  // Webview messages are untrusted: each payload must be rejected as a whole, nothing stored.
+  const MALICIOUS_UPDATES = [
+    ['prototype pollution key', JSON.parse('{"__proto__": {"polluted": true}, "lang": "en"}')],
+    ['constructor key', { constructor: { prototype: { polluted: true } } }],
+    ['shell metacharacters in pythonPath', { pythonPath: '/usr/bin/python3; rm -rf ~' }],
+    ['relative pythonPath', { pythonPath: 'python3' }],
+    ['NUL byte in a path', { decompilerLocalPaths: { ghidra: '/opt/ghidra\0/evil' } }],
+    ['decompiler id with spaces or quotes', { decompilerLocalPaths: { 'ghidra"; x': '/opt/x' } }],
+    ['oversized string', { authServerUrl: 'h'.repeat(100000) }],
+    ['too many static features', { enabledStaticFeatures: Array.from({ length: 1000 }, (_, i) => `t${i}`) }],
+    ['NaN number', { aiTemperature: Number.NaN }],
+    ['number as string', { codeFontSize: '13' }],
+    ['out-of-range number', { aiMaxTokens: 1e9 }],
+    ['unexpected enum value', { lang: '<img src=x onerror=alert(1)>' }],
+    ['pricing rule with extra key', { aiPricingRules: [{ model: 'm', script: 'x' }] }],
+    ['array instead of object', []],
+    ['null payload', null],
+    ['string payload', 'lang=en'],
+  ];
+  for (const [label, update] of MALICIOUS_UPDATES) {
+    it(`rejects a malicious update: ${label}`, () => {
+      const result = validateSettingsUpdate(update, { lang: 'fr' });
+      expect(result.ok, label).to.equal(false);
+      expect(result).to.not.have.property('settings');
+      expect(({} as any).polluted).to.equal(undefined);
+    });
+  }
+
   it('rejects an unknown key', () => {
     const result = validateSettingsUpdate({ lang: 'en', injectedKey: 'x' }, {});
     expect(result.ok).to.equal(false);
@@ -186,8 +214,34 @@ describe('hub settings handlers', () => {
     expect(selectPythonExecutable.calledOnce).to.equal(true);
     expect(store.current()).to.deep.equal({ lang: 'en', pythonPath: SELECTED_PYTHON });
     expect(store.attested()).to.equal(SELECTED_PYTHON);
-    expect(posted[0]).to.include({ type: 'hubSettings', requestId: 9 });
-    expect(posted[0].settings.pythonPath).to.equal(SELECTED_PYTHON);
+    expect(posted[0]).to.deep.equal({ type: 'hubPythonPathSelected', pythonPath: SELECTED_PYTHON });
+    expect(posted[1]).to.include({ type: 'hubSettings', requestId: 9 });
+    expect(posted[1].settings.pythonPath).to.equal(SELECTED_PYTHON);
+  });
+
+  it('keeps a save acknowledged while the attestation was being written', async () => {
+    const store = makeStore({ lang: 'fr' });
+    let actions;
+    let pendingSave = null;
+    const update = store.update;
+    store.update = sinon.spy(async (key, next) => {
+      // The save arrives while the extension host awaits the attestation write.
+      if (key === PYTHON_PATH_ATTESTATION_KEY && !pendingSave) {
+        pendingSave = actions.hubSaveSettings({ settings: { lang: 'en' }, requestId: 21 });
+      }
+      return update(key, next);
+    });
+    ({ actions } = makeActions(store, sinon.stub().resolves({ ok: true, path: SELECTED_PYTHON })));
+    await actions.hubSelectPythonPath({ requestId: 22 });
+    await pendingSave;
+    expect(store.current()).to.deep.equal({ lang: 'en', pythonPath: SELECTED_PYTHON });
+  });
+
+  it('shows the selected interpreter even when a local save was pending (no requestId)', async () => {
+    const store = makeStore({ lang: 'fr' });
+    const { actions, posted } = makeActions(store, sinon.stub().resolves({ ok: true, path: SELECTED_PYTHON }));
+    await actions.hubSelectPythonPath({ requestId: null });
+    expect(posted).to.deep.equal([{ type: 'hubPythonPathSelected', pythonPath: SELECTED_PYTHON }]);
   });
 
   it('keeps a save acknowledged while the native picker was open', async () => {

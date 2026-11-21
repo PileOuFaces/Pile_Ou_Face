@@ -15,6 +15,9 @@ function mountSettings() {
   const dom = new JSDOM(`<div id="panel-options">
     <input id="settingInterfaceMode" data-key="interfaceMode" value="advanced">
     <input id="settingLang" data-key="lang" value="fr">
+    <select id="settingBindiffThreshold" data-key="bindiffThreshold" data-type="float">
+      <option value="0.40">40 %</option><option value="0.60">60 %</option>
+    </select>
     <input id="settingPythonPath" data-key="pythonPath" readonly>
     <button data-select-python-path></button>
     <button data-clear-python-path></button>
@@ -119,5 +122,39 @@ describe('settings rendering and pythonPath ownership', () => {
     dom.window._settingsSaved({ ok: false, requestId: save.requestId });
     expect(messages[messages.length - 1].type).to.equal('hubGetSettings');
     expect(dom.window.document.documentElement.dataset.hubSettingsSavePending).to.equal('false');
+  });
+
+  it('shows a stored numeric value in a select whose options are formatted differently', () => {
+    fixture = mountSettings();
+    const { dom, clock, messages } = fixture;
+    const select = dom.window.document.getElementById('settingBindiffThreshold');
+    dom.window._applySettings({ interfaceMode: 'advanced', bindiffThreshold: 0.6 }, 0);
+    expect(select.value).to.equal('0.60');
+    dom.window._scheduleSave();
+    clock.tick(500);
+    const save = messages.find((message) => message.type === 'hubSaveSettings');
+    expect(save.settings.bindiffThreshold).to.equal(0.6);
+  });
+
+  it('never sends NaN for an empty numeric control (the host would reject the whole save)', () => {
+    fixture = mountSettings();
+    const { dom, clock, messages } = fixture;
+    dom.window._applySettings({ interfaceMode: 'advanced', bindiffThreshold: 0.4 }, 0);
+    dom.window.document.getElementById('settingBindiffThreshold').value = '';
+    dom.window.document.getElementById('settingInterfaceMode').value = 'simple';
+    dom.window._scheduleSave();
+    clock.tick(500);
+    const save = messages.find((message) => message.type === 'hubSaveSettings');
+    expect(save.settings.bindiffThreshold).to.equal(0.4);
+    expect(JSON.parse(JSON.stringify(save.settings)).bindiffThreshold).to.equal(0.4);
+  });
+
+  it('applies the interpreter chosen in the native picker even while a save is pending', () => {
+    fixture = mountSettings();
+    const { dom } = fixture;
+    dom.window._applySettings({ interfaceMode: 'advanced', pythonPath: '' }, 0);
+    dom.window._scheduleSave();
+    dom.window._pythonPathSelected({ type: 'hubPythonPathSelected', pythonPath: SELECTED_PYTHON });
+    expect(dom.window.document.getElementById('settingPythonPath').value).to.equal(SELECTED_PYTHON);
   });
 });

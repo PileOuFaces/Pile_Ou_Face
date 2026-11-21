@@ -22,6 +22,14 @@ function _settingsSaved(message) {
   _requestSettings();
 }
 
+/** Host answer to the native picker: shows the interpreter really in use, whatever the pending request. */
+function _pythonPathSelected(message) {
+  const value = typeof message?.pythonPath === 'string' ? message.pythonPath : '';
+  const input = document.getElementById('settingPythonPath');
+  if (input) input.value = value;
+  if (_settingsCache) _settingsCache = { ..._settingsCache, pythonPath: value };
+}
+
 function _resetSettings() {
   clearTimeout(_settingsDebounce);
   _settingsDebounce = null;
@@ -99,6 +107,23 @@ function refreshStaticNavigationForSettings() {
   }
 }
 
+const _NUMERIC_SETTING_TYPES = new Set(['float', 'int']);
+
+/**
+ * Numeric selects list formatted options ("0.40") while the host stores numbers (0.4):
+ * pick the option with the same numeric value, otherwise the select would become empty.
+ */
+function _setSettingControlValue(el, value) {
+  if (el.tagName === 'SELECT' && _NUMERIC_SETTING_TYPES.has(el.dataset.type)) {
+    const match = Array.from(el.options).find((option) => Number(option.value) === Number(value));
+    if (match) {
+      el.value = match.value;
+      return;
+    }
+  }
+  el.value = String(value);
+}
+
 function _applySettings(settings, requestId) {
   // Opening Options can return a snapshot taken before the user's latest edit.
   // Only the current request may replace the form, never a pending local save.
@@ -115,7 +140,7 @@ function _applySettings(settings, requestId) {
     const key = el.dataset.key;
     if (!(key in settings)) return;
     if (el.type === 'checkbox') el.checked = settings[key] === true;
-    else el.value = String(settings[key]);
+    else _setSettingControlValue(el, settings[key]);
   });
   if (settings.lang && window.POFI18n?.setLocale) {
     window.POFI18n.setLocale(settings.lang);
@@ -145,9 +170,11 @@ function _collectSettings() {
     const key = el.dataset.key;
     const type = el.dataset.type;
     if (el.type === 'checkbox') settings[key] = el.checked;
-    else if (type === 'float') settings[key] = parseFloat(el.value);
-    else if (type === 'int') settings[key] = parseInt(el.value, 10);
-    else settings[key] = el.value;
+    else if (_NUMERIC_SETTING_TYPES.has(type)) {
+      const parsed = type === 'float' ? parseFloat(el.value) : parseInt(el.value, 10);
+      // An empty or invalid control keeps the known value: NaN would make the host reject the save.
+      if (Number.isFinite(parsed)) settings[key] = parsed;
+    } else settings[key] = el.value;
   });
   if (window.POFAiGenerationSettings) {
     const generation = window.POFAiGenerationSettings.fromGlobalSettings(settings);
