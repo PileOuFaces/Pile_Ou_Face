@@ -21,7 +21,7 @@ const { recordRuntimeEvent } = require('../shared/runtimeAudit');
  * @brief Enregistre les commandes statiques et retourne les subscriptions.
  * @param {object} context - Contexte VS Code
  * @param {object} deps - { ensureTempDir, runCommand, detectPythonExecutable, logChannel }
- * @param {object} providers - { root, pythonExe, ensureStaticAsm, refreshSidebar }
+ * @param {object} providers - { root, getPythonExe (ou pythonExe), ensureStaticAsm, refreshSidebar }
  * @returns {vscode.Disposable[]}
  */
 function readMappingBinary(mappingPath) {
@@ -78,7 +78,12 @@ function registerStaticCommands(context, deps, providers) {
     runCommand,
     logChannel,
   } = deps;
-  const { root, pythonExe, refreshSidebar, openHub } = providers;
+  const { root, refreshSidebar, openHub } = providers;
+  // getPythonExe est résolu à chaque lancement (pythonPath modifié sans recharger l'extension) ;
+  // pythonExe reste accepté pour les appelants existants.
+  const getPythonExe = typeof providers.getPythonExe === 'function'
+    ? providers.getPythonExe
+    : () => providers.pythonExe;
 
   const subs = [];
 
@@ -192,7 +197,7 @@ function registerStaticCommands(context, deps, providers) {
       if (binaryPath) xrefsArgs.push('--binary', binaryPath);
       const backendRoot = getExtensionPath() || r;
       const out = await new Promise<string>((resolve, reject) => {
-        cp.execFile(pythonExe, xrefsArgs, { encoding: 'utf8', cwd: r, maxBuffer: 4 * 1024 * 1024, timeout: 30000, env: { ...process.env, PYTHONPATH: backendRoot } }, (err, stdout) => {
+        cp.execFile(getPythonExe(), xrefsArgs, { encoding: 'utf8', cwd: r, maxBuffer: 4 * 1024 * 1024, timeout: 30000, env: { ...process.env, PYTHONPATH: backendRoot } }, (err, stdout) => {
           if (err) reject(err); else resolve(stdout);
         });
       });
@@ -250,7 +255,7 @@ function registerStaticCommands(context, deps, providers) {
       if (binaryPath) xrefsArgs.push('--binary', binaryPath);
       const backendRoot = getExtensionPath() || r;
       const out = await new Promise<string>((resolve, reject) => {
-        cp.execFile(pythonExe, xrefsArgs, { encoding: 'utf8', cwd: r, maxBuffer: 4 * 1024 * 1024, timeout: 30000, env: { ...process.env, PYTHONPATH: backendRoot } }, (err, stdout) => {
+        cp.execFile(getPythonExe(), xrefsArgs, { encoding: 'utf8', cwd: r, maxBuffer: 4 * 1024 * 1024, timeout: 30000, env: { ...process.env, PYTHONPATH: backendRoot } }, (err, stdout) => {
           if (err) reject(err); else resolve(stdout);
         });
       });
@@ -298,7 +303,7 @@ function registerStaticCommands(context, deps, providers) {
     if (storageDir) args.push('--workspace-root', storageDir);
     try {
       const stdout = await new Promise((resolve, reject) => {
-        cp.execFile(pythonExe, args, {
+        cp.execFile(getPythonExe(), args, {
           encoding: 'utf8',
           cwd: root || extensionRoot,
           maxBuffer: 4 * 1024 * 1024,
@@ -351,7 +356,7 @@ function registerStaticCommands(context, deps, providers) {
     if (storageDir) args.push('--workspace-root', storageDir);
     try {
       const stdout = await new Promise((resolve, reject) => {
-        cp.execFile(pythonExe, args, {
+        cp.execFile(getPythonExe(), args, {
           encoding: 'utf8',
           cwd: root || extensionRoot,
           maxBuffer: 4 * 1024 * 1024,
@@ -392,7 +397,7 @@ function registerStaticCommands(context, deps, providers) {
     const mappingPath = path.join(tempDir, `${baseName}.disasm.mapping.json`);
     if (!fs.existsSync(disasmPath)) {
       await runCommand(
-        pythonExe,
+        getPythonExe(),
         [
           getDisasmScript(root),
           '--binary',
@@ -435,7 +440,7 @@ function registerStaticCommands(context, deps, providers) {
     const disasmPath = path.join(tempDir, `${baseName}.disasm.asm`);
     const mappingPath = path.join(tempDir, `${baseName}.disasm.mapping.json`);
     await runCommand(
-      pythonExe,
+      getPythonExe(),
       [
         getDisasmScript(root),
         '--binary',
