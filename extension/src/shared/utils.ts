@@ -13,6 +13,7 @@ const crypto = require('crypto');
 const logger = require('./logger');
 const { recordRuntimeEvent } = require('./runtimeAudit');
 const pythonDependencies = require('./pythonDependencies');
+const { readStoredSettings } = require('./settingsSchema');
 
 const logChannel = vscode.window.createOutputChannel('Pile ou Face');
 
@@ -134,8 +135,6 @@ function detectPythonExecutable(root, settingsPythonPath) {
   return 'python3';
 }
 
-const SETTINGS_STATE_KEY = 'pof-settings';
-
 // Store des réglages persistés (context.globalState), enregistré à l'activation pour les
 // modules qui n'ont pas accès au contexte VS Code (ex. staticCache).
 type SettingsStore = { get: (key: string, fallback?: unknown) => any };
@@ -148,8 +147,8 @@ function setSettingsStore(store) {
 function getConfiguredPythonPath(store = _settingsStore) {
   if (!store || typeof store.get !== 'function') return '';
   try {
-    const value = (store.get(SETTINGS_STATE_KEY, {}) || {}).pythonPath;
-    return typeof value === 'string' && value.trim() ? value : '';
+    // Seul un pythonPath conforme au schéma (chemin absolu vers python*) est exécuté.
+    return readStoredSettings(store).pythonPath || '';
   } catch (err) {
     logWarning(`[Python] Lecture du réglage pythonPath impossible : ${err?.message || err}`);
     return '';

@@ -15,6 +15,7 @@ const http = require('http');
 const https = require('https');
 const readline = require('readline');
 const { detectPythonExecutable, buildRuntimeEnv, resolveDockerExecutable, logDebug, logWarning } = require('../shared/utils');
+const { migrateStoredSettings } = require('../shared/settingsSchema');
 const { emptyPluginUiState, summarizePluginRuntimeState } = require('./pluginState');
 const { AuthService } = require('../shared/authService');
 const { resolveAuthServerUrl } = require('../shared/authConfig');
@@ -471,7 +472,9 @@ function staticHandlers(config: LooseMessage) {
       return {};
     }
   };
-  const getPythonExecutable = () => getSavedSettings().pythonPath || detectPythonExecutable(root);
+  // Seul un pythonPath conforme au schéma est exécuté (POF-P1-002).
+  const getPythonExecutable = () => migrateStoredSettings(getSavedSettings()).settings.pythonPath
+    || detectPythonExecutable(root);
   const getAuthServerUrl = () => {
     const authConfig = vscode.workspace.getConfiguration('pileOuFace').inspect('authServerUrl');
     return resolveAuthServerUrl({

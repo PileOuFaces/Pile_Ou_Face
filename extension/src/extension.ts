@@ -48,6 +48,7 @@ const { makeMcpSetupBridge } = require('./shared/mcpSetupBridge');
 const { AuthService } = require('./shared/authService');
 const { planLegacyAuthUrlMigration, resolveAuthServerUrl } = require('./shared/authConfig');
 const { getProductConfig } = require('./shared/productConfig');
+const { SETTINGS_STATE_KEY, migrateStoredSettings } = require('./shared/settingsSchema');
 const { configureRuntimeAudit, recordRuntimeEvent, resetRuntimeAudit } = require('./shared/runtimeAudit');
 const { initializeExtensionTelemetry } = require('./shared/telemetry/telemetry');
 const logger = require('./shared/logger');
@@ -98,6 +99,17 @@ function _unregisterGlobalErrorHandlers() {
   _unhandledRejectionHandler = null;
 }
 
+// POF-P1-002 : retire des réglages enregistrés les clés inconnues et les valeurs
+// invalides (dont un pythonPath arbitraire) avant toute lecture.
+function migrateSavedSettings(context) {
+  const raw = context.globalState.get(SETTINGS_STATE_KEY);
+  if (raw === undefined) return;
+  const { settings, dropped } = migrateStoredSettings(raw);
+  if (!dropped.length) return;
+  logWarning(`[Settings] Removed unknown or invalid saved settings: ${dropped.join(', ')}`);
+  Promise.resolve(context.globalState.update(SETTINGS_STATE_KEY, settings))
+    .catch((err) => logWarning(`[Settings] Settings migration could not be saved: ${err?.message || err}`));
+}
 
 /**
  * @brief Active l'extension et enregistre les commandes.
@@ -129,6 +141,8 @@ function activate(context) {
       if (e.affectsConfiguration('pileOuFace.logLevel')) applyLogLevelFromConfig();
     })
   );
+
+  migrateSavedSettings(context);
 
   // Ensure Python dependencies are installed at startup
   const folders = vscode.workspace.workspaceFolders;
@@ -202,9 +216,10 @@ function activate(context) {
 
   // Panneau latéral et refresh
   const root = resolveProjectRoot(vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || '');
-  const pythonExe = root
+  // Résolu à chaque lancement : un pythonPath enregistré s'applique sans recharger l'extension.
+  const getPythonExe = () => (root
     ? resolvePythonExecutable(root, context.globalState)
-    : (getConfiguredPythonPath(context.globalState) || 'python3');
+    : (getConfiguredPythonPath(context.globalState) || 'python3'));
   const refreshSidebar = (_binaryPath) => {};
   const setSidebarMode = (_mode) => {};
   hubConfig.refreshSidebar = refreshSidebar;
@@ -218,7 +233,7 @@ function activate(context) {
     detectPythonExecutable,
     logChannel,
   };
-  const staticProviders = { root, pythonExe, refreshSidebar, openHub };
+  const staticProviders = { root, getPythonExe, refreshSidebar, openHub };
   const staticSubs = registerStaticCommands(context, staticDeps, staticProviders);
   context.subscriptions.push(...staticSubs);
 
@@ -232,7 +247,7 @@ function activate(context) {
       const [scriptRelPath, ...rest] = argsWithScript;
       const scriptPath = require('path').join(cwd || root, scriptRelPath);
       const startedAt = Date.now();
-      cp.execFile(pythonExe, [scriptPath, ...rest], {
+      cp.execFile(getPythonExe(), [scriptPath, ...rest], {
         encoding: 'utf8', cwd: cwd || root, maxBuffer, timeout,
         env: buildRuntimeEnv(cwd || root, storageDir),
       }, (err, stdout, stderr) => {
@@ -257,7 +272,7 @@ function activate(context) {
   const mcpSetupBridge = makeMcpSetupBridge({
     root,
     extensionPath: context.extensionPath,
-    getPythonExecutable: () => pythonExe,
+    getPythonExecutable: getPythonExe,
     buildPythonEnv: () => buildRuntimeEnv(root, storageDir),
   });
   const mcpAgentsPanel = createMcpAgentsPanel({ context, bridge: mcpSetupBridge, getProjectDir: getMcpProjectDir });

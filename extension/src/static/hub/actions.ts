@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 /**
  * @file hub/actions.ts
- * @brief Handlers UI/misc, disasm, export, scan, rules, compilation, trace init, settings.
+ * @brief Handlers UI/misc, disasm, export, scan, rules, compilation, trace init.
+ *        Les réglages sont traités par hub/settingsActions.ts.
  *        Extracted from onDidReceiveMessage in hub.ts.
  */
 
@@ -39,7 +40,6 @@ function createActions({
   getSearchScript,
   getPayloadScriptRunnerScript,
   getExampleCandidates,
-  SETTINGS_DEFAULTS,
   setSidebarMode,
   refreshSidebar,
   normalizePayloadTargetMode,
@@ -1178,21 +1178,6 @@ function createActions({
       const initPayload = await buildRunTraceInit(pathForWebview, null, message.sourcePath || '', message.payloadTargetMode || 'auto');
       panel.webview.postMessage({ type: 'initRunTrace', ...initPayload });
       if (refreshSidebar) refreshSidebar(pathForWebview);
-    },
-
-    hubGetSettings: async (message) => {
-      const settings = context.globalState.get('pof-settings', SETTINGS_DEFAULTS);
-      panel.webview.postMessage({ type: 'hubSettings', settings: { ...SETTINGS_DEFAULTS, ...settings }, requestId: message.requestId });
-    },
-
-    hubSaveSettings: async (message) => {
-      await context.globalState.update('pof-settings', message.settings);
-      panel.webview.postMessage({ type: 'hubSettingsSaved', ok: true, requestId: message.requestId });
-    },
-
-    hubResetSettings: async (message) => {
-      await context.globalState.update('pof-settings', SETTINGS_DEFAULTS);
-      panel.webview.postMessage({ type: 'hubSettings', settings: { ...SETTINGS_DEFAULTS }, requestId: message.requestId });
     },
   };
 }

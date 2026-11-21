@@ -126,6 +126,7 @@
     'Utilisé pour exécuter les backends et scripts Python.': 'Used to run Python backends and scripts.',
     'Auto-détection': 'Auto-detect',
     'Parcourir': 'Browse',
+    "Revenir à l'auto-détection": 'Return to auto-detection',
     'Décompilation': 'Decompilation',
     'Décompilateurs': 'Decompilers',
     "Auto essaie le local puis Docker. Docker force l'image container.": 'Auto tries local first, then Docker. Docker forces the container image.',
