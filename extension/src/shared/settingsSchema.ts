@@ -180,11 +180,17 @@ const SETTINGS_SCHEMA: Readonly<Record<string, Validator>> = Object.freeze({
   bindiffThreshold: numberIn(LIMITS.bindiffThreshold),
 });
 
-function checkStoredValue(key: string, value: any, attestedPythonPath: string): Check {
+/** Attestation(s) enregistrées : une chaîne, ou une liste pendant un changement d'interpréteur. */
+function normalizeAttested(attested: unknown): string[] {
+  const values = Array.isArray(attested) ? attested : [attested];
+  return values.filter((value) => typeof value === 'string' && value !== '');
+}
+
+function checkStoredValue(key: string, value: any, attestedPythonPaths: string[]): Check {
   if (!hasOwn(SETTINGS_SCHEMA, key)) return fail('unknown key');
   const result = SETTINGS_SCHEMA[key](value);
-  // La forme du chemin ne prouve pas sa provenance : seul le chemin attesté par le Host est conservé.
-  if (result.ok && HOST_MANAGED_KEYS.has(key) && value !== '' && value !== attestedPythonPath) {
+  // La forme du chemin ne prouve pas sa provenance : seul un chemin attesté par le Host est conservé.
+  if (result.ok && HOST_MANAGED_KEYS.has(key) && value !== '' && !attestedPythonPaths.includes(value)) {
     return fail('not selected by the extension host');
   }
   return result;
@@ -195,13 +201,17 @@ function checkStoredValue(key: string, value: any, attestedPythonPath: string): 
  * tout pythonPath non attesté par une sélection native (`attestedPythonPath`) sont
  * retirés ; les défauts s'appliquent alors.
  */
-function migrateStoredSettings(raw: unknown, { attestedPythonPath = '' } = {}): { settings: Settings; dropped: string[] } {
+function migrateStoredSettings(
+  raw: unknown,
+  { attestedPythonPath = '' as string | string[] } = {},
+): { settings: Settings; dropped: string[] } {
+  const attested = normalizeAttested(attestedPythonPath);
   const settings: Settings = {};
   const dropped: string[] = [];
   if (raw == null) return { settings, dropped };
   if (!isPlainObject(raw)) return { settings, dropped: ['<root>'] };
   for (const [key, value] of Object.entries(raw as Settings)) {
-    const result = checkStoredValue(key, value, attestedPythonPath);
+    const result = checkStoredValue(key, value, attested);
     if (result.ok) settings[key] = result.value;
     else dropped.push(key);
   }
@@ -240,16 +250,18 @@ function cloneSettingsDefaults(): Settings {
 
 type SettingsStore = { get?: (key: string, fallback?: unknown) => any } | null | undefined;
 
-/** pythonPath attesté par la dernière sélection native vérifiée, ou ''. */
-function readAttestedPythonPath(store: SettingsStore): string {
-  const value = store?.get?.(PYTHON_PATH_ATTESTATION_KEY, '');
-  return typeof value === 'string' ? value : '';
+/**
+ * pythonPath attestés par une sélection native vérifiée. Pendant un changement A → B, la liste
+ * contient B et A : un lecteur entre les deux écritures voit toujours un chemin attesté.
+ */
+function readAttestedPythonPaths(store: SettingsStore): string[] {
+  return normalizeAttested(store?.get?.(PYTHON_PATH_ATTESTATION_KEY, ''));
 }
 
 /** Réglages enregistrés bruts et migrés, avec les clés retirées. */
 function migrateSettingsFromStore(store: SettingsStore): { settings: Settings; dropped: string[] } {
   return migrateStoredSettings(store?.get?.(SETTINGS_STATE_KEY, {}), {
-    attestedPythonPath: readAttestedPythonPath(store),
+    attestedPythonPath: readAttestedPythonPaths(store),
   });
 }
 
@@ -275,4 +287,5 @@ module.exports = {
   validateSettingsUpdate,
   readStoredSettings,
   readSettingsWithDefaults,
+  readAttestedPythonPaths,
 };

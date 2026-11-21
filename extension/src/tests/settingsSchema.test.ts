@@ -237,6 +237,54 @@ describe('hub settings handlers', () => {
     expect(store.current()).to.deep.equal({ lang: 'en', pythonPath: SELECTED_PYTHON });
   });
 
+  it('keeps an attested interpreter visible to readers at every step of a change A to B', async () => {
+    const OTHER_PYTHON = '/opt/other venv/bin/python3';
+    const store = makeStore({ pythonPath: SELECTED_PYTHON }, { attested: SELECTED_PYTHON });
+    const seen = [];
+    const update = store.update;
+    store.update = sinon.spy(async (key, next) => {
+      await update(key, next);
+      seen.push(readStoredSettings(store).pythonPath);
+    });
+    const { actions } = makeActions(store, sinon.stub().resolves({ ok: true, path: OTHER_PYTHON }));
+    await actions.hubSelectPythonPath({ requestId: 30 });
+    // Never undefined (auto-detection) between the writes: first A, then B.
+    expect(seen).to.deep.equal([SELECTED_PYTHON, OTHER_PYTHON, OTHER_PYTHON]);
+    expect(store.attested()).to.equal(OTHER_PYTHON);
+  });
+
+  it('keeps the previous interpreter when writing the new pythonPath fails', async () => {
+    const OTHER_PYTHON = '/opt/other venv/bin/python3';
+    const store = makeStore({ pythonPath: SELECTED_PYTHON }, { attested: SELECTED_PYTHON });
+    const update = store.update;
+    store.update = sinon.spy(async (key, next) => {
+      if (key === SETTINGS_STATE_KEY) throw new Error('disk full');
+      return update(key, next);
+    });
+    const { actions, posted, vscode } = makeActions(store, sinon.stub().resolves({ ok: true, path: OTHER_PYTHON }));
+    await actions.hubSelectPythonPath({ requestId: 31 });
+    expect(readStoredSettings(store).pythonPath).to.equal(SELECTED_PYTHON);
+    expect(vscode.window.showErrorMessage.calledOnce).to.equal(true);
+    expect(posted[0]).to.deep.equal({ type: 'hubPythonPathSelected', pythonPath: SELECTED_PYTHON });
+  });
+
+  it('acknowledges a save that the storage rejects, so the form can reload', async () => {
+    const store = makeStore({ lang: 'fr' });
+    store.update = sinon.spy(async () => { throw new Error('storage unavailable'); });
+    const { actions, posted, vscode } = makeActions(store);
+    await actions.hubSaveSettings({ settings: { lang: 'en' }, requestId: 32 });
+    expect(posted).to.deep.equal([{ type: 'hubSettingsSaved', ok: false, errors: ['storage error'], requestId: 32 }]);
+    expect(vscode.window.showErrorMessage.calledOnce).to.equal(true);
+  });
+
+  it('still answers a reset when the storage rejects it', async () => {
+    const store = makeStore({ lang: 'fr' });
+    store.update = sinon.spy(async () => { throw new Error('storage unavailable'); });
+    const { actions, posted } = makeActions(store);
+    await actions.hubResetSettings({ requestId: 33 });
+    expect(posted[0]).to.include({ type: 'hubSettings', requestId: 33 });
+  });
+
   it('shows the selected interpreter even when a local save was pending (no requestId)', async () => {
     const store = makeStore({ lang: 'fr' });
     const { actions, posted } = makeActions(store, sinon.stub().resolves({ ok: true, path: SELECTED_PYTHON }));

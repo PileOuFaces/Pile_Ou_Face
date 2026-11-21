@@ -32,6 +32,11 @@ function createSettingsActions({
     writes = run.catch(() => {});
     return run;
   };
+  const reportWriteFailure = (action, err) => {
+    const reason = err?.message || String(err);
+    logChannel?.appendLine?.(`[Settings] ${action} failed: ${reason}`);
+    vscode.window.showErrorMessage(`Pile ou Face: ${action} failed (${reason}).`);
+  };
   const postSettings = (requestId) => panel.webview.postMessage({
     type: 'hubSettings',
     settings: readSettingsWithDefaults(store),
@@ -52,14 +57,26 @@ function createSettingsActions({
         panel.webview.postMessage({ type: 'hubSettingsSaved', ok: false, errors: result.errors, requestId: message?.requestId });
         return;
       }
-      await store.update(SETTINGS_STATE_KEY, result.settings);
+      try {
+        await store.update(SETTINGS_STATE_KEY, result.settings);
+      } catch (err) {
+        // Always acknowledge: the form waits for this answer before it reloads the settings.
+        reportWriteFailure('saving settings', err);
+        panel.webview.postMessage({ type: 'hubSettingsSaved', ok: false, errors: ['storage error'], requestId: message?.requestId });
+        return;
+      }
       panel.webview.postMessage({ type: 'hubSettingsSaved', ok: true, requestId: message?.requestId });
     }),
 
     hubResetSettings: (message) => serialized(async () => {
-      await store.update(SETTINGS_STATE_KEY, cloneSettingsDefaults());
-      await store.update(PYTHON_PATH_ATTESTATION_KEY, undefined);
-      postSettings(message?.requestId);
+      try {
+        await store.update(SETTINGS_STATE_KEY, cloneSettingsDefaults());
+        await store.update(PYTHON_PATH_ATTESTATION_KEY, undefined);
+      } catch (err) {
+        reportWriteFailure('resetting settings', err);
+      } finally {
+        postSettings(message?.requestId);
+      }
     }),
 
     hubSelectPythonPath: async (message) => {
@@ -68,12 +85,21 @@ function createSettingsActions({
       if (selection.ok) {
         // Le sélecteur est ouvert hors de la file : les sauvegardes restent possibles pendant ce
         // temps. L'écriture, elle, relit les réglages dans la file, après toute sauvegarde acquittée.
-        await serialized(async () => {
-          // Attestation d'abord : le pythonPath enregistré n'est réutilisé que s'il est attesté.
-          await store.update(PYTHON_PATH_ATTESTATION_KEY, selection.path);
-          await store.update(SETTINGS_STATE_KEY, { ...readStoredSettings(store), pythonPath: selection.path });
-        });
-        logChannel?.appendLine?.(`[Settings] pythonPath set to ${selection.path}`);
+        try {
+          await serialized(async () => {
+            // 1. B attesté en plus de A ; 2. réglage B ; 3. B seul. À chaque étape, le pythonPath
+            // enregistré reste attesté : un lecteur concurrent ou un échec d'écriture garde A ou B.
+            // Seul le chemin en service (déjà attesté) reste valide pendant la transition.
+            const inUse = readStoredSettings(store).pythonPath;
+            const transition = inUse && inUse !== selection.path ? [selection.path, inUse] : selection.path;
+            await store.update(PYTHON_PATH_ATTESTATION_KEY, transition);
+            await store.update(SETTINGS_STATE_KEY, { ...readStoredSettings(store), pythonPath: selection.path });
+            await store.update(PYTHON_PATH_ATTESTATION_KEY, selection.path);
+          });
+          logChannel?.appendLine?.(`[Settings] pythonPath set to ${selection.path}`);
+        } catch (err) {
+          reportWriteFailure('saving pythonPath', err);
+        }
       } else if (!selection.cancelled) {
         logChannel?.appendLine?.(`[Settings] pythonPath selection rejected: ${selection.error}`);
         vscode.window.showErrorMessage(`Pile ou Face: ${selection.error}`);
