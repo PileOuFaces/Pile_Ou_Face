@@ -10,7 +10,9 @@ const path = require('path');
 const crypto = require('crypto');
 const cp = require('child_process');
 const { getHubContent } = require('../shared/webview');
-const { buildRuntimeEnv, resolveProjectRoot, getExtensionPath, logDebug } = require('../shared/utils');
+const {
+  buildRuntimeEnv, resolveProjectRoot, getExtensionPath, getConfiguredPythonPath, logDebug,
+} = require('../shared/utils');
 const { AuthService } = require('../shared/authService');
 const { resolveAuthServerUrl } = require('../shared/authConfig');
 const {
@@ -32,7 +34,8 @@ const {
   payloadTargetLabel,
   resolvePayloadTarget,
 } = require('../shared/dynamicInputTarget');
-const { readCache, writeCache } = require('../shared/staticCache');
+// Async variants: cache I/O must not block the Extension Host (POF-P1-010).
+const { readCacheAsync: readCache, writeCacheAsync: writeCache } = require('../shared/staticCache');
 const { createHandlers } = require('./handlers');
 const {
   getDisasmScript,
@@ -285,7 +288,7 @@ function createHub(config) {
     const workspaceRoot = folders[0].uri.fsPath;
     const root = resolveProjectRoot(folders[0].uri.fsPath);
     const backendRoot = getExtensionPath() || root;
-    const pythonExe = detectPythonExecutable(root);
+    const pythonExe = detectPythonExecutable(root, getConfiguredPythonPath(context.globalState));
     const pythonEnv = buildRuntimeEnv(
       root,
       storageDir,

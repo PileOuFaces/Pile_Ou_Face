@@ -14,6 +14,65 @@ const binary = (dir, content = 'binary') => {
   return result;
 };
 
+describe('getCacheKey', () => {
+  // Whole-second timestamp: exactly representable by common filesystems.
+  const FIXED_TIME_SECONDS = 1700000000;
+  const dirs = [];
+  const tempDir = () => {
+    const dir = temp();
+    dirs.push(dir);
+    return dir;
+  };
+
+  afterEach(() => {
+    while (dirs.length) {
+      fs.rmSync(dirs.pop(), { recursive: true, force: true });
+    }
+  });
+
+  it('returns the same non-null key for an unchanged file', () => {
+    const bin = binary(tempDir());
+    const first = cache.getCacheKey(bin);
+    const second = cache.getCacheKey(bin);
+    expect(first).to.be.a('string');
+    expect(first).to.not.equal(null);
+    expect(second).to.equal(first);
+  });
+
+  it('changes the key when only the size changes and mtime is restored', () => {
+    const bin = binary(tempDir(), 'short');
+    // One open file for every check and change: no path re-resolved between them.
+    const fd = fs.openSync(bin, 'r+');
+    let before;
+    let after;
+    let keyBefore;
+    let keyAfter;
+    try {
+      fs.futimesSync(fd, FIXED_TIME_SECONDS, FIXED_TIME_SECONDS);
+      before = fs.fstatSync(fd);
+      keyBefore = cache.getCacheKey(bin);
+
+      fs.writeSync(fd, 'a-much-longer-content', 0);
+      fs.futimesSync(fd, FIXED_TIME_SECONDS, FIXED_TIME_SECONDS);
+      after = fs.fstatSync(fd);
+      keyAfter = cache.getCacheKey(bin);
+    } finally {
+      fs.closeSync(fd);
+    }
+
+    expect(after.size).to.not.equal(before.size);
+    expect(after.mtimeMs).to.equal(before.mtimeMs);
+    expect(keyBefore).to.not.equal(null);
+    expect(keyAfter).to.not.equal(null);
+    expect(keyAfter).to.not.equal(keyBefore);
+  });
+
+  it('returns null for a nonexistent path in a temporary directory', () => {
+    const missing = path.join(tempDir(), 'does-not-exist.bin');
+    expect(cache.getCacheKey(missing)).to.equal(null);
+  });
+});
+
 describe('SQLite static cache', () => {
   it('derives stable paths and keys', () => {
     const dir = temp();

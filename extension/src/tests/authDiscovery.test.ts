@@ -26,6 +26,26 @@ describe('auth discovery v1', () => {
     expect(() => normalizeAuthOrigin('https://auth.example/path')).to.throw(/origin/);
   });
 
+  it('accepts the bracketed IPv6 loopback over HTTP', () => {
+    expect(normalizeAuthOrigin('http://[::1]:8000')).to.equal('http://[::1]:8000');
+    expect(normalizeAuthOrigin('http://[::1]:8000/')).to.equal('http://[::1]:8000');
+  });
+
+  it('keeps rejecting HTTP hosts that only look like loopback', () => {
+    for (const origin of [
+      'http://[::2]',
+      'http://[::ffff:127.0.0.1]',
+      'http://localhost.example.com',
+      'http://127.0.0.1.nip.io',
+    ]) {
+      expect(() => normalizeAuthOrigin(origin), origin).to.throw(/HTTPS/);
+    }
+  });
+
+  it('keeps accepting HTTPS origins, including IPv6 literals', () => {
+    expect(normalizeAuthOrigin('https://[::2]:8443/')).to.equal('https://[::2]:8443');
+  });
+
   it('validates issuer, audiences, deployment, JWKS and protocol before use', () => {
     expect(validateAuthDiscovery('https://auth.example', discovery(), 'deployment-test').deployment_id)
       .to.equal('deployment-test');

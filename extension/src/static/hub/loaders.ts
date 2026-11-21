@@ -38,14 +38,15 @@ function createLoaders({
   }) => {
     const cacheRoot = storageDir;
     if (useCache) {
-      const cached = readCache(cacheRoot, absPath, cacheKey, cacheOptions);
+      const cached = await readCache(cacheRoot, absPath, cacheKey, cacheOptions);
       if (cached && isCacheUsable(cached)) {
         if (logLabel) logChannel.appendLine(`[cache] ${logLabel} depuis cache`);
         return cached;
       }
     }
     const value = await compute();
-    writeCache(cacheRoot, absPath, cacheKey, value, cacheOptions);
+    // Not awaited: the per-database FIFO queue orders it before any later read.
+    void writeCache(cacheRoot, absPath, cacheKey, value, cacheOptions);
     return value;
   };
 

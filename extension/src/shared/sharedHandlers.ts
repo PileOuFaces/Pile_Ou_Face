@@ -11,7 +11,7 @@ const fs = require('fs');
 const cp = require('child_process');
 const readline = require('readline');
 const fileManager = require('./fileManager');
-const { detectPythonExecutable, getExtensionPath, buildRuntimeEnv } = require('./utils');
+const { resolvePythonExecutable, getExtensionPath, buildRuntimeEnv, logWarning } = require('./utils');
 const { makeAnnotationsBridge } = require('./annotationsBridge');
 const { makeChatHistoryBridge } = require('./chatHistoryBridge');
 const { makePatchHistoryBridge } = require('./patchHistoryBridge');
@@ -264,10 +264,11 @@ function sharedHandlers(ctx) {
     setRawProfile,
     clearRawProfile,
   } = ctx;
+  const getPythonExecutable = () => resolvePythonExecutable(root, context?.globalState);
   const annotationsBridge = ctx.annotationsBridge || makeAnnotationsBridge({
     root,
     extensionPath: context?.extensionPath || getExtensionPath() || root,
-    getPythonExecutable: () => detectPythonExecutable(root),
+    getPythonExecutable,
     buildPythonEnv: () => buildRuntimeEnv(root, storageDir),
     getOverlayMappingPath: (binaryPath) =>
       getDisasmMappingPathForBinary(binaryPath, { root, storageDir, getTempDir }),
@@ -276,20 +277,47 @@ function sharedHandlers(ctx) {
     root,
     workspacePath: root,
     extensionPath: context?.extensionPath || getExtensionPath() || root,
-    getPythonExecutable: () => detectPythonExecutable(root),
+    getPythonExecutable,
     buildPythonEnv: () => buildRuntimeEnv(root, storageDir),
   });
   const patchHistoryBridge = ctx.patchHistoryBridge || makePatchHistoryBridge({
     root,
     extensionPath: context?.extensionPath || getExtensionPath() || root,
-    getPythonExecutable: () => detectPythonExecutable(root),
+    getPythonExecutable,
     buildPythonEnv: () => buildRuntimeEnv(root, storageDir),
   });
-  const safePostMessage = (message) => {
+  // Many handlers post after an await or a process callback: by then the hub may have been
+  // closed, and `panel.webview` throws "Webview is disposed". Such a late message is dropped
+  // silently; any other delivery failure (thrown or rejected, even after the hub closed) is
+  // logged, never thrown.
+  const WEBVIEW_DISPOSED = 'Webview is disposed'; // VS Code's message for a closed panel
+  let hubDisposed = false;
+  if (typeof panel?.onDidDispose === 'function') {
+    panel.onDidDispose(() => { hubDisposed = true; });
+  }
+  const describeError = (err) => {
     try {
-      panel.webview.postMessage(message);
+      return String(err?.message ?? err);
     } catch (_) {
-      // The hub can be disposed while asynchronous provider probes are still returning.
+      return 'unprintable error';
+    }
+  };
+  const reportUndelivered = (message, err) => {
+    const reason = describeError(err);
+    if (reason === WEBVIEW_DISPOSED) return;
+    logWarning(`[hub] message ${describeError(message?.type)} not delivered: ${reason}`);
+  };
+  const safePostMessage = (message) => {
+    if (hubDisposed) return;
+    let delivery;
+    try {
+      delivery = panel.webview.postMessage(message);
+    } catch (err) {
+      reportUndelivered(message, err);
+      return;
+    }
+    if (delivery && typeof delivery.then === 'function') {
+      delivery.then(undefined, (err) => reportUndelivered(message, err));
     }
   };
 
@@ -304,13 +332,13 @@ function sharedHandlers(ctx) {
   });
 
   const notifyAnnotations = (binaryPath, annotations, overlay = '') => {
-    panel.webview.postMessage(buildAnnotationsMessage(binaryPath, annotations, overlay));
-    panel.webview.postMessage({ type: 'hubAnnotationSaved', binaryPath });
+    safePostMessage(buildAnnotationsMessage(binaryPath, annotations, overlay));
+    safePostMessage({ type: 'hubAnnotationSaved', binaryPath });
   };
 
 
   const forgetRecentBinary = (binaryPath) => {
-    panel.webview.postMessage({ type: 'hubForgetRecentBinary', binaryPath });
+    safePostMessage({ type: 'hubForgetRecentBinary', binaryPath });
   };
 
   const rememberBinarySelection = async (resolved) => {
@@ -341,8 +369,8 @@ function sharedHandlers(ctx) {
       if (result.total > 0) {
         vscode.window.showInformationMessage(`Reverse Workspace: ${result.total} generated file(s) removed.`);
       }
-      panel.webview.postMessage({ type: 'refreshGeneratedFiles' });
-      panel.webview.postMessage({ type: 'generatedFiles', files: fileManager.listAll(storageDir || root) });
+      safePostMessage({ type: 'refreshGeneratedFiles' });
+      safePostMessage({ type: 'generatedFiles', files: fileManager.listAll(storageDir || root) });
     }
     return null;
   };
@@ -504,7 +532,7 @@ function sharedHandlers(ctx) {
 
   return {
     getPlatform: () => {
-      panel.webview.postMessage({ type: 'platformInfo', platform: process.platform });
+      safePostMessage({ type: 'platformInfo', platform: process.platform });
     },
     requestBinarySelection: async () => {
       const binaryUri = await vscode.window.showOpenDialog({
@@ -518,7 +546,7 @@ function sharedHandlers(ctx) {
       const resolved = await resolveBinarySelection(binaryPath);
       if (!resolved) return;
       await rememberBinarySelection(resolved);
-      panel.webview.postMessage({
+      safePostMessage({
         type: 'hubSetBinaryPath',
         binaryPath: resolved.pathForWebview,
         binaryMeta: resolved.binaryMeta,
@@ -534,7 +562,7 @@ function sharedHandlers(ctx) {
       });
       if (!resolved) return;
       await rememberBinarySelection(resolved);
-      panel.webview.postMessage({
+      safePostMessage({
         type: 'hubSetBinaryPath',
         binaryPath: resolved.pathForWebview,
         binaryMeta: resolved.binaryMeta,
@@ -553,8 +581,8 @@ function sharedHandlers(ctx) {
       });
       await patchHistoryBridge.deleteHistory(absPath);
       if (result.total > 0) {
-        panel.webview.postMessage({ type: 'refreshGeneratedFiles' });
-        panel.webview.postMessage({ type: 'generatedFiles', files: fileManager.listAll(storageDir || root) });
+        safePostMessage({ type: 'refreshGeneratedFiles' });
+        safePostMessage({ type: 'generatedFiles', files: fileManager.listAll(storageDir || root) });
       }
     },
     hubClearRecentBinaries: async () => {
@@ -568,7 +596,7 @@ function sharedHandlers(ctx) {
         const { setRecentBinaries: setRecentBinariesState } = require('./recentBinaries');
         await setRecentBinariesState(context, existing);
       }
-      panel.webview.postMessage({ type: 'hubSetRecentBinaries', recent: existing });
+      safePostMessage({ type: 'hubSetRecentBinaries', recent: existing });
     },
     requestRulesSelection: async (message) => {
       const target = String(message?.target || 'manual').trim() || 'manual';
@@ -586,12 +614,12 @@ function sharedHandlers(ctx) {
         const p = uri[0].fsPath;
         const relPath = path.relative(root, p);
         const pathForWebview = relPath.startsWith('..') ? p : relPath;
-        panel.webview.postMessage({ type: 'hubRulesPath', rulesPath: pathForWebview, target });
+        safePostMessage({ type: 'hubRulesPath', rulesPath: pathForWebview, target });
       }
     },
     listGeneratedFiles: () => {
       const summary = fileManager.listAll(storageDir || root);
-      panel.webview.postMessage({ type: 'generatedFiles', files: summary });
+      safePostMessage({ type: 'generatedFiles', files: summary });
     },
     cleanupGeneratedFiles: async (message) => {
       if (message?.confirm) {
@@ -608,8 +636,8 @@ function sharedHandlers(ctx) {
       if (total > 0) {
         vscode.window.showInformationMessage(`Reverse Workspace: ${total} file(s) removed.`);
       }
-      panel.webview.postMessage({ type: 'refreshGeneratedFiles' });
-      panel.webview.postMessage({ type: 'generatedFiles', files: fileManager.listAll(storageDir || root) });
+      safePostMessage({ type: 'refreshGeneratedFiles' });
+      safePostMessage({ type: 'generatedFiles', files: fileManager.listAll(storageDir || root) });
     },
     purgeStaleCache: async () => {
       const { removed: removedFiles } = fileManager.purgeStaleCache(storageDir || root, root);
@@ -620,8 +648,8 @@ function sharedHandlers(ctx) {
           ? `Reverse Workspace: ${removed} stale cache entry or entries removed.`
           : 'Reverse Workspace: no stale cache entries found.'
       );
-      panel.webview.postMessage({ type: 'refreshGeneratedFiles' });
-      panel.webview.postMessage({ type: 'generatedFiles', files: fileManager.listAll(storageDir || root) });
+      safePostMessage({ type: 'refreshGeneratedFiles' });
+      safePostMessage({ type: 'generatedFiles', files: fileManager.listAll(storageDir || root) });
     },
     hubError: (message) => {
       vscode.window.showErrorMessage(message.message || 'Error');
@@ -629,9 +657,9 @@ function sharedHandlers(ctx) {
     hubLoadChatHistory: async () => {
       try {
         const result = await chatHistoryBridge.loadHistory();
-        panel.webview.postMessage({ type: 'hubChatHistory', ...result });
+        safePostMessage({ type: 'hubChatHistory', ...result });
       } catch (err) {
-        panel.webview.postMessage({
+        safePostMessage({
           type: 'hubChatHistoryError',
           error: String(err?.message || err),
         });
@@ -644,7 +672,7 @@ function sharedHandlers(ctx) {
           activeConversationId: message.activeConversationId,
         });
       } catch (err) {
-        panel.webview.postMessage({
+        safePostMessage({
           type: 'hubChatHistoryError',
           error: String(err?.message || err),
         });
@@ -653,12 +681,12 @@ function sharedHandlers(ctx) {
     hubLoadAnnotations: async (message) => {
       const { binaryPath } = message;
       if (!binaryPath) {
-        panel.webview.postMessage(buildAnnotationsMessage('', {}));
+        safePostMessage(buildAnnotationsMessage('', {}));
         return;
       }
       try {
         const annotations = await annotationsBridge.loadAnnotations(binaryPath);
-        panel.webview.postMessage(buildAnnotationsMessage(binaryPath, annotations));
+        safePostMessage(buildAnnotationsMessage(binaryPath, annotations));
       } catch (err) {
         vscode.window.showErrorMessage(`Unable to load annotations: ${err?.message || err}`);
       }
@@ -755,10 +783,7 @@ function sharedHandlers(ctx) {
       }
     },
     hubAiProvidersGet: () => {
-      const getSavedSettings = () => {
-        try { return context?.globalState?.get('pof-settings', {}) || {}; } catch (_) { return {}; }
-      };
-      const pythonExe = getSavedSettings().pythonPath || detectPythonExecutable(root);
+      const pythonExe = getPythonExecutable();
       const script = path.join(getExtensionPath() || root, 'backends', 'mcp', 'ai_provider.py');
       cp.execFile(pythonExe, [script, 'list'], { encoding: 'utf8', cwd: root, timeout: 15000 }, (err, stdout) => {
         if (err) {
@@ -774,22 +799,19 @@ function sharedHandlers(ctx) {
       });
     },
     hubAiProviderSet: (message) => {
-      const getSavedSettings = () => {
-        try { return context?.globalState?.get('pof-settings', {}) || {}; } catch (_) { return {}; }
-      };
-      const pythonExe = getSavedSettings().pythonPath || detectPythonExecutable(root);
+      const pythonExe = getPythonExecutable();
       const script = path.join(getExtensionPath() || root, 'backends', 'mcp', 'ai_provider.py');
       const args = [script, 'set', '--provider', String(message.provider || ''), '--api-key-stdin'];
       if (message.model) { args.push('--model', String(message.model)); }
       const proc = cp.execFile(pythonExe, args, { encoding: 'utf8', cwd: root, timeout: 15000 }, (err, stdout) => {
         if (err) {
-          panel.webview.postMessage({ type: 'hubError', message: String(err.message || err) });
+          safePostMessage({ type: 'hubError', message: String(err.message || err) });
           return;
         }
         try {
           const setResult = JSON.parse(stdout || '{}');
           if (!setResult.ok) {
-            panel.webview.postMessage({ type: 'hubError', message: String(setResult.error || 'Unknown error') });
+            safePostMessage({ type: 'hubError', message: String(setResult.error || 'Unknown error') });
             return;
           }
         } catch (_) {
@@ -800,9 +822,9 @@ function sharedHandlers(ctx) {
         cp.execFile(pythonExe, listArgs, { encoding: 'utf8', cwd: root, timeout: 15000 }, (_err2, stdout2) => {
           try {
             const listResult = JSON.parse(stdout2 || '{}');
-            panel.webview.postMessage({ type: 'hubAiProvidersResult', data: listResult });
+            safePostMessage({ type: 'hubAiProvidersResult', data: listResult });
           } catch (_) {
-            panel.webview.postMessage({ type: 'hubAiProvidersResult', data: { error: 'Update saved — refresh failed' } });
+            safePostMessage({ type: 'hubAiProvidersResult', data: { error: 'Update saved — refresh failed' } });
           }
         });
       });
@@ -811,20 +833,17 @@ function sharedHandlers(ctx) {
       proc.stdin.end();
     },
     hubAiProviderTest: (message) => {
-      const getSavedSettings = () => {
-        try { return context?.globalState?.get('pof-settings', {}) || {}; } catch (_) { return {}; }
-      };
-      const pythonExe = getSavedSettings().pythonPath || detectPythonExecutable(root);
+      const pythonExe = getPythonExecutable();
       const script = path.join(getExtensionPath() || root, 'backends', 'mcp', 'ai_provider.py');
       // Test = refresh list and show current configured state
       cp.execFile(pythonExe, [script, 'list'], { encoding: 'utf8', cwd: root, timeout: 15000 }, (err, stdout) => {
         if (err) {
-          panel.webview.postMessage({ type: 'hubAiProvidersResult', data: { error: String(err.message || err) } });
+          safePostMessage({ type: 'hubAiProvidersResult', data: { error: String(err.message || err) } });
           return;
         }
         try {
           const result = JSON.parse(stdout || '{}');
-          panel.webview.postMessage({ type: 'hubAiProvidersResult', data: result });
+          safePostMessage({ type: 'hubAiProvidersResult', data: result });
           const provider = String(message.provider || '');
           const found = Array.isArray(result.providers) && result.providers.find((p) => p.name === provider);
           if (found) {
@@ -835,15 +854,12 @@ function sharedHandlers(ctx) {
             );
           }
         } catch (_) {
-          panel.webview.postMessage({ type: 'hubAiProvidersResult', data: { error: 'Parse error' } });
+          safePostMessage({ type: 'hubAiProvidersResult', data: { error: 'Parse error' } });
         }
       });
     },
     hubAiProviderDefaultSet: (message) => {
-      const getSavedSettings = () => {
-        try { return context?.globalState?.get('pof-settings', {}) || {}; } catch (_) { return {}; }
-      };
-      const pythonExe = getSavedSettings().pythonPath || detectPythonExecutable(root);
+      const pythonExe = getPythonExecutable();
       const script = path.join(getExtensionPath() || root, 'backends', 'mcp', 'ai_provider.py');
       cp.execFile(
         pythonExe,
@@ -851,7 +867,7 @@ function sharedHandlers(ctx) {
         { encoding: 'utf8', cwd: root, timeout: 15000 },
         (err, stdout) => {
           if (err) {
-            panel.webview.postMessage({
+            safePostMessage({
               type: 'hubError',
               message: String(err.message || err),
             });
@@ -859,12 +875,12 @@ function sharedHandlers(ctx) {
           }
           try {
             const result = JSON.parse(stdout || '{}');
-            panel.webview.postMessage({
+            safePostMessage({
               type: 'hubAiProviderDefaultSaved',
               data: result,
             });
           } catch (_) {
-            panel.webview.postMessage({
+            safePostMessage({
               type: 'hubError',
               message: 'Default provider saved, but the response could not be read.',
             });
@@ -874,10 +890,7 @@ function sharedHandlers(ctx) {
     },
     hubAiProviderPrompt: (message) => {
       const requestId = String(message.requestId || '').trim();
-      const getSavedSettings = () => {
-        try { return context?.globalState?.get('pof-settings', {}) || {}; } catch (_) { return {}; }
-      };
-      const pythonExe = getSavedSettings().pythonPath || detectPythonExecutable(root);
+      const pythonExe = getPythonExecutable();
       const script = path.join(getExtensionPath() || root, 'backends', 'mcp', 'ai_provider.py');
       const provider = String(message.provider || '');
       const model = String(message.model || '');
@@ -914,7 +927,7 @@ function sharedHandlers(ctx) {
         const fragments = tokenBufferFragments;
         tokenBuffer = '';
         tokenBufferFragments = 0;
-        panel.webview.postMessage({
+        safePostMessage({
           type: 'hubOllamaStream',
           event: { type: 'token', content, fragments },
           model: displayModel,
@@ -932,7 +945,7 @@ function sharedHandlers(ctx) {
         clearAiProcess(requestId);
         flushTokenBuffer();
         setTimeout(() => {
-          panel.webview.postMessage({
+          safePostMessage({
             type: 'hubOllamaResult',
             ok: event.ok !== false,
             model: displayModel,
@@ -950,7 +963,7 @@ function sharedHandlers(ctx) {
         flushTokenBuffer();
         rl?.close?.();
         proc.kill?.('SIGTERM');
-        panel.webview.postMessage({
+        safePostMessage({
           type: 'hubOllamaResult',
           ok: false,
           cancelled: true,
@@ -993,7 +1006,7 @@ function sharedHandlers(ctx) {
     hubAiCancel: (message) => {
       const requestId = String(message.requestId || '').trim();
       if (!cancelAiProcess(requestId)) {
-        panel.webview.postMessage({
+        safePostMessage({
           type: 'hubOllamaResult',
           ok: false,
           cancelled: true,

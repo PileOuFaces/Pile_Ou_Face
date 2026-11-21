@@ -6,10 +6,15 @@ describe("loadTraceFromWorkspace", () => {
   let vscode;
   let extension;
   let showErrorStub;
+  let previousWorkspace;
+  let previousShowError;
 
   beforeEach(() => {
     showErrorStub = sinon.stub();
     vscode = require("vscode");
+    // Shared vscode mock: restore it after each test so later files keep its workspace API.
+    previousWorkspace = vscode.workspace;
+    previousShowError = vscode.window.showErrorMessage;
     vscode.workspace = { workspaceFolders: undefined };
     vscode.window.showErrorMessage = showErrorStub;
 
@@ -17,6 +22,8 @@ describe("loadTraceFromWorkspace", () => {
   });
 
   afterEach(() => {
+    vscode.workspace = previousWorkspace;
+    vscode.window.showErrorMessage = previousShowError;
     sinon.restore();
   });
 
