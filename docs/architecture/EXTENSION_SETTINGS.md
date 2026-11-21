@@ -193,27 +193,31 @@ Tous les appels à `getConfiguration` repérés hors tests visent la section `pi
 | `extension/src/extension.ts` | `resolvePythonExecutable(root, context.globalState)` (préparation au démarrage et commandes) ; `setSettingsStore(context.globalState)` à l'activation |
 | `extension/src/shared/sharedHandlers.ts` | `resolvePythonExecutable(root, context?.globalState)` pour les trois bridges et les handlers IA |
 | `extension/src/shared/staticCache.ts` | `resolvePythonExecutable(extensionPath)`, via le store enregistré à l'activation |
-| `extension/src/static/hub.ts` | `detectPythonExecutable(root, getConfiguredPythonPath(context.globalState))` |
-| `extension/src/static/staticHandlers.ts:467-474` | `getSavedSettings().pythonPath \|\| detectPythonExecutable(root)` (inchangé) |
+| `extension/src/static/hub.ts` | `getPythonExe()` → `detectPythonExecutable(root, getConfiguredPythonPath(context.globalState))`, résolu à chaque lancement |
+| `extension/src/static/hub/analysisContext.ts`, `extension/src/static/commands.ts` | `getPythonExe()` fourni par le hub ou l'activation, résolu à chaque lancement |
+| `extension/src/static/staticHandlers.ts` | `readStoredSettings(context?.globalState).pythonPath \|\| detectPythonExecutable(root)` |
 
-Vérifications observées sur cette valeur :
+Vérifications sur cette valeur (POF-P1-002, `extension/src/shared/settingsSchema.ts`) :
 
-- `getConfiguredPythonPath` retient la valeur si c'est une chaîne non vide après `trim()` (la valeur elle-même n'est pas modifiée). Aucun contrôle d'existence du fichier n'est fait.
-- Si la lecture du `globalState` lève une exception, `getConfiguredPythonPath` journalise un avertissement et retourne `''` : la détection habituelle s'applique (`staticHandlers.ts` garde son propre `getSavedSettings`, qui retourne `{}`).
-- `detectPythonExecutable(root, settingsPythonPath)` (`extension/src/shared/utils.ts`) retourne le chemin passé en second paramètre s'il est « vrai », sinon détecte le venv puis `python3`.
+- Un `pythonPath` n'est exécuté que s'il est vide ou s'il s'agit d'un chemin absolu dont le nom de fichier est `python`, `python3`, `python3.x` (avec `.exe` éventuel), **et** s'il est égal au chemin attesté sous la clé `globalState` `pof-python-path-selected` (`PYTHON_PATH_ATTESTATION_KEY`). Seul `hubSelectPythonPath` écrit cette clé, après une sélection native vérifiée ; le webview n'y a jamais eu accès. Sinon, la détection habituelle s'applique.
+- Un `pythonPath` enregistré avant cette vérification (donc écrit par le webview) n'est jamais attesté : il est retiré même s'il est bien formé, et doit être sélectionné à nouveau.
+- Si la lecture du `globalState` lève une exception, `getConfiguredPythonPath` journalise un avertissement et retourne `''` : la détection habituelle s'applique.
+- L'exécutable est résolu à chaque lancement : un `pythonPath` enregistré hub ouvert s'applique sans réouverture du hub ni rechargement de l'extension.
 
-Valeur par défaut et écriture :
+Valeur par défaut et écriture (`extension/src/static/hub/settingsActions.ts`) :
 
-- `SETTINGS_DEFAULTS.pythonPath` vaut `''` (`extension/src/static/hub.ts:152-153`).
-- `hubGetSettings` fusionne `SETTINGS_DEFAULTS` et la valeur stockée (`extension/src/static/hub/actions.ts:1183-1186`).
-- `hubSaveSettings` enregistre `message.settings` tel quel dans `pof-settings` (`extension/src/static/hub/actions.ts:1188-1191`). Aucun contrôle de type ni de contenu n'y est repéré.
-- `hubResetSettings` remet `SETTINGS_DEFAULTS` (`extension/src/static/hub/actions.ts:1193-1196`).
+- `SETTINGS_DEFAULTS` est défini dans `extension/src/shared/settingsSchema.ts` ; `pythonPath` y vaut `''`.
+- `hubGetSettings` envoie les réglages enregistrés, migrés, complétés par les défauts.
+- `hubSaveSettings` valide l'envoi du webview avec le schéma : une clé inconnue, un type ou une borne invalide refusent tout l'envoi (`hubSettingsSaved` avec `ok: false` et un message d'erreur). `pythonPath` ne peut qu'être conservé ou vidé par le webview.
+- `hubSelectPythonPath` est le seul moyen de définir `pythonPath` : sélection native (`showOpenDialog`), puis vérification du nom de fichier et exécution de `-c "import sys; print(sys.version_info[0])"` (délai de 5 s) qui doit afficher `3` (`extension/src/shared/pythonPathSelection.ts`). Les réglages sont relus après la fermeture du sélecteur : une sauvegarde acquittée pendant la sélection est conservée. L'attestation est écrite avant `pof-settings`.
+- `hubResetSettings` remet une copie de `SETTINGS_DEFAULTS` et efface l'attestation.
+- À l'activation, `migrateSavedSettings` (`extension/src/extension.ts`) retire de `pof-settings` les clés inconnues et les valeurs invalides, dont un `pythonPath` non conforme ou non attesté, et journalise les noms des clés retirées.
 
 Aucun réglage équivalent à `pythonPath` n'a été repéré dans `getConfiguration`.
 
 ### Autres clés de `pof-settings`
 
-L'objet `pof-settings` contient d'autres clés déclarées dans `SETTINGS_DEFAULTS` (`extension/src/static/hub.ts:152-169`) : `pythonPath`, `authServerUrl`, `aiTemperature`, `aiTopP`, `aiMaxTokens`, `aiPricingRules`, `decompilerProvider`, `decompilerLocalPaths`, `stringsEncoding`, `stringsMinLen`, `asmSyntax`, `lang`, `defaultPanel`, `codeFontSize`, `interfaceMode`, `enabledStaticFeatures`. Elles ne figurent pas dans `contributes.configuration`. Seules les lectures suivantes ont été relevées dans le cadre de cet inventaire :
+L'objet `pof-settings` contient d'autres clés déclarées dans `SETTINGS_DEFAULTS` (`extension/src/shared/settingsSchema.ts`), plus `bindiffThreshold` (sans défaut). Leurs types et bornes sont vérifiés par le schéma : `pythonPath`, `authServerUrl`, `aiTemperature`, `aiTopP`, `aiMaxTokens`, `aiPricingRules`, `decompilerProvider`, `decompilerLocalPaths`, `stringsEncoding`, `stringsMinLen`, `asmSyntax`, `lang`, `defaultPanel`, `codeFontSize`, `interfaceMode`, `enabledStaticFeatures`. Elles ne figurent pas dans `contributes.configuration`. Seules les lectures suivantes ont été relevées dans le cadre de cet inventaire :
 
 | Clé | Point de lecture | Vérification à la lecture |
 |---|---|---|

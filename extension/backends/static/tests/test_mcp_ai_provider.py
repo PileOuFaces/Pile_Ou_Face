@@ -1,5 +1,9 @@
 import json
+import logging
 import os
+import subprocess
+import sys
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -10,6 +14,7 @@ from backends.mcp.ai_provider import (
     call_provider_result,
     list_providers,
     set_default_provider,
+    set_provider_configuration,
 )
 
 
@@ -401,6 +406,48 @@ def test_set_default_provider_persists_env(monkeypatch):
     write_env.assert_called_once_with("POF_DEFAULT_AI_PROVIDER", "groq")
 
 
+SECRET_KEY = "sk-test-secret-value"
+
+
+def _redirect_env_file(monkeypatch, env_file):
+    from backends.mcp import env_loader
+
+    original = env_loader._write_env_key
+    monkeypatch.setattr(
+        env_loader,
+        "_write_env_key",
+        lambda key, value: original(key, value, env_file),
+    )
+
+
+def test_set_provider_configuration_persists_reloadable_key(monkeypatch, tmp_path):
+    from backends.mcp.env_loader import _load_env_file
+
+    env_file = tmp_path / "pof" / ".env"
+    _redirect_env_file(monkeypatch, env_file)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    result = set_provider_configuration("anthropic", SECRET_KEY, None)
+    assert result["ok"] is True
+    assert SECRET_KEY not in json.dumps(result)
+    monkeypatch.delenv("ANTHROPIC_API_KEY")
+    _load_env_file(env_file)
+    assert os.environ["ANTHROPIC_API_KEY"] == SECRET_KEY
+
+
+def test_set_provider_configuration_error_hides_key(monkeypatch, tmp_path, caplog):
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("")
+    _redirect_env_file(monkeypatch, blocker / ".env")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    with caplog.at_level(logging.DEBUG):
+        result = set_provider_configuration("openai", SECRET_KEY, None)
+    assert result["ok"] is False
+    assert "OPENAI_API_KEY" in result["error"]
+    assert SECRET_KEY not in result["error"]
+    assert SECRET_KEY not in caplog.text
+    assert "OPENAI_API_KEY" not in os.environ
+
+
 def test_openai_model_list_excludes_non_chat_models(monkeypatch):
     import urllib.request
 
@@ -456,3 +503,36 @@ def test_gemini_model_list_uses_api_key_header(monkeypatch):
     assert request.full_url == "https://generativelanguage.googleapis.com/v1beta/models"
     assert "key=" not in request.full_url
     assert request.get_header("X-goog-api-key") == "test"
+
+
+def test_cli_set_failure_reports_the_reason_on_stderr_without_the_key(tmp_path):
+    """The extension host only shows stderr when the CLI fails (sharedHandlers)."""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".pile-ou-face").write_text("")  # a file where the config dir should be
+    env = {**os.environ, "HOME": str(home), "USERPROFILE": str(home)}
+    env.pop("OPENAI_API_KEY", None)
+    extension_root = Path(__file__).resolve().parents[3]
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "backends.mcp.ai_provider",
+            "set",
+            "--provider",
+            "openai",
+            "--api-key-stdin",
+        ],
+        input=f"{SECRET_KEY}\n",
+        capture_output=True,
+        text=True,
+        cwd=extension_root,
+        env=env,
+        timeout=60,
+        check=False,
+    )
+    assert proc.returncode == 1
+    assert "Cannot save OPENAI_API_KEY" in proc.stderr
+    assert SECRET_KEY not in proc.stderr
+    assert SECRET_KEY not in proc.stdout
+    assert json.loads(proc.stdout)["ok"] is False
