@@ -85,6 +85,9 @@ qu'une partie des dépendances (par exemple sans `lief`). S'ils manquent, elle
   2. `<venv>/python -m pip install --require-hashes --no-build-isolation -r backends/requirements.lock.txt`.
 
   L'installation se fait uniquement dans ce venv, sans `--break-system-packages`.
+  Si la configuration pip (fichier `pip.conf`/`pip.ini` ou variable `PIP_*`)
+  redirige l'installation (`target`, `prefix`, `root`, `user`), l'extension
+  annule et l'indique ; les autres réglages (miroir, proxy, certificat) sont conservés.
 - **Hors ligne** : l'échec est signalé (« PyPI is unreachable ») avec la
   commande manuelle ; l'activation n'est pas bloquée et la proposition revient
   au prochain démarrage.

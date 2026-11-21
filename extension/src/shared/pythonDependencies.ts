@@ -18,6 +18,12 @@ const LOCK_FILE_NAME = 'requirements.lock.txt';
  * outils sans version ni hash. L'installation principale tourne ensuite avec --no-build-isolation.
  */
 const BUILD_LOCK_FILE_NAME = 'requirements-build.lock.txt';
+/**
+ * Options pip (fichiers de configuration ou variables PIP_*) qui déplaceraient l'installation hors
+ * du venv. Les autres (index-url, proxy, cert…) restent permises : les hashes garantissent le contenu.
+ */
+const REDIRECTING_PIP_OPTIONS = new Set(['target', 'prefix', 'root', 'user']);
+const DISABLED_VALUES = new Set(['', '0', 'false', 'no', 'off']);
 const PIP_INSTALL_ARGS = ['-m', 'pip', 'install', '--require-hashes', '--no-input', '--disable-pip-version-check', '--quiet'];
 const VENV_DIR_NAME = '.venv';
 const CORE_IMPORTS = ['unicorn', 'capstone'];
@@ -33,10 +39,10 @@ type DependencyOptions = { backendBase: string; quiet?: boolean; log: (message: 
 type ExecResult = { ok: boolean; output: string };
 type LockFiles = { build: string; main: string };
 
-function execFileResult(file: string, args: string[]): Promise<ExecResult> {
+function execFileResult(file: string, args: string[]): Promise<ExecResult & { stdout: string }> {
   return new Promise((resolve) => {
-    cp.execFile(file, args, (error, _stdout, stderr) => {
-      resolve({ ok: !error, output: String(stderr || error?.message || '').trim() });
+    cp.execFile(file, args, (error, stdout, stderr) => {
+      resolve({ ok: !error, output: String(stderr || error?.message || '').trim(), stdout: String(stdout || '') });
     });
   });
 }
@@ -79,9 +85,22 @@ async function hasCoreImports(pythonExe: string): Promise<boolean> {
   return true;
 }
 
-function manualInstallCommand(pythonExe: string, locks: LockFiles): string {
-  const pip = `"${pythonExe}" -m pip install --require-hashes`;
-  return `${pip} -r "${locks.build}" && ${pip} --no-build-isolation -r "${locks.main}"`;
+/** Deux commandes distinctes : `&&` n'existe pas dans Windows PowerShell 5.1, et un chemin entre guillemets y exige `&`. */
+function manualInstallCommand(pythonExe: string, locks: LockFiles, platform: string = process.platform): string {
+  const call = platform === 'win32' ? `& "${pythonExe}"` : `"${pythonExe}"`;
+  const pip = `${call} -m pip install --require-hashes`;
+  return `(1) ${pip} -r "${locks.build}" (2) ${pip} --no-build-isolation -r "${locks.main}"`;
+}
+
+/** Clés de `pip config list` (ex. `install.target`, `:env:.prefix`) qui redirigeraient l'installation. */
+function redirectingPipOptions(configList: string): string[] {
+  return configList.split(/\r?\n/).flatMap((line) => {
+    const match = /^(.+?)=(.*)$/.exec(line.trim());
+    if (!match) return [];
+    const option = match[1].slice(match[1].lastIndexOf('.') + 1).toLowerCase();
+    const value = match[2].replace(/^'(.*)'$/, '$1').trim().toLowerCase();
+    return REDIRECTING_PIP_OPTIONS.has(option) && !DISABLED_VALUES.has(value) ? [match[1]] : [];
+  });
 }
 
 async function askConsent(): Promise<boolean> {
@@ -113,7 +132,7 @@ function reportInstallFailure(output: string, venvPython: string, locks: LockFil
     ? 'PyPI is unreachable (offline?). Retry once connected'
     : 'Installation failed (details in the "Pile ou Face" output channel)';
   vscode.window.showWarningMessage(
-    `${reason}. ${UNAVAILABLE_NOTE} Manual command: ${manualInstallCommand(venvPython, locks)}`
+    `${reason}. ${UNAVAILABLE_NOTE} Manual commands: ${manualInstallCommand(venvPython, locks)}`
   );
   return offline ? 'offline' : 'failed';
 }
@@ -127,6 +146,7 @@ async function installInExtensionVenv(basePython: string, venvPath: string, lock
     vscode.window.showWarningMessage(`Cannot create backends/.venv: ${venvErr.message}. ${UNAVAILABLE_NOTE}`);
     return 'failed';
   }
+  if (!(await pipStaysInVenv(venvPython, locks, log))) return 'failed';
   log('[pip] Installation des outils de construction (versions vérifiées par hash)…');
   const build = await execFileResult(venvPython, [...PIP_INSTALL_ARGS, '-r', locks.build]);
   if (!build.ok) return reportInstallFailure(build.output, venvPython, locks, log);
@@ -136,6 +156,24 @@ async function installInExtensionVenv(basePython: string, venvPath: string, lock
   log('[pip] Installation terminée.');
   vscode.window.showInformationMessage('Pile ou Face: Python dependencies installed.');
   return 'installed';
+}
+
+/**
+ * Le consentement porte sur backends/.venv : refuse une configuration pip (fichier ou PIP_*)
+ * qui redirigerait l'installation (PIP_TARGET, install.prefix…).
+ */
+async function pipStaysInVenv(venvPython: string, locks: LockFiles, log): Promise<boolean> {
+  const config = await execFileResult(venvPython, ['-m', 'pip', 'config', 'list']);
+  const redirecting = config.ok ? redirectingPipOptions(config.stdout) : [];
+  if (config.ok && !redirecting.length) return true;
+  const reason = config.ok
+    ? `pip configuration would install outside backends/.venv (${redirecting.join(', ')})`
+    : `cannot read the pip configuration (${config.output})`;
+  log(`[pip] Installation annulée : ${reason}`);
+  vscode.window.showWarningMessage(
+    `Install cancelled: ${reason}. ${UNAVAILABLE_NOTE} Manual commands: ${manualInstallCommand(venvPython, locks)}`
+  );
+  return false;
 }
 
 function reportUnavailable(message: string, quiet: boolean, log): DependencyStatus {
@@ -182,6 +220,8 @@ async function ensurePythonDependencies(pythonExe: string, options: DependencyOp
 module.exports = {
   LOCK_FILE_NAME,
   BUILD_LOCK_FILE_NAME,
+  manualInstallCommand,
+  redirectingPipOptions,
   INSTALL_ACTION,
   ensurePythonDependencies,
 };

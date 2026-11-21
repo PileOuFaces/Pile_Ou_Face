@@ -6,7 +6,9 @@ const cp = require("child_process");
 const vscode = require("vscode");
 
 const utils = require("../shared/utils");
-const { INSTALL_ACTION, LOCK_FILE_NAME, BUILD_LOCK_FILE_NAME } = require("../shared/pythonDependencies");
+const {
+  INSTALL_ACTION, LOCK_FILE_NAME, BUILD_LOCK_FILE_NAME, manualInstallCommand, redirectingPipOptions,
+} = require("../shared/pythonDependencies");
 
 const EXT_DIR_WITH_SPACES = path.join(path.sep, "opt", "My Extensions", "pile ou face");
 const LOCK_FILE = path.join(EXT_DIR_WITH_SPACES, "backends", LOCK_FILE_NAME);
@@ -23,17 +25,18 @@ function argsOf(call) {
 }
 
 function pipCalls(execFile) {
-  return execFile.getCalls().map(argsOf).filter((c) => c.args[0] === "-m" && c.args[1] === "pip");
+  return execFile.getCalls().map(argsOf).filter((c) => c.args[0] === "-m" && c.args[1] === "pip" && c.args[2] === "install");
 }
 
-/** Imports manquants ; venv et pip répondent selon `pipError`. */
-function stubPython(existing, pipError = null) {
+/** Imports manquants ; venv et pip répondent selon `pipError` ; `pipConfig` = sortie de `pip config list`. */
+function stubPython(existing, pipError = null, pipConfig = "") {
   return sinon.stub(cp, "execFile").callsFake((_file, args, cb) => {
     if (args[0] === "-c") return cb(new Error("ModuleNotFoundError"), "", "");
     if (args[1] === "venv") {
       existing.add(VENV_PYTHON);
       return cb(null, "", "");
     }
+    if (args[2] === "config") return cb(null, pipConfig, "");
     return pipError ? cb(new Error("exit 1"), "", pipError) : cb(null, "", "");
   });
 }
@@ -110,6 +113,25 @@ describe("ensurePythonDependencies", () => {
     expect(pip.args).to.include("--no-build-isolation");
     expect(pip.args.slice(-2)).to.deep.equal(["-r", LOCK_FILE]);
     for (const call of [buildPip, pip]) expect(call.args).to.not.include("--break-system-packages");
+  });
+
+  it("refuses to install when the pip configuration redirects outside the venv", async () => {
+    info.resolves(INSTALL_ACTION);
+    const execFile = stubPython(existing, null, ":env:.target='/elsewhere'\ninstall.index-url='https://mirror.example/simple'\n");
+
+    const status = await utils.ensurePythonDependencies("python3", EXT_DIR_WITH_SPACES, { quiet: true });
+
+    expect(status).to.equal("failed");
+    expect(pipCalls(execFile)).to.deep.equal([]);
+    expect(warn.firstCall.args[0]).to.contain(":env:.target").and.to.not.contain("index-url");
+  });
+
+  it("keeps non-redirecting pip settings such as a mirror index or user=false", async () => {
+    info.resolves(INSTALL_ACTION);
+    const execFile = stubPython(existing, null, "global.index-url='https://mirror.example/simple'\ninstall.user='false'\n");
+
+    expect(await utils.ensurePythonDependencies("python3", EXT_DIR_WITH_SPACES, { quiet: true })).to.equal("installed");
+    expect(pipCalls(execFile)).to.have.length(2);
   });
 
   it("reuses an existing extension venv without recreating it", async () => {
@@ -245,5 +267,23 @@ for (const [lockName, sourceName] of [[LOCK_FILE_NAME, "requirements.txt"], [BUI
       .split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith("#"))
       .map((l) => normalize(l.split(/[<>=!~;[\s]/)[0]));
     for (const name of direct) expect(pinned.has(name), name).to.equal(true);
+  });
+});
+
+describe("pip helpers", () => {
+  it("detects every option that moves the install destination, from files or PIP_* variables", () => {
+    const list = [
+      "global.prefix='/a'", "install.target='/b'", ":env:.root='/c'", ":env:.user='1'",
+      "install.user='off'", "global.index-url='https://mirror.example/simple'", "global.cert='/ca.pem'",
+    ].join("\n");
+    expect(redirectingPipOptions(list)).to.deep.equal(["global.prefix", "install.target", ":env:.root", ":env:.user"]);
+  });
+
+  it("gives two separate commands, with the PowerShell call operator on Windows", () => {
+    const locks = { build: "C:\\ext\\build.lock", main: "C:\\ext\\main.lock" };
+    const win = manualInstallCommand("C:\\ext\\.venv\\Scripts\\python.exe", locks, "win32");
+    expect(win).to.not.contain("&&");
+    expect(win.match(/& "C:\\ext\\.venv\\Scripts\\python.exe" -m pip install --require-hashes/g)).to.have.length(2);
+    expect(manualInstallCommand("/v/bin/python3", locks, "linux")).to.not.contain("&");
   });
 });
