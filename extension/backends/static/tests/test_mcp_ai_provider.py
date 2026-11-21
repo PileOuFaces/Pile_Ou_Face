@@ -1,6 +1,9 @@
 import json
 import logging
 import os
+import subprocess
+import sys
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -500,3 +503,36 @@ def test_gemini_model_list_uses_api_key_header(monkeypatch):
     assert request.full_url == "https://generativelanguage.googleapis.com/v1beta/models"
     assert "key=" not in request.full_url
     assert request.get_header("X-goog-api-key") == "test"
+
+
+def test_cli_set_failure_reports_the_reason_on_stderr_without_the_key(tmp_path):
+    """The extension host only shows stderr when the CLI fails (sharedHandlers)."""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".pile-ou-face").write_text("")  # a file where the config dir should be
+    env = {**os.environ, "HOME": str(home), "USERPROFILE": str(home)}
+    env.pop("OPENAI_API_KEY", None)
+    extension_root = Path(__file__).resolve().parents[3]
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "backends.mcp.ai_provider",
+            "set",
+            "--provider",
+            "openai",
+            "--api-key-stdin",
+        ],
+        input=f"{SECRET_KEY}\n",
+        capture_output=True,
+        text=True,
+        cwd=extension_root,
+        env=env,
+        timeout=60,
+        check=False,
+    )
+    assert proc.returncode == 1
+    assert "Cannot save OPENAI_API_KEY" in proc.stderr
+    assert SECRET_KEY not in proc.stderr
+    assert SECRET_KEY not in proc.stdout
+    assert json.loads(proc.stdout)["ok"] is False

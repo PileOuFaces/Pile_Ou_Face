@@ -727,6 +727,9 @@ if __name__ == "__main__":
         result = set_provider_configuration(args.provider, api_key, args.model)
         print(json.dumps(result))
         if not result.get("ok"):
+            # The extension host shows stderr when the command fails; the message is
+            # already sanitized (variable name and OS reason, never the key).
+            print(result.get("error", "Unknown error"), file=sys.stderr)
             sys.exit(1)
     elif args.cmd == "call":
         prompt = sys.stdin.read().strip()
