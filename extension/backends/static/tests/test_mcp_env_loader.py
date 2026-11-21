@@ -15,6 +15,38 @@ PRIVATE_DIR_MODE = 0o700
 GROUP_READABLE_MODE = 0o640  # trop ouvert pour une clé, sans être lisible par tous
 GROUP_READABLE_DIR_MODE = 0o750
 posix_only = pytest.mark.skipif(os.name != "posix", reason="POSIX permissions")
+OTHERS_ACCESS_BITS = 0o077
+
+
+def _reserved_to_current_user(path):
+    info = path.stat()
+    return (
+        info.st_uid == os.getuid()
+        and not stat.S_IMODE(info.st_mode) & OTHERS_ACCESS_BITS
+    )
+
+
+@pytest.fixture(autouse=True)
+def _fixtures_stay_private(tmp_path):
+    """Several tests deliberately create group-readable files (0o640/0o750) holding the
+    dummy SECRET, to check that the loader tightens them. That is only safe because
+    pytest places tmp_path under a 0o700 directory owned by the current user: nobody
+    else can traverse to the fixtures. Fail instead of exposing them otherwise
+    (e.g. a shared --basetemp)."""
+    if os.name == "posix":
+        assert any(
+            _reserved_to_current_user(p) for p in (tmp_path, *tmp_path.parents)
+        ), f"{tmp_path} is reachable by other users"
+
+
+@posix_only
+def test_privacy_guard_rejects_a_directory_open_to_others(tmp_path):
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    os.chmod(shared, GROUP_READABLE_DIR_MODE)
+    assert not _reserved_to_current_user(shared)
+    os.chmod(shared, PRIVATE_DIR_MODE)
+    assert _reserved_to_current_user(shared)
 
 
 def test_load_sets_missing_vars(tmp_path):
