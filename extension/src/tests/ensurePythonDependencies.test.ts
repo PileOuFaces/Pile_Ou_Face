@@ -274,9 +274,14 @@ describe("pip helpers", () => {
   it("detects every option that moves the install destination, from files or PIP_* variables", () => {
     const list = [
       "global.prefix='/a'", "install.target='/b'", ":env:.root='/c'", ":env:.user='1'",
+      ":env:.python='/other/venv/bin/python'", "install.target='off'", "global.prefix='0'",
       "install.user='off'", "global.index-url='https://mirror.example/simple'", "global.cert='/ca.pem'",
     ].join("\n");
-    expect(redirectingPipOptions(list)).to.deep.equal(["global.prefix", "install.target", ":env:.root", ":env:.user"]);
+    // Only `user` is a boolean: "off" or "0" for target/prefix are directory names.
+    expect(redirectingPipOptions(list)).to.deep.equal([
+      "global.prefix", "install.target", ":env:.root", ":env:.user",
+      ":env:.python", "install.target", "global.prefix",
+    ]);
   });
 
   it("gives two separate commands, with the PowerShell call operator on Windows", () => {

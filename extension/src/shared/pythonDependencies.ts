@@ -22,7 +22,10 @@ const BUILD_LOCK_FILE_NAME = 'requirements-build.lock.txt';
  * Options pip (fichiers de configuration ou variables PIP_*) qui déplaceraient l'installation hors
  * du venv. Les autres (index-url, proxy, cert…) restent permises : les hashes garantissent le contenu.
  */
-const REDIRECTING_PIP_OPTIONS = new Set(['target', 'prefix', 'root', 'user']);
+// `python` (PIP_PYTHON) fait agir pip sur un autre interpréteur, donc un autre environnement.
+const REDIRECTING_PIP_OPTIONS = new Set(['target', 'prefix', 'root', 'user', 'python']);
+// Seul `user` est booléen ; pour les autres, toute valeur est un chemin (« off » compris).
+const BOOLEAN_PIP_OPTIONS = new Set(['user']);
 const DISABLED_VALUES = new Set(['', '0', 'false', 'no', 'off']);
 const PIP_INSTALL_ARGS = ['-m', 'pip', 'install', '--require-hashes', '--no-input', '--disable-pip-version-check', '--quiet'];
 const VENV_DIR_NAME = '.venv';
@@ -99,7 +102,8 @@ function redirectingPipOptions(configList: string): string[] {
     if (!match) return [];
     const option = match[1].slice(match[1].lastIndexOf('.') + 1).toLowerCase();
     const value = match[2].replace(/^'(.*)'$/, '$1').trim().toLowerCase();
-    return REDIRECTING_PIP_OPTIONS.has(option) && !DISABLED_VALUES.has(value) ? [match[1]] : [];
+    if (!REDIRECTING_PIP_OPTIONS.has(option)) return [];
+    return BOOLEAN_PIP_OPTIONS.has(option) && DISABLED_VALUES.has(value) ? [] : [match[1]];
   });
 }
 

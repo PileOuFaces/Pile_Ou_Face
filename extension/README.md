@@ -86,7 +86,7 @@ qu'une partie des dépendances (par exemple sans `lief`). S'ils manquent, elle
 
   L'installation se fait uniquement dans ce venv, sans `--break-system-packages`.
   Si la configuration pip (fichier `pip.conf`/`pip.ini` ou variable `PIP_*`)
-  redirige l'installation (`target`, `prefix`, `root`, `user`), l'extension
+  redirige l'installation (`target`, `prefix`, `root`, `user`, `python`), l'extension
   annule et l'indique ; les autres réglages (miroir, proxy, certificat) sont conservés.
 - **Hors ligne** : l'échec est signalé (« PyPI is unreachable ») avec la
   commande manuelle ; l'activation n'est pas bloquée et la proposition revient
@@ -130,10 +130,11 @@ done
   mettre à jour les versions, et reporter la nouvelle date ici.
 - Vérifier ensuite dans un venv propre, avec les deux commandes pip de **Install**
   ci-dessus (outils de construction, puis lock principal avec `--no-build-isolation`).
-- Certaines dépendances n'ont pas de wheel pour toutes les plateformes ; pip les
-  construit alors depuis le sdist (hash vérifié aussi), avec les outils figés : `hexdump`
-  et `vivisect-vstruct-wb` (Python pur, partout), `yara-python` (macOS, compilateur
-  C requis), `lief` (macOS Intel et Linux ARM64, compilation longue, CMake requis).
+- `hexdump` et `vivisect-vstruct-wb` n'existent qu'en sdist (Python pur) : pip les
+  construit avec les outils figés, sans compilateur.
+- **Limite connue — macOS Intel :** `cryptography` 50.0.2 ne publie pas de wheel
+  macOS x86_64 (seulement arm64). Sa construction exige Rust et `maturin`, absents
+  des outils figés : l'installation depuis l'extension échoue alors, avec un message.
 
 ### Décompilateurs (optionnel)
 
