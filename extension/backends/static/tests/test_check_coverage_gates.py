@@ -90,6 +90,28 @@ def test_platform_threshold_overrides_the_default_only_for_that_platform():
     assert gates_module.threshold({"include": ["*"], "fail_under": 69}, "darwin") == 69
 
 
+def test_job_selects_only_the_gates_that_list_it():
+    gates = {
+        "a": {"include": ["*"], "fail_under": 1, "jobs": ["full-test"]},
+        "b": {"include": ["*"], "fail_under": 1, "jobs": ["dynamic-unicorn"]},
+        "c": {"include": ["*"], "fail_under": 1},
+    }
+    gates_module = _load_script()
+    assert gates_module.gates_for_job("full-test", gates) == ["a"]
+    assert gates_module.gates_for_job("dynamic-unicorn", gates) == ["b"]
+    assert gates_module.gates_for_job("other", gates) == []
+
+
+def test_every_configured_gate_is_enforced_by_a_ci_job():
+    workflow = (SCRIPT.parents[2] / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+    for name, gate in _load_script().load_gates().items():
+        assert gate.get("jobs"), f"gate {name} is enforced by no job"
+        for job in gate["jobs"]:
+            assert f"check_coverage_gates.py --job {job}" in workflow, (name, job)
+
+
 def test_pyproject_defines_the_documented_gates():
     gates = _load_script().load_gates()
     assert gates["static+plugins"]["fail_under"] == 69

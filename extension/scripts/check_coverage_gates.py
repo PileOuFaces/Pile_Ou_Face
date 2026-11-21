@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Per-component Python coverage gates (docs/ci/COVERAGE_POLICY.md).
 
-Thresholds live in ``pyproject.toml`` under ``[tool.pof.coverage_gates]``. Each CI job
-names the gates it is responsible for; a named gate with no measured data fails, so a
-gate can never pass silently because its code was not measured.
+Thresholds live in ``pyproject.toml`` under ``[tool.pof.coverage_gates]``. Each gate
+lists the CI jobs that enforce it (``jobs``); a job runs ``--job NAME`` (or names gates
+explicitly). A selected gate with no measured data fails, so a gate can never pass
+silently because its code was not measured.
 
-Usage: python scripts/check_coverage_gates.py [--data-file .coverage] GATE [GATE ...]
+Usage: python scripts/check_coverage_gates.py [--data-file .coverage] (--job NAME | GATE ...)
 """
 
 from __future__ import annotations
@@ -72,12 +73,23 @@ def check(
     return 1 if failed else 0
 
 
+def gates_for_job(job: str, gates: dict[str, dict]) -> list[str]:
+    return [name for name, gate in gates.items() if job in gate.get("jobs", [])]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--data-file", default=".coverage")
-    parser.add_argument("gates", nargs="+")
+    parser.add_argument("--job", help="enforce every gate that lists this CI job")
+    parser.add_argument("gates", nargs="*")
     args = parser.parse_args(argv)
-    return check(args.gates, args.data_file, load_gates())
+    gates = load_gates()
+    names = list(args.gates)
+    if args.job:
+        names += [name for name in gates_for_job(args.job, gates) if name not in names]
+    if not names:
+        parser.error("no coverage gate selected (pass --job NAME or gate names)")
+    return check(names, args.data_file, gates)
 
 
 if __name__ == "__main__":

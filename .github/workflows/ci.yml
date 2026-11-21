@@ -188,7 +188,7 @@ jobs:
           python3 -m coverage report
           python3 -m coverage xml
           python3 -m coverage json -o coverage-python.json
-          python3 scripts/check_coverage_gates.py static+plugins
+          python3 scripts/check_coverage_gates.py --job full-test
 
       - name: Bundle activation smoke test
         working-directory: ./extension
@@ -400,7 +400,7 @@ jobs:
           PYTHONPATH=. python3 -m coverage run --source=backends/dynamic \
             --omit='backends/dynamic/tests/*' -m pytest backends/dynamic/tests -q
           python3 -m coverage report --fail-under=0
-          python3 scripts/check_coverage_gates.py dynamic
+          python3 scripts/check_coverage_gates.py --job dynamic-unicorn
 
   # ══════════════════════════════════════════════════════════════
   # 🧬 Corpus réel multi-architecture — PRs uniquement, ubuntu seulement
