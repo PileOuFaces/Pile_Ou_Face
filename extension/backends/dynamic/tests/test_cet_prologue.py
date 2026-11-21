@@ -189,27 +189,40 @@ class TestCetPrologue(unittest.TestCase):
         self.assertTrue(classic, "expected x/p as locals once the frame exists")
         self.assertEqual(final_locals("-fcf-protection=full"), classic)
 
-    def test_frameless_function_keeps_its_historical_slots_with_cet(self):
-        """No `push rbp` after `endbr64`: the landing pad must not hide the frame."""
-
-        def roles_after_entry(flag):
-            steps = _steps(
-                self._trace_with(
-                    "-fomit-frame-pointer", flag, max_steps=FRAMELESS_MAX_STEPS
-                )
+    def test_frameless_cet_function_never_shows_slots_based_on_the_callers_rbp(self):
+        """`endbr64` then no frame-pointer prologue (-fomit-frame-pointer): rbp is the
+        caller's for the whole function, so no local/argument slot may be built on it."""
+        steps = _steps(
+            self._trace_with(
+                "-fomit-frame-pointer",
+                "-fcf-protection=full",
+                max_steps=FRAMELESS_MAX_STEPS,
             )
-            # Skip the CET landing pad itself so both builds compare the same code.
-            body = [
-                slots for snap, slots in steps if not _is_cet_landing_pad(_instr(snap))
-            ]
-            return [sorted(_roles(slots)) for slots in body]
+        )
+        self.assertTrue(_is_cet_landing_pad(_instr(steps[0][0])))
+        for snapshot, slots in steps:
+            self.assertLessEqual(
+                _roles(slots), FRAME_CONTROL_ROLES, f"`{_instr(snapshot)}`: {slots}"
+            )
 
-        with_cet = roles_after_entry("-fcf-protection=full")
-        classic = roles_after_entry("-fcf-protection=none")
-        # Same step budget, so the CET build has one body step fewer (its endbr64).
-        common = min(len(with_cet), len(classic))
-        self.assertGreaterEqual(common, FRAMELESS_MAX_STEPS - 1)
-        self.assertEqual(with_cet[:common], classic[:common])
+    def test_instruction_between_landing_pad_and_prologue_shows_nothing(self):
+        """`endbr64; nop; push rbp` (e.g. -fpatchable-function-entry): the extra
+        instruction must not reveal the caller's data before `mov rbp, rsp`."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            binary = _compile(
+                tmpdir,
+                "patchable",
+                ("-fcf-protection=full", "-fpatchable-function-entry=1,0"),
+            )
+            steps = _steps(_trace(binary))
+        instrs = [_instr(snap) for snap, _ in steps]
+        self.assertEqual(instrs[:3], ["endbr64", "nop", "push rbp"], instrs)
+        for snapshot, slots in steps:
+            if _instr(snapshot) == "mov rbp, rsp":
+                break
+            self.assertLessEqual(
+                _roles(slots), FRAME_CONTROL_ROLES, f"`{_instr(snapshot)}`: {slots}"
+            )
 
     def test_every_call_hides_caller_data_until_its_frame_exists(self):
         """Second call to the same function: neither its `call` step nor its

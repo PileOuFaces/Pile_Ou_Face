@@ -1919,9 +1919,6 @@ def build_dynamic_analysis(
     # saved_bp/return_address never depend on either.
     frame_pointer_ready_by_function: dict[str, bool] = {}
     frame_allocated_by_function: dict[str, bool] = {}
-    # Functions whose proven entry instruction was a CET landing pad: the next
-    # instruction tells whether a frame-pointer prologue follows.
-    cet_entry_pending: set[str] = set()
 
     for index, snapshot in enumerate(snapshots):
         prev_snapshot = snapshots[index - 1] if index > 0 else None
@@ -1989,16 +1986,12 @@ def build_dynamic_analysis(
                 frame_pointer_ready_by_function[function_key] = False
                 frame_allocated_by_function[function_key] = False
             if cet_entry:
+                # Same rule as an entry proven at the `call` step: nothing is shown
+                # until `mov rbp, rsp`. Without a frame pointer, rbp stays the
+                # caller's for the whole function, so slots based on it would be
+                # caller data.
                 frame_pointer_ready_by_function[function_key] = False
                 frame_allocated_by_function[function_key] = False
-                cet_entry_pending.add(function_key)
-            elif function_key in cet_entry_pending:
-                cet_entry_pending.discard(function_key)
-                if not _is_prologue_push_bp(instr_text):
-                    # No frame-pointer prologue after the landing pad: same
-                    # permissive default as a frameless function without CET.
-                    frame_pointer_ready_by_function[function_key] = True
-                    frame_allocated_by_function[function_key] = True
             if _is_prologue_push_bp(instr_text):
                 frame_pointer_ready_by_function[function_key] = False
                 frame_allocated_by_function[function_key] = False
