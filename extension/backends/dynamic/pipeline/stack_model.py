@@ -358,6 +358,23 @@ def _is_prologue_push_bp(instr_text: str) -> bool:
     return operand in ("rbp", "ebp")
 
 
+def _normalize_ip(ip: int | None, load_base: int) -> int | None:
+    """Instruction address relative to the image (PIE), as symbol addresses are."""
+    if ip is not None and load_base > 0 and ip >= load_base:
+        return ip - load_base
+    return ip
+
+
+def _is_cet_landing_pad(instr_text: str) -> bool:
+    """True for `endbr64` / `endbr32` (CET indirect-branch landing pad).
+
+    With `-fcf-protection` (Ubuntu's gcc default) it is the first instruction of
+    every function, before `push rbp`. It neither builds nor uses a frame.
+    """
+    parts = instr_text.lower().split(None, 1)
+    return bool(parts) and parts[0] in ("endbr64", "endbr32")
+
+
 def _is_prologue_mov_bp_sp(instr_text: str) -> bool:
     """True when the instruction is `mov rbp, rsp` / `mov ebp, esp`."""
     parts = instr_text.lower().split(None, 1)
@@ -1902,6 +1919,9 @@ def build_dynamic_analysis(
     # saved_bp/return_address never depend on either.
     frame_pointer_ready_by_function: dict[str, bool] = {}
     frame_allocated_by_function: dict[str, bool] = {}
+    # Functions whose proven entry instruction was a CET landing pad: the next
+    # instruction tells whether a frame-pointer prologue follows.
+    cet_entry_pending: set[str] = set()
 
     for index, snapshot in enumerate(snapshots):
         prev_snapshot = snapshots[index - 1] if index > 0 else None
@@ -1935,12 +1955,12 @@ def build_dynamic_analysis(
                     if isinstance(function_info, dict)
                     else None
                 )
-                normalized_ip = (
-                    ip - resolver.load_base
-                    if ip is not None
-                    and resolver.load_base > 0
-                    and ip >= resolver.load_base
-                    else ip
+                normalized_ip = _normalize_ip(ip, resolver.load_base)
+                # Address of the instruction this snapshot executed: `ip` above is
+                # read from the registers *after* it (the next instruction).
+                executed_ip = _normalize_ip(
+                    _parse_int(snapshot.get("rip")) or _parse_int(snapshot.get("eip")),
+                    resolver.load_base,
                 )
                 # True only when we can PROVE this is the function's entry
                 # instruction (address match) -- default to "not ready".
@@ -1952,9 +1972,26 @@ def build_dynamic_analysis(
                     and normalized_ip is not None
                     and normalized_ip == function_addr
                 )
-                default_ready = not is_function_entry_instruction
+                # A CET landing pad proven to be the entry (address of the executed
+                # instruction): the caller's rbp is still live, nothing of this
+                # frame exists yet. Other first observations keep the rule above.
+                cet_entry = (
+                    function_addr is not None
+                    and executed_ip == function_addr
+                    and _is_cet_landing_pad(instr_text)
+                )
+                default_ready = not (is_function_entry_instruction or cet_entry)
                 frame_pointer_ready_by_function[function_key] = default_ready
                 frame_allocated_by_function[function_key] = default_ready
+                if cet_entry:
+                    cet_entry_pending.add(function_key)
+            elif function_key in cet_entry_pending:
+                cet_entry_pending.discard(function_key)
+                if not _is_prologue_push_bp(instr_text):
+                    # No frame-pointer prologue after the landing pad: same
+                    # permissive default as a frameless function without CET.
+                    frame_pointer_ready_by_function[function_key] = True
+                    frame_allocated_by_function[function_key] = True
             if _is_prologue_push_bp(instr_text):
                 frame_pointer_ready_by_function[function_key] = False
                 frame_allocated_by_function[function_key] = False
