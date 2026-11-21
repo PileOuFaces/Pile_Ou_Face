@@ -124,3 +124,4 @@ def test_pyproject_defines_the_documented_gates():
     assert gates["static+plugins"]["fail_under"] == 69
     assert gates["static+plugins"]["fail_under_by_platform"] == {"darwin": 68}
     assert gates["dynamic"]["fail_under"] == 69
+    assert gates["mcp"]["fail_under"] == 61

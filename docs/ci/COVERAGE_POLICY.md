@@ -13,6 +13,7 @@ Les seuils sont définis dans `extension/pyproject.toml`.
 | Global (historique) | Sources de `[tool.coverage.run]` | 62 % (`fail_under`) | `full-test`, matrice OS |
 | `static+plugins` | `backends/static`, `backends/plugins` (hors tests) | 69 % sous Linux, 68 % sous macOS | `full-test`, matrice OS |
 | `dynamic` | `backends/dynamic` (hors tests) | 69 % | `Dynamic Unicorn Regression` |
+| `mcp` | `backends/mcp` (tests dans `backends/static/tests/test_mcp_*.py`) | 61 % | `full-test`, matrice OS |
 
 - **Script :** les gates par composant sont vérifiées par `extension/scripts/check_coverage_gates.py`, à partir de `[tool.pof.coverage_gates]`. Chaque gate liste les jobs qui l'appliquent (`jobs`) ; chaque job appelle `--job <nom>`. Un test vérifie que toute gate configurée est bien appliquée par un job du workflow.
 - **Gate sans données :** une gate nommée par un job mais sans données mesurées échoue. Une gate ne peut donc jamais passer parce que son code n'a pas été mesuré.
@@ -69,4 +70,5 @@ Les seuils JS correspondent à l'arrondi inférieur de l'état le plus exigeant,
 
 | Date | Changement | Décision |
 |---|---|---|
+| 2026-11-21 | Gate `mcp` 61 % (61,6 % mesuré sous Linux) ; `backends/dynamic` et `backends/mcp` entrent dans les sources, les tests dynamic sont collectés par `full-test` (#524) | Décision du mainteneur consignée dans la PR #532 |
 | 2026-11-21 | Gates `static+plugins` 69 % (68 % sous macOS, tests ELF ignorés par conception) et `dynamic` 69 %, global 62 % conservé ; c8 relevé de 30/30/60/76 à 54/54/70/83 | Décision du mainteneur consignée dans la PR #532 (commentaire « Décision du mainteneur ») |

@@ -81,3 +81,10 @@ include = ["backends/dynamic/*"]
 omit = ["backends/dynamic/tests/*"]
 fail_under = 69
 
+
+[tool.pof.coverage_gates.mcp]
+# Measured from #524 on (backends/mcp added to the sources); its tests live in
+# backends/static/tests/test_mcp_*.py, run by full-test.
+jobs = ["full-test"]
+include = ["backends/mcp/*"]
+fail_under = 61
