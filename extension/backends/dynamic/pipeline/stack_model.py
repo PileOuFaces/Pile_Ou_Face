@@ -358,6 +358,23 @@ def _is_prologue_push_bp(instr_text: str) -> bool:
     return operand in ("rbp", "ebp")
 
 
+def _normalize_ip(ip: int | None, load_base: int) -> int | None:
+    """Instruction address relative to the image (PIE), as symbol addresses are."""
+    if ip is not None and load_base > 0 and ip >= load_base:
+        return ip - load_base
+    return ip
+
+
+def _is_cet_landing_pad(instr_text: str) -> bool:
+    """True for `endbr64` / `endbr32` (CET indirect-branch landing pad).
+
+    With `-fcf-protection` (Ubuntu's gcc default) it is the first instruction of
+    every function, before `push rbp`. It neither builds nor uses a frame.
+    """
+    parts = instr_text.lower().split(None, 1)
+    return bool(parts) and parts[0] in ("endbr64", "endbr32")
+
+
 def _is_prologue_mov_bp_sp(instr_text: str) -> bool:
     """True when the instruction is `mov rbp, rsp` / `mov ebp, esp`."""
     parts = instr_text.lower().split(None, 1)
@@ -1929,32 +1946,52 @@ def build_dynamic_analysis(
 
         if function_key:
             instr_text = _instruction_text(snapshot)
+            function_addr = (
+                _parse_int(function_info.get("addr"))
+                if isinstance(function_info, dict)
+                else None
+            )
+            # Address of the instruction this snapshot executed: `ip` above is
+            # read from the registers *after* it (the next instruction).
+            executed_ip = _normalize_ip(
+                _parse_int(snapshot.get("rip")) or _parse_int(snapshot.get("eip")),
+                resolver.load_base,
+            )
+            # A CET landing pad proven to be the entry (executed address match),
+            # on every call -- repeated and recursive ones included, as `push rbp`
+            # below: the caller's rbp is still live, nothing of this frame exists.
+            cet_entry = (
+                function_addr is not None
+                and executed_ip == function_addr
+                and _is_cet_landing_pad(instr_text)
+            )
+            normalized_ip = _normalize_ip(ip, resolver.load_base)
+            # True only when we can PROVE the next instruction is the function's
+            # entry (address match, e.g. the `call` step) -- then "not ready".
+            is_function_entry_instruction = (
+                function_addr is not None
+                and normalized_ip is not None
+                and normalized_ip == function_addr
+            )
             if function_key not in frame_pointer_ready_by_function:
-                function_addr = (
-                    _parse_int(function_info.get("addr"))
-                    if isinstance(function_info, dict)
-                    else None
-                )
-                normalized_ip = (
-                    ip - resolver.load_base
-                    if ip is not None
-                    and resolver.load_base > 0
-                    and ip >= resolver.load_base
-                    else ip
-                )
-                # True only when we can PROVE this is the function's entry
-                # instruction (address match) -- default to "not ready".
-                # Otherwise (unresolved, or trace genuinely starts mid-
-                # function) keep the historical permissive default so a
-                # trace that never observes a prologue still works.
-                is_function_entry_instruction = (
-                    function_addr is not None
-                    and normalized_ip is not None
-                    and normalized_ip == function_addr
-                )
+                # Otherwise (unresolved, or trace genuinely starts mid-function)
+                # keep the historical permissive default so a trace that never
+                # observes a prologue still works.
                 default_ready = not is_function_entry_instruction
                 frame_pointer_ready_by_function[function_key] = default_ready
                 frame_allocated_by_function[function_key] = default_ready
+            elif is_function_entry_instruction:
+                # State is kept per function, not per invocation: a later call
+                # (repeated or recursive) starts exactly like the first one.
+                frame_pointer_ready_by_function[function_key] = False
+                frame_allocated_by_function[function_key] = False
+            if cet_entry:
+                # Same rule as an entry proven at the `call` step: nothing is shown
+                # until `mov rbp, rsp`. Without a frame pointer, rbp stays the
+                # caller's for the whole function, so slots based on it would be
+                # caller data.
+                frame_pointer_ready_by_function[function_key] = False
+                frame_allocated_by_function[function_key] = False
             if _is_prologue_push_bp(instr_text):
                 frame_pointer_ready_by_function[function_key] = False
                 frame_allocated_by_function[function_key] = False
