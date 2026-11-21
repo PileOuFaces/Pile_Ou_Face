@@ -31,7 +31,7 @@ Les seuils c8 sont définis dans `extension/.c8rc.json`.
 
 ## Différence Linux / macOS
 
-Sous macOS, 18 tests de `backends/static/tests` sont ignorés volontairement. Ils compilent un binaire ELF avec gcc, mais le gcc de macOS est clang et produit du Mach-O. `compile_minimal_elf` (`backends/static/tests/util.py`) renvoie donc `None` dès que `sys.platform != "linux"`.
+Sous macOS, 19 tests de `backends/static/tests` sont ignorés volontairement. Ils compilent un binaire ELF avec gcc, mais le gcc de macOS est clang et produit du Mach-O. `compile_minimal_elf` (`backends/static/tests/util.py`) renvoie donc `None` dès que `sys.platform != "linux"`.
 
 | Fichier de test | Tests ignorés sous macOS seulement |
 |---|---|
@@ -40,7 +40,7 @@ Sous macOS, 18 tests de `backends/static/tests` sont ignorés volontairement. Il
 | `test_symbols.py`, `test_sections.py`, `test_headers.py`, `test_binary_metadata_model.py` | 2 chacun |
 | `test_tools_symbols.py`, `test_tools_strings.py`, `test_tools_disasm.py`, `test_analysis_index.py` | 1 chacun |
 
-À l'inverse, `test_macho_symbol_types.py` ne tourne que sous macOS.
+À l'inverse, l'un des tests de `test_macho_symbol_types.py` exige l'éditeur de liens de macOS et ne tourne que là. L'écart net est donc de 18 tests ignorés (28 sous macOS, 10 sous Linux).
 
 **Mesures :**
 - `static+plugins` : 68,02 % sous macOS et 69,34 % sous Linux. Valeurs identiques sur deux exécutions complètes de la CI de la PR #532, avec la même liste de tests ignorés.
@@ -69,4 +69,4 @@ Les seuils JS correspondent à l'arrondi inférieur de l'état le plus exigeant,
 
 | Date | Changement | Décision |
 |---|---|---|
-| 2026-11-21 | Gates `static+plugins` 69 % (68 % sous macOS, tests ELF ignorés par conception) et `dynamic` 69 %, global 62 % conservé ; c8 relevé de 30/30/60/76 à 54/54/70/83 | Mainteneur, mission de finalisation pré-V1 |
+| 2026-11-21 | Gates `static+plugins` 69 % (68 % sous macOS, tests ELF ignorés par conception) et `dynamic` 69 %, global 62 % conservé ; c8 relevé de 30/30/60/76 à 54/54/70/83 | Décision du mainteneur consignée dans la PR #532 (commentaire « Décision du mainteneur ») |

@@ -64,8 +64,8 @@ output = "coverage.xml"
 include = ["backends/static/*", "backends/plugins/*"]
 omit = ["backends/static/tests/*", "backends/plugins/tests/*"]
 fail_under = 69
-# macOS: 18 static tests need a gcc producing ELF and are skipped there by design
-# (backends/static/tests/util.py); measured 68.02 % on macOS (decision 2026-11-21).
+# macOS: 19 static tests need a gcc producing ELF and are skipped there by design
+# (backends/static/tests/util.py); measured 68.02 % on macOS (decision recorded in PR #532).
 fail_under_by_platform = { darwin = 68 }
 
 [tool.pof.coverage_gates.dynamic]
