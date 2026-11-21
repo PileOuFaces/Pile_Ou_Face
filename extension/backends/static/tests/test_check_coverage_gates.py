@@ -78,7 +78,20 @@ def test_rejects_an_unknown_gate(measured):
     assert _check(gates_module, ["missing"], measured, _gates(full=0)) == 2
 
 
+def test_platform_threshold_overrides_the_default_only_for_that_platform():
+    gate = {
+        "include": ["*"],
+        "fail_under": 69,
+        "fail_under_by_platform": {"darwin": 68},
+    }
+    gates_module = _load_script()
+    assert gates_module.threshold(gate, "darwin") == 68
+    assert gates_module.threshold(gate, "linux") == 69
+    assert gates_module.threshold({"include": ["*"], "fail_under": 69}, "darwin") == 69
+
+
 def test_pyproject_defines_the_documented_gates():
     gates = _load_script().load_gates()
     assert gates["static+plugins"]["fail_under"] == 69
+    assert gates["static+plugins"]["fail_under_by_platform"] == {"darwin": 68}
     assert gates["dynamic"]["fail_under"] == 69

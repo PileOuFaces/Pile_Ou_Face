@@ -11,7 +11,7 @@ Les seuils sont définis dans `extension/pyproject.toml`.
 | Gate | Périmètre | Seuil | Job CI |
 |---|---|---|---|
 | Global (historique) | Sources de `[tool.coverage.run]` | 62 % (`fail_under`) | `full-test`, matrice OS |
-| `static+plugins` | `backends/static`, `backends/plugins` (hors tests) | 69 % | `full-test`, matrice OS |
+| `static+plugins` | `backends/static`, `backends/plugins` (hors tests) | 69 % sous Linux, 68 % sous macOS | `full-test`, matrice OS |
 | `dynamic` | `backends/dynamic` (hors tests) | 69 % | `Dynamic Unicorn Regression` |
 
 - **Script :** les gates par composant sont vérifiées par `extension/scripts/check_coverage_gates.py`, à partir de `[tool.pof.coverage_gates]`.
@@ -28,6 +28,25 @@ Les seuils c8 sont définis dans `extension/.c8rc.json`.
 | lines / statements | 54 % |
 | branches | 70 % |
 | functions | 83 % |
+
+## Différence Linux / macOS
+
+Sous macOS, 18 tests de `backends/static/tests` sont ignorés volontairement. Ils compilent un binaire ELF avec gcc, mais le gcc de macOS est clang et produit du Mach-O. `compile_minimal_elf` (`backends/static/tests/util.py`) renvoie donc `None` dès que `sys.platform != "linux"`.
+
+| Fichier de test | Tests ignorés sous macOS seulement |
+|---|---|
+| `test_disasm.py` | 4 |
+| `test_calling_convention.py` | 3 |
+| `test_symbols.py`, `test_sections.py`, `test_headers.py`, `test_binary_metadata_model.py` | 2 chacun |
+| `test_tools_symbols.py`, `test_tools_strings.py`, `test_tools_disasm.py`, `test_analysis_index.py` | 1 chacun |
+
+À l'inverse, `test_macho_symbol_types.py` ne tourne que sous macOS.
+
+**Mesures :**
+- `static+plugins` : 68,02 % sous macOS et 69,34 % sous Linux. Valeurs identiques sur deux exécutions complètes de la CI de la PR #532, avec la même liste de tests ignorés.
+- Le seuil macOS (`fail_under_by_platform`) suit la règle du ratchet : arrondi inférieur du taux mesuré sur cette plateforme.
+
+**Si le taux macOS fluctue sous 68 %,** le seuil n'est pas baissé : il faut identifier la source de variation et la corriger.
 
 ## Mesures de référence (2026-11-21)
 
@@ -50,4 +69,4 @@ Les seuils JS correspondent à l'arrondi inférieur de l'état le plus exigeant,
 
 | Date | Changement | Décision |
 |---|---|---|
-| 2026-11-21 | Gates `static+plugins` 69 % et `dynamic` 69 %, global 62 % conservé ; c8 relevé de 30/30/60/76 à 54/54/70/83 | Mainteneur, mission de finalisation pré-V1 |
+| 2026-11-21 | Gates `static+plugins` 69 % (68 % sous macOS, tests ELF ignorés par conception) et `dynamic` 69 %, global 62 % conservé ; c8 relevé de 30/30/60/76 à 54/54/70/83 | Mainteneur, mission de finalisation pré-V1 |

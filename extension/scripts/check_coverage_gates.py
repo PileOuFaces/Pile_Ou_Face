@@ -28,6 +28,11 @@ def load_gates(pyproject: Path = PYPROJECT) -> dict[str, dict]:
     return config.get("tool", {}).get("pof", {}).get("coverage_gates", {})
 
 
+def threshold(gate: dict, platform: str = sys.platform) -> float:
+    """`fail_under`, or its documented per-platform value (`fail_under_by_platform`)."""
+    return gate.get("fail_under_by_platform", {}).get(platform, gate["fail_under"])
+
+
 def measure(cov: coverage.Coverage, gate: dict) -> float:
     """Coverage percentage (statements and branches) of the gate's files."""
     return cov.report(
@@ -58,9 +63,12 @@ def check(
             print(f"FAIL  {name}: no coverage data for {gate['include']}")
             failed = True
             continue
-        ok = percent >= gate["fail_under"]
+        required = threshold(gate)
+        ok = percent >= required
         failed |= not ok
-        print(f"{'OK  ' if ok else 'FAIL'}  {name}: {percent:.2f}% (gate {gate['fail_under']}%)")
+        print(
+            f"{'OK  ' if ok else 'FAIL'}  {name}: {percent:.2f}% (gate {required}% on {sys.platform})"
+        )
     return 1 if failed else 0
 
 
