@@ -23,6 +23,9 @@ const {
   ensureTempDir,
   runCommand,
   detectPythonExecutable,
+  resolvePythonExecutable,
+  getConfiguredPythonPath,
+  setSettingsStore,
   resolveProjectRoot,
   buildRuntimeEnv,
   ensurePythonDependencies,
@@ -102,6 +105,7 @@ function _unregisterGlobalErrorHandlers() {
  */
 function activate(context) {
   setExtensionPath(context.extensionPath);
+  setSettingsStore(context.globalState);
   _registerGlobalErrorHandlers();
   const productConfig = getProductConfig();
   const telemetry = initializeExtensionTelemetry({
@@ -130,7 +134,7 @@ function activate(context) {
   const folders = vscode.workspace.workspaceFolders;
   if (folders && folders.length > 0) {
     const root = resolveProjectRoot(folders[0].uri.fsPath);
-    const pythonExe = detectPythonExecutable(root);
+    const pythonExe = resolvePythonExecutable(root, context.globalState);
     ensurePythonDependencies(pythonExe, root, { quiet: true }).catch((err) => {
       logChannel.appendLine(`[Python setup] Warning: ${err.message}`);
     });
@@ -198,8 +202,9 @@ function activate(context) {
 
   // Panneau latéral et refresh
   const root = resolveProjectRoot(vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || '');
-  const savedSettings = context.globalState.get('pof-settings', {});
-  const pythonExe = savedSettings.pythonPath || (root ? detectPythonExecutable(root) : 'python3');
+  const pythonExe = root
+    ? resolvePythonExecutable(root, context.globalState)
+    : (getConfiguredPythonPath(context.globalState) || 'python3');
   const refreshSidebar = (_binaryPath) => {};
   const setSidebarMode = (_mode) => {};
   hubConfig.refreshSidebar = refreshSidebar;

@@ -1,3 +1,6 @@
+# Dépendances directes du backend. L'extension installe requirements.lock.txt
+# (versions figées + hashes), à régénérer après toute modification ici :
+# voir « Versions vérifiées » dans extension/README.md.
 unicorn==2.1.4
 capstone
 flare-capa
