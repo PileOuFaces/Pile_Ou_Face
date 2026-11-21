@@ -189,19 +189,18 @@ Tous les appels à `getConfiguration` repérés hors tests visent la section `pi
 
 | Point de lecture | Détail |
 |---|---|
-| `extension/src/extension.ts:201-202` | `savedSettings.pythonPath \|\| (root ? detectPythonExecutable(root) : 'python3')` |
-| `extension/src/static/staticHandlers.ts:467-474` | `getSavedSettings().pythonPath \|\| detectPythonExecutable(root)` |
-| `extension/src/shared/sharedHandlers.ts:758-761` | Idem, dans `hubAiProvidersGet` |
-| `extension/src/shared/sharedHandlers.ts:777-780` | Idem |
-| `extension/src/shared/sharedHandlers.ts:814-817` | Idem |
-| `extension/src/shared/sharedHandlers.ts:843-846` | Idem |
-| `extension/src/shared/sharedHandlers.ts:877-880` | Idem |
+| `extension/src/shared/utils.ts` | `getConfiguredPythonPath(store)` et `resolvePythonExecutable(root, store)` : point unique de lecture et de résolution (#519) |
+| `extension/src/extension.ts` | `resolvePythonExecutable(root, context.globalState)` (préparation au démarrage et commandes) ; `setSettingsStore(context.globalState)` à l'activation |
+| `extension/src/shared/sharedHandlers.ts` | `resolvePythonExecutable(root, context?.globalState)` pour les trois bridges et les handlers IA |
+| `extension/src/shared/staticCache.ts` | `resolvePythonExecutable(extensionPath)`, via le store enregistré à l'activation |
+| `extension/src/static/hub.ts` | `detectPythonExecutable(root, getConfiguredPythonPath(context.globalState))` |
+| `extension/src/static/staticHandlers.ts:467-474` | `getSavedSettings().pythonPath \|\| detectPythonExecutable(root)` (inchangé) |
 
 Vérifications observées sur cette valeur :
 
-- Seule la valeur est testée comme « vraie » (opérateur `||`). Aucun contrôle de type, d'existence du fichier ni de chemin n'est repéré à ces points de lecture.
-- `getSavedSettings` retourne `{}` si la lecture du `globalState` lève une exception (`extension/src/static/staticHandlers.ts:467-473`, `extension/src/shared/sharedHandlers.ts:759`). Le `|| {}` couvre aussi une valeur fausse.
-- `detectPythonExecutable(root, settingsPythonPath)` (`extension/src/shared/utils.ts:184-185`) accepte un chemin en second paramètre et le retourne s'il est « vrai ». Les appels repérés à `detectPythonExecutable(root)` dans les lectures ci-dessus ne passent pas ce paramètre. D'autres appelants n'ont pas été inventoriés ici.
+- `getConfiguredPythonPath` retient la valeur si c'est une chaîne non vide après `trim()` (la valeur elle-même n'est pas modifiée). Aucun contrôle d'existence du fichier n'est fait.
+- Si la lecture du `globalState` lève une exception, `getConfiguredPythonPath` journalise un avertissement et retourne `''` : la détection habituelle s'applique (`staticHandlers.ts` garde son propre `getSavedSettings`, qui retourne `{}`).
+- `detectPythonExecutable(root, settingsPythonPath)` (`extension/src/shared/utils.ts`) retourne le chemin passé en second paramètre s'il est « vrai », sinon détecte le venv puis `python3`.
 
 Valeur par défaut et écriture :
 

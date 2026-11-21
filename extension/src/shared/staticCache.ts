@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const cp = require('child_process');
-const { getExtensionPath } = require('./utils');
+const { getExtensionPath, resolvePythonExecutable } = require('./utils');
 
 const CACHE_DIR_NAME = 'static_cache';
 const CACHE_DB_NAME = 'static-cache.sqlite3';
@@ -44,16 +44,6 @@ function getCacheScriptPath(root) {
   return path.join(base, 'backends', 'static', 'cache', 'cache_index.py');
 }
 
-function detectPythonExecutable(root) {
-  const base = getExtensionPath() || root;
-  const candidates = [
-    path.join(base, 'backends', '.venv', 'bin', 'python3'),
-    path.join(base, 'backends', '.venv', 'Scripts', 'python.exe'),
-    path.join(base, 'backends', '.venv', 'Scripts', 'python'),
-  ];
-  return candidates.find((candidate) => fs.existsSync(candidate)) || 'python3';
-}
-
 function runCacheStore(storageDir, args, { input }: CacheStoreOptions = {}) {
   try {
     const extensionPath = getExtensionPath();
@@ -61,7 +51,7 @@ function runCacheStore(storageDir, args, { input }: CacheStoreOptions = {}) {
     if (!fs.existsSync(scriptPath)) return null;
     fs.mkdirSync(getCacheDir(storageDir), { recursive: true });
     const result = cp.spawnSync(
-      detectPythonExecutable(extensionPath),
+      resolvePythonExecutable(extensionPath),
       [scriptPath, '--db', getStaticCacheDbPath(storageDir), ...args],
       {
         cwd: storageDir,

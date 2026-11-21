@@ -11,7 +11,7 @@ const fs = require('fs');
 const cp = require('child_process');
 const readline = require('readline');
 const fileManager = require('./fileManager');
-const { detectPythonExecutable, getExtensionPath, buildRuntimeEnv, logWarning } = require('./utils');
+const { resolvePythonExecutable, getExtensionPath, buildRuntimeEnv, logWarning } = require('./utils');
 const { makeAnnotationsBridge } = require('./annotationsBridge');
 const { makeChatHistoryBridge } = require('./chatHistoryBridge');
 const { makePatchHistoryBridge } = require('./patchHistoryBridge');
@@ -264,10 +264,11 @@ function sharedHandlers(ctx) {
     setRawProfile,
     clearRawProfile,
   } = ctx;
+  const getPythonExecutable = () => resolvePythonExecutable(root, context?.globalState);
   const annotationsBridge = ctx.annotationsBridge || makeAnnotationsBridge({
     root,
     extensionPath: context?.extensionPath || getExtensionPath() || root,
-    getPythonExecutable: () => detectPythonExecutable(root),
+    getPythonExecutable,
     buildPythonEnv: () => buildRuntimeEnv(root, storageDir),
     getOverlayMappingPath: (binaryPath) =>
       getDisasmMappingPathForBinary(binaryPath, { root, storageDir, getTempDir }),
@@ -276,13 +277,13 @@ function sharedHandlers(ctx) {
     root,
     workspacePath: root,
     extensionPath: context?.extensionPath || getExtensionPath() || root,
-    getPythonExecutable: () => detectPythonExecutable(root),
+    getPythonExecutable,
     buildPythonEnv: () => buildRuntimeEnv(root, storageDir),
   });
   const patchHistoryBridge = ctx.patchHistoryBridge || makePatchHistoryBridge({
     root,
     extensionPath: context?.extensionPath || getExtensionPath() || root,
-    getPythonExecutable: () => detectPythonExecutable(root),
+    getPythonExecutable,
     buildPythonEnv: () => buildRuntimeEnv(root, storageDir),
   });
   // Many handlers post after an await or a process callback: by then the hub may have been
@@ -782,10 +783,7 @@ function sharedHandlers(ctx) {
       }
     },
     hubAiProvidersGet: () => {
-      const getSavedSettings = () => {
-        try { return context?.globalState?.get('pof-settings', {}) || {}; } catch (_) { return {}; }
-      };
-      const pythonExe = getSavedSettings().pythonPath || detectPythonExecutable(root);
+      const pythonExe = getPythonExecutable();
       const script = path.join(getExtensionPath() || root, 'backends', 'mcp', 'ai_provider.py');
       cp.execFile(pythonExe, [script, 'list'], { encoding: 'utf8', cwd: root, timeout: 15000 }, (err, stdout) => {
         if (err) {
@@ -801,10 +799,7 @@ function sharedHandlers(ctx) {
       });
     },
     hubAiProviderSet: (message) => {
-      const getSavedSettings = () => {
-        try { return context?.globalState?.get('pof-settings', {}) || {}; } catch (_) { return {}; }
-      };
-      const pythonExe = getSavedSettings().pythonPath || detectPythonExecutable(root);
+      const pythonExe = getPythonExecutable();
       const script = path.join(getExtensionPath() || root, 'backends', 'mcp', 'ai_provider.py');
       const args = [script, 'set', '--provider', String(message.provider || ''), '--api-key-stdin'];
       if (message.model) { args.push('--model', String(message.model)); }
@@ -838,10 +833,7 @@ function sharedHandlers(ctx) {
       proc.stdin.end();
     },
     hubAiProviderTest: (message) => {
-      const getSavedSettings = () => {
-        try { return context?.globalState?.get('pof-settings', {}) || {}; } catch (_) { return {}; }
-      };
-      const pythonExe = getSavedSettings().pythonPath || detectPythonExecutable(root);
+      const pythonExe = getPythonExecutable();
       const script = path.join(getExtensionPath() || root, 'backends', 'mcp', 'ai_provider.py');
       // Test = refresh list and show current configured state
       cp.execFile(pythonExe, [script, 'list'], { encoding: 'utf8', cwd: root, timeout: 15000 }, (err, stdout) => {
@@ -867,10 +859,7 @@ function sharedHandlers(ctx) {
       });
     },
     hubAiProviderDefaultSet: (message) => {
-      const getSavedSettings = () => {
-        try { return context?.globalState?.get('pof-settings', {}) || {}; } catch (_) { return {}; }
-      };
-      const pythonExe = getSavedSettings().pythonPath || detectPythonExecutable(root);
+      const pythonExe = getPythonExecutable();
       const script = path.join(getExtensionPath() || root, 'backends', 'mcp', 'ai_provider.py');
       cp.execFile(
         pythonExe,
@@ -901,10 +890,7 @@ function sharedHandlers(ctx) {
     },
     hubAiProviderPrompt: (message) => {
       const requestId = String(message.requestId || '').trim();
-      const getSavedSettings = () => {
-        try { return context?.globalState?.get('pof-settings', {}) || {}; } catch (_) { return {}; }
-      };
-      const pythonExe = getSavedSettings().pythonPath || detectPythonExecutable(root);
+      const pythonExe = getPythonExecutable();
       const script = path.join(getExtensionPath() || root, 'backends', 'mcp', 'ai_provider.py');
       const provider = String(message.provider || '');
       const model = String(message.model || '');
