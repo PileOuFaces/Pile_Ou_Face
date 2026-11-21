@@ -12,6 +12,7 @@ const cp = require('child_process');
 const crypto = require('crypto');
 const logger = require('./logger');
 const { recordRuntimeEvent } = require('./runtimeAudit');
+const pythonDependencies = require('./pythonDependencies');
 
 const logChannel = vscode.window.createOutputChannel('Pile ou Face');
 
@@ -109,76 +110,14 @@ function ensureStorageDir(context) {
   return dir;
 }
 
+/** Aucun pip sans consentement explicite : voir shared/pythonDependencies.ts. */
 async function ensurePythonDependencies(pythonExe, root, options: { quiet?: boolean } = {}) {
-  const { quiet = false } = options || {};
   const backendBase = _extensionPath || path.resolve(String(root || '').trim());
-  const requirementsPath = path.join(backendBase, 'backends', 'requirements.txt');
-  if (!fs.existsSync(requirementsPath)) {
-    logChannel.appendLine('[pip] requirements.txt introuvable.');
-    return;
-  }
-  if (pythonExe === 'python3' || pythonExe === 'python') {
-    const venvPath = path.join(backendBase, 'backends', '.venv');
-    if (!fs.existsSync(venvPath)) {
-      logChannel.appendLine('[venv] Création du venv…');
-      try {
-        await new Promise<void>((resolve, reject) => {
-          cp.execFile(pythonExe, ['-m', 'venv', venvPath], (error, stdout, stderr) =>
-            error ? reject(new Error(stderr)) : resolve());
-        });
-        const candidates = [
-          path.join(venvPath, 'bin', 'python3'),
-          path.join(venvPath, 'Scripts', 'python.exe'),
-          path.join(venvPath, 'Scripts', 'python')
-        ];
-        for (const c of candidates) {
-          if (fs.existsSync(c)) {
-            pythonExe = c;
-            logChannel.appendLine(`[venv] Utilisation: ${pythonExe}`);
-            break;
-          }
-        }
-    } catch (venvErr) {
-      logChannel.appendLine(`[venv] Erreur: ${venvErr.message}`);
-      if (!quiet) {
-        vscode.window.showWarningMessage(`Impossible de créer backends/.venv: ${venvErr.message}`);
-      }
-      return;
-    }
-  }
-  }
-  const coreDeps = ['unicorn', 'capstone'];
-  let needInstall = false;
-  for (const dep of coreDeps) {
-    try {
-      await new Promise<void>((resolve, reject) => {
-        cp.execFile(pythonExe, ['-c', `import ${dep}`], (error) => (error ? reject(error) : resolve()));
-      });
-    } catch {
-      needInstall = true;
-      break;
-    }
-  }
-  if (!needInstall) {
-    logChannel.appendLine('[pip] Dépendances OK.');
-    return;
-  }
-  logChannel.appendLine('[pip] Installation des dépendances…');
-  try {
-    await new Promise<void>((resolve, reject) => {
-      cp.execFile(pythonExe, ['-m', 'pip', 'install', '-r', requirementsPath, '--quiet', '--break-system-packages'], (error, stdout, stderr) =>
-        error ? reject(new Error(stderr || error.message)) : resolve());
-    });
-    logChannel.appendLine('[pip] Installation terminée.');
-  } catch (installErr) {
-    const msg = installErr.message || '';
-    logChannel.appendLine(`[pip] Erreur: ${msg}`);
-    if (!quiet) {
-      vscode.window.showWarningMessage(
-        `Dépendances manquantes. Exécutez: ${pythonExe} -m pip install -r requirements.txt`
-      );
-    }
-  }
+  return pythonDependencies.ensurePythonDependencies(pythonExe, {
+    backendBase,
+    quiet: options?.quiet === true,
+    log: (message) => logChannel.appendLine(logger.redact(message)),
+  });
 }
 
 function detectPythonExecutable(root, settingsPythonPath) {

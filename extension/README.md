@@ -66,6 +66,48 @@ make install
 
 Installe les dépendances dans un venv (`lief`, `capstone`, `pyelftools`, `unicorn`…).
 
+#### Installation depuis l'extension (consentement explicite)
+
+À l'activation, l'extension vérifie seulement que `unicorn` et `capstone` sont
+importables. S'ils manquent, elle **ne lance rien** : une notification propose
+« Installer » ou « Plus tard ».
+
+- **Plus tard** ou notification fermée : aucun `pip`, aucun venv créé ; les
+  fonctions Python restent indisponibles, l'extension continue de fonctionner.
+- **Installer** : création si besoin de `backends/.venv`, puis
+  `<venv>/python -m pip install --require-hashes -r backends/requirements.lock.txt`.
+  L'installation se fait uniquement dans ce venv, sans `--break-system-packages`.
+- **Hors ligne** : l'échec est signalé (« PyPI est injoignable ») avec la
+  commande manuelle ; l'activation n'est pas bloquée et la proposition revient
+  au prochain démarrage.
+- **Interpréteur configuré** (réglage `pythonPath` hors de `backends/.venv`) :
+  l'extension n'y installe rien et indique la commande à lancer soi-même.
+
+#### Versions vérifiées : `backends/requirements.lock.txt`
+
+`backends/requirements.txt` liste les dépendances directes (source éditée à la
+main). `backends/requirements.lock.txt` en est dérivé : toutes les versions,
+transitives comprises, sont figées avec les hashes de **toutes** les
+distributions publiées (wheels Linux, macOS, Windows et sdist), pour toutes les
+plateformes. Ne pas l'éditer à la main.
+
+Régénération (outil : [uv](https://docs.astral.sh/uv/)) depuis `extension/backends/` :
+
+```bash
+uv pip compile requirements.txt \
+  --universal --python-version 3.8 \
+  --generate-hashes \
+  --exclude-newer 2026-11-21T00:00:00Z \
+  --output-file requirements.lock.txt
+```
+
+- `--universal` : une seule résolution valable pour tous les OS et versions de Python ≥ 3.8.
+- `--exclude-newer` : ignore les publications postérieures à la date ; la même
+  commande redonne le même fichier. Avancer cette date volontairement pour
+  mettre à jour les versions, et reporter la nouvelle date ici.
+- Vérifier ensuite dans un venv propre :
+  `python -m pip install --require-hashes -r requirements.lock.txt`.
+
 ### Décompilateurs (optionnel)
 
 Les décompilateurs tournent dans des containers Docker isolés :

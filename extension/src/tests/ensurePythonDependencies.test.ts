@@ -6,29 +6,53 @@ const cp = require("child_process");
 const vscode = require("vscode");
 
 const utils = require("../shared/utils");
+const { INSTALL_ACTION, LOCK_FILE_NAME } = require("../shared/pythonDependencies");
 
 const EXT_DIR_WITH_SPACES = path.join(path.sep, "opt", "My Extensions", "pile ou face");
-const REQUIREMENTS = path.join(EXT_DIR_WITH_SPACES, "backends", "requirements.txt");
+const LOCK_FILE = path.join(EXT_DIR_WITH_SPACES, "backends", LOCK_FILE_NAME);
 const VENV_PATH = path.join(EXT_DIR_WITH_SPACES, "backends", ".venv");
 const VENV_PYTHON = path.join(VENV_PATH, "bin", "python3");
 const PYTHON_WITH_SPACES = path.join(path.sep, "Applications", "My Python", "bin", "python3");
+const OFFLINE_STDERR =
+  "WARNING: Retrying (Retry(total=4)) after connection broken by 'NewConnectionError(\"Failed to establish a new connection\")'\n"
+  + "ERROR: Could not find a version that satisfies the requirement unicorn==2.1.4";
 
 function argsOf(call) {
   return { file: call.args[0], args: call.args[1] };
 }
 
+function pipCalls(execFile) {
+  return execFile.getCalls().map(argsOf).filter((c) => c.args[0] === "-m" && c.args[1] === "pip");
+}
+
+/** Imports manquants ; venv et pip répondent selon `pipError`. */
+function stubPython(existing, pipError = null) {
+  return sinon.stub(cp, "execFile").callsFake((_file, args, cb) => {
+    if (args[0] === "-c") return cb(new Error("ModuleNotFoundError"), "", "");
+    if (args[1] === "venv") {
+      existing.add(VENV_PYTHON);
+      return cb(null, "", "");
+    }
+    return pipError ? cb(new Error("exit 1"), "", pipError) : cb(null, "", "");
+  });
+}
+
 describe("ensurePythonDependencies", () => {
   let existing;
   let execStub;
+  let info;
+  let warn;
   let previousExtensionPath;
 
   beforeEach(() => {
     // Shared singleton: other suites (e.g. staticCache) set it at load time.
     previousExtensionPath = utils.getExtensionPath();
     utils.setExtensionPath(EXT_DIR_WITH_SPACES);
-    existing = new Set([REQUIREMENTS]);
+    existing = new Set([LOCK_FILE]);
     sinon.stub(fs, "existsSync").callsFake((p) => existing.has(p));
     execStub = sinon.stub(cp, "exec");
+    info = sinon.stub(vscode.window, "showInformationMessage").resolves(undefined);
+    warn = sinon.stub(vscode.window, "showWarningMessage").resolves(undefined);
   });
 
   afterEach(() => {
@@ -36,53 +60,118 @@ describe("ensurePythonDependencies", () => {
     utils.setExtensionPath(previousExtensionPath);
   });
 
-  it("checks imports via execFile with an executable path containing spaces as a single argument", async () => {
+  it("checks imports via execFile with an executable path containing spaces, without prompting when present", async () => {
     const execFile = sinon.stub(cp, "execFile").callsFake((_file, _args, cb) => cb(null, "", ""));
 
-    await utils.ensurePythonDependencies(PYTHON_WITH_SPACES, EXT_DIR_WITH_SPACES, { quiet: true });
+    const status = await utils.ensurePythonDependencies(PYTHON_WITH_SPACES, EXT_DIR_WITH_SPACES, { quiet: true });
 
+    expect(status).to.equal("ok");
     expect(execStub.called).to.equal(false);
-    expect(execFile.callCount).to.equal(2);
-    expect(argsOf(execFile.getCall(0))).to.deep.equal({ file: PYTHON_WITH_SPACES, args: ["-c", "import unicorn"] });
-    expect(argsOf(execFile.getCall(1))).to.deep.equal({ file: PYTHON_WITH_SPACES, args: ["-c", "import capstone"] });
+    expect(info.called).to.equal(false);
+    expect(execFile.getCalls().map(argsOf)).to.deep.equal([
+      { file: PYTHON_WITH_SPACES, args: ["-c", "import unicorn"] },
+      { file: PYTHON_WITH_SPACES, args: ["-c", "import capstone"] },
+    ]);
   });
 
-  it("creates the venv via execFile with a venv path containing spaces, then uses the venv python", async () => {
-    const execFile = sinon.stub(cp, "execFile").callsFake((_file, args, cb) => {
-      if (args[1] === "venv") existing.add(VENV_PYTHON);
-      cb(null, "", "");
-    });
+  it("never runs pip nor creates the venv when the user declines or dismisses the prompt", async () => {
+    const execFile = stubPython(existing);
 
-    await utils.ensurePythonDependencies("python3", EXT_DIR_WITH_SPACES, { quiet: true });
+    for (const answer of [undefined, "Plus tard"]) {
+      info.resolves(answer);
+      const status = await utils.ensurePythonDependencies("python3", EXT_DIR_WITH_SPACES, { quiet: true });
+      expect(status).to.equal("declined");
+    }
 
-    expect(execStub.called).to.equal(false);
-    expect(argsOf(execFile.getCall(0))).to.deep.equal({ file: "python3", args: ["-m", "venv", VENV_PATH] });
-    expect(argsOf(execFile.getCall(1))).to.deep.equal({ file: VENV_PYTHON, args: ["-c", "import unicorn"] });
+    expect(info.callCount).to.equal(2);
+    expect(pipCalls(execFile)).to.deep.equal([]);
+    expect(execFile.getCalls().some((c) => c.args[1][1] === "venv")).to.equal(false);
+    expect(warn.called).to.equal(false);
   });
 
-  it("reports venv creation errors with stderr and stops before checking imports", async () => {
-    const execFile = sinon.stub(cp, "execFile").callsFake((_file, _args, cb) => cb(new Error("exit 1"), "", "venv boom"));
-    const warn = sinon.stub(vscode.window, "showWarningMessage");
+  it("after consent, creates the extension venv and runs pip in it with --require-hashes on the lock file", async () => {
+    info.resolves(INSTALL_ACTION);
+    const execFile = stubPython(existing);
 
-    await utils.ensurePythonDependencies("python3", EXT_DIR_WITH_SPACES);
+    const status = await utils.ensurePythonDependencies("python3", EXT_DIR_WITH_SPACES, { quiet: true });
 
-    expect(execFile.callCount).to.equal(1);
+    expect(status).to.equal("installed");
+    expect(execStub.called).to.equal(false);
+    expect(execFile.getCalls().map(argsOf)).to.deep.include({ file: "python3", args: ["-m", "venv", VENV_PATH] });
+    const [pip] = pipCalls(execFile);
+    expect(pip.file).to.equal(VENV_PYTHON);
+    expect(pip.args).to.include("--require-hashes");
+    expect(pip.args.slice(-2)).to.deep.equal(["-r", LOCK_FILE]);
+    expect(pip.args).to.not.include("--break-system-packages");
+  });
+
+  it("reuses an existing extension venv without recreating it", async () => {
+    existing.add(VENV_PYTHON);
+    info.resolves(INSTALL_ACTION);
+    const execFile = stubPython(existing);
+
+    const status = await utils.ensurePythonDependencies(VENV_PYTHON, EXT_DIR_WITH_SPACES, { quiet: true });
+
+    expect(status).to.equal("installed");
+    expect(execFile.getCalls().some((c) => c.args[1][1] === "venv")).to.equal(false);
+    expect(pipCalls(execFile).map((c) => c.file)).to.deep.equal([VENV_PYTHON]);
+  });
+
+  it("reports an offline failure clearly without throwing", async () => {
+    info.resolves(INSTALL_ACTION);
+    stubPython(existing, OFFLINE_STDERR);
+
+    const status = await utils.ensurePythonDependencies("python3", EXT_DIR_WITH_SPACES, { quiet: true });
+
+    expect(status).to.equal("offline");
+    expect(warn.calledOnce).to.equal(true);
+    expect(warn.firstCall.args[0]).to.match(/hors ligne/);
+    expect(warn.firstCall.args[0]).to.contain("--require-hashes");
+  });
+
+  it("reports other pip failures as failed", async () => {
+    info.resolves(INSTALL_ACTION);
+    stubPython(existing, "ERROR: THESE PACKAGES DO NOT MATCH THE HASHES FROM THE REQUIREMENTS FILE.");
+
+    const status = await utils.ensurePythonDependencies("python3", EXT_DIR_WITH_SPACES, { quiet: true });
+
+    expect(status).to.equal("failed");
+    expect(warn.firstCall.args[0]).to.not.match(/hors ligne/);
+  });
+
+  it("reports venv creation errors with stderr and does not run pip", async () => {
+    info.resolves(INSTALL_ACTION);
+    const execFile = sinon.stub(cp, "execFile").callsFake((_file, args, cb) =>
+      args[0] === "-c" ? cb(new Error("ModuleNotFoundError"), "", "") : cb(new Error("exit 1"), "", "venv boom"));
+
+    const status = await utils.ensurePythonDependencies("python3", EXT_DIR_WITH_SPACES);
+
+    expect(status).to.equal("failed");
+    expect(pipCalls(execFile)).to.deep.equal([]);
     expect(warn.calledOnce).to.equal(true);
     expect(warn.firstCall.args[0]).to.contain("venv boom");
   });
 
-  it("installs requirements when a dependency import fails", async () => {
-    const execFile = sinon.stub(cp, "execFile").callsFake((_file, args, cb) => {
-      if (args[0] === "-c") return cb(new Error("ModuleNotFoundError"), "", "");
-      return cb(null, "", "");
-    });
+  it("never installs into a configured interpreter outside the extension venv", async () => {
+    const execFile = stubPython(existing);
 
-    await utils.ensurePythonDependencies(PYTHON_WITH_SPACES, EXT_DIR_WITH_SPACES, { quiet: true });
+    const status = await utils.ensurePythonDependencies(PYTHON_WITH_SPACES, EXT_DIR_WITH_SPACES);
 
-    expect(execStub.called).to.equal(false);
-    expect(execFile.callCount).to.equal(2);
-    const install = argsOf(execFile.getCall(1));
-    expect(install.file).to.equal(PYTHON_WITH_SPACES);
-    expect(install.args.slice(0, 5)).to.deep.equal(["-m", "pip", "install", "-r", REQUIREMENTS]);
+    expect(status).to.equal("unavailable");
+    expect(info.called).to.equal(false);
+    expect(pipCalls(execFile)).to.deep.equal([]);
+    expect(warn.firstCall.args[0]).to.contain(LOCK_FILE);
+  });
+
+  it("does not prompt nor install when the hash lock file is missing", async () => {
+    existing.delete(LOCK_FILE);
+    const execFile = stubPython(existing);
+
+    const status = await utils.ensurePythonDependencies("python3", EXT_DIR_WITH_SPACES, { quiet: true });
+
+    expect(status).to.equal("unavailable");
+    expect(info.called).to.equal(false);
+    expect(warn.called).to.equal(false);
+    expect(pipCalls(execFile)).to.deep.equal([]);
   });
 });
