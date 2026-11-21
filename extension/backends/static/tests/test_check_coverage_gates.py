@@ -106,10 +106,17 @@ def test_every_configured_gate_is_enforced_by_a_ci_job():
     workflow = (SCRIPT.parents[2] / ".github" / "workflows" / "ci.yml").read_text(
         encoding="utf-8"
     )
+    # A commented-out call does not enforce anything.
+    commands = [
+        line.strip()
+        for line in workflow.splitlines()
+        if not line.strip().startswith("#")
+    ]
     for name, gate in _load_script().load_gates().items():
         assert gate.get("jobs"), f"gate {name} is enforced by no job"
         for job in gate["jobs"]:
-            assert f"check_coverage_gates.py --job {job}" in workflow, (name, job)
+            expected = f"check_coverage_gates.py --job {job}"
+            assert any(expected in command for command in commands), (name, job)
 
 
 def test_pyproject_defines_the_documented_gates():
