@@ -60,7 +60,7 @@ def check(
             continue
         ok = percent >= gate["fail_under"]
         failed |= not ok
-        print(f"{'OK  ' if ok else 'FAIL'}  {name}: {percent:.1f}% (gate {gate['fail_under']}%)")
+        print(f"{'OK  ' if ok else 'FAIL'}  {name}: {percent:.2f}% (gate {gate['fail_under']}%)")
     return 1 if failed else 0
 
 
