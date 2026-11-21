@@ -6,10 +6,11 @@ const cp = require("child_process");
 const vscode = require("vscode");
 
 const utils = require("../shared/utils");
-const { INSTALL_ACTION, LOCK_FILE_NAME } = require("../shared/pythonDependencies");
+const { INSTALL_ACTION, LOCK_FILE_NAME, BUILD_LOCK_FILE_NAME } = require("../shared/pythonDependencies");
 
 const EXT_DIR_WITH_SPACES = path.join(path.sep, "opt", "My Extensions", "pile ou face");
 const LOCK_FILE = path.join(EXT_DIR_WITH_SPACES, "backends", LOCK_FILE_NAME);
+const BUILD_LOCK_FILE = path.join(EXT_DIR_WITH_SPACES, "backends", BUILD_LOCK_FILE_NAME);
 const VENV_PATH = path.join(EXT_DIR_WITH_SPACES, "backends", ".venv");
 const VENV_PYTHON = path.join(VENV_PATH, "bin", "python3");
 const PYTHON_WITH_SPACES = path.join(path.sep, "Applications", "My Python", "bin", "python3");
@@ -48,7 +49,7 @@ describe("ensurePythonDependencies", () => {
     // Shared singleton: other suites (e.g. staticCache) set it at load time.
     previousExtensionPath = utils.getExtensionPath();
     utils.setExtensionPath(EXT_DIR_WITH_SPACES);
-    existing = new Set([LOCK_FILE]);
+    existing = new Set([LOCK_FILE, BUILD_LOCK_FILE]);
     sinon.stub(fs, "existsSync").callsFake((p) => existing.has(p));
     execStub = sinon.stub(cp, "exec");
     info = sinon.stub(vscode.window, "showInformationMessage").resolves(undefined);
@@ -89,7 +90,7 @@ describe("ensurePythonDependencies", () => {
     expect(warn.called).to.equal(false);
   });
 
-  it("after consent, creates the extension venv and runs pip in it with --require-hashes on the lock file", async () => {
+  it("after consent, creates the extension venv and runs pip in it with --require-hashes on both lock files", async () => {
     info.resolves(INSTALL_ACTION);
     const execFile = stubPython(existing);
 
@@ -98,11 +99,17 @@ describe("ensurePythonDependencies", () => {
     expect(status).to.equal("installed");
     expect(execStub.called).to.equal(false);
     expect(execFile.getCalls().map(argsOf)).to.deep.include({ file: "python3", args: ["-m", "venv", VENV_PATH] });
-    const [pip] = pipCalls(execFile);
+    const [buildPip, pip, ...extra] = pipCalls(execFile);
+    expect(extra).to.deep.equal([]);
+    // Build tools first, from their own lock: the main install then never fetches unpinned ones.
+    expect(buildPip.file).to.equal(VENV_PYTHON);
+    expect(buildPip.args).to.include("--require-hashes");
+    expect(buildPip.args.slice(-2)).to.deep.equal(["-r", BUILD_LOCK_FILE]);
     expect(pip.file).to.equal(VENV_PYTHON);
     expect(pip.args).to.include("--require-hashes");
+    expect(pip.args).to.include("--no-build-isolation");
     expect(pip.args.slice(-2)).to.deep.equal(["-r", LOCK_FILE]);
-    expect(pip.args).to.not.include("--break-system-packages");
+    for (const call of [buildPip, pip]) expect(call.args).to.not.include("--break-system-packages");
   });
 
   it("reuses an existing extension venv without recreating it", async () => {
@@ -114,7 +121,7 @@ describe("ensurePythonDependencies", () => {
 
     expect(status).to.equal("installed");
     expect(execFile.getCalls().some((c) => c.args[1][1] === "venv")).to.equal(false);
-    expect(pipCalls(execFile).map((c) => c.file)).to.deep.equal([VENV_PYTHON]);
+    expect(pipCalls(execFile).map((c) => c.file)).to.deep.equal([VENV_PYTHON, VENV_PYTHON]);
   });
 
   it("reports an offline failure clearly without throwing", async () => {
@@ -163,17 +170,29 @@ describe("ensurePythonDependencies", () => {
     expect(warn.firstCall.args[0]).to.contain(LOCK_FILE);
   });
 
-  it("does not prompt nor install when the hash lock file is missing, and says so even when quiet", async () => {
-    existing.delete(LOCK_FILE);
-    const execFile = stubPython(existing);
+  for (const [label, missing] of [["hash lock file", LOCK_FILE], ["build tools lock file", BUILD_LOCK_FILE]]) {
+    it(`does not prompt nor install when the ${label} is missing, and says so even when quiet`, async () => {
+      existing.delete(missing);
+      const execFile = stubPython(existing);
+
+      const status = await utils.ensurePythonDependencies("python3", EXT_DIR_WITH_SPACES, { quiet: true });
+
+      expect(status).to.equal("unavailable");
+      expect(info.called).to.equal(false);
+      expect(warn.calledOnce).to.equal(true);
+      expect(warn.firstCall.args[0]).to.contain(missing);
+      expect(pipCalls(execFile)).to.deep.equal([]);
+    });
+  }
+
+  it("stops before the main install when the build tools cannot be installed", async () => {
+    info.resolves(INSTALL_ACTION);
+    const execFile = stubPython(existing, OFFLINE_STDERR);
 
     const status = await utils.ensurePythonDependencies("python3", EXT_DIR_WITH_SPACES, { quiet: true });
 
-    expect(status).to.equal("unavailable");
-    expect(info.called).to.equal(false);
-    expect(warn.calledOnce).to.equal(true);
-    expect(warn.firstCall.args[0]).to.contain(LOCK_FILE);
-    expect(pipCalls(execFile)).to.deep.equal([]);
+    expect(status).to.equal("offline");
+    expect(pipCalls(execFile).map((c) => c.args.slice(-1)[0])).to.deep.equal([BUILD_LOCK_FILE]);
   });
 
   it("ignores a partial system Python and offers the full install when the extension venv is missing", async () => {
@@ -199,9 +218,9 @@ describe("ensurePythonDependencies", () => {
   });
 });
 
-describe("backends/requirements.lock.txt (versioned)", () => {
+for (const [lockName, sourceName] of [[LOCK_FILE_NAME, "requirements.txt"], [BUILD_LOCK_FILE_NAME, "requirements-build.txt"]]) describe(`backends/${lockName} (versioned)`, () => {
   const backendsDir = path.resolve(__dirname, "..", "..", "backends");
-  const lockPath = path.join(backendsDir, LOCK_FILE_NAME);
+  const lockPath = path.join(backendsDir, lockName);
 
   it("is shipped with the extension so the consented install can run", () => {
     expect(fs.existsSync(lockPath), `${lockPath} manquant : voir « Versions vérifiées » dans extension/README.md`)
@@ -218,11 +237,11 @@ describe("backends/requirements.lock.txt (versioned)", () => {
     }
   });
 
-  it("covers every direct dependency of requirements.txt", () => {
+  it(`covers every direct dependency of ${sourceName}`, () => {
     const normalize = (name) => name.toLowerCase().replace(/[-_.]+/g, "-");
     const lockText = fs.readFileSync(lockPath, "utf8");
     const pinned = new Set(Array.from(lockText.matchAll(/^([A-Za-z0-9._-]+)(?:\[[^\]]+\])?==/gm), (m) => normalize(m[1])));
-    const direct = fs.readFileSync(path.join(backendsDir, "requirements.txt"), "utf8")
+    const direct = fs.readFileSync(path.join(backendsDir, sourceName), "utf8")
       .split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith("#"))
       .map((l) => normalize(l.split(/[<>=!~;[\s]/)[0]));
     for (const name of direct) expect(pinned.has(name), name).to.equal(true);

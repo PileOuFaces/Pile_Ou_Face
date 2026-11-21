@@ -56,7 +56,7 @@ Pile ou Face analyse des binaires ELF, PE et Mach-O (x86, x64, ARM64) directemen
 
 - **VS Code** 1.120+
 - **Node.js** 18+
-- **Python** 3.8+
+- **Python** 3.10+
 
 ### Backend Python
 
@@ -79,8 +79,11 @@ qu'une partie des dépendances (par exemple sans `lief`). S'ils manquent, elle
 
 - **Later** ou notification fermée : aucun `pip`, aucun venv créé ; les
   fonctions Python restent indisponibles, l'extension continue de fonctionner.
-- **Install** : création si besoin de `backends/.venv`, puis
-  `<venv>/python -m pip install --require-hashes -r backends/requirements.lock.txt`.
+- **Install** : création si besoin de `backends/.venv`, puis deux commandes pip
+  dans ce venv :
+  1. `<venv>/python -m pip install --require-hashes -r backends/requirements-build.lock.txt` ;
+  2. `<venv>/python -m pip install --require-hashes --no-build-isolation -r backends/requirements.lock.txt`.
+
   L'installation se fait uniquement dans ce venv, sans `--break-system-packages`.
 - **Hors ligne** : l'échec est signalé (« PyPI is unreachable ») avec la
   commande manuelle ; l'activation n'est pas bloquée et la proposition revient
@@ -88,7 +91,7 @@ qu'une partie des dépendances (par exemple sans `lief`). S'ils manquent, elle
 - **Interpréteur configuré** (réglage `pythonPath` hors de `backends/.venv`) :
   l'extension n'y installe rien et indique la commande à lancer soi-même.
 
-#### Versions vérifiées : `backends/requirements.lock.txt`
+#### Versions vérifiées : `backends/requirements.lock.txt` et `requirements-build.lock.txt`
 
 `backends/requirements.txt` liste les dépendances directes (source éditée à la
 main). `backends/requirements.lock.txt` en est dérivé : toutes les versions,
@@ -96,15 +99,24 @@ transitives comprises, sont figées avec les hashes de **toutes** les
 distributions publiées (wheels Linux, macOS, Windows et sdist), pour toutes les
 plateformes. Ne pas l'éditer à la main.
 
+`backends/requirements-build.lock.txt` (dérivé de `requirements-build.txt`) fige
+de la même façon les outils de construction (`setuptools`, `wheel`). Certaines
+dépendances n'existent qu'en sdist : par défaut, pip installerait ces outils dans
+un environnement de build isolé, **sans version ni hash**, puis exécuterait leur
+code. L'extension installe donc d'abord ce fichier, puis le lock principal avec
+`--no-build-isolation` : tout le code téléchargé est vérifié par hash.
+
 Régénération (outil : [uv](https://docs.astral.sh/uv/) 0.9.5, la version utilisée pour le
 fichier actuel) depuis `extension/backends/` :
 
 ```bash
-uv pip compile requirements.txt \
-  --universal --python-version 3.10 \
-  --generate-hashes \
-  --exclude-newer 2026-11-21T00:00:00Z \
-  --output-file requirements.lock.txt
+for name in requirements requirements-build; do
+  uv pip compile "$name.txt" \
+    --universal --python-version 3.10 \
+    --generate-hashes \
+    --exclude-newer 2026-11-21T00:00:00Z \
+    --output-file "$name.lock.txt"
+done
 ```
 
 - `--universal` : une seule résolution valable pour tous les OS et versions de Python ≥ 3.10.
@@ -113,12 +125,12 @@ uv pip compile requirements.txt \
 - `--exclude-newer` : ignore les publications postérieures à la date ; la même
   commande redonne le même fichier. Avancer cette date volontairement pour
   mettre à jour les versions, et reporter la nouvelle date ici.
-- Vérifier ensuite dans un venv propre :
-  `python -m pip install --require-hashes -r requirements.lock.txt`.
+- Vérifier ensuite dans un venv propre, avec les deux commandes pip de **Install**
+  ci-dessus (outils de construction, puis lock principal avec `--no-build-isolation`).
 - Certaines dépendances n'ont pas de wheel pour toutes les plateformes ; pip les
-  construit alors depuis le sdist (hash vérifié aussi) : `hexdump` et
-  `vivisect-vstruct-wb` (Python pur, partout), `yara-python` (macOS, compilateur
-  C requis), `lief` (macOS Intel et Linux ARM64, compilation longue).
+  construit alors depuis le sdist (hash vérifié aussi), avec les outils figés : `hexdump`
+  et `vivisect-vstruct-wb` (Python pur, partout), `yara-python` (macOS, compilateur
+  C requis), `lief` (macOS Intel et Linux ARM64, compilation longue, CMake requis).
 
 ### Décompilateurs (optionnel)
 

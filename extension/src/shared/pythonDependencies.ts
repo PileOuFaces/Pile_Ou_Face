@@ -12,6 +12,13 @@ const cp = require('child_process');
 
 /** Fichier de versions figées avec hashes, généré depuis requirements.txt (voir README). */
 const LOCK_FILE_NAME = 'requirements.lock.txt';
+/**
+ * Outils de construction figés (setuptools, wheel), installés d'abord dans le venv : certaines
+ * dépendances n'existent qu'en sdist, et l'isolation de build de pip téléchargerait sinon ces
+ * outils sans version ni hash. L'installation principale tourne ensuite avec --no-build-isolation.
+ */
+const BUILD_LOCK_FILE_NAME = 'requirements-build.lock.txt';
+const PIP_INSTALL_ARGS = ['-m', 'pip', 'install', '--require-hashes', '--no-input', '--disable-pip-version-check', '--quiet'];
 const VENV_DIR_NAME = '.venv';
 const CORE_IMPORTS = ['unicorn', 'capstone'];
 const DEFAULT_PYTHON_NAMES = ['python3', 'python'];
@@ -24,6 +31,7 @@ const NETWORK_ERROR_PATTERN = /NewConnectionError|Failed to establish a new conn
 type DependencyStatus = 'ok' | 'installed' | 'declined' | 'offline' | 'failed' | 'unavailable';
 type DependencyOptions = { backendBase: string; quiet?: boolean; log: (message: string) => void };
 type ExecResult = { ok: boolean; output: string };
+type LockFiles = { build: string; main: string };
 
 function execFileResult(file: string, args: string[]): Promise<ExecResult> {
   return new Promise((resolve) => {
@@ -71,8 +79,9 @@ async function hasCoreImports(pythonExe: string): Promise<boolean> {
   return true;
 }
 
-function manualInstallCommand(pythonExe: string, lockPath: string): string {
-  return `"${pythonExe}" -m pip install --require-hashes -r "${lockPath}"`;
+function manualInstallCommand(pythonExe: string, locks: LockFiles): string {
+  const pip = `"${pythonExe}" -m pip install --require-hashes`;
+  return `${pip} -r "${locks.build}" && ${pip} --no-build-isolation -r "${locks.main}"`;
 }
 
 async function askConsent(): Promise<boolean> {
@@ -97,19 +106,19 @@ async function ensureExtensionVenv(basePython: string, venvPath: string, log): P
   return created;
 }
 
-function reportInstallFailure(output: string, venvPython: string, lockPath: string, log): DependencyStatus {
+function reportInstallFailure(output: string, venvPython: string, locks: LockFiles, log): DependencyStatus {
   const offline = NETWORK_ERROR_PATTERN.test(output);
   log(`[pip] Erreur${offline ? ' (réseau indisponible)' : ''}: ${output}`);
   const reason = offline
     ? 'PyPI is unreachable (offline?). Retry once connected'
     : 'Installation failed (details in the "Pile ou Face" output channel)';
   vscode.window.showWarningMessage(
-    `${reason}. ${UNAVAILABLE_NOTE} Manual command: ${manualInstallCommand(venvPython, lockPath)}`
+    `${reason}. ${UNAVAILABLE_NOTE} Manual command: ${manualInstallCommand(venvPython, locks)}`
   );
   return offline ? 'offline' : 'failed';
 }
 
-async function installInExtensionVenv(basePython: string, venvPath: string, lockPath: string, log): Promise<DependencyStatus> {
+async function installInExtensionVenv(basePython: string, venvPath: string, locks: LockFiles, log): Promise<DependencyStatus> {
   let venvPython;
   try {
     venvPython = await ensureExtensionVenv(basePython, venvPath, log);
@@ -118,12 +127,12 @@ async function installInExtensionVenv(basePython: string, venvPath: string, lock
     vscode.window.showWarningMessage(`Cannot create backends/.venv: ${venvErr.message}. ${UNAVAILABLE_NOTE}`);
     return 'failed';
   }
+  log('[pip] Installation des outils de construction (versions vérifiées par hash)…');
+  const build = await execFileResult(venvPython, [...PIP_INSTALL_ARGS, '-r', locks.build]);
+  if (!build.ok) return reportInstallFailure(build.output, venvPython, locks, log);
   log('[pip] Installation des dépendances (versions vérifiées par hash)…');
-  const result = await execFileResult(venvPython, [
-    '-m', 'pip', 'install', '--require-hashes', '--no-input', '--disable-pip-version-check', '--quiet',
-    '-r', lockPath,
-  ]);
-  if (!result.ok) return reportInstallFailure(result.output, venvPython, lockPath, log);
+  const result = await execFileResult(venvPython, [...PIP_INSTALL_ARGS, '--no-build-isolation', '-r', locks.main]);
+  if (!result.ok) return reportInstallFailure(result.output, venvPython, locks, log);
   log('[pip] Installation terminée.');
   vscode.window.showInformationMessage('Pile ou Face: Python dependencies installed.');
   return 'installed';
@@ -143,7 +152,10 @@ function reportUnavailable(message: string, quiet: boolean, log): DependencyStat
 async function ensurePythonDependencies(pythonExe: string, options: DependencyOptions): Promise<DependencyStatus> {
   const { backendBase, quiet = false, log } = options;
   const venvPath = path.join(backendBase, 'backends', VENV_DIR_NAME);
-  const lockPath = path.join(backendBase, 'backends', LOCK_FILE_NAME);
+  const locks = {
+    build: path.join(backendBase, 'backends', BUILD_LOCK_FILE_NAME),
+    main: path.join(backendBase, 'backends', LOCK_FILE_NAME),
+  };
   if (await hasCoreImports(interpreterToCheck(pythonExe, venvPath))) {
     log('[pip] Dépendances OK.');
     return 'ok';
@@ -151,23 +163,25 @@ async function ensurePythonDependencies(pythonExe: string, options: DependencyOp
   if (!isDefaultPython(pythonExe) && !isExtensionVenvPython(pythonExe, venvPath)) {
     return reportUnavailable(
       `Python dependencies are missing for the configured interpreter ${pythonExe}. `
-        + `Install them yourself: ${manualInstallCommand(pythonExe, lockPath)}.`,
+        + `Install them yourself: ${manualInstallCommand(pythonExe, locks)}.`,
       quiet, log
     );
   }
-  if (!fs.existsSync(lockPath)) {
+  const missingLock = [locks.build, locks.main].find((lockPath) => !fs.existsSync(lockPath));
+  if (missingLock) {
     // Défaut de packaging, pas un choix utilisateur : toujours visible, même à l'activation.
-    return reportUnavailable(`Hash-verified requirements file not found: ${lockPath}.`, false, log);
+    return reportUnavailable(`Hash-verified requirements file not found: ${missingLock}.`, false, log);
   }
   if (!(await askConsent())) {
     log(`[pip] Installation refusée par l'utilisateur. ${UNAVAILABLE_NOTE}`);
     return 'declined';
   }
-  return installInExtensionVenv(pythonExe, venvPath, lockPath, log);
+  return installInExtensionVenv(pythonExe, venvPath, locks, log);
 }
 
 module.exports = {
   LOCK_FILE_NAME,
+  BUILD_LOCK_FILE_NAME,
   INSTALL_ACTION,
   ensurePythonDependencies,
 };
