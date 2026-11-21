@@ -1949,19 +1949,27 @@ def build_dynamic_analysis(
 
         if function_key:
             instr_text = _instruction_text(snapshot)
+            function_addr = (
+                _parse_int(function_info.get("addr"))
+                if isinstance(function_info, dict)
+                else None
+            )
+            # Address of the instruction this snapshot executed: `ip` above is
+            # read from the registers *after* it (the next instruction).
+            executed_ip = _normalize_ip(
+                _parse_int(snapshot.get("rip")) or _parse_int(snapshot.get("eip")),
+                resolver.load_base,
+            )
+            # A CET landing pad proven to be the entry (executed address match),
+            # on every call -- repeated and recursive ones included, as `push rbp`
+            # below: the caller's rbp is still live, nothing of this frame exists.
+            cet_entry = (
+                function_addr is not None
+                and executed_ip == function_addr
+                and _is_cet_landing_pad(instr_text)
+            )
             if function_key not in frame_pointer_ready_by_function:
-                function_addr = (
-                    _parse_int(function_info.get("addr"))
-                    if isinstance(function_info, dict)
-                    else None
-                )
                 normalized_ip = _normalize_ip(ip, resolver.load_base)
-                # Address of the instruction this snapshot executed: `ip` above is
-                # read from the registers *after* it (the next instruction).
-                executed_ip = _normalize_ip(
-                    _parse_int(snapshot.get("rip")) or _parse_int(snapshot.get("eip")),
-                    resolver.load_base,
-                )
                 # True only when we can PROVE this is the function's entry
                 # instruction (address match) -- default to "not ready".
                 # Otherwise (unresolved, or trace genuinely starts mid-
@@ -1972,19 +1980,13 @@ def build_dynamic_analysis(
                     and normalized_ip is not None
                     and normalized_ip == function_addr
                 )
-                # A CET landing pad proven to be the entry (address of the executed
-                # instruction): the caller's rbp is still live, nothing of this
-                # frame exists yet. Other first observations keep the rule above.
-                cet_entry = (
-                    function_addr is not None
-                    and executed_ip == function_addr
-                    and _is_cet_landing_pad(instr_text)
-                )
-                default_ready = not (is_function_entry_instruction or cet_entry)
+                default_ready = not is_function_entry_instruction
                 frame_pointer_ready_by_function[function_key] = default_ready
                 frame_allocated_by_function[function_key] = default_ready
-                if cet_entry:
-                    cet_entry_pending.add(function_key)
+            if cet_entry:
+                frame_pointer_ready_by_function[function_key] = False
+                frame_allocated_by_function[function_key] = False
+                cet_entry_pending.add(function_key)
             elif function_key in cet_entry_pending:
                 cet_entry_pending.discard(function_key)
                 if not _is_prologue_push_bp(instr_text):

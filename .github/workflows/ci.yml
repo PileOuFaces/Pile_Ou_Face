@@ -360,6 +360,7 @@ jobs:
           filters: |
             relevant:
               - 'extension/backends/dynamic/**'
+              - '.github/workflows/ci.yml'
               - 'extension/backends/requirements-ci.txt'
 
       - name: Setup Python
@@ -390,6 +391,8 @@ jobs:
             backends/dynamic/tests/test_libc_syscall_simulation.py \
             backends/dynamic/tests/test_stack_protector_tls_bootstrap.py \
             backends/dynamic/tests/test_stack_chk_fail_crash.py \
+            backends/dynamic/tests/test_red_zone_frame_allocation.py \
+            backends/dynamic/tests/test_cet_prologue.py \
             -q
 
   # ══════════════════════════════════════════════════════════════

@@ -39,6 +39,20 @@ from backends.dynamic.pipeline.stack_model import (  # noqa: E402
 
 CF_PROTECTION = ("-fcf-protection=none", "-fcf-protection=full")
 FRAME_CONTROL_ROLES = {"saved_bp", "return_address"}
+TWO_CALLS = """
+    int helper(int a) {
+        int x = a;
+        return x;
+    }
+
+    int main(void) {
+        int r = helper(1);
+        r += helper(2);
+        return r;
+    }
+"""
+# Reaches the second helper() entry, then stops before main's `ret`.
+TWO_CALLS_MAX_STEPS = 26
 SIMPLE_MAIN = """
     int main(void) {
         int x = 42;
@@ -52,12 +66,14 @@ MAX_STEPS = 6
 FRAMELESS_MAX_STEPS = 5
 
 
-def _compile(tmpdir: str, name: str, flags: tuple[str, ...]) -> Path:
+def _compile(
+    tmpdir: str, name: str, flags: tuple[str, ...], source: str = SIMPLE_MAIN
+) -> Path:
     if shutil.which("gcc") is None:
         raise unittest.SkipTest("gcc is required for the CET corpus")
     src = Path(tmpdir) / f"{name}.c"
     binary = Path(tmpdir) / name
-    src.write_text(textwrap.dedent(SIMPLE_MAIN), encoding="utf-8")
+    src.write_text(textwrap.dedent(source), encoding="utf-8")
     result = subprocess.run(
         [
             "gcc",
@@ -194,6 +210,19 @@ class TestCetPrologue(unittest.TestCase):
         common = min(len(with_cet), len(classic))
         self.assertGreaterEqual(common, FRAMELESS_MAX_STEPS - 1)
         self.assertEqual(with_cet[:common], classic[:common])
+
+    def test_every_call_hides_caller_data_at_its_landing_pad(self):
+        """Second call to the same function: its state from the first call must not
+        expose the caller's data at the new `endbr64`."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            binary = _compile(tmpdir, "two_calls", ("-fcf-protection=full",), TWO_CALLS)
+            steps = _steps(_trace(binary, TWO_CALLS_MAX_STEPS))
+        pads = [slots for snap, slots in steps if _is_cet_landing_pad(_instr(snap))]
+        self.assertGreaterEqual(len(pads), 3, "main + two helper() entries expected")
+        for index, slots in enumerate(pads):
+            self.assertLessEqual(
+                _roles(slots), FRAME_CONTROL_ROLES, f"landing pad #{index}: {slots}"
+            )
 
     def test_endbr_inside_a_function_does_not_reset_the_frame(self):
         """Only a landing pad proven to be the entry (address match) counts."""
