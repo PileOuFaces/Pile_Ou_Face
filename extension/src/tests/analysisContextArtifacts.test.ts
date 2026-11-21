@@ -194,4 +194,53 @@ describe('analysisContext artifact fallback', () => {
 
     fs.rmSync(root, { recursive: true, force: true });
   });
+
+  describe('with an asynchronous cache lookup (POF-P1-010)', () => {
+    let root;
+    let binary;
+    let resolveLookup;
+    let resolveExtraction;
+    let readCache;
+    let runPythonJson;
+    let ctx;
+
+    beforeEach(() => {
+      root = fs.mkdtempSync(path.join(os.tmpdir(), 'pof-symbol-lookup-'));
+      const tempDir = path.join(root, '.pile-ou-face');
+      fs.mkdirSync(tempDir, { recursive: true });
+      binary = path.join(root, 'sample.elf');
+      fs.writeFileSync(binary, 'ELF');
+      readCache = sinon.stub().returns(new Promise((resolve) => { resolveLookup = resolve; }));
+      runPythonJson = sinon.stub().returns(new Promise((resolve) => { resolveExtraction = resolve; }));
+      ctx = makeContext(root, tempDir, [], { readCache, runPythonJson });
+    });
+
+    afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+    it('shares one cache lookup and one extraction between concurrent cached callers', async () => {
+      const first = ctx.loadBinarySymbols(binary);
+      const second = ctx.loadBinarySymbols(binary);
+      resolveLookup(null);
+      await flush();
+      resolveExtraction({ symbols: [{ name: 'main' }] });
+
+      expect(await Promise.all([first, second])).to.deep.equal([[{ name: 'main' }], [{ name: 'main' }]]);
+      expect(readCache.calledOnce).to.equal(true);
+      expect(runPythonJson.calledOnce).to.equal(true);
+    });
+
+    it('lets a cached caller join an extraction started during its lookup', async () => {
+      const cached = ctx.loadBinarySymbols(binary);
+      const fresh = ctx.loadBinarySymbols(binary, { useCache: false });
+      expect(runPythonJson.calledOnce).to.equal(true);
+      resolveLookup(null);
+      await flush();
+      resolveExtraction({ symbols: [{ name: 'main' }] });
+
+      expect(await Promise.all([cached, fresh])).to.deep.equal([[{ name: 'main' }], [{ name: 'main' }]]);
+      expect(runPythonJson.calledOnce).to.equal(true);
+    });
+  });
 });

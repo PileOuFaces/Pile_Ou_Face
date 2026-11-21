@@ -200,13 +200,24 @@ describe('static cache async API (POF-P1-010)', function () {
 
   it('removes the entry of a write that was in flight during a clear', async () => {
     expect(await cache.writeCacheAsync(dir, bin, 'info', { v: 0 })).to.equal(true);
-    const lock = await holdWriteLock(cache.getStaticCacheDbPath(dir));
-    const inFlight = cache.writeCacheAsync(dir, bin, 'info', { v: 1 });
-    await delay(SETTLE_MS);
-    // Both the put and the clear wait for the lock; either may commit first.
-    cache.clearCacheEntries(dir);
-    expect(await inFlight).to.equal(false);
-    await lock.released;
+    // The clear runs once the put has passed its pre-check and before its process starts,
+    // so the put commits after the clear: only the post-put catch-up can remove its entry.
+    const realExecFile = cp.execFile;
+    let clearedBeforePut = false;
+    cp.execFile = (command, argv, ...rest) => {
+      if (!clearedBeforePut && argv.includes('put')) {
+        clearedBeforePut = true;
+        cache.clearCacheEntries(dir);
+      }
+      return realExecFile(command, argv, ...rest);
+    };
+    try {
+      expect(await cache.writeCacheAsync(dir, bin, 'info', { v: 1 })).to.equal(false);
+    } finally {
+      cp.execFile = realExecFile;
+    }
+    expect(clearedBeforePut).to.equal(true);
     expect(await cache.readCacheAsync(dir, bin, 'info')).to.equal(null);
+    expect(cache.listCacheEntries(dir)).to.deep.equal([]);
   });
 });

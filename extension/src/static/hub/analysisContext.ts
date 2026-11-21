@@ -38,6 +38,9 @@ function createAnalysisContext({
   // Several panels request the same symbol table when a binary becomes active.
   // Share that immutable extraction instead of starting competing Python processes.
   const _symbolsInFlight = new Map<string, Promise<any[]>>();
+  // The cache lookup is async (POF-P1-010): callers arriving during it share it too, otherwise
+  // each one would miss the cache and start its own extraction once the first one has finished.
+  const _symbolsLookups = new Map<string, Promise<any[]>>();
 
   const sanitizeArtifactToken = (value, fallback = 'item') => {
     const text = String(value || '').trim();
@@ -578,26 +581,36 @@ function createAnalysisContext({
     return { doc, editor };
   };
 
-  const loadBinarySymbols = async (binaryPath, { includeAll = false, useCache = true } = {}) => {
-    const cacheKey = includeAll ? 'symbols_all' : 'symbols';
-    const cached = await readAnalysisCacheEntry(binaryPath, useCache, cacheKey);
-    if (Array.isArray(cached)) {
-      logChannel?.appendLine?.(`[cache] Symboles depuis cache (${includeAll ? 'all' : 'default'})`);
-      return cached;
-    }
-    const inflightKey = `${path.resolve(binaryPath)}:${includeAll ? 'all' : 'default'}`;
-    const existing = _symbolsInFlight.get(inflightKey);
-    if (existing) return existing;
+  const extractBinarySymbols = (binaryPath, includeAll, useCache, inflightKey) => {
     const extraction = (async () => {
       const args = ['--binary', binaryPath];
       if (includeAll) args.push('--all');
       const rawSymbols = await runPythonJson(getSymbolsScript(root), args).catch(() => []);
       const symbols = Array.isArray(rawSymbols) ? rawSymbols : (rawSymbols.symbols || []);
-      writeAnalysisCacheEntry(binaryPath, useCache, cacheKey, symbols);
+      writeAnalysisCacheEntry(binaryPath, useCache, includeAll ? 'symbols_all' : 'symbols', symbols);
       return symbols;
     })().finally(() => { _symbolsInFlight.delete(inflightKey); });
     _symbolsInFlight.set(inflightKey, extraction);
     return extraction;
+  };
+
+  const loadBinarySymbols = (binaryPath, { includeAll = false, useCache = true } = {}) => {
+    const inflightKey = `${path.resolve(binaryPath)}:${includeAll ? 'all' : 'default'}`;
+    // An uncached caller joins an extraction, never a lookup that could answer from the cache.
+    const running = _symbolsInFlight.get(inflightKey) || (useCache ? _symbolsLookups.get(inflightKey) : undefined);
+    if (running) return running;
+    if (!useCache) return extractBinarySymbols(binaryPath, includeAll, useCache, inflightKey);
+    const lookup = (async () => {
+      const cached = await readAnalysisCacheEntry(binaryPath, useCache, includeAll ? 'symbols_all' : 'symbols');
+      if (Array.isArray(cached)) {
+        logChannel?.appendLine?.(`[cache] Symboles depuis cache (${includeAll ? 'all' : 'default'})`);
+        return cached;
+      }
+      // An uncached caller may have started the extraction during the lookup: join it.
+      return _symbolsInFlight.get(inflightKey) || extractBinarySymbols(binaryPath, includeAll, useCache, inflightKey);
+    })().finally(() => { _symbolsLookups.delete(inflightKey); });
+    _symbolsLookups.set(inflightKey, lookup);
+    return lookup;
   };
 
   const collectSymbolNames = (symbols) => {
