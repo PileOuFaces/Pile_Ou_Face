@@ -175,6 +175,9 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r extension/backends/requirements-ci.txt
+          # Same pin as the Dynamic Unicorn job: the dynamic tests are run, not skipped,
+          # so the coverage of backends/dynamic is real (docs/ci/COVERAGE_POLICY.md).
+          pip install unicorn==2.1.4
           cd extension && npm ci
 
       - name: Python tests with coverage
@@ -185,6 +188,7 @@ jobs:
           python3 -m coverage report
           python3 -m coverage xml
           python3 -m coverage json -o coverage-python.json
+          python3 scripts/check_coverage_gates.py static+plugins
 
       - name: Bundle activation smoke test
         working-directory: ./extension
@@ -361,6 +365,9 @@ jobs:
             relevant:
               - 'extension/backends/dynamic/**'
               - 'extension/backends/requirements-ci.txt'
+              - 'extension/pyproject.toml'
+              - 'extension/scripts/check_coverage_gates.py'
+              - '.github/workflows/ci.yml'
 
       - name: Setup Python
         if: steps.filter.outputs.relevant == 'true'
@@ -382,15 +389,17 @@ jobs:
           pip install -r extension/backends/requirements-ci.txt
           pip install unicorn==2.1.4
 
-      - name: Run libc/syscall bridge regressions
+      - name: Run every dynamic test with coverage
         if: steps.filter.outputs.relevant == 'true'
         working-directory: ./extension
         run: |
-          PYTHONPATH=. python3 -m pytest \
-            backends/dynamic/tests/test_libc_syscall_simulation.py \
-            backends/dynamic/tests/test_stack_protector_tls_bootstrap.py \
-            backends/dynamic/tests/test_stack_chk_fail_crash.py \
-            -q
+          # All of backends/dynamic/tests (libc/syscall bridge regressions included), with
+          # unicorn installed: nothing is skipped for a missing dependency here.
+          python3 -m coverage erase
+          PYTHONPATH=. python3 -m coverage run --source=backends/dynamic \
+            --omit='backends/dynamic/tests/*' -m pytest backends/dynamic/tests -q
+          python3 -m coverage report --fail-under=0
+          python3 scripts/check_coverage_gates.py dynamic
 
   # ══════════════════════════════════════════════════════════════
   # 🧬 Corpus réel multi-architecture — PRs uniquement, ubuntu seulement

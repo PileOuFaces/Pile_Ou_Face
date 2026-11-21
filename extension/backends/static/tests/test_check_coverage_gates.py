@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+"""CI coverage gate script (scripts/check_coverage_gates.py)."""
+
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+
+import coverage
+import pytest
+
+SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "check_coverage_gates.py"
+
+
+def _load_script():
+    spec = importlib.util.spec_from_file_location("check_coverage_gates", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture
+def measured(tmp_path):
+    """A .coverage file where pkg/half.py is 75 % covered and pkg/full.py 100 %.
+
+    Written with CoverageData, without tracing: a second tracer started inside the
+    CI's ``coverage run`` would disturb the measurement of the following tests.
+    """
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    half = pkg / "half.py"
+    half.write_text("def used():\n    return 1\n\n\ndef unused():\n    return 2\n")
+    full = pkg / "full.py"
+    full.write_text("VALUE = 1\n")
+    data_file = str(tmp_path / ".coverage")
+    data = coverage.CoverageData(basename=data_file)
+    data.add_lines({str(half): [1, 2, 5], str(full): [1]})
+    data.write()
+    return data_file
+
+
+def _gates(**thresholds):
+    patterns = {
+        "half": "*/pkg/half.py",
+        "full": "*/pkg/full.py",
+        "absent": "*/elsewhere/*",
+    }
+    return {
+        name: {"include": [patterns[name]], "fail_under": value}
+        for name, value in thresholds.items()
+    }
+
+
+def _check(module, names, data_file, gates):
+    return module.check(names, data_file, gates, config_file=False)
+
+
+def test_passes_when_every_named_gate_is_met(measured, capsys):
+    gates_module = _load_script()
+    assert _check(gates_module, ["full"], measured, _gates(full=100)) == 0
+    assert "OK" in capsys.readouterr().out
+
+
+def test_fails_below_the_threshold(measured, capsys):
+    gates_module = _load_script()
+    assert _check(gates_module, ["half"], measured, _gates(half=80)) == 1
+    assert "FAIL  half" in capsys.readouterr().out
+
+
+def test_fails_when_a_named_gate_has_no_data(measured, capsys):
+    gates_module = _load_script()
+    assert _check(gates_module, ["absent"], measured, _gates(absent=0)) == 1
+    assert "no coverage data" in capsys.readouterr().out
+
+
+def test_rejects_an_unknown_gate(measured):
+    gates_module = _load_script()
+    assert _check(gates_module, ["missing"], measured, _gates(full=0)) == 2
+
+
+def test_pyproject_defines_the_documented_gates():
+    gates = _load_script().load_gates()
+    assert gates["static+plugins"]["fail_under"] == 69
+    assert gates["dynamic"]["fail_under"] == 69
