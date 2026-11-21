@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 from unittest.mock import MagicMock, patch
 
@@ -10,6 +11,7 @@ from backends.mcp.ai_provider import (
     call_provider_result,
     list_providers,
     set_default_provider,
+    set_provider_configuration,
 )
 
 
@@ -399,6 +401,48 @@ def test_set_default_provider_persists_env(monkeypatch):
     result = set_default_provider("groq")
     assert result == {"ok": True, "default_provider": "groq"}
     write_env.assert_called_once_with("POF_DEFAULT_AI_PROVIDER", "groq")
+
+
+SECRET_KEY = "sk-test-secret-value"
+
+
+def _redirect_env_file(monkeypatch, env_file):
+    from backends.mcp import env_loader
+
+    original = env_loader._write_env_key
+    monkeypatch.setattr(
+        env_loader,
+        "_write_env_key",
+        lambda key, value: original(key, value, env_file),
+    )
+
+
+def test_set_provider_configuration_persists_reloadable_key(monkeypatch, tmp_path):
+    from backends.mcp.env_loader import _load_env_file
+
+    env_file = tmp_path / "pof" / ".env"
+    _redirect_env_file(monkeypatch, env_file)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    result = set_provider_configuration("anthropic", SECRET_KEY, None)
+    assert result["ok"] is True
+    assert SECRET_KEY not in json.dumps(result)
+    monkeypatch.delenv("ANTHROPIC_API_KEY")
+    _load_env_file(env_file)
+    assert os.environ["ANTHROPIC_API_KEY"] == SECRET_KEY
+
+
+def test_set_provider_configuration_error_hides_key(monkeypatch, tmp_path, caplog):
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("")
+    _redirect_env_file(monkeypatch, blocker / ".env")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    with caplog.at_level(logging.DEBUG):
+        result = set_provider_configuration("openai", SECRET_KEY, None)
+    assert result["ok"] is False
+    assert "OPENAI_API_KEY" in result["error"]
+    assert SECRET_KEY not in result["error"]
+    assert SECRET_KEY not in caplog.text
+    assert "OPENAI_API_KEY" not in os.environ
 
 
 def test_openai_model_list_excludes_non_chat_models(monkeypatch):
