@@ -233,3 +233,44 @@ Ces références ne sont pas des chemins d'exécution de l'Extension Host.
 - La durée réelle des appels : aucune mesure n'a été faite.
 - L'existence d'autres appelants hors `extension/src/` : hors périmètre.
 - Le contenu de `getExtensionPath` (`./utils`) et du script `backends/static/cache/cache_index.py`, qui n'ont pas été lus.
+
+## 7. Correction POF-P1-010 : API asynchrone et file bornée
+
+Les sections 1 à 6 décrivent l'état au commit de base. Depuis POF-P1-010 :
+
+- `extension/src/shared/staticCache.ts` expose `readCacheAsync` et `writeCacheAsync`. Elles lancent
+  `cache_index.py` avec `child_process.execFile` (même interpréteur, mêmes arguments, délai de 10 s et
+  limite de sortie de 1 Mio, identique au défaut de `spawnSync`) et utilisent `fs.promises` pour
+  `stat`, `access` et `mkdir`.
+- Une file FIFO par base SQLite (`extension/src/shared/boundedSerialQueue.ts`) exécute une opération à la
+  fois, dans l'ordre de soumission : une lecture soumise après une écriture voit cette écriture, même si
+  l'appelant n'attend pas l'écriture. La file est bornée (`CACHE_QUEUE_LIMIT`, 32 opérations en cours ou
+  en attente) ; au-delà, la lecture renvoie un défaut de cache et l'écriture est ignorée, avec un
+  avertissement dans le journal.
+- `extension/src/static/hub.ts` injecte ces variantes asynchrones dans `createAnalysisContext` et
+  `createLoaders`. Les lectures sont attendues (`await`) ; les écritures sont mises en file sans être
+  attendues. `writeCacheAsync` ne rejette jamais : elle résout `false` si l'entrée n'est pas stockée.
+- Les fonctions synchrones (`readCache`, `writeCache`, `listCacheEntries`, `pruneCacheEntries`,
+  `clearCacheEntries`, `deleteCacheEntriesForBinary`) restent exportées et inchangées. Elles servent encore
+  aux chemins de maintenance de `extension/src/shared/fileManager.ts` (section 2.6 à 2.9), qui bloquent
+  toujours l'Extension Host et ne passent pas par la file : leur ordre relatif aux écritures asynchrones en
+  attente n'est pas garanti.
+
+### Mesure de l'event loop
+
+Script DEV, sur un stockage temporaire, jamais en production :
+
+```bash
+cd extension
+npx tsx scripts/measure-static-cache-event-loop.ts 20
+```
+
+Il affiche, pour l'API synchrone puis asynchrone, le p50, le p95 et le maximum du délai de l'event loop
+(`perf_hooks.monitorEventLoopDelay`) pendant N paires écriture + lecture d'une charge de 2000 symboles.
+
+### Tests
+
+- `extension/src/tests/boundedSerialQueue.test.ts` : ordre FIFO, reprise après erreur, borne.
+- `extension/src/tests/staticCacheAsync.test.ts` : aller-retour, ordre lecture/écriture entrelacées,
+  event loop actif pendant les opérations, contention SQLite (verrou d'écriture externe tenu 1,5 s,
+  écrivains concurrents dans d'autres processus).

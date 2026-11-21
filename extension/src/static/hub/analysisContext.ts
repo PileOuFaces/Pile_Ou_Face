@@ -275,7 +275,7 @@ function createAnalysisContext({
   };
 
   const loadBinaryHeaders = async (binaryPath, { useCache = true } = {}) => {
-    const cached = readAnalysisCacheEntry(binaryPath, useCache, 'info');
+    const cached = await readAnalysisCacheEntry(binaryPath, useCache, 'info');
     if (cached && typeof cached === 'object') {
       logChannel?.appendLine?.('[cache] Infos binaire depuis cache');
       return cached;
@@ -453,16 +453,17 @@ function createAnalysisContext({
     }
   };
 
-  const readAnalysisCacheEntry = (effectiveAbsPath, allowCache, cacheKey) => {
+  const readAnalysisCacheEntry = async (effectiveAbsPath, allowCache, cacheKey) => {
     const target = getAnalysisCacheTarget(effectiveAbsPath, allowCache);
     if (!target) return null;
     return readCache(storageDir, target, cacheKey);
   };
 
+  // Returns once the write is queued; the per-database FIFO orders it before later reads.
   const writeAnalysisCacheEntry = (effectiveAbsPath, allowCache, cacheKey, value) => {
     const target = getAnalysisCacheTarget(effectiveAbsPath, allowCache);
     if (!target) return false;
-    writeCache(storageDir, target, cacheKey, value);
+    void writeCache(storageDir, target, cacheKey, value);
     return true;
   };
 
@@ -473,7 +474,7 @@ function createAnalysisContext({
     logLabel = null,
     compute,
   }) => {
-    const cached = readAnalysisCacheEntry(effectiveAbsPath, allowCache, cacheKey);
+    const cached = await readAnalysisCacheEntry(effectiveAbsPath, allowCache, cacheKey);
     if (cached) {
       if (logLabel) logChannel.appendLine(`[cache] ${logLabel} depuis cache`);
       return cached;
@@ -579,7 +580,7 @@ function createAnalysisContext({
 
   const loadBinarySymbols = async (binaryPath, { includeAll = false, useCache = true } = {}) => {
     const cacheKey = includeAll ? 'symbols_all' : 'symbols';
-    const cached = readAnalysisCacheEntry(binaryPath, useCache, cacheKey);
+    const cached = await readAnalysisCacheEntry(binaryPath, useCache, cacheKey);
     if (Array.isArray(cached)) {
       logChannel?.appendLine?.(`[cache] Symboles depuis cache (${includeAll ? 'all' : 'default'})`);
       return cached;

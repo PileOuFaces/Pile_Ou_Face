@@ -127,7 +127,7 @@ function createGraphRenderers({
         if (fs.existsSync(mappingPath)) {
           const mappingSig = getFileSignature(mappingPath);
           const cacheKey = funcAddr ? `cfg_${funcAddr}` : 'cfg';
-          const cachedCfg = allowCache ? readAnalysisCacheEntry(effectiveAbsPath, allowCache, cacheKey) : null;
+          const cachedCfg = allowCache ? await readAnalysisCacheEntry(effectiveAbsPath, allowCache, cacheKey) : null;
           if (cachedCfg && cachedCfg._cache_meta?.mapping_sig === mappingSig) {
             logChannel.appendLine(`[cache] CFG depuis cache (${funcAddr || 'full'})`);
             logDebug(`[CFG] response cache binary=${binaryPath} func=${funcAddr || '<full>'} blocks=${(cachedCfg.blocks || []).length} edges=${(cachedCfg.edges || []).length}`);
@@ -253,7 +253,7 @@ function createGraphRenderers({
         if (fs.existsSync(mappingPath) && fs.existsSync(resolvedSymbolsPath)) {
           const mappingSig = getFileSignature(mappingPath);
           const symbolsSig = getFileSignature(resolvedSymbolsPath);
-          const cachedCallGraph = allowCache ? readAnalysisCacheEntry(effectiveAbsPath, allowCache, 'callgraph') : null;
+          const cachedCallGraph = allowCache ? await readAnalysisCacheEntry(effectiveAbsPath, allowCache, 'callgraph') : null;
           if (
             cachedCallGraph
             && cachedCallGraph._cache_meta?.mapping_sig === mappingSig
