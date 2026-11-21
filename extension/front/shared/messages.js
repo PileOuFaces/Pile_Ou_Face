@@ -2944,6 +2944,10 @@ window.addEventListener('message', (event) => {
     }
     return;
   }
+  if (msg.type === 'hubPythonPathSelected') {
+    _pythonPathSelected(msg);
+    return;
+  }
   if (msg.type === 'hubSettingsSaved') {
     _settingsSaved(msg);
     return;

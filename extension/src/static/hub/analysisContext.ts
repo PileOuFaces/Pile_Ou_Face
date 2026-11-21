@@ -6,7 +6,8 @@ const { confirmOpenLargeTextFile } = require('../../shared/largeFileGuard');
 
 function createAnalysisContext({
   root,
-  pythonExe,
+  getPythonExe = null,
+  pythonExe = 'python3',
   logChannel,
   runCommand,
   runPythonJson,
@@ -33,6 +34,8 @@ function createAnalysisContext({
   getExampleCandidates,
   normalizeAddress,
 }) {
+  // Resolved per launch so a pythonPath saved while the hub is open applies immediately.
+  const resolvePythonExe = typeof getPythonExe === 'function' ? getPythonExe : () => pythonExe;
   // In-flight deduplication: concurrent callers for the same disasmPath share one subprocess.
   const _disasmInFlight = new Map<string, Promise<void>>();
   // Several panels request the same symbol table when a binary becomes active.
@@ -265,7 +268,7 @@ function createAnalysisContext({
           progress.report({ increment: 0, message: 'Annulation…' });
         });
         await runCommand(
-          pythonExe,
+          resolvePythonExe(),
           args,
           root,
           logChannel,
@@ -340,7 +343,7 @@ function createAnalysisContext({
               args,
             );
           } else {
-            await runCommand(pythonExe, args, root, logChannel, { PYTHONPATH: getExtensionPath() || root });
+            await runCommand(resolvePythonExe(), args, root, logChannel, { PYTHONPATH: getExtensionPath() || root });
           }
           if (warmHeaders) await warmHeaders;
         };

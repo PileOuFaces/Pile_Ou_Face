@@ -77,6 +77,7 @@ const { createGraphRenderers } = require('./hub/graphRenderers');
 const { createLoaders } = require('./hub/loaders');
 const { createTraceHistory } = require('./hub/traceHistory');
 const { createActions } = require('./hub/actions');
+const { createSettingsActions } = require('./hub/settingsActions');
 const { createRunTraceTelemetry } = require('../dynamic/runTraceTelemetry');
 const archSupport = require('./hub/archSupport');
 const { getRuntimeAuditState, recordRuntimeEvent } = require('../shared/runtimeAudit');
@@ -151,25 +152,6 @@ function createHub(config) {
     setSidebarMode,
     telemetry,
   } = config;
-
-  const SETTINGS_DEFAULTS = {
-    pythonPath: '',
-    authServerUrl: '',
-    aiTemperature: 0.7,
-    aiTopP: 0.9,
-    aiMaxTokens: 4096,
-    aiPricingRules: [],
-    decompilerProvider: 'docker',
-    decompilerLocalPaths: {},
-    stringsEncoding: 'auto',
-    stringsMinLen: 4,
-    asmSyntax: 'intel',
-    lang: 'fr',
-    defaultPanel: 'dashboard',
-    codeFontSize: 13,
-    interfaceMode: 'advanced',
-    enabledStaticFeatures: [],
-  };
 
   // Same source of truth as telemetryEvents.ts (extensionVersion): drives the
   // plugin host min/max_version compatibility check in backends/plugins/registry.py.
@@ -288,7 +270,8 @@ function createHub(config) {
     const workspaceRoot = folders[0].uri.fsPath;
     const root = resolveProjectRoot(folders[0].uri.fsPath);
     const backendRoot = getExtensionPath() || root;
-    const pythonExe = detectPythonExecutable(root, getConfiguredPythonPath(context.globalState));
+    // Résolu à chaque lancement : un pythonPath enregistré hub ouvert s'applique immédiatement.
+    const getPythonExe = () => detectPythonExecutable(root, getConfiguredPythonPath(context.globalState));
     const pythonEnv = buildRuntimeEnv(
       root,
       storageDir,
@@ -346,7 +329,7 @@ function createHub(config) {
         ...runtimeArgs,
       ];
       const stdout = await new Promise((resolve, reject) => {
-        const proc = cp.spawn(pythonExe, args, {
+        const proc = cp.spawn(getPythonExe(), args, {
           cwd: root,
           env: pluginRuntime.env,
           stdio: ['pipe', 'pipe', 'pipe'],
@@ -487,7 +470,7 @@ function createHub(config) {
       try {
         const { stdout } = await new Promise<{ stdout: string }>((resolve, reject) => {
           cp.execFile(
-            pythonExe,
+            getPythonExe(),
             [path.join(backendRoot, 'backends/static/decompile/decompile.py'), '--list', '--provider', 'auto'],
             { encoding: 'utf8', cwd: root, maxBuffer: 2 * 1024 * 1024, timeout: 30000, env: pythonEnv },
             (err, stdout, stderr) => err ? reject(Object.assign(err, { stderr })) : resolve({ stdout }),
@@ -608,7 +591,7 @@ function createHub(config) {
     const runPythonJson = (scriptPath, args) => new Promise((resolve, reject) => {
       const startedAt = Date.now();
       const auditName = path.relative(root, scriptPath);
-      cp.execFile(pythonExe, [scriptPath, ...args], { encoding: 'utf8', cwd: root, maxBuffer: 32 * 1024 * 1024, timeout: 60000, env: pythonEnv }, (err, stdout) => {
+      cp.execFile(getPythonExe(), [scriptPath, ...args], { encoding: 'utf8', cwd: root, maxBuffer: 32 * 1024 * 1024, timeout: 60000, env: pythonEnv }, (err, stdout) => {
         recordRuntimeEvent('python', auditName, {
           source: 'hub.runPythonJson',
           argc: args.length,
@@ -623,7 +606,7 @@ function createHub(config) {
     const runPythonJsonViaFile = (scriptPath, args, tmpFile) => new Promise((resolve, reject) => {
       const startedAt = Date.now();
       const auditName = path.relative(root, scriptPath);
-      cp.execFile(pythonExe, [scriptPath, ...args, '--output', tmpFile], { cwd: root, timeout: 120000, env: pythonEnv }, (err) => {
+      cp.execFile(getPythonExe(), [scriptPath, ...args, '--output', tmpFile], { cwd: root, timeout: 120000, env: pythonEnv }, (err) => {
         recordRuntimeEvent('python', auditName, {
           source: 'hub.runPythonJsonViaFile',
           argc: args.length,
@@ -651,7 +634,7 @@ function createHub(config) {
       const auditName = args?.[0] || '';
       const auditArgc = Array.isArray(args) ? Math.max(0, args.length - 1) : 0;
       cp.execFile(
-        pythonExe,
+        getPythonExe(),
         args,
         { encoding: 'utf8', cwd: root, timeout, maxBuffer, env: pythonEnv },
         (err, stdout, stderr) => {
@@ -689,7 +672,7 @@ function createHub(config) {
       const auditName = args?.[0] || '';
       const auditArgc = Array.isArray(args) ? Math.max(0, args.length - 1) : 0;
       cp.execFile(
-        pythonExe,
+        getPythonExe(),
         args,
         { encoding: 'utf8', cwd: root, timeout, maxBuffer, env: pythonEnv },
         (err, stdout, stderr) => {
@@ -915,7 +898,7 @@ function createHub(config) {
     };
     // ── Module instantiation ──────────────────────────────────────────────────
     const analysisCtx = createAnalysisContext({
-      root, storageDir, globalDir, pythonExe, logChannel, runCommand, runPythonJson, runPythonTextFile,
+      root, storageDir, globalDir, getPythonExe, logChannel, runCommand, runPythonJson, runPythonTextFile,
       resolvePathFromWorkspace, toWebviewPath, ensureTempDir, getRawProfile,
       vscode, fs, path, crypto,
       inspectBinaryInput, normalizeRawProfile, getRawArchDescriptor,
@@ -951,16 +934,17 @@ function createHub(config) {
       payloadToHex, buildCmpPayloadSuggestion,
       isSupportedBinary, inspectBinaryInput,
       getRulesManagerScript, getSearchScript, getPayloadScriptRunnerScript, getExampleCandidates,
-      SETTINGS_DEFAULTS,
       setSidebarMode, refreshSidebar,
       normalizePayloadTargetMode, payloadTargetLabel, resolvePayloadTarget,
       preferredMainSymbol, findSymbolByCandidates, mainSymbolCandidates,
     });
+    const settingsHandlers = createSettingsActions({ panel, context, vscode, root, logChannel });
     const hubDispatchMap = {
       ...navHandlers,
       ...graphHandlers,
       ...loadersHandlers,
       ...actionsHandlers,
+      ...settingsHandlers,
       requestDynamicTraceHistory: traceHistoryHandlers.requestDynamicTraceHistory,
       openDynamicTraceHistory: traceHistoryHandlers.openDynamicTraceHistory,
       deleteDynamicTraceHistory: traceHistoryHandlers.deleteDynamicTraceHistory,
@@ -1338,7 +1322,7 @@ function createHub(config) {
             '--input', absoluteAsm,
             '--output', isolatedJsonPath
           ];
-          await runCommand(pythonExe, staticArgs, root, logChannel, { PYTHONPATH: getExtensionPath() || root });
+          await runCommand(getPythonExe(), staticArgs, root, logChannel, { PYTHONPATH: getExtensionPath() || root });
           if (!fs.existsSync(isolatedJsonPath)) {
             throw new Error(`Trace statique introuvable: ${path.basename(isolatedJsonPath)}`);
           }
@@ -1482,7 +1466,7 @@ function createHub(config) {
           if (useInterp) pythonArgs.push('--start-interp');
 
           failureCategory = 'backend_failed';
-          await runCommand(pythonExe, pythonArgs, root, logChannel, { PYTHONPATH: getExtensionPath() || root });
+          await runCommand(getPythonExe(), pythonArgs, root, logChannel, { PYTHONPATH: getExtensionPath() || root });
           if (!fs.existsSync(isolatedJsonPath)) {
             throw new Error(`Trace dynamique introuvable: ${path.basename(isolatedJsonPath)}`);
           }
