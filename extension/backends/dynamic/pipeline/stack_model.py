@@ -1968,21 +1968,26 @@ def build_dynamic_analysis(
                 and executed_ip == function_addr
                 and _is_cet_landing_pad(instr_text)
             )
+            normalized_ip = _normalize_ip(ip, resolver.load_base)
+            # True only when we can PROVE the next instruction is the function's
+            # entry (address match, e.g. the `call` step) -- then "not ready".
+            is_function_entry_instruction = (
+                function_addr is not None
+                and normalized_ip is not None
+                and normalized_ip == function_addr
+            )
             if function_key not in frame_pointer_ready_by_function:
-                normalized_ip = _normalize_ip(ip, resolver.load_base)
-                # True only when we can PROVE this is the function's entry
-                # instruction (address match) -- default to "not ready".
-                # Otherwise (unresolved, or trace genuinely starts mid-
-                # function) keep the historical permissive default so a
-                # trace that never observes a prologue still works.
-                is_function_entry_instruction = (
-                    function_addr is not None
-                    and normalized_ip is not None
-                    and normalized_ip == function_addr
-                )
+                # Otherwise (unresolved, or trace genuinely starts mid-function)
+                # keep the historical permissive default so a trace that never
+                # observes a prologue still works.
                 default_ready = not is_function_entry_instruction
                 frame_pointer_ready_by_function[function_key] = default_ready
                 frame_allocated_by_function[function_key] = default_ready
+            elif is_function_entry_instruction:
+                # State is kept per function, not per invocation: a later call
+                # (repeated or recursive) starts exactly like the first one.
+                frame_pointer_ready_by_function[function_key] = False
+                frame_allocated_by_function[function_key] = False
             if cet_entry:
                 frame_pointer_ready_by_function[function_key] = False
                 frame_allocated_by_function[function_key] = False

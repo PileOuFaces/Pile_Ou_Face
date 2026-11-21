@@ -211,18 +211,28 @@ class TestCetPrologue(unittest.TestCase):
         self.assertGreaterEqual(common, FRAMELESS_MAX_STEPS - 1)
         self.assertEqual(with_cet[:common], classic[:common])
 
-    def test_every_call_hides_caller_data_at_its_landing_pad(self):
-        """Second call to the same function: its state from the first call must not
-        expose the caller's data at the new `endbr64`."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            binary = _compile(tmpdir, "two_calls", ("-fcf-protection=full",), TWO_CALLS)
-            steps = _steps(_trace(binary, TWO_CALLS_MAX_STEPS))
-        pads = [slots for snap, slots in steps if _is_cet_landing_pad(_instr(snap))]
-        self.assertGreaterEqual(len(pads), 3, "main + two helper() entries expected")
-        for index, slots in enumerate(pads):
-            self.assertLessEqual(
-                _roles(slots), FRAME_CONTROL_ROLES, f"landing pad #{index}: {slots}"
-            )
+    def test_every_call_hides_caller_data_until_its_frame_exists(self):
+        """Second call to the same function: neither its `call` step nor its
+        `endbr64` may show the caller's data, whatever the first call left."""
+        for flag in CF_PROTECTION:
+            with self.subTest(flag=flag), tempfile.TemporaryDirectory() as tmpdir:
+                binary = _compile(tmpdir, "two_calls", (flag,), TWO_CALLS)
+                steps = _steps(_trace(binary, TWO_CALLS_MAX_STEPS))
+                calls = [
+                    i
+                    for i, (snap, _) in enumerate(steps)
+                    if _instr(snap).startswith("call")
+                ]
+                self.assertGreaterEqual(len(calls), 2, "two helper() calls expected")
+                for call_index in calls:
+                    for snap, slots in steps[call_index:]:
+                        if _instr(snap) == "mov rbp, rsp":
+                            break
+                        self.assertLessEqual(
+                            _roles(slots),
+                            FRAME_CONTROL_ROLES,
+                            f"{flag}, call at step {call_index + 1}: `{_instr(snap)}`: {slots}",
+                        )
 
     def test_endbr_inside_a_function_does_not_reset_the_frame(self):
         """Only a landing pad proven to be the entry (address match) counts."""
