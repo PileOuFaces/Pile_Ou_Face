@@ -48,12 +48,6 @@ else:
     UNICORN_SKIP_REASON = ""
 import pytest
 
-# The corpus is compiled with the host gcc and traced as x86-64 ELF: on macOS gcc is
-# clang and produces Mach-O, so these tests only make sense on Linux.
-pytestmark = pytest.mark.skipif(
-    not sys.platform.startswith("linux"), reason="needs gcc producing x86-64 ELF"
-)
-
 
 class _FakeUc:
     """Minimal Unicorn stand-in -- only what _record_crash_context/emu_stop need."""
@@ -174,6 +168,11 @@ def _canary_config(argv1: str | None) -> TraceConfig:
 
 
 @unittest.skipIf(trace_binary is None, UNICORN_SKIP_REASON)
+# The corpus is compiled with the host gcc and traced as x86-64 ELF: on macOS gcc is
+# clang and produces Mach-O. The _FakeUc tests of this module stay portable.
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="needs gcc producing x86-64 ELF"
+)
 class TestStackChkFailCorpus(unittest.TestCase):
     """canary_intact / canary_corrupted, same source, only argv1 differs."""
 
