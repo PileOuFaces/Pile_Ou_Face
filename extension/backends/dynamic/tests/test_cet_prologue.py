@@ -90,8 +90,8 @@ def _compile(
         capture_output=True,
         text=True,
     )
-    if result.returncode != 0:
-        raise unittest.SkipTest(f"gcc failed: {result.stderr.strip()}")
+    # The corpus is part of the test: a compilation error must fail, not skip.
+    assert result.returncode == 0, f"gcc failed: {result.stderr.strip()}"
     return binary
 
 
@@ -145,6 +145,7 @@ def _roles(slots: list[dict]) -> set[str]:
 
 
 @unittest.skipIf(TraceConfig is None, UNICORN_SKIP_REASON)
+@unittest.skipUnless(sys.platform.startswith("linux"), "needs gcc producing x86-64 ELF")
 class TestCetPrologue(unittest.TestCase):
     def _trace_with(self, *flags: str, max_steps: int = MAX_STEPS) -> dict:
         with tempfile.TemporaryDirectory() as tmpdir:
