@@ -34,7 +34,8 @@ const {
   payloadTargetLabel,
   resolvePayloadTarget,
 } = require('../shared/dynamicInputTarget');
-const { readCache, writeCache } = require('../shared/staticCache');
+// Async variants: cache I/O must not block the Extension Host (POF-P1-010).
+const { readCacheAsync: readCache, writeCacheAsync: writeCache } = require('../shared/staticCache');
 const { createHandlers } = require('./handlers');
 const {
   getDisasmScript,

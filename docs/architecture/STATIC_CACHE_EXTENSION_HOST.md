@@ -233,3 +233,70 @@ Ces références ne sont pas des chemins d'exécution de l'Extension Host.
 - La durée réelle des appels : aucune mesure n'a été faite.
 - L'existence d'autres appelants hors `extension/src/` : hors périmètre.
 - Le contenu de `getExtensionPath` (`./utils`) et du script `backends/static/cache/cache_index.py`, qui n'ont pas été lus.
+
+## 7. Correction POF-P1-010 : API asynchrone et file bornée
+
+Les sections 1 à 6 décrivent l'état au commit de base. Depuis POF-P1-010 :
+
+- `extension/src/shared/staticCache.ts` expose `readCacheAsync` et `writeCacheAsync`. Elles lancent
+  `cache_index.py` avec `child_process.execFile` (même interpréteur, mêmes arguments, délai de 10 s et
+  limite de sortie de 1 Mio, identique au défaut de `spawnSync`) et utilisent `fs.promises` pour
+  `stat`, `access` et `mkdir`.
+- Une file FIFO par base SQLite (`extension/src/shared/boundedSerialQueue.ts`) exécute une opération à la
+  fois, dans l'ordre de soumission : une lecture soumise après une écriture voit cette écriture, même si
+  l'appelant n'attend pas l'écriture. La file est bornée (`CACHE_QUEUE_LIMIT`, 32 opérations en cours ou
+  en attente) ; au-delà, la lecture renvoie un défaut de cache et l'écriture est ignorée, avec un
+  avertissement dans le journal.
+- `extension/src/static/hub.ts` injecte ces variantes asynchrones dans `createAnalysisContext` et
+  `createLoaders`. Les lectures sont attendues (`await`) ; les écritures sont mises en file sans être
+  attendues. `writeCacheAsync` ne rejette jamais : elle résout `false` si l'entrée n'est pas stockée.
+- Les fonctions synchrones (`readCache`, `writeCache`, `listCacheEntries`, `pruneCacheEntries`,
+  `clearCacheEntries`, `deleteCacheEntriesForBinary`) restent exportées et inchangées. Elles servent encore
+  aux chemins de maintenance de `extension/src/shared/fileManager.ts` (section 2.6 à 2.9), qui bloquent
+  toujours l'Extension Host et ne passent pas par la file.
+- `writeCacheAsync` relève la signature du binaire (chemin, mtime, taille) au moment de la soumission,
+  de façon synchrone (`fs.statSync` et `fs.realpathSync`, sans Python) : un `stat` asynchrone pourrait se
+  terminer après le remplacement du binaire et classer l'ancien résultat sous la nouvelle signature.
+  Juste avant l'écriture, la signature est relue : si le binaire a changé pendant l'attente, l'écriture
+  est abandonnée (`false`) au lieu d'enregistrer l'ancien résultat sous la nouvelle signature.
+- `clearCacheEntries` et `deleteCacheEntriesForBinary` enregistrent une invalidation
+  (`extension/src/shared/staticCacheInvalidation.ts`) avant d'agir. Une écriture asynchrone soumise avant
+  cette invalidation, pour la même base (ou le même binaire), est abandonnée si elle n'a pas encore démarré ;
+  si elle était déjà en cours, elle est suivie d'un `delete-binary` pour ce binaire, afin qu'aucune
+  entrée supprimée ne soit recréée. `pruneCacheEntries` n'invalide rien : il ne retire que des entrées
+  dont le binaire a changé, et une écriture valide n'en fait pas partie.
+
+### Mesure de l'event loop
+
+Script DEV, sur un stockage temporaire, jamais en production :
+
+```bash
+cd extension
+npx tsx scripts/measure-static-cache-event-loop.ts 20
+```
+
+Il affiche, pour l'API synchrone puis asynchrone, le p50, le p95 et le maximum du délai de l'event loop
+(`perf_hooks.monitorEventLoopDelay`) pendant N paires écriture + lecture d'une charge de 2000 symboles.
+Chaque paire est vérifiée (écriture stockée, relecture identique) et l'histogramme doit contenir des
+échantillons : sinon le script échoue au lieu d'afficher des chiffres qui ne mesureraient que des échecs.
+
+Résultats relevés le 2026-11-21 : 3 exécutions de 20 itérations, conteneur `node:22` (Debian, Python 3
+du système) sur une machine Linux x86_64 de DEV. Valeurs en ms, min–max des 3 exécutions :
+
+| API | p50 | p95 | max | durée totale |
+|---|---|---|---|---|
+| synchrone (`readCache`/`writeCache`) | 65,8–67,9 | 71,5–73,5 | 78,1–80,9 | 1349–1380 |
+| asynchrone (`readCacheAsync`/`writeCacheAsync`) | 1,1 | 1,2–1,3 | 2,6–3,2 | 1325–1387 |
+
+Le travail total ne change pas (même durée totale : un processus Python par opération), mais il ne bloque
+plus l'event loop : avec l'API synchrone, chaque paire bloque l'Extension Host environ 70 ms. Ces chiffres
+dépendent de la machine et ne constituent pas un seuil garanti.
+
+### Tests
+
+- `extension/src/tests/boundedSerialQueue.test.ts` : ordre FIFO, reprise après erreur, borne.
+- `extension/src/tests/staticCacheAsync.test.ts` : aller-retour, ordre lecture/écriture entrelacées,
+  event loop actif pendant les opérations, contention SQLite (verrou d'écriture externe tenu 1,5 s,
+  écrivains concurrents dans d'autres processus), binaire remplacé pendant l'attente ou juste après la
+  soumission (avant tout `stat` asynchrone), `clear` et
+  `delete-binary` exécutés pendant qu'une écriture est en attente ou en cours.
