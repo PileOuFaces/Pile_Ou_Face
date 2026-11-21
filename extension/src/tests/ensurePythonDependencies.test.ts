@@ -29,9 +29,10 @@ function pipCalls(execFile) {
 }
 
 /** Imports manquants ; venv et pip répondent selon `pipError` ; `pipConfig` = sortie de `pip config list`. */
-function stubPython(existing, pipError = null, pipConfig = "", { installs = true } = {}) {
+function stubPython(existing, pipError = null, pipConfig = "", { installs = true, platform = "linux x86_64" } = {}) {
   let installed = false;
   return sinon.stub(cp, "execFile").callsFake((_file, args, cb) => {
+    if (args[0] === "-c" && args[1].includes("platform.machine()")) return cb(null, `${platform}\n`, "");
     if (args[0] === "-c") return installed ? cb(null, "", "") : cb(new Error("ModuleNotFoundError"), "", "");
     if (args[1] === "venv") {
       existing.add(VENV_PYTHON);
@@ -148,6 +149,28 @@ describe("ensurePythonDependencies", () => {
     expect(warn.firstCall.args[0]).to.match(/^Installation failed/);
   });
 
+  it("does not offer the automatic install on Intel macOS, and says why even when quiet", async () => {
+    const execFile = stubPython(existing, null, "", { platform: "darwin x86_64" });
+
+    const status = await utils.ensurePythonDependencies("python3", EXT_DIR_WITH_SPACES, { quiet: true });
+
+    expect(status).to.equal("unsupported");
+    expect(info.called).to.equal(false);
+    expect(pipCalls(execFile)).to.deep.equal([]);
+    expect(execFile.getCalls().some((c) => c.args[1][1] === "venv")).to.equal(false);
+    expect(warn.calledOnce).to.equal(true);
+    expect(warn.firstCall.args[0]).to.contain("not supported on Intel macOS").and.to.contain("pythonPath");
+  });
+
+  it("probes the interpreter that will receive the packages, so Apple Silicon macOS still gets the offer", async () => {
+    const execFile = stubPython(existing, null, "", { platform: "darwin arm64" });
+
+    expect(await utils.ensurePythonDependencies("python3", EXT_DIR_WITH_SPACES, { quiet: true })).to.equal("declined");
+    expect(info.calledOnce).to.equal(true);
+    const probe = execFile.getCalls().find((c) => c.args[1][0] === "-c" && c.args[1][1].includes("platform.machine()"));
+    expect(probe.args[0]).to.equal("python3");
+  });
+
   it("reuses an existing extension venv without recreating it", async () => {
     existing.add(VENV_PYTHON);
     info.resolves(INSTALL_ACTION);
@@ -239,7 +262,8 @@ describe("ensurePythonDependencies", () => {
 
     expect(status).to.equal("declined");
     expect(info.calledOnce).to.equal(true);
-    expect(execFile.getCalls().some((c) => c.args[0] === "python3" && c.args[1][0] === "-c")).to.equal(false);
+    // The platform probe may run on python3; the import checks must not.
+    expect(execFile.getCalls().some((c) => c.args[0] === "python3" && /^import (unicorn|capstone)$/.test(c.args[1][1] || ""))).to.equal(false);
   });
 
   it("checks the extension venv, not the system Python, for a default interpreter name", async () => {

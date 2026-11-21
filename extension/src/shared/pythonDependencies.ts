@@ -37,7 +37,7 @@ const UNAVAILABLE_NOTE = 'Pile ou Face Python features stay unavailable.';
 // Signatures d'erreurs réseau de pip / urllib3 sur Linux, macOS et Windows.
 const NETWORK_ERROR_PATTERN = /NewConnectionError|Failed to establish a new connection|Temporary failure in name resolution|Name or service not known|nodename nor servname|getaddrinfo failed|Network is unreachable|ConnectTimeoutError|ProxyError/i;
 
-type DependencyStatus = 'ok' | 'installed' | 'declined' | 'offline' | 'failed' | 'unavailable';
+type DependencyStatus = 'ok' | 'installed' | 'declined' | 'offline' | 'failed' | 'unavailable' | 'unsupported';
 type DependencyOptions = { backendBase: string; quiet?: boolean; log: (message: string) => void };
 type ExecResult = { ok: boolean; output: string };
 type LockFiles = { build: string; main: string };
@@ -184,6 +184,31 @@ async function pipStaysInVenv(venvPython: string, locks: LockFiles, log): Promis
   return false;
 }
 
+/**
+ * macOS Intel : cryptography (version verrouillée) ne publie plus de wheel x86_64 macOS, et
+ * aucune compilation implicite n'est faite. Le critère est l'interpréteur qui recevra les
+ * paquets (sous Rosetta, l'architecture de VS Code peut différer de celle de Python).
+ */
+const PLATFORM_PROBE = 'import platform, sys; print(sys.platform, platform.machine())';
+const UNSUPPORTED_AUTO_INSTALL = new Set(['darwin x86_64']);
+
+async function isAutoInstallUnsupported(pythonExe: string): Promise<boolean> {
+  const probe = await execFileResult(pythonExe, ['-c', PLATFORM_PROBE]);
+  // Sonde impossible : pas de conclusion ici ; la création du venv signalera un Python absent.
+  return probe.ok && UNSUPPORTED_AUTO_INSTALL.has(probe.stdout.trim().toLowerCase());
+}
+
+function reportUnsupportedPlatform(log): DependencyStatus {
+  const message = 'Pile ou Face: automatic installation of the Python dependencies is not supported on Intel macOS '
+    + '(the pinned cryptography release publishes no macOS x86_64 wheel, and building from source is not done '
+    + 'automatically). The rest of the extension still works. To use the Python features, install the dependencies '
+    + 'of backends/requirements.txt yourself in a Python environment and select it with the pythonPath setting.';
+  log(`[pip] Installation automatique non prise en charge sur macOS Intel. ${UNAVAILABLE_NOTE}`);
+  // Limitation de plateforme, pas un choix utilisateur : toujours visible, même à l'activation.
+  vscode.window.showWarningMessage(message);
+  return 'unsupported';
+}
+
 function reportUnavailable(message: string, quiet: boolean, log): DependencyStatus {
   log(`[pip] ${message} ${UNAVAILABLE_NOTE}`);
   if (!quiet) vscode.window.showWarningMessage(`${message} ${UNAVAILABLE_NOTE}`);
@@ -218,6 +243,7 @@ async function ensurePythonDependencies(pythonExe: string, options: DependencyOp
     // Défaut de packaging, pas un choix utilisateur : toujours visible, même à l'activation.
     return reportUnavailable(`Hash-verified requirements file not found: ${missingLock}.`, false, log);
   }
+  if (await isAutoInstallUnsupported(findVenvPython(venvPath) || pythonExe)) return reportUnsupportedPlatform(log);
   if (!(await askConsent())) {
     log(`[pip] Installation refusée par l'utilisateur. ${UNAVAILABLE_NOTE}`);
     return 'declined';

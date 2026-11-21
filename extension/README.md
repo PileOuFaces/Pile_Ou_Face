@@ -132,9 +132,15 @@ done
   ci-dessus (outils de construction, puis lock principal avec `--no-build-isolation`).
 - `hexdump` et `vivisect-vstruct-wb` n'existent qu'en sdist (Python pur) : pip les
   construit avec les outils figés, sans compilateur.
-- **Limite connue — macOS Intel :** `cryptography` 50.0.2 ne publie pas de wheel
-  macOS x86_64 (seulement arm64). Sa construction exige Rust et `maturin`, absents
-  des outils figés : l'installation depuis l'extension échoue alors, avec un message.
+- **Non pris en charge — installation automatique sur macOS Intel :** `cryptography`
+  50.0.2 (version verrouillée) ne publie pas de wheel macOS x86_64 ; seul arm64 en a
+  depuis la 49. L'extension ne compile rien implicitement depuis les sources et ne
+  rétrograde pas cette dépendance. Quand l'interpréteur Python qui recevrait les paquets
+  est un macOS x86_64 (`sys.platform`, `platform.machine()`, Rosetta compris), elle ne
+  propose donc pas l'installation et l'explique par un avertissement. Seule cette
+  installation automatique est concernée : le reste de l'extension fonctionne, et les
+  fonctions Python restent utilisables si l'on installe soi-même les dépendances de
+  `backends/requirements.txt` dans un environnement Python choisi avec le réglage `pythonPath`.
 
 ### Décompilateurs (optionnel)
 
