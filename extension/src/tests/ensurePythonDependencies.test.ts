@@ -29,15 +29,18 @@ function pipCalls(execFile) {
 }
 
 /** Imports manquants ; venv et pip répondent selon `pipError` ; `pipConfig` = sortie de `pip config list`. */
-function stubPython(existing, pipError = null, pipConfig = "") {
+function stubPython(existing, pipError = null, pipConfig = "", { installs = true } = {}) {
+  let installed = false;
   return sinon.stub(cp, "execFile").callsFake((_file, args, cb) => {
-    if (args[0] === "-c") return cb(new Error("ModuleNotFoundError"), "", "");
+    if (args[0] === "-c") return installed ? cb(null, "", "") : cb(new Error("ModuleNotFoundError"), "", "");
     if (args[1] === "venv") {
       existing.add(VENV_PYTHON);
       return cb(null, "", "");
     }
     if (args[2] === "config") return cb(null, pipConfig, "");
-    return pipError ? cb(new Error("exit 1"), "", pipError) : cb(null, "", "");
+    if (pipError) return cb(new Error("exit 1"), "", pipError);
+    if (installs && args.includes("--no-build-isolation")) installed = true;
+    return cb(null, "", "");
   });
 }
 
@@ -132,6 +135,17 @@ describe("ensurePythonDependencies", () => {
 
     expect(await utils.ensurePythonDependencies("python3", EXT_DIR_WITH_SPACES, { quiet: true })).to.equal("installed");
     expect(pipCalls(execFile)).to.have.length(2);
+  });
+
+  it("does not report success when pip exits 0 without installing (e.g. PIP_DRY_RUN)", async () => {
+    info.resolves(INSTALL_ACTION);
+    stubPython(existing, null, "", { installs: false });
+
+    const status = await utils.ensurePythonDependencies("python3", EXT_DIR_WITH_SPACES, { quiet: true });
+
+    expect(status).to.equal("failed");
+    expect(info.calledOnce).to.equal(true);
+    expect(warn.firstCall.args[0]).to.match(/^Installation failed/);
   });
 
   it("reuses an existing extension venv without recreating it", async () => {

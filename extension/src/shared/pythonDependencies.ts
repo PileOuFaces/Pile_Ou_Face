@@ -157,6 +157,10 @@ async function installInExtensionVenv(basePython: string, venvPath: string, lock
   log('[pip] Installation des dépendances (versions vérifiées par hash)…');
   const result = await execFileResult(venvPython, [...PIP_INSTALL_ARGS, '--no-build-isolation', '-r', locks.main]);
   if (!result.ok) return reportInstallFailure(result.output, venvPython, locks, log);
+  // pip can exit 0 without installing anything (PIP_DRY_RUN, constraints…): trust the imports only.
+  if (!(await hasCoreImports(venvPython))) {
+    return reportInstallFailure('pip succeeded but unicorn/capstone are still not importable', venvPython, locks, log);
+  }
   log('[pip] Installation terminée.');
   vscode.window.showInformationMessage('Pile ou Face: Python dependencies installed.');
   return 'installed';
