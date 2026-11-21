@@ -8,12 +8,20 @@ const sinon = require('sinon');
 const proxyquire = require('proxyquire');
 const utils = require('../shared/utils');
 
-const SETTINGS_KEY = 'pof-settings';
+const { SETTINGS_STATE_KEY: SETTINGS_KEY, PYTHON_PATH_ATTESTATION_KEY } = require('../shared/settingsSchema');
 // Chemin avec espaces : vérifie qu'il est transmis tel quel, sans découpage.
 const CONFIGURED_PYTHON = path.join(os.tmpdir(), 'pof python env', 'bin', 'python3');
 const EXTENSION_ROOT = path.resolve(__dirname, '../..');
 
-const storeWith = (settings) => ({ get: (key, fallback) => (key === SETTINGS_KEY ? settings : fallback) });
+// Le pythonPath configuré est attesté, comme après une sélection native (POF-P1-002).
+const liveStoreFor = (read) => ({
+  get: (key, fallback) => {
+    if (key === SETTINGS_KEY) return read();
+    if (key === PYTHON_PATH_ATTESTATION_KEY) return CONFIGURED_PYTHON;
+    return fallback;
+  },
+});
+const storeWith = (settings) => liveStoreFor(() => settings);
 const EMPTY_STORE = storeWith({});
 const CONFIGURED_STORE = storeWith({ pythonPath: CONFIGURED_PYTHON });
 
@@ -224,16 +232,16 @@ describe('hub Python executable', () => {
   });
 
   it('uses a pythonPath saved while the hub is open for the next analysis', async () => {
-    let saved = {};
-    const liveStore = { get: (key, fallback) => (key === SETTINGS_KEY ? saved : fallback) };
+    const state = new Map();
+    const liveStore = { get: (key, fallback) => (state.has(key) ? state.get(key) : fallback) };
     const launchAnalysis = openHubWith(liveStore);
     expect(launchAnalysis()).to.equal(utils.detectPythonExecutable(utils.resolveProjectRoot(HUB_ROOT)));
 
-    // Enregistrement par le vrai handler, hub toujours ouvert.
+    // Enregistrement par le vrai handler (réglage + attestation), hub toujours ouvert.
     const { createSettingsActions } = require('../static/hub/settingsActions');
     const settingsActions = createSettingsActions({
       panel: { webview: { postMessage: () => {} } },
-      context: { globalState: { ...liveStore, update: async (_key, value) => { saved = value; } } },
+      context: { globalState: { ...liveStore, update: async (key, value) => { state.set(key, value); } } },
       vscode: { window: { showErrorMessage: () => {} } },
       root: HUB_ROOT,
       logChannel: { appendLine: () => {} },
@@ -327,7 +335,7 @@ describe('extension activation Python executable', () => {
 
   it('applies a pythonPath saved after activation without reloading', () => {
     let saved = {};
-    activateWith({ get: (key, fallback) => (key === SETTINGS_KEY ? saved : fallback) });
+    activateWith(liveStoreFor(() => saved));
     saved = { pythonPath: CONFIGURED_PYTHON };
     expect(staticProviders.getPythonExe()).to.equal(CONFIGURED_PYTHON);
   });
@@ -338,5 +346,15 @@ describe('extension activation Python executable', () => {
     expect(update.calledWith(SETTINGS_KEY, { lang: 'en' })).to.equal(true);
     const detected = utils.detectPythonExecutable(utils.resolveProjectRoot(workspaceDir));
     expect(ensurePythonDependencies.firstCall.args[0]).to.equal(detected);
+  });
+
+  it('never runs a well-formed legacy pythonPath that no native selection attested', () => {
+    const update = sinon.stub().resolves();
+    const legacyPython = path.join(os.tmpdir(), 'pof legacy', 'bin', 'python3');
+    activateWith(storeWith({ lang: 'en', pythonPath: legacyPython }), update);
+    expect(update.calledWith(SETTINGS_KEY, { lang: 'en' })).to.equal(true);
+    const detected = utils.detectPythonExecutable(utils.resolveProjectRoot(workspaceDir));
+    expect(ensurePythonDependencies.firstCall.args[0]).to.equal(detected);
+    expect(staticProviders.getPythonExe()).to.equal(detected);
   });
 });

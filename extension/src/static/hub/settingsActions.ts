@@ -7,6 +7,7 @@
 
 const {
   SETTINGS_STATE_KEY,
+  PYTHON_PATH_ATTESTATION_KEY,
   cloneSettingsDefaults,
   readStoredSettings,
   readSettingsWithDefaults,
@@ -49,14 +50,20 @@ function createSettingsActions({
 
     hubResetSettings: async (message) => {
       await store.update(SETTINGS_STATE_KEY, cloneSettingsDefaults());
+      await store.update(PYTHON_PATH_ATTESTATION_KEY, undefined);
       postSettings(message?.requestId);
     },
 
     hubSelectPythonPath: async (message) => {
-      const current = readStoredSettings(store);
-      const selection = await selectPythonExecutable(vscode, { defaultPath: current.pythonPath || root });
+      const defaultPath = readStoredSettings(store).pythonPath || root;
+      const selection = await selectPythonExecutable(vscode, { defaultPath });
       if (selection.ok) {
-        await store.update(SETTINGS_STATE_KEY, { ...current, pythonPath: selection.path });
+        // Relecture après fermeture du sélecteur : une sauvegarde acquittée pendant
+        // qu'il était ouvert ne doit pas être écrasée par une copie périmée.
+        const latest = readStoredSettings(store);
+        // Attestation d'abord : le pythonPath enregistré n'est réutilisé que s'il est attesté.
+        await store.update(PYTHON_PATH_ATTESTATION_KEY, selection.path);
+        await store.update(SETTINGS_STATE_KEY, { ...latest, pythonPath: selection.path });
         logChannel?.appendLine?.(`[Settings] pythonPath set to ${selection.path}`);
       } else if (!selection.cancelled) {
         logChannel?.appendLine?.(`[Settings] pythonPath selection rejected: ${selection.error}`);

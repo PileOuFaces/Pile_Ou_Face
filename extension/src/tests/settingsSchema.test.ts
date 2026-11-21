@@ -4,8 +4,10 @@ const { expect } = require('chai');
 const sinon = require('sinon');
 const {
   SETTINGS_STATE_KEY,
+  PYTHON_PATH_ATTESTATION_KEY,
   SETTINGS_DEFAULTS,
   migrateStoredSettings,
+  readStoredSettings,
   validateSettingsUpdate,
 } = require('../shared/settingsSchema');
 const { createSettingsActions } = require('../static/hub/settingsActions');
@@ -13,12 +15,14 @@ const { createSettingsActions } = require('../static/hub/settingsActions');
 const SELECTED_PYTHON = '/opt/pof venv/bin/python3';
 const WEBVIEW_PYTHON = '/tmp/attacker/bin/python3';
 
-function makeStore(initial) {
-  let value = initial;
+// Memento minimal : `attested` simule une sélection native antérieure de ce pythonPath.
+function makeStore(initial, { attested } = { attested: undefined }) {
+  const values = new Map<string, any>([[SETTINGS_STATE_KEY, initial], [PYTHON_PATH_ATTESTATION_KEY, attested]]);
   return {
-    get: (key, fallback) => (key === SETTINGS_STATE_KEY && value !== undefined ? value : fallback),
-    update: sinon.spy(async (key, next) => { if (key === SETTINGS_STATE_KEY) value = next; }),
-    current: () => value,
+    get: (key, fallback) => (values.get(key) !== undefined ? values.get(key) : fallback),
+    update: sinon.spy(async (key, next) => { values.set(key, next); }),
+    current: () => values.get(SETTINGS_STATE_KEY),
+    attested: () => values.get(PYTHON_PATH_ATTESTATION_KEY),
   };
 }
 
@@ -112,13 +116,27 @@ describe('settings migration (migrateStoredSettings)', () => {
     expect(dropped).to.have.members(['legacyFlag', 'asmSyntax', 'pythonPath']);
   });
 
-  it('keeps an absolute path to a Python executable', () => {
+  it('keeps only the pythonPath attested by a native selection', () => {
     for (const pythonPath of [SELECTED_PYTHON, '/usr/bin/python', '/usr/local/bin/python3.12']) {
-      expect(migrateStoredSettings({ pythonPath }).settings.pythonPath).to.equal(pythonPath);
+      const attestedPythonPath = pythonPath;
+      expect(migrateStoredSettings({ pythonPath }, { attestedPythonPath }).settings.pythonPath).to.equal(pythonPath);
     }
     for (const pythonPath of ['python3', '/bin/sh', '/usr/bin/python3 -c evil']) {
-      expect(migrateStoredSettings({ pythonPath }).dropped, pythonPath).to.deep.equal(['pythonPath']);
+      const attestedPythonPath = pythonPath;
+      expect(migrateStoredSettings({ pythonPath }, { attestedPythonPath }).dropped, pythonPath).to.deep.equal(['pythonPath']);
     }
+  });
+
+  it('drops a well-formed legacy pythonPath written by the webview before the update', () => {
+    // Chemin absolu nommé python3 : la forme est conforme, mais aucune sélection native ne l'atteste.
+    expect(migrateStoredSettings({ pythonPath: WEBVIEW_PYTHON }).dropped).to.deep.equal(['pythonPath']);
+    expect(migrateStoredSettings({ pythonPath: WEBVIEW_PYTHON }, { attestedPythonPath: SELECTED_PYTHON }).settings)
+      .to.deep.equal({});
+    expect(readStoredSettings(makeStore({ pythonPath: WEBVIEW_PYTHON, lang: 'en' }))).to.deep.equal({ lang: 'en' });
+  });
+
+  it('accepts an empty pythonPath without attestation', () => {
+    expect(migrateStoredSettings({ pythonPath: '' })).to.deep.equal({ settings: { pythonPath: '' }, dropped: [] });
   });
 
   it('handles missing and malformed stored settings', () => {
@@ -146,7 +164,7 @@ describe('hub settings handlers', () => {
   });
 
   it('stores a valid save merged with the host-managed values', async () => {
-    const store = makeStore({ pythonPath: SELECTED_PYTHON });
+    const store = makeStore({ pythonPath: SELECTED_PYTHON }, { attested: SELECTED_PYTHON });
     const { actions, posted } = makeActions(store);
     await actions.hubSaveSettings({ settings: { lang: 'en' }, requestId: 4 });
     expect(store.current()).to.deep.equal({ pythonPath: SELECTED_PYTHON, lang: 'en' });
@@ -167,12 +185,26 @@ describe('hub settings handlers', () => {
     await actions.hubSelectPythonPath({ requestId: 9 });
     expect(selectPythonExecutable.calledOnce).to.equal(true);
     expect(store.current()).to.deep.equal({ lang: 'en', pythonPath: SELECTED_PYTHON });
+    expect(store.attested()).to.equal(SELECTED_PYTHON);
     expect(posted[0]).to.include({ type: 'hubSettings', requestId: 9 });
     expect(posted[0].settings.pythonPath).to.equal(SELECTED_PYTHON);
   });
 
+  it('keeps a save acknowledged while the native picker was open', async () => {
+    const store = makeStore({ lang: 'fr' });
+    let actions;
+    // Sauvegarde différée de la langue, acquittée pendant que le sélecteur est ouvert.
+    const selectPythonExecutable = sinon.stub().callsFake(async () => {
+      await actions.hubSaveSettings({ settings: { lang: 'en' }, requestId: 11 });
+      return { ok: true, path: SELECTED_PYTHON };
+    });
+    ({ actions } = makeActions(store, selectPythonExecutable));
+    await actions.hubSelectPythonPath({ requestId: 12 });
+    expect(store.current()).to.deep.equal({ lang: 'en', pythonPath: SELECTED_PYTHON });
+  });
+
   it('keeps the current pythonPath when the selection is rejected', async () => {
-    const store = makeStore({ pythonPath: SELECTED_PYTHON });
+    const store = makeStore({ pythonPath: SELECTED_PYTHON }, { attested: SELECTED_PYTHON });
     const { actions, vscode } = makeActions(store, sinon.stub().resolves({ ok: false, error: 'not Python' }));
     await actions.hubSelectPythonPath({ requestId: 2 });
     expect(store.update.called).to.equal(false);
@@ -180,10 +212,11 @@ describe('hub settings handlers', () => {
   });
 
   it('resets to an independent copy of the defaults', async () => {
-    const store = makeStore({ pythonPath: SELECTED_PYTHON });
+    const store = makeStore({ pythonPath: SELECTED_PYTHON }, { attested: SELECTED_PYTHON });
     const { actions } = makeActions(store);
     await actions.hubResetSettings({ requestId: 5 });
     expect(store.current()).to.deep.equal(SETTINGS_DEFAULTS);
+    expect(store.attested()).to.equal(undefined);
     store.current().enabledStaticFeatures.push('disasm');
     expect(SETTINGS_DEFAULTS.enabledStaticFeatures).to.deep.equal([]);
   });

@@ -48,7 +48,7 @@ const { makeMcpSetupBridge } = require('./shared/mcpSetupBridge');
 const { AuthService } = require('./shared/authService');
 const { planLegacyAuthUrlMigration, resolveAuthServerUrl } = require('./shared/authConfig');
 const { getProductConfig } = require('./shared/productConfig');
-const { SETTINGS_STATE_KEY, migrateStoredSettings } = require('./shared/settingsSchema');
+const { SETTINGS_STATE_KEY, migrateSettingsFromStore } = require('./shared/settingsSchema');
 const { configureRuntimeAudit, recordRuntimeEvent, resetRuntimeAudit } = require('./shared/runtimeAudit');
 const { initializeExtensionTelemetry } = require('./shared/telemetry/telemetry');
 const logger = require('./shared/logger');
@@ -100,11 +100,10 @@ function _unregisterGlobalErrorHandlers() {
 }
 
 // POF-P1-002 : retire des réglages enregistrés les clés inconnues et les valeurs
-// invalides (dont un pythonPath arbitraire) avant toute lecture.
+// invalides (dont un pythonPath non attesté par une sélection native) avant toute lecture.
 function migrateSavedSettings(context) {
-  const raw = context.globalState.get(SETTINGS_STATE_KEY);
-  if (raw === undefined) return;
-  const { settings, dropped } = migrateStoredSettings(raw);
+  if (context.globalState.get(SETTINGS_STATE_KEY) === undefined) return;
+  const { settings, dropped } = migrateSettingsFromStore(context.globalState);
   if (!dropped.length) return;
   logWarning(`[Settings] Removed unknown or invalid saved settings: ${dropped.join(', ')}`);
   Promise.resolve(context.globalState.update(SETTINGS_STATE_KEY, settings))

@@ -8,6 +8,10 @@
 const path = require('path');
 
 const SETTINGS_STATE_KEY = 'pof-settings';
+// Attestation Host du dernier pythonPath choisi par sélection native et vérifié.
+// Clé distincte de `pof-settings`, que le webview n'a jamais pu écrire : un ancien
+// pythonPath enregistré par le webview n'y figure pas et n'est donc jamais réutilisé.
+const PYTHON_PATH_ATTESTATION_KEY = 'pof-python-path-selected';
 
 const SETTINGS_DEFAULTS = Object.freeze({
   pythonPath: '',
@@ -176,17 +180,28 @@ const SETTINGS_SCHEMA: Readonly<Record<string, Validator>> = Object.freeze({
   bindiffThreshold: numberIn(LIMITS.bindiffThreshold),
 });
 
+function checkStoredValue(key: string, value: any, attestedPythonPath: string): Check {
+  if (!hasOwn(SETTINGS_SCHEMA, key)) return fail('unknown key');
+  const result = SETTINGS_SCHEMA[key](value);
+  // La forme du chemin ne prouve pas sa provenance : seul le chemin attesté par le Host est conservé.
+  if (result.ok && HOST_MANAGED_KEYS.has(key) && value !== '' && value !== attestedPythonPath) {
+    return fail('not selected by the extension host');
+  }
+  return result;
+}
+
 /**
- * Migration des réglages existants : les clés inconnues et les valeurs invalides
- * (dont un pythonPath arbitraire) sont retirées ; les défauts s'appliquent alors.
+ * Migration des réglages existants : les clés inconnues, les valeurs invalides et
+ * tout pythonPath non attesté par une sélection native (`attestedPythonPath`) sont
+ * retirés ; les défauts s'appliquent alors.
  */
-function migrateStoredSettings(raw: unknown): { settings: Settings; dropped: string[] } {
+function migrateStoredSettings(raw: unknown, { attestedPythonPath = '' } = {}): { settings: Settings; dropped: string[] } {
   const settings: Settings = {};
   const dropped: string[] = [];
   if (raw == null) return { settings, dropped };
   if (!isPlainObject(raw)) return { settings, dropped: ['<root>'] };
   for (const [key, value] of Object.entries(raw as Settings)) {
-    const result = hasOwn(SETTINGS_SCHEMA, key) ? SETTINGS_SCHEMA[key](value) : fail('unknown key');
+    const result = checkStoredValue(key, value, attestedPythonPath);
     if (result.ok) settings[key] = result.value;
     else dropped.push(key);
   }
@@ -223,9 +238,24 @@ function cloneSettingsDefaults(): Settings {
   return JSON.parse(JSON.stringify(SETTINGS_DEFAULTS));
 }
 
+type SettingsStore = { get?: (key: string, fallback?: unknown) => any } | null | undefined;
+
+/** pythonPath attesté par la dernière sélection native vérifiée, ou ''. */
+function readAttestedPythonPath(store: SettingsStore): string {
+  const value = store?.get?.(PYTHON_PATH_ATTESTATION_KEY, '');
+  return typeof value === 'string' ? value : '';
+}
+
+/** Réglages enregistrés bruts et migrés, avec les clés retirées. */
+function migrateSettingsFromStore(store: SettingsStore): { settings: Settings; dropped: string[] } {
+  return migrateStoredSettings(store?.get?.(SETTINGS_STATE_KEY, {}), {
+    attestedPythonPath: readAttestedPythonPath(store),
+  });
+}
+
 /** Réglages enregistrés et migrés, sans les défauts. */
-function readStoredSettings(store: { get?: (key: string, fallback?: unknown) => any } | null | undefined): Settings {
-  return migrateStoredSettings(store?.get?.(SETTINGS_STATE_KEY, {})).settings;
+function readStoredSettings(store: SettingsStore): Settings {
+  return migrateSettingsFromStore(store).settings;
 }
 
 /** Réglages enregistrés complétés par les défauts, tels qu'envoyés au webview. */
@@ -235,11 +265,13 @@ function readSettingsWithDefaults(store): Settings {
 
 module.exports = {
   SETTINGS_STATE_KEY,
+  PYTHON_PATH_ATTESTATION_KEY,
   SETTINGS_DEFAULTS,
   SETTINGS_LIMITS: LIMITS,
   cloneSettingsDefaults,
   isPythonExecutableName,
   migrateStoredSettings,
+  migrateSettingsFromStore,
   validateSettingsUpdate,
   readStoredSettings,
   readSettingsWithDefaults,

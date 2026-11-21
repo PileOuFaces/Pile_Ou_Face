@@ -195,11 +195,12 @@ Tous les appels à `getConfiguration` repérés hors tests visent la section `pi
 | `extension/src/shared/staticCache.ts` | `resolvePythonExecutable(extensionPath)`, via le store enregistré à l'activation |
 | `extension/src/static/hub.ts` | `getPythonExe()` → `detectPythonExecutable(root, getConfiguredPythonPath(context.globalState))`, résolu à chaque lancement |
 | `extension/src/static/hub/analysisContext.ts`, `extension/src/static/commands.ts` | `getPythonExe()` fourni par le hub ou l'activation, résolu à chaque lancement |
-| `extension/src/static/staticHandlers.ts` | `migrateStoredSettings(getSavedSettings()).settings.pythonPath \|\| detectPythonExecutable(root)` |
+| `extension/src/static/staticHandlers.ts` | `readStoredSettings(context?.globalState).pythonPath \|\| detectPythonExecutable(root)` |
 
 Vérifications sur cette valeur (POF-P1-002, `extension/src/shared/settingsSchema.ts`) :
 
-- Un `pythonPath` n'est exécuté que s'il est vide ou s'il s'agit d'un chemin absolu dont le nom de fichier est `python`, `python3`, `python3.x` (avec `.exe` éventuel). Sinon, la détection habituelle s'applique.
+- Un `pythonPath` n'est exécuté que s'il est vide ou s'il s'agit d'un chemin absolu dont le nom de fichier est `python`, `python3`, `python3.x` (avec `.exe` éventuel), **et** s'il est égal au chemin attesté sous la clé `globalState` `pof-python-path-selected` (`PYTHON_PATH_ATTESTATION_KEY`). Seul `hubSelectPythonPath` écrit cette clé, après une sélection native vérifiée ; le webview n'y a jamais eu accès. Sinon, la détection habituelle s'applique.
+- Un `pythonPath` enregistré avant cette vérification (donc écrit par le webview) n'est jamais attesté : il est retiré même s'il est bien formé, et doit être sélectionné à nouveau.
 - Si la lecture du `globalState` lève une exception, `getConfiguredPythonPath` journalise un avertissement et retourne `''` : la détection habituelle s'applique.
 - L'exécutable est résolu à chaque lancement : un `pythonPath` enregistré hub ouvert s'applique sans réouverture du hub ni rechargement de l'extension.
 
@@ -208,9 +209,9 @@ Valeur par défaut et écriture (`extension/src/static/hub/settingsActions.ts`) 
 - `SETTINGS_DEFAULTS` est défini dans `extension/src/shared/settingsSchema.ts` ; `pythonPath` y vaut `''`.
 - `hubGetSettings` envoie les réglages enregistrés, migrés, complétés par les défauts.
 - `hubSaveSettings` valide l'envoi du webview avec le schéma : une clé inconnue, un type ou une borne invalide refusent tout l'envoi (`hubSettingsSaved` avec `ok: false` et un message d'erreur). `pythonPath` ne peut qu'être conservé ou vidé par le webview.
-- `hubSelectPythonPath` est le seul moyen de définir `pythonPath` : sélection native (`showOpenDialog`), puis vérification du nom de fichier et exécution de `-c "import sys; print(sys.version_info[0])"` (délai de 5 s) qui doit afficher `3` (`extension/src/shared/pythonPathSelection.ts`).
-- `hubResetSettings` remet une copie de `SETTINGS_DEFAULTS`.
-- À l'activation, `migrateSavedSettings` (`extension/src/extension.ts`) retire de `pof-settings` les clés inconnues et les valeurs invalides, dont un `pythonPath` non conforme, et journalise les noms des clés retirées.
+- `hubSelectPythonPath` est le seul moyen de définir `pythonPath` : sélection native (`showOpenDialog`), puis vérification du nom de fichier et exécution de `-c "import sys; print(sys.version_info[0])"` (délai de 5 s) qui doit afficher `3` (`extension/src/shared/pythonPathSelection.ts`). Les réglages sont relus après la fermeture du sélecteur : une sauvegarde acquittée pendant la sélection est conservée. L'attestation est écrite avant `pof-settings`.
+- `hubResetSettings` remet une copie de `SETTINGS_DEFAULTS` et efface l'attestation.
+- À l'activation, `migrateSavedSettings` (`extension/src/extension.ts`) retire de `pof-settings` les clés inconnues et les valeurs invalides, dont un `pythonPath` non conforme ou non attesté, et journalise les noms des clés retirées.
 
 Aucun réglage équivalent à `pythonPath` n'a été repéré dans `getConfiguration`.
 
