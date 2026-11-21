@@ -163,7 +163,7 @@ describe("ensurePythonDependencies", () => {
     expect(warn.firstCall.args[0]).to.contain(LOCK_FILE);
   });
 
-  it("does not prompt nor install when the hash lock file is missing", async () => {
+  it("does not prompt nor install when the hash lock file is missing, and says so even when quiet", async () => {
     existing.delete(LOCK_FILE);
     const execFile = stubPython(existing);
 
@@ -171,7 +171,60 @@ describe("ensurePythonDependencies", () => {
 
     expect(status).to.equal("unavailable");
     expect(info.called).to.equal(false);
-    expect(warn.called).to.equal(false);
+    expect(warn.calledOnce).to.equal(true);
+    expect(warn.firstCall.args[0]).to.contain(LOCK_FILE);
     expect(pipCalls(execFile)).to.deep.equal([]);
+  });
+
+  it("ignores a partial system Python and offers the full install when the extension venv is missing", async () => {
+    // Python système avec unicorn et capstone, mais sans lief : il ne doit pas suffire.
+    const execFile = sinon.stub(cp, "execFile").callsFake((_file, _args, cb) => cb(null, "", ""));
+
+    const status = await utils.ensurePythonDependencies("python3", EXT_DIR_WITH_SPACES, { quiet: true });
+
+    expect(status).to.equal("declined");
+    expect(info.calledOnce).to.equal(true);
+    expect(execFile.getCalls().some((c) => c.args[0] === "python3" && c.args[1][0] === "-c")).to.equal(false);
+  });
+
+  it("checks the extension venv, not the system Python, for a default interpreter name", async () => {
+    existing.add(VENV_PYTHON);
+    const execFile = sinon.stub(cp, "execFile").callsFake((_file, _args, cb) => cb(null, "", ""));
+
+    const status = await utils.ensurePythonDependencies("python3", EXT_DIR_WITH_SPACES, { quiet: true });
+
+    expect(status).to.equal("ok");
+    expect(info.called).to.equal(false);
+    expect(execFile.getCalls().map((c) => c.args[0])).to.deep.equal([VENV_PYTHON, VENV_PYTHON]);
+  });
+});
+
+describe("backends/requirements.lock.txt (versioned)", () => {
+  const backendsDir = path.resolve(__dirname, "..", "..", "backends");
+  const lockPath = path.join(backendsDir, LOCK_FILE_NAME);
+
+  it("is shipped with the extension so the consented install can run", () => {
+    expect(fs.existsSync(lockPath), `${lockPath} manquant : voir « Versions vérifiées » dans extension/README.md`)
+      .to.equal(true);
+  });
+
+  it("pins every package with == and at least one sha256 hash", () => {
+    const text = fs.readFileSync(lockPath, "utf8").replace(/\\\r?\n/g, " ");
+    const requirements = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
+    expect(requirements).to.not.be.empty;
+    for (const line of requirements) {
+      expect(line, line).to.match(/^[A-Za-z0-9._-]+(\[[^\]]+\])?==\S+/);
+      expect(line, line).to.match(/--hash=sha256:[0-9a-f]{64}/);
+    }
+  });
+
+  it("covers every direct dependency of requirements.txt", () => {
+    const normalize = (name) => name.toLowerCase().replace(/[-_.]+/g, "-");
+    const lockText = fs.readFileSync(lockPath, "utf8");
+    const pinned = new Set(Array.from(lockText.matchAll(/^([A-Za-z0-9._-]+)(?:\[[^\]]+\])?==/gm), (m) => normalize(m[1])));
+    const direct = fs.readFileSync(path.join(backendsDir, "requirements.txt"), "utf8")
+      .split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith("#"))
+      .map((l) => normalize(l.split(/[<>=!~;\[\s]/)[0]));
+    for (const name of direct) expect(pinned.has(name), name).to.equal(true);
   });
 });

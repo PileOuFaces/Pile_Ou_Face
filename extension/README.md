@@ -69,8 +69,13 @@ Installe les dépendances dans un venv (`lief`, `capstone`, `pyelftools`, `unico
 #### Installation depuis l'extension (consentement explicite)
 
 À l'activation, l'extension vérifie seulement que `unicorn` et `capstone` sont
-importables. S'ils manquent, elle **ne lance rien** : une notification propose
-« Installer » ou « Plus tard ».
+importables dans `backends/.venv` (ou dans l'interpréteur configuré via
+`pythonPath`). Le Python système n'est pas pris en compte : il peut n'avoir
+qu'une partie des dépendances (par exemple sans `lief`). S'ils manquent, elle
+**ne lance rien** : une notification propose « Installer » ou « Plus tard ».
+
+- **`requirements.lock.txt` absent** (défaut de packaging) : aucune
+  installation possible ; un avertissement s'affiche, même à l'activation.
 
 - **Plus tard** ou notification fermée : aucun `pip`, aucun venv créé ; les
   fonctions Python restent indisponibles, l'extension continue de fonctionner.

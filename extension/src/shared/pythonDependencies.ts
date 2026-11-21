@@ -50,7 +50,21 @@ function isExtensionVenvPython(pythonExe: string, venvPath: string): boolean {
   return venvPythonCandidates(venvPath).some((candidate) => path.resolve(candidate) === resolved);
 }
 
+function isDefaultPython(pythonExe: string): boolean {
+  return DEFAULT_PYTHON_NAMES.includes(pythonExe);
+}
+
+/**
+ * Interpréteur dont on vérifie les imports. Un nom par défaut (python3/python) n'est
+ * qu'un interpréteur de base pour créer backends/.venv : seul ce venv compte, car le
+ * Python système peut n'avoir qu'une partie des dépendances (ex. sans lief).
+ */
+function interpreterToCheck(pythonExe: string, venvPath: string): string {
+  return isDefaultPython(pythonExe) ? findVenvPython(venvPath) : pythonExe;
+}
+
 async function hasCoreImports(pythonExe: string): Promise<boolean> {
+  if (!pythonExe) return false;
   for (const dep of CORE_IMPORTS) {
     if (!(await execFileResult(pythonExe, ['-c', `import ${dep}`])).ok) return false;
   }
@@ -130,11 +144,11 @@ async function ensurePythonDependencies(pythonExe: string, options: DependencyOp
   const { backendBase, quiet = false, log } = options;
   const venvPath = path.join(backendBase, 'backends', VENV_DIR_NAME);
   const lockPath = path.join(backendBase, 'backends', LOCK_FILE_NAME);
-  if (await hasCoreImports(pythonExe)) {
+  if (await hasCoreImports(interpreterToCheck(pythonExe, venvPath))) {
     log('[pip] Dépendances OK.');
     return 'ok';
   }
-  if (!DEFAULT_PYTHON_NAMES.includes(pythonExe) && !isExtensionVenvPython(pythonExe, venvPath)) {
+  if (!isDefaultPython(pythonExe) && !isExtensionVenvPython(pythonExe, venvPath)) {
     return reportUnavailable(
       `Dépendances Python manquantes pour l'interpréteur configuré ${pythonExe}. `
         + `Installez-les vous-même : ${manualInstallCommand(pythonExe, lockPath)}.`,
@@ -142,7 +156,8 @@ async function ensurePythonDependencies(pythonExe: string, options: DependencyOp
     );
   }
   if (!fs.existsSync(lockPath)) {
-    return reportUnavailable(`Fichier de versions vérifiées introuvable : ${lockPath}.`, quiet, log);
+    // Défaut de packaging, pas un choix utilisateur : toujours visible, même à l'activation.
+    return reportUnavailable(`Fichier de versions vérifiées introuvable : ${lockPath}.`, false, log);
   }
   if (!(await askConsent())) {
     log(`[pip] Installation refusée par l'utilisateur. ${UNAVAILABLE_NOTE}`);
