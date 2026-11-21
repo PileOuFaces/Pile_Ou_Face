@@ -46,6 +46,13 @@ except SystemExit as exc:  # pragma: no cover - optional dependency in local env
     UNICORN_SKIP_REASON = str(exc)
 else:
     UNICORN_SKIP_REASON = ""
+import pytest
+
+# The corpus is compiled with the host gcc and traced as x86-64 ELF: on macOS gcc is
+# clang and produces Mach-O, so these tests only make sense on Linux.
+pytestmark = pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="needs gcc producing x86-64 ELF"
+)
 
 
 class _FakeUc:
