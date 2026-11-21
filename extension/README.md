@@ -72,17 +72,17 @@ Installe les dépendances dans un venv (`lief`, `capstone`, `pyelftools`, `unico
 importables dans `backends/.venv` (ou dans l'interpréteur configuré via
 `pythonPath`). Le Python système n'est pas pris en compte : il peut n'avoir
 qu'une partie des dépendances (par exemple sans `lief`). S'ils manquent, elle
-**ne lance rien** : une notification propose « Installer » ou « Plus tard ».
+**ne lance rien** : une notification propose « Install » ou « Later ».
 
 - **`requirements.lock.txt` absent** (défaut de packaging) : aucune
   installation possible ; un avertissement s'affiche, même à l'activation.
 
-- **Plus tard** ou notification fermée : aucun `pip`, aucun venv créé ; les
+- **Later** ou notification fermée : aucun `pip`, aucun venv créé ; les
   fonctions Python restent indisponibles, l'extension continue de fonctionner.
-- **Installer** : création si besoin de `backends/.venv`, puis
+- **Install** : création si besoin de `backends/.venv`, puis
   `<venv>/python -m pip install --require-hashes -r backends/requirements.lock.txt`.
   L'installation se fait uniquement dans ce venv, sans `--break-system-packages`.
-- **Hors ligne** : l'échec est signalé (« PyPI est injoignable ») avec la
+- **Hors ligne** : l'échec est signalé (« PyPI is unreachable ») avec la
   commande manuelle ; l'activation n'est pas bloquée et la proposition revient
   au prochain démarrage.
 - **Interpréteur configuré** (réglage `pythonPath` hors de `backends/.venv`) :
@@ -96,22 +96,29 @@ transitives comprises, sont figées avec les hashes de **toutes** les
 distributions publiées (wheels Linux, macOS, Windows et sdist), pour toutes les
 plateformes. Ne pas l'éditer à la main.
 
-Régénération (outil : [uv](https://docs.astral.sh/uv/)) depuis `extension/backends/` :
+Régénération (outil : [uv](https://docs.astral.sh/uv/) 0.9.5, la version utilisée pour le
+fichier actuel) depuis `extension/backends/` :
 
 ```bash
 uv pip compile requirements.txt \
-  --universal --python-version 3.8 \
+  --universal --python-version 3.10 \
   --generate-hashes \
   --exclude-newer 2026-11-21T00:00:00Z \
   --output-file requirements.lock.txt
 ```
 
-- `--universal` : une seule résolution valable pour tous les OS et versions de Python ≥ 3.8.
+- `--universal` : une seule résolution valable pour tous les OS et versions de Python ≥ 3.10.
+  3.10 est le minimum du backend (`MIN_PYTHON_VERSION` dans `backends/mcp/setup_cli.py`,
+  syntaxe `X | None`) ; `python-idb` exige d'ailleurs Python ≥ 3.9.
 - `--exclude-newer` : ignore les publications postérieures à la date ; la même
   commande redonne le même fichier. Avancer cette date volontairement pour
   mettre à jour les versions, et reporter la nouvelle date ici.
 - Vérifier ensuite dans un venv propre :
   `python -m pip install --require-hashes -r requirements.lock.txt`.
+- Certaines dépendances n'ont pas de wheel pour toutes les plateformes ; pip les
+  construit alors depuis le sdist (hash vérifié aussi) : `hexdump` et
+  `vivisect-vstruct-wb` (Python pur, partout), `yara-python` (macOS, compilateur
+  C requis), `lief` (macOS Intel et Linux ARM64, compilation longue).
 
 ### Décompilateurs (optionnel)
 

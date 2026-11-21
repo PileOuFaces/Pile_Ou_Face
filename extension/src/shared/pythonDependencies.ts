@@ -15,9 +15,9 @@ const LOCK_FILE_NAME = 'requirements.lock.txt';
 const VENV_DIR_NAME = '.venv';
 const CORE_IMPORTS = ['unicorn', 'capstone'];
 const DEFAULT_PYTHON_NAMES = ['python3', 'python'];
-const INSTALL_ACTION = 'Installer';
-const DECLINE_ACTION = 'Plus tard';
-const UNAVAILABLE_NOTE = 'Les fonctions Python de Pile ou Face restent indisponibles.';
+const INSTALL_ACTION = 'Install';
+const DECLINE_ACTION = 'Later';
+const UNAVAILABLE_NOTE = 'Pile ou Face Python features stay unavailable.';
 // Signatures d'erreurs réseau de pip / urllib3 sur Linux, macOS et Windows.
 const NETWORK_ERROR_PATTERN = /NewConnectionError|Failed to establish a new connection|Temporary failure in name resolution|Name or service not known|nodename nor servname|getaddrinfo failed|Network is unreachable|ConnectTimeoutError|ProxyError/i;
 
@@ -77,8 +77,8 @@ function manualInstallCommand(pythonExe: string, lockPath: string): string {
 
 async function askConsent(): Promise<boolean> {
   const choice = await vscode.window.showInformationMessage(
-    'Pile ou Face : des dépendances Python (unicorn, capstone, lief…) manquent. '
-      + 'Les installer dans le venv de l\'extension (backends/.venv) depuis PyPI, versions vérifiées par hash ?',
+    'Pile ou Face: Python dependencies (unicorn, capstone, lief…) are missing. '
+      + 'Install them from PyPI into the extension venv (backends/.venv), with hash-verified versions?',
     INSTALL_ACTION,
     DECLINE_ACTION
   );
@@ -90,9 +90,9 @@ async function ensureExtensionVenv(basePython: string, venvPath: string, log): P
   if (existing) return existing;
   log('[venv] Création du venv…');
   const result = await execFileResult(basePython, ['-m', 'venv', venvPath]);
-  if (!result.ok) throw new Error(result.output || 'python -m venv a échoué');
+  if (!result.ok) throw new Error(result.output || 'python -m venv failed');
   const created = findVenvPython(venvPath);
-  if (!created) throw new Error(`interpréteur introuvable dans ${venvPath}`);
+  if (!created) throw new Error(`no interpreter found in ${venvPath}`);
   log(`[venv] Utilisation: ${created}`);
   return created;
 }
@@ -101,10 +101,10 @@ function reportInstallFailure(output: string, venvPython: string, lockPath: stri
   const offline = NETWORK_ERROR_PATTERN.test(output);
   log(`[pip] Erreur${offline ? ' (réseau indisponible)' : ''}: ${output}`);
   const reason = offline
-    ? 'PyPI est injoignable (hors ligne ?). Réessayez une fois connecté'
-    : 'L\'installation a échoué (détails dans le canal « Pile ou Face »)';
+    ? 'PyPI is unreachable (offline?). Retry once connected'
+    : 'Installation failed (details in the "Pile ou Face" output channel)';
   vscode.window.showWarningMessage(
-    `${reason}. ${UNAVAILABLE_NOTE} Commande manuelle : ${manualInstallCommand(venvPython, lockPath)}`
+    `${reason}. ${UNAVAILABLE_NOTE} Manual command: ${manualInstallCommand(venvPython, lockPath)}`
   );
   return offline ? 'offline' : 'failed';
 }
@@ -115,7 +115,7 @@ async function installInExtensionVenv(basePython: string, venvPath: string, lock
     venvPython = await ensureExtensionVenv(basePython, venvPath, log);
   } catch (venvErr) {
     log(`[venv] Erreur: ${venvErr.message}`);
-    vscode.window.showWarningMessage(`Impossible de créer backends/.venv : ${venvErr.message}. ${UNAVAILABLE_NOTE}`);
+    vscode.window.showWarningMessage(`Cannot create backends/.venv: ${venvErr.message}. ${UNAVAILABLE_NOTE}`);
     return 'failed';
   }
   log('[pip] Installation des dépendances (versions vérifiées par hash)…');
@@ -125,7 +125,7 @@ async function installInExtensionVenv(basePython: string, venvPath: string, lock
   ]);
   if (!result.ok) return reportInstallFailure(result.output, venvPython, lockPath, log);
   log('[pip] Installation terminée.');
-  vscode.window.showInformationMessage('Pile ou Face : dépendances Python installées.');
+  vscode.window.showInformationMessage('Pile ou Face: Python dependencies installed.');
   return 'installed';
 }
 
@@ -150,14 +150,14 @@ async function ensurePythonDependencies(pythonExe: string, options: DependencyOp
   }
   if (!isDefaultPython(pythonExe) && !isExtensionVenvPython(pythonExe, venvPath)) {
     return reportUnavailable(
-      `Dépendances Python manquantes pour l'interpréteur configuré ${pythonExe}. `
-        + `Installez-les vous-même : ${manualInstallCommand(pythonExe, lockPath)}.`,
+      `Python dependencies are missing for the configured interpreter ${pythonExe}. `
+        + `Install them yourself: ${manualInstallCommand(pythonExe, lockPath)}.`,
       quiet, log
     );
   }
   if (!fs.existsSync(lockPath)) {
     // Défaut de packaging, pas un choix utilisateur : toujours visible, même à l'activation.
-    return reportUnavailable(`Fichier de versions vérifiées introuvable : ${lockPath}.`, false, log);
+    return reportUnavailable(`Hash-verified requirements file not found: ${lockPath}.`, false, log);
   }
   if (!(await askConsent())) {
     log(`[pip] Installation refusée par l'utilisateur. ${UNAVAILABLE_NOTE}`);

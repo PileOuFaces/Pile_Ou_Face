@@ -77,7 +77,7 @@ describe("ensurePythonDependencies", () => {
   it("never runs pip nor creates the venv when the user declines or dismisses the prompt", async () => {
     const execFile = stubPython(existing);
 
-    for (const answer of [undefined, "Plus tard"]) {
+    for (const answer of [undefined, "Later"]) {
       info.resolves(answer);
       const status = await utils.ensurePythonDependencies("python3", EXT_DIR_WITH_SPACES, { quiet: true });
       expect(status).to.equal("declined");
@@ -125,7 +125,7 @@ describe("ensurePythonDependencies", () => {
 
     expect(status).to.equal("offline");
     expect(warn.calledOnce).to.equal(true);
-    expect(warn.firstCall.args[0]).to.match(/hors ligne/);
+    expect(warn.firstCall.args[0]).to.match(/offline/);
     expect(warn.firstCall.args[0]).to.contain("--require-hashes");
   });
 
@@ -136,7 +136,7 @@ describe("ensurePythonDependencies", () => {
     const status = await utils.ensurePythonDependencies("python3", EXT_DIR_WITH_SPACES, { quiet: true });
 
     expect(status).to.equal("failed");
-    expect(warn.firstCall.args[0]).to.not.match(/hors ligne/);
+    expect(warn.firstCall.args[0]).to.not.match(/offline/);
   });
 
   it("reports venv creation errors with stderr and does not run pip", async () => {
@@ -224,7 +224,7 @@ describe("backends/requirements.lock.txt (versioned)", () => {
     const pinned = new Set(Array.from(lockText.matchAll(/^([A-Za-z0-9._-]+)(?:\[[^\]]+\])?==/gm), (m) => normalize(m[1])));
     const direct = fs.readFileSync(path.join(backendsDir, "requirements.txt"), "utf8")
       .split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith("#"))
-      .map((l) => normalize(l.split(/[<>=!~;\[\s]/)[0]));
+      .map((l) => normalize(l.split(/[<>=!~;[\s]/)[0]));
     for (const name of direct) expect(pinned.has(name), name).to.equal(true);
   });
 });
