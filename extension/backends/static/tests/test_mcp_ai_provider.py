@@ -564,3 +564,30 @@ def test_provider_error_echoing_the_api_key_is_redacted(provider, monkeypatch):
     assert "[REDACTED]" in message
     assert SECRET_KEY not in message
     assert excinfo.value.__cause__ is None
+
+
+@pytest.mark.parametrize(
+    ("provider", "error_event"),
+    [
+        ("openai", '{"error":{"message":"Invalid API key: %s"}}'),
+        ("anthropic", '{"type":"error","error":{"message":"Invalid API key: %s"}}'),
+        ("gemini", '{"error":{"message":"Invalid API key: %s"}}'),
+    ],
+)
+def test_streaming_error_echoing_the_api_key_is_redacted(
+    provider, error_event, monkeypatch
+):
+    """#544: an SSE error event sent after HTTP 200 must not carry the key to the user."""
+    from backends.mcp.ai_provider import _PROVIDER_ENV_KEYS, call_provider_result
+
+    monkeypatch.setenv(_PROVIDER_ENV_KEYS[provider], SECRET_KEY)
+    lines = [f"data: {error_event % SECRET_KEY}\n", "\n"]
+    monkeypatch.setattr(
+        "urllib.request.urlopen", lambda req, timeout=None: StreamingResponse(lines)
+    )
+    with pytest.raises(RuntimeError) as excinfo:
+        call_provider_result(
+            provider, "prompt", "", "model-x", on_token=lambda _t: None
+        )
+    assert SECRET_KEY not in str(excinfo.value)
+    assert "[REDACTED]" in str(excinfo.value)

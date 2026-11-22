@@ -640,6 +640,12 @@ def call_provider_result(
         message = _redact_provider_key(provider, _http_error_message(exc))
         # from None: the original HTTPError (and its body) is not chained into tracebacks.
         raise RuntimeError(f"HTTP {exc.code}: {message}") from None
+    except RuntimeError as exc:
+        # Streaming errors arrive after HTTP 200 (SSE "error" events) and may echo the key too.
+        message = _redact_provider_key(provider, str(exc))
+        if message == str(exc):
+            raise
+        raise RuntimeError(message) from None
 
 
 def call_provider(provider: str, prompt: str, context: str, model: str | None) -> str:
