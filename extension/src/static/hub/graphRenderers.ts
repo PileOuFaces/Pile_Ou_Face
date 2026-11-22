@@ -2,6 +2,7 @@
 
 const { logDebug, logWarning } = require('../../shared/utils');
 const { getFunctionInstrCounts } = require('../../shared/mappingStore');
+const { writeFileAtomic } = require('../../shared/privateTempDir');
 
 function createGraphRenderers({
   panel,
@@ -242,13 +243,14 @@ function createGraphRenderers({
             baseName,
           }) || resolvedDiscoveredPath;
           if (resolvedDiscoveredPath && fs.existsSync(resolvedDiscoveredPath)) {
-            fs.writeFileSync(resolvedSymbolsPath, fs.readFileSync(resolvedDiscoveredPath, 'utf8'), 'utf8');
+            writeFileAtomic(resolvedSymbolsPath, fs.readFileSync(resolvedDiscoveredPath, 'utf8'), fs);
           } else {
-            fs.writeFileSync(resolvedSymbolsPath, '[]', 'utf8');
+            writeFileAtomic(resolvedSymbolsPath, '[]', fs);
           }
         } else if (!fs.existsSync(resolvedSymbolsPath) && fs.existsSync(binForSymbols)) {
           const symbols = await loadBinarySymbols(binForSymbols);
-          fs.writeFileSync(resolvedSymbolsPath, JSON.stringify(symbols, null, 2), 'utf8');
+          // Atomic: the existence check above and this write are separated by an await.
+          writeFileAtomic(resolvedSymbolsPath, JSON.stringify(symbols, null, 2), fs);
         }
         if (fs.existsSync(mappingPath) && fs.existsSync(resolvedSymbolsPath)) {
           const mappingSig = getFileSignature(mappingPath);

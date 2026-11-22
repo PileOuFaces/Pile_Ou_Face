@@ -7,6 +7,7 @@
 const vscode = require('vscode');
 const fs = require('fs');
 const os = require('os');
+const { PRIVATE_DIR_MODE, privateTempBase } = require('./privateTempDir');
 const path = require('path');
 const cp = require('child_process');
 const crypto = require('crypto');
@@ -27,7 +28,6 @@ const logInfo = (message) => logAt('info', message);
 const logWarning = (message) => logAt('warning', message);
 const logError = (message) => logAt('error', message);
 
-const TEMP_DIR_NAME = 'pile-ou-face';
 
 // Singleton initialisé au démarrage avec context.extensionPath.
 // Sépare "où vivent les backends" (extensionPath) de "workspace utilisateur" (root).
@@ -76,16 +76,17 @@ function findGitRoot(dir) {
   return dir;
 }
 
+// Under the current user's private base (privateTempDir.ts), never a shared /tmp path.
 function getTempDir(root) {
   const projectRoot = path.resolve(findGitRoot(resolveProjectRoot(root)) || process.cwd());
   const key = crypto.createHash('sha256').update(projectRoot).digest('hex').slice(0, 16);
-  return path.join(os.tmpdir(), TEMP_DIR_NAME, key);
+  return path.join(privateTempBase({ warn: logWarning }), key);
 }
 
 function ensureTempDir(root) {
   const dir = getTempDir(root);
   if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(dir, { recursive: true, mode: PRIVATE_DIR_MODE });
     logChannel.appendLine(`[temp] Dossier créé: ${dir}`);
   }
   return dir;
@@ -354,7 +355,6 @@ module.exports = {
   logInfo,
   logWarning,
   logError,
-  TEMP_DIR_NAME,
   getTempDir,
   ensureTempDir,
   getStorageDir,

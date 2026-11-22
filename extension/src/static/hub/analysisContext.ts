@@ -3,6 +3,7 @@
 const { getExtensionPath } = require('../../shared/utils');
 const { makeMappingStore } = require('../../shared/mappingStore');
 const { confirmOpenLargeTextFile } = require('../../shared/largeFileGuard');
+const { writeFileAtomic } = require('../../shared/privateTempDir');
 
 function createAnalysisContext({
   root,
@@ -656,7 +657,8 @@ function createAnalysisContext({
     const args = [discScript, '--mapping', mappingPath];
     if (binArg) args.push('--binary', binArg);
     const functions = await runPythonJson(discScript, args.slice(1));
-    fs.writeFileSync(discoveredPath, JSON.stringify(functions, null, 2), 'utf8');
+    // Atomic: a symlink planted at discoveredPath meanwhile is replaced, never followed.
+    writeFileAtomic(discoveredPath, JSON.stringify(functions, null, 2), fs);
     return discoveredPath;
   };
 

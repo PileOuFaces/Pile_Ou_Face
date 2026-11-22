@@ -16,6 +16,7 @@ const https = require('https');
 const readline = require('readline');
 const { detectPythonExecutable, buildRuntimeEnv, resolveDockerExecutable, logDebug, logWarning } = require('../shared/utils');
 const { checkHubCommand } = require('./hubCommandPolicy');
+const { ensurePrivateSubdir, safeFileStem } = require('../shared/privateTempDir');
 const { readStoredSettings } = require('../shared/settingsSchema');
 const { decompilerEnvFromPaths } = require('../shared/decompilerLocalPaths');
 const { emptyPluginUiState, summarizePluginRuntimeState } = require('./pluginState');
@@ -1701,7 +1702,8 @@ function staticHandlers(config: LooseMessage) {
         }
       }
 
-      const cancelFlagPath = path.join(os.tmpdir(), `pof-triage-cancel-${requestId}.flag`);
+      // Private per-user directory, and a hashed name: requestId comes from the webview.
+      const cancelFlagPath = path.join(ensurePrivateSubdir('triage'), `cancel-${safeFileStem(requestId)}.flag`);
       try { fs.rmSync(cancelFlagPath, { force: true }); } catch (err) {
         logDebug(`[auto-triage] cleanup cancel flag failed: ${err.message || err}`);
       }
