@@ -16,8 +16,11 @@ const fs = require('fs');
 const path = require('path');
 
 const COMPILE_LANGS = ['c', 'cpp', 'rust', 'go'] as const;
+// Union des cibles des chaînes livrées (docker/compilers/*/compilers.json, vérifiée par test).
 const COMPILE_TARGETS = [
-  'elf-x64', 'elf-x86', 'elf-arm64', 'elf-arm', 'pe-x64', 'pe-x86', 'macho-arm64', 'macho-x64',
+  'elf-x64', 'elf-x86', 'elf-arm64', 'elf-arm', 'elf-riscv64', 'elf-mips', 'elf-mipsel', 'elf-mips64el',
+  'elf-ppc', 'elf-ppc64', 'elf-ppc64le', 'elf-sparc64', 'elf-s390x', 'elf-m68k', 'elf-sh4',
+  'pe-x64', 'pe-x86', 'macho-arm64', 'macho-x64',
 ] as const;
 
 const OPTIMIZATION_FLAGS = ['-O0', '-Og', '-O1', '-O2', '-O3', '-Os'];

@@ -78,6 +78,20 @@ describe('compilePolicy (#548)', () => {
     expect(validateCompileFlags(['-O2'], 'go').ok).to.equal(false);
   });
 
+  it('accepts every target of the shipped toolchains (no regression for cross targets)', () => {
+    const { COMPILE_TARGETS } = require('../static/compilePolicy');
+    const compilersDir = path.resolve(__dirname, '..', '..', '..', 'docker', 'compilers');
+    const shipped = new Set();
+    for (const name of fs.readdirSync(compilersDir)) {
+      const file = path.join(compilersDir, name, 'compilers.json');
+      if (!fs.existsSync(file)) continue;
+      const text = fs.readFileSync(file, 'utf8');
+      for (const match of text.matchAll(/"((?:elf|pe|macho)-[a-z0-9]+)"/g)) shipped.add(match[1]);
+    }
+    expect(shipped.size).to.be.greaterThan(8);
+    expect([...shipped].filter((t) => !COMPILE_TARGETS.includes(t))).to.deep.equal([]);
+  });
+
   it('only accepts known languages and targets', () => {
     expect(validateLangTarget('c', 'elf-x64').ok).to.equal(true);
     expect(validateLangTarget('sh', 'elf-x64').ok).to.equal(false);

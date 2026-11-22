@@ -37,7 +37,7 @@ const {
 // Async variants: cache I/O must not block the Extension Host (POF-P1-010).
 const { readCacheAsync: readCache, writeCacheAsync: writeCache } = require('../shared/staticCache');
 const { createHandlers } = require('./handlers');
-const { OPTIMIZATION_FLAGS, DEBUG_FLAGS, privateOutputName } = require('./compilePolicy');
+const { OPTIMIZATION_FLAGS, DEBUG_FLAGS, privateOutputName, validateSourcePath } = require('./compilePolicy');
 const {
   getDisasmScript,
   getHeadersScript,
@@ -820,10 +820,11 @@ function createHub(config) {
       if (String(extraFlags || '').trim()) throw new Error('Free compiler options are not supported.');
       if (optim !== null && !OPTIMIZATION_FLAGS.includes(optim)) throw new Error('Unknown optimization level.');
       if (debug !== null && debug !== '' && !DEBUG_FLAGS.includes(debug)) throw new Error('Unknown debug option.');
-      const absoluteSourcePath = resolvePathFromWorkspace(sourcePath);
-      if (!fs.existsSync(absoluteSourcePath)) {
-        throw new Error(`Source introuvable: ${absoluteSourcePath}`);
-      }
+      // #548 : même contrôle que le panneau de compilation, pour tous les appelants
+      // (Run Trace compris) : fichier régulier .c, chemin réel compris.
+      const sourceCheck = validateSourcePath(resolvePathFromWorkspace(sourcePath), 'c');
+      if (sourceCheck.ok === false) throw new Error(`Source refusée : ${sourceCheck.reason}`);
+      const absoluteSourcePath = sourceCheck.value;
       const absoluteBinaryPath = resolvePathFromWorkspace(binaryPath);
       const outputDir = path.dirname(absoluteBinaryPath);
       if (!fs.existsSync(outputDir)) {
