@@ -1703,7 +1703,13 @@ function staticHandlers(config: LooseMessage) {
       }
 
       // Private per-user directory, and a hashed name: requestId comes from the webview.
-      const cancelFlagPath = path.join(ensurePrivateSubdir('triage'), `cancel-${safeFileStem(requestId)}.flag`);
+      let cancelFlagPath;
+      try {
+        cancelFlagPath = path.join(ensurePrivateSubdir('triage'), `cancel-${safeFileStem(requestId)}.flag`);
+      } catch (err) {
+        fail(`Dossier temporaire privé indisponible : ${err.message || err}`);
+        return;
+      }
       try { fs.rmSync(cancelFlagPath, { force: true }); } catch (err) {
         logDebug(`[auto-triage] cleanup cancel flag failed: ${err.message || err}`);
       }

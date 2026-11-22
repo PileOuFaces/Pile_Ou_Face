@@ -74,7 +74,7 @@ describe("archSupport — readArchSupportFromMapping", () => {
     try {
       expect(archSupport.readArchSupportFromMapping(file, fs)).to.be.null;
     } finally {
-      fs.unlinkSync(file);
+      fs.rmSync(path.dirname(file), { recursive: true, force: true });
     }
   });
 
@@ -83,7 +83,7 @@ describe("archSupport — readArchSupportFromMapping", () => {
     try {
       expect(archSupport.readArchSupportFromMapping(file, fs)).to.be.null;
     } finally {
-      fs.unlinkSync(file);
+      fs.rmSync(path.dirname(file), { recursive: true, force: true });
     }
   });
 
@@ -94,7 +94,7 @@ describe("archSupport — readArchSupportFromMapping", () => {
       const result = archSupport.readArchSupportFromMapping(file, fs);
       expect(result).to.deep.equal(payload);
     } finally {
-      fs.unlinkSync(file);
+      fs.rmSync(path.dirname(file), { recursive: true, force: true });
     }
   });
 
@@ -105,7 +105,7 @@ describe("archSupport — readArchSupportFromMapping", () => {
     try {
       expect(archSupport.readArchSupportFromMapping(file, fs)).to.be.null;
     } finally {
-      fs.unlinkSync(file);
+      fs.rmSync(path.dirname(file), { recursive: true, force: true });
     }
   });
 });

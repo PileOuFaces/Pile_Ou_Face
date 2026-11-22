@@ -6,9 +6,13 @@
  * The previous `os.tmpdir()/pile-ou-face/<hash>` path was predictable and shared: on a
  * multi-user machine another account could create it first and plant files (e.g. a trace
  * read by the visualizer) or symbolic links that the extension would then write through.
- * Here the base directory is `os.tmpdir()/pile-ou-face-<user>`, created with mode 0700 and
- * accepted only if it is a real directory owned by the current user and closed to others.
- * Otherwise a fresh random directory (mkdtemp, 0700) is used for this process.
+ * POSIX: the base directory is `os.tmpdir()/pile-ou-face-<uid>`, created with mode 0700 and
+ * accepted only if it is a real directory owned by the current user and closed to others;
+ * otherwise a fresh random directory (mkdtemp, 0700) is used for this process.
+ * Windows: Node cannot check ACLs, so ownership cannot be proven. A fresh random directory
+ * (mkdtemp) is used for every session: its name cannot be guessed, hence not pre-created
+ * by another account. Its ACLs are inherited from %TEMP%, normally private to the user
+ * (residual risk only if %TEMP% is deliberately shared between accounts).
  */
 
 const fs = require('fs');
@@ -46,7 +50,8 @@ function privateDirProblem(dir: string, { platform = process.platform, getuid = 
   }
   if (info.isSymbolicLink()) return 'is a symbolic link';
   if (!info.isDirectory()) return 'is not a directory';
-  // Windows: os.tmpdir() is already inside the user's profile; POSIX modes do not apply.
+  // Ownership cannot be proven without POSIX ids (Windows): privateTempBase() never reuses
+  // a predictable path there, it always creates a random one.
   if (platform === 'win32' || typeof getuid !== 'function') return null;
   if (info.uid !== getuid()) return `is owned by uid ${info.uid}`;
   if ((info.mode & OTHERS_ACCESS_BITS) !== 0) return `is accessible to other users (mode ${(info.mode & 0o777).toString(8)})`;
@@ -56,7 +61,12 @@ function privateDirProblem(dir: string, { platform = process.platform, getuid = 
 /** The current user's private base directory (created on first use, cached per process). */
 function privateTempBase(deps: Deps = {}): string {
   if (cachedBase && !deps.fsApi) return cachedBase;
-  const { tmpdir = os.tmpdir, fsApi = fs, warn = () => {} } = deps;
+  const { tmpdir = os.tmpdir, fsApi = fs, warn = () => {}, platform = process.platform } = deps;
+  if (platform === 'win32') {
+    const sessionDir = fsApi.mkdtempSync(path.join(tmpdir(), BASE_PREFIX));
+    if (!deps.fsApi) cachedBase = sessionDir;
+    return sessionDir;
+  }
   const base = path.join(tmpdir(), `${BASE_PREFIX}${userTag(deps)}`);
   try {
     fsApi.mkdirSync(base, { mode: PRIVATE_DIR_MODE });

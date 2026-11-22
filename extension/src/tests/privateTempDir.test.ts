@@ -74,9 +74,18 @@ describe('private temporary directory', () => {
     expect(privateDirProblem(file, { fsApi: fs })).to.equal('is not a directory');
   });
 
-  it('on Windows, accepts the base without POSIX ownership checks (per-user temp)', () => {
-    const base = privateTempBase(deps({ platform: 'win32', username: () => 'Jane Doe' }));
-    expect(base).to.equal(path.join(fakeTmp, 'pile-ou-face-Jane_Doe'));
+  it('on Windows, never reuses a predictable directory another account could pre-create', () => {
+    // Node cannot check Windows ACLs: a squatted pile-ou-face-<user> must not be adopted.
+    const squatted = path.join(fakeTmp, 'pile-ou-face-Jane_Doe');
+    fs.mkdirSync(squatted);
+    const first = privateTempBase(deps({ platform: 'win32', username: () => 'Jane Doe' }));
+    const second = privateTempBase(deps({ platform: 'win32', username: () => 'Jane Doe' }));
+    for (const base of [first, second]) {
+      expect(base).to.not.equal(squatted);
+      expect(path.dirname(base)).to.equal(fakeTmp);
+      expect(path.basename(base)).to.match(/^pile-ou-face-[A-Za-z0-9]{6}$/);
+    }
+    expect(first).to.not.equal(second);
   });
 
   (POSIX ? it : it.skip)('creates private subdirectories inside the base', () => {
