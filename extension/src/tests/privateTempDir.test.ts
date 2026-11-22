@@ -15,6 +15,16 @@ const {
 } = require('../shared/privateTempDir');
 
 const POSIX = process.platform !== 'win32';
+
+/** Reads `file` in one open that fails if it is a symbolic link (no check-then-use). */
+function readRegularFile(file) {
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    return fs.readFileSync(fd, 'utf8');
+  } finally {
+    fs.closeSync(fd);
+  }
+}
 const OWN_UID = POSIX ? process.getuid() : 0;
 const OTHER_UID = OWN_UID + 4242;
 
@@ -109,8 +119,7 @@ describe('private temporary directory', () => {
     fs.symlinkSync(victim, target);
     writeFileAtomic(target, '{"ok":true}');
     expect(fs.readFileSync(victim, 'utf8')).to.equal('untouched');
-    expect(fs.lstatSync(target).isSymbolicLink()).to.equal(false);
-    expect(fs.readFileSync(target, 'utf8')).to.equal('{"ok":true}');
+    expect(readRegularFile(target)).to.equal('{"ok":true}');
     expect(fs.readdirSync(fakeTmp).filter((name) => name.endsWith('.tmp'))).to.deep.equal([]);
   });
 
@@ -120,7 +129,7 @@ describe('private temporary directory', () => {
     fs.symlinkSync(outside, target);
     writeFileAtomic(target, '[]');
     expect(fs.existsSync(outside)).to.equal(false);
-    expect(fs.readFileSync(target, 'utf8')).to.equal('[]');
+    expect(readRegularFile(target)).to.equal('[]');
   });
 });
 
