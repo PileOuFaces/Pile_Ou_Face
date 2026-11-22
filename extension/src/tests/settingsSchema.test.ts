@@ -106,7 +106,6 @@ describe('settings schema (validateSettingsUpdate)', () => {
       interfaceMode: 'simple',
       enabledStaticFeatures: ['disasm'],
       bindiffThreshold: 0.75,
-      decompilerLocalPaths: { ghidra: '/opt/ghidra' },
       aiPricingRules: [{
         id: 'pricing-1', model: 'openai@gpt-*', inputPerMillion: 1.5, outputPerMillion: 3, effectiveDate: '2026-01-01', currency: 'USD',
       }],

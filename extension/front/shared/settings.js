@@ -34,6 +34,16 @@ function _pythonPathSelected(message) {
   _settingsPythonPathClearRequested = false;
 }
 
+/** Host answer to the native decompiler folder picker (#531). */
+function _decompilerLocalPathSelected(message) {
+  const id = typeof message?.decompilerId === 'string' ? message.decompilerId : '';
+  if (!id || message?.changed !== true || !_settingsCache) return;
+  const paths = { ...(_settingsCache.decompilerLocalPaths || {}) };
+  if (typeof message.path === 'string' && message.path) paths[id] = message.path;
+  else delete paths[id];
+  _settingsCache = { ..._settingsCache, decompilerLocalPaths: paths };
+}
+
 function _resetSettings() {
   clearTimeout(_settingsDebounce);
   _settingsDebounce = null;
@@ -189,12 +199,9 @@ function _collectSettings() {
     settings.aiMaxTokens = generation.max_tokens;
   }
   settings.aiPricingRules = collectAiPricingRules();
-  settings.decompilerLocalPaths = {};
-  document.querySelectorAll('#panel-options [data-decompiler-local-path]').forEach((el) => {
-    const id = String(el.dataset.decompilerLocalPath || '').trim();
-    const value = String(el.value || '').trim();
-    if (id && value) settings.decompilerLocalPaths[id] = value;
-  });
+  // Decompiler folders are owned by the extension host (native picker, #531): never sent
+  // from the form, so an attested folder is not erased by an unrelated save.
+  delete settings.decompilerLocalPaths;
   settings.interfaceMode = document.getElementById('settingInterfaceMode')?.value === 'simple' ? 'simple' : 'advanced';
   const selectedFeatures = settings.interfaceMode === 'simple'
     ? Array.from(STATIC_SIMPLE_FEATURES)

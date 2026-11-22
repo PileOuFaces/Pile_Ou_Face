@@ -193,4 +193,22 @@ describe('settings rendering and pythonPath ownership', () => {
     expect(save.settings.pythonPath).to.equal('');
     expect(document.getElementById('settingPythonPath').value).to.equal('');
   });
+
+  it('never sends decompiler folders: they are owned by the extension host (#531)', () => {
+    fixture = mountSettings();
+    const { dom, clock, messages } = fixture;
+    const { document } = dom.window;
+    dom.window._applySettings({ interfaceMode: 'advanced', decompilerLocalPaths: { ghidra: '/opt/ghidra' } }, 0);
+    const forged = document.createElement('input');
+    forged.dataset.decompilerLocalPath = 'ghidra';
+    forged.value = '/tmp/evil';
+    document.getElementById('panel-options').appendChild(forged);
+    document.getElementById('settingLang').value = 'en';
+    dom.window._scheduleSave();
+    clock.tick(500);
+    const save = messages.find((message) => message.type === 'hubSaveSettings');
+    expect(save.settings.lang).to.equal('en');
+    expect(save.settings).to.not.have.property('decompilerLocalPaths');
+  });
 });
+

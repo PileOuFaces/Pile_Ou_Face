@@ -16,6 +16,7 @@ const https = require('https');
 const readline = require('readline');
 const { detectPythonExecutable, buildRuntimeEnv, resolveDockerExecutable, logDebug, logWarning } = require('../shared/utils');
 const { readStoredSettings } = require('../shared/settingsSchema');
+const { decompilerEnvFromPaths } = require('../shared/decompilerLocalPaths');
 const { emptyPluginUiState, summarizePluginRuntimeState } = require('./pluginState');
 const { AuthService } = require('../shared/authService');
 const { resolveAuthServerUrl } = require('../shared/authConfig');
@@ -502,18 +503,20 @@ function staticHandlers(config: LooseMessage) {
     return base;
   };
   const buildPythonEnv = () => {
-    const settings = getSavedSettings();
-    const localPaths = settings.decompilerLocalPaths && typeof settings.decompilerLocalPaths === 'object'
-      ? settings.decompilerLocalPaths
-      : {};
     const env = buildRuntimeEnv(
       root,
       storageDir,
       globalDir ? { POF_GLOBAL_STORAGE_DIR: globalDir } : {},
     );
-    const ghidraPath = String(localPaths.ghidra || '').trim();
-    if (ghidraPath) env.GHIDRA_INSTALL_DIR = ghidraPath;
-    return env;
+    // #531 : seuls les dossiers attestés par le Host (réglages migrés), dont la structure est
+    // revérifiée à chaque usage, deviennent des variables d'exécution (GHIDRA_INSTALL_DIR).
+    let attestedPaths = {};
+    try {
+      attestedPaths = readStoredSettings(context?.globalState).decompilerLocalPaths || {};
+    } catch (err) {
+      logWarning(`[decompiler] Lecture des dossiers locaux impossible : ${err?.message || err}`);
+    }
+    return { ...env, ...decompilerEnvFromPaths(attestedPaths, { log: logWarning }) };
   };
   const resolveAutoTriageProviderModel = (message, pythonEnv) => {
     let provider = String(message.provider || pythonEnv.POF_DEFAULT_AI_PROVIDER || 'ollama').trim() || 'ollama';
