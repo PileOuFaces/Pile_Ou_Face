@@ -98,4 +98,23 @@ describe('privacy telemetry transport', () => {
     transport.dispose();
     expect(await pending).to.equal(false);
   });
+
+  it('releases the unread response body so no exchange outlives the call', async () => {
+    let signal = null;
+    let bodyCancelled = false;
+    const transport = createTelemetryTransport({
+      endpoint: 'https://telemetry.example.test',
+      fetchImpl: async (_url, init) => {
+        signal = init.signal;
+        signal.addEventListener('abort', () => { bodyCancelled = true; });
+        // Headers received, body left open by the provider.
+        return { ok: true, status: 200, body: new ReadableStream({ start() {} }) };
+      },
+    });
+
+    expect(await transport.sendBody('{}')).to.equal(true);
+    expect(signal.aborted).to.equal(true);
+    expect(bodyCancelled).to.equal(true);
+  });
 });
+
