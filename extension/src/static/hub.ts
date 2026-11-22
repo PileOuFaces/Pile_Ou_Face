@@ -79,6 +79,7 @@ const { createTraceHistory } = require('./hub/traceHistory');
 const { createActions } = require('./hub/actions');
 const { createSettingsActions } = require('./hub/settingsActions');
 const { createRunTraceTelemetry } = require('../dynamic/runTraceTelemetry');
+const { writeFileAtomic } = require('../shared/privateTempDir');
 const archSupport = require('./hub/archSupport');
 const { getRuntimeAuditState, recordRuntimeEvent } = require('../shared/runtimeAudit');
 const { EVENT_NAMES } = require('../shared/telemetry/telemetryEvents');
@@ -1074,7 +1075,8 @@ function createHub(config) {
         const args = [discScript, '--mapping', mappingPath];
         if (binArg) args.push('--binary', binArg);
         const functions = await runPythonJson(discScript, args.slice(1));
-        fs.writeFileSync(discoveredPath, JSON.stringify(functions, null, 2), 'utf8');
+        // Atomic: a symlink planted at discoveredPath meanwhile is replaced, never followed.
+        writeFileAtomic(discoveredPath, JSON.stringify(functions, null, 2));
         return discoveredPath;
       };
       const loadLatestTrace = () => {

@@ -222,7 +222,22 @@ L'objet `pof-settings` contient d'autres clés déclarées dans `SETTINGS_DEFAUL
 | Clé | Point de lecture | Vérification à la lecture |
 |---|---|---|
 | `authServerUrl` | `extension/src/extension.ts:142`, `146`, `150` ; `extension/src/static/staticHandlers.ts:478` ; `extension/src/static/hub.ts:298` | Valeur utilisée comme `savedAuthServerUrl` ; contrôle en aval par `requireSecureAuthUrl` (`extension/src/shared/authConfig.ts:117`) |
-| `decompilerLocalPaths` | `extension/src/static/staticHandlers.ts:495-498`, `504` | Contrôle de type objet (`typeof ... === 'object'`), puis `String(localPaths.ghidra \|\| '').trim()` |
+| `decompilerLocalPaths` | `extension/src/static/staticHandlers.ts` (`buildPythonEnv`) | Réglages migrés (dossiers attestés par le Host uniquement), puis `decompilerEnvFromPaths` (`extension/src/shared/decompilerLocalPaths.ts`) : chemin toujours canonique et structure Ghidra présente, sinon non exporté (voir ci-dessous) |
+
+### `decompilerLocalPaths` : ce que l'attestation garantit (#531)
+
+Le dossier Ghidra local est choisi dans le dialogue natif du Host, puis attesté dans `pof-decompiler-paths-selected`. Le webview ne peut que l'effacer. Avant chaque usage (`GHIDRA_INSTALL_DIR`), l'extension vérifie :
+
+- que le dossier attesté se résout toujours vers lui-même : si un lien symbolique le redirige désormais, lui ou un parent, il est ignoré et il faut le choisir à nouveau ;
+- que la structure attendue est présente : `support/analyzeHeadless` (`.bat` sous Windows) et `Ghidra/application.properties`.
+
+Elle ne garantit **pas** l'authenticité ni l'intégrité du contenu :
+
+- un dossier contenant ces fichiers n'est pas prouvé être Ghidra ;
+- remplacer un exécutable dans ce dossier n'est pas détecté ;
+- un lien placé à l'intérieur (par exemple `support/analyzeHeadless`) est suivi.
+
+Comme pour tout programme installé, quiconque peut écrire dans ce dossier décide de ce qui s'exécute.
 
 Les lectures des autres clés (`aiTemperature`, `aiTopP`, etc.) n'ont pas été inventoriées : elles sortent du périmètre demandé, centré sur les réglages et sur `pythonPath`.
 
