@@ -221,6 +221,37 @@ describe('decompiler local folders (#531)', () => {
       expect(log.calledOnce).to.equal(true);
     });
 
+    (process.platform === 'win32' ? it.skip : it)('ignores an attested folder later replaced by a symlink to another installation', () => {
+      // The attested value is canonical; a link swapped in afterwards points to a folder
+      // the user never chose, even if it has the right layout.
+      const chosen = ghidraFolder();
+      const other = ghidraFolder();
+      fs.rmSync(chosen, { recursive: true });
+      fs.symlinkSync(other, chosen);
+      const log = sinon.spy();
+      expect(decompilerEnvFromPaths({ ghidra: chosen }, { log })).to.deep.equal({});
+      expect(log.firstCall.args[0]).to.contain('now resolves to');
+    });
+
+    (process.platform === 'win32' ? it.skip : it)('ignores an attested folder whose parent was replaced by a symlink', () => {
+      const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'pof-ghidra-parent-'));
+      created.push(parent);
+      const chosen = path.join(parent, 'ghidra');
+      for (const relative of HOST_FILES) {
+        const target = path.join(chosen, ...relative.split('/'));
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, '');
+      }
+      const canonical = fs.realpathSync(chosen);
+      const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'pof-ghidra-elsewhere-'));
+      created.push(elsewhere);
+      fs.renameSync(path.join(parent, 'ghidra'), path.join(elsewhere, 'ghidra'));
+      fs.rmSync(parent, { recursive: true });
+      fs.symlinkSync(elsewhere, parent);
+      created.push(parent);
+      expect(decompilerEnvFromPaths({ ghidra: canonical })).to.deep.equal({});
+    });
+
     it('never exports an unattested folder: the migration removes it first', () => {
       const folder = ghidraFolder();
       const store = makeStore({ decompilerLocalPaths: { ghidra: folder } });
