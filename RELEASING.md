@@ -12,7 +12,7 @@ Flux : `feature/*` → PR → `develops` → PR de promotion → `main` → tag 
 
 | Workflow | Déclencheur | Rôle |
 |----------|-------------|------|
-| `ci.yml` | PR vers `develops`/`main`, et push sur toute autre branche (pas sur `develops`/`main`) | Lint, tests, matrice OS, E2E, corpus. Produit `CI Success`, le check requis avant merge. Après une fusion, seuls CodeQL, Gitleaks, Semgrep/Bandit et Trivy tournent sur `develops`/`main`. |
+| `ci.yml` | Toute PR vers `develops`/`main` ; push sur une autre branche seulement si `extension/**` ou un workflow CI/publication change (jamais sur `develops`/`main`) | Lint, tests, matrice OS, E2E, corpus. Produit `CI Success`, le check requis avant merge. Après une fusion, seuls CodeQL, Gitleaks, Semgrep/Bandit et Trivy tournent sur `develops`/`main`. |
 | `docker-decompilers.yml` | push `develops` / PR vers `develops` (chemins `docker/decompilers/**`, `extension/backends/static/decompile/**`) | Build + **push** des images décompilateur sur ghcr. Sur `develops` : tags `:<version>` (immuable, depuis `image_versions.json`) + `develops` + `sha-*`. Sur PR : build de validation, **sans** push. |
 | `vsix.yml` | push `main` | Package un `.vsix` en artefact (téléchargeable, **pas** publié). |
 | `publish.yml` | push d'un tag `v*.*.*` ; *Run workflow* manuel (`release_action` = `verify` ou `publish`) | **Push du tag** : vérifie que le tag est un ancêtre de `main`, package le VSIX (profil SaaS officiel), génère le SBOM, **atteste** VSIX et SBOM, conserve le VSIX en artefact — **aucune publication**. **`release_action = publish`** (lancé sur le tag) : mêmes étapes, puis publication Open VSX, puis Marketplace à partir du même VSIX vérifié. **`verify`** : vérifie le token Open VSX sans publier. Ne crée pas de GitHub Release. |

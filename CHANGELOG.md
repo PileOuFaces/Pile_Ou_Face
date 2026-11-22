@@ -8,8 +8,8 @@
 - Les réglages envoyés par l'interface sont validés côté extension.
 - Le chemin de l'interpréteur Python et le dossier Ghidra local ne peuvent être choisis que dans le dialogue de VS Code.
 - L'interface ne peut plus déclencher que les commandes VS Code qu'elle utilise réellement.
-- Le fichier des clés API IA locales (`~/.pile-ou-face/.env`) est créé avec des droits restreints. Les clés n'apparaissent plus dans les erreurs ni dans les journaux.
-- Les fichiers temporaires vont dans un dossier privé par utilisateur.
+- Le fichier des clés API IA locales (`~/.pile-ou-face/.env`) est créé avec des droits restreints. Un échec d'enregistrement d'une clé n'affiche plus que le nom de la variable concernée.
+- Le dossier temporaire de l'extension (caches, traces) et les fichiers du triage IA sont placés dans un dossier privé par utilisateur.
 - Plusieurs valeurs affichées dans l'interface (registres d'une trace, noms de sections) sont désormais traitées comme du texte.
 
 ### Changed
