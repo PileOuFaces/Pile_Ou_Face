@@ -602,6 +602,10 @@ LONG_KEY = "sk-review-ABC/DEF+GHI=123456789"
     [
         LONG_KEY[:16] + "…",  # truncated prefix, as several providers print it
         urllib.parse.quote(LONG_KEY, safe=""),  # URL-encoded form
+        "key:" + LONG_KEY[:16] + "…",  # fragment glued to a label
+        "?key="
+        + urllib.parse.quote(LONG_KEY[:16], safe="")
+        + "…",  # encoded fragment in a URL
     ],
 )
 def test_partial_or_encoded_key_in_provider_error_is_redacted(echoed, monkeypatch):
@@ -657,3 +661,24 @@ def test_cli_error_output_redacts_keys(monkeypatch, capsys):
     assert '"ok": false' in out
     assert SECRET_KEY not in out
     assert "[REDACTED]" in out
+
+
+def test_key_with_inner_newline_is_fully_redacted_in_header_error(monkeypatch):
+    """#544: repr() escapes an inner newline, so the key's tail must be masked too."""
+    from backends.mcp.ai_provider import call_provider_result
+
+    head, tail = "sk-review-ABCDEFGH", "IJKLMNOPQRSTUV"
+    monkeypatch.setenv("OPENAI_API_KEY", f"{head}\n{tail}")
+    with pytest.raises(Exception) as excinfo:
+        call_provider_result("openai", "prompt", "", "model-x")
+    message = str(excinfo.value)
+    assert head not in message
+    assert tail not in message
+
+
+def test_redaction_keeps_ordinary_messages_intact(monkeypatch):
+    from backends.mcp.ai_provider import redact_provider_keys
+
+    monkeypatch.setenv("OPENAI_API_KEY", LONG_KEY)
+    text = "HTTP 429: Rate limit reached for model gpt-x, retry in 20s"
+    assert redact_provider_keys(text) == text

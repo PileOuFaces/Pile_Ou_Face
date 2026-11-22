@@ -1,6 +1,5 @@
 import json
 import os
-import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -607,37 +606,72 @@ def _http_error_message(exc: urllib.error.HTTPError) -> str:
 
 _REDACTED = "[REDACTED]"
 # Shorter fragments are too common to mask without hiding ordinary words;
-# a key prefix this long already identifies the key.
+# a key fragment this long already identifies the key.
 _MIN_KEY_FRAGMENT = 8
-_TOKEN_RE = re.compile(r"[A-Za-z0-9_\-.~/+=%:]+")
 
 
-def _configured_keys() -> list[str]:
-    keys = (os.environ.get(env, "") for env in _PROVIDER_ENV_KEYS.values())
-    return [k.strip() for k in keys if len(k.strip()) >= _MIN_KEY_FRAGMENT]
+def _key_forms(key: str) -> set[str]:
+    """Forms under which a key shows up in messages: raw, trimmed, URL-encoded,
+    escaped as in a bytes/str repr, and each line of a key holding a newline."""
+    forms = {
+        key,
+        key.strip(),
+        urllib.parse.quote(key, safe=""),
+        urllib.parse.quote(key),
+        key.encode("unicode_escape").decode("ascii"),
+    }
+    forms.update(key.split())
+    return {f for f in forms if len(f) >= _MIN_KEY_FRAGMENT}
 
 
-def _leaks_key(token: str, keys: list[str]) -> bool:
-    candidate = urllib.parse.unquote(token).strip(".")
-    if len(candidate) < _MIN_KEY_FRAGMENT:
-        return False
-    return any(candidate in key or key in candidate for key in keys)
+def _configured_key_forms() -> list[str]:
+    forms: set[str] = set()
+    for env in _PROVIDER_ENV_KEYS.values():
+        key = os.environ.get(env, "")
+        if key.strip():
+            forms |= _key_forms(key)
+    return sorted(forms, key=len, reverse=True)
+
+
+def _fragment_end(message: str, start: int, forms: list[str]) -> int:
+    """End of the longest run starting at ``start`` found inside one key form."""
+    end = start
+    if start + _MIN_KEY_FRAGMENT > len(message):
+        return end
+    for form in forms:
+        length = _MIN_KEY_FRAGMENT
+        if message[start : start + length] not in form:
+            continue
+        while (
+            start + length < len(message)
+            and message[start : start + length + 1] in form
+        ):
+            length += 1
+        end = max(end, start + length)
+    return end
 
 
 def redact_provider_keys(message: str) -> str:
-    """Masks configured AI keys, whole or partial, raw or URL-encoded (#544).
+    """Masks configured AI keys, whole or as fragments of >= 8 characters,
+    raw, URL-encoded or escaped, wherever they sit in the message (#544).
 
-    Providers echo the key (or a truncated prefix) in error bodies, and Python's
-    own header validation quotes the full header value in its exceptions.
+    Providers echo the key (or a truncated prefix, glued to a label) in error
+    bodies, and Python's header validation quotes "Bearer <key>" in its repr.
     """
-    keys = _configured_keys()
-    if not keys:
+    forms = _configured_key_forms()
+    if not forms:
         return message
-    for key in keys:
-        message = message.replace(key, _REDACTED)
-    return _TOKEN_RE.sub(
-        lambda m: _REDACTED if _leaks_key(m.group(0), keys) else m.group(0), message
-    )
+    out: list[str] = []
+    i = 0
+    while i < len(message):
+        end = _fragment_end(message, i, forms)
+        if end > i:
+            out.append(_REDACTED)
+            i = end
+        else:
+            out.append(message[i])
+            i += 1
+    return "".join(out)
 
 
 def call_provider_result(
