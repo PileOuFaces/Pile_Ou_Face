@@ -37,6 +37,7 @@ const {
 // Async variants: cache I/O must not block the Extension Host (POF-P1-010).
 const { readCacheAsync: readCache, writeCacheAsync: writeCache } = require('../shared/staticCache');
 const { createHandlers } = require('./handlers');
+const { OPTIMIZATION_FLAGS, DEBUG_FLAGS, privateOutputName } = require('./compilePolicy');
 const {
   getDisasmScript,
   getHeadersScript,
@@ -815,6 +816,10 @@ function createHub(config) {
     }) => {
       if (!sourcePath) throw new Error('Source C requise.');
       if (!binaryPath) throw new Error('Chemin binaire requis.');
+      // #548 : aucune option libre ; optimisation et débogage limités aux valeurs du panneau.
+      if (String(extraFlags || '').trim()) throw new Error('Free compiler options are not supported.');
+      if (optim !== null && !OPTIMIZATION_FLAGS.includes(optim)) throw new Error('Unknown optimization level.');
+      if (debug !== null && debug !== '' && !DEBUG_FLAGS.includes(debug)) throw new Error('Unknown debug option.');
       const absoluteSourcePath = resolvePathFromWorkspace(sourcePath);
       if (!fs.existsSync(absoluteSourcePath)) {
         throw new Error(`Source introuvable: ${absoluteSourcePath}`);
@@ -878,12 +883,6 @@ function createHub(config) {
 
       // Strip
       if (strip) gccArgs.push('-s');
-
-      // Flags custom
-      if (extraFlags) {
-        const parts = extraFlags.split(/\s+/).filter(Boolean);
-        gccArgs.push(...parts);
-      }
 
       gccArgs.push('-o', absoluteBinaryPath, absoluteSourcePath);
       await runCommand('gcc', gccArgs, root, logChannel);
@@ -1379,9 +1378,9 @@ function createHub(config) {
           } else {
             failureCategory = 'compilation_failed';
             const sourceBase = path.parse(sourcePath).name || 'binary';
-            const requestedName = binaryPath ? path.basename(binaryPath) : `${sourceBase}.elf`;
-            const outputName = requestedName || `${sourceBase}.elf`;
-            const outPath = path.resolve(tempDir, outputName);
+            // Nom seulement, assaini : la sortie reste dans le dossier temporaire privé (#548).
+            const outputName = privateOutputName(binaryPath || `${sourceBase}.elf`, 'elf-x64');
+            const outPath = path.join(tempDir, outputName);
             const compileResult = await compileCSource({
               sourcePath,
               binaryPath: outPath,

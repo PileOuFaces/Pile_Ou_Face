@@ -930,6 +930,7 @@
     'Binaire de sortie': 'Output binary',
     'Sélectionner un fichier source…': 'Select a source file…',
     'Chemin de sortie (auto si vide)': 'Output path (automatic when empty)',
+    'Dossier privé si vide ; exporter avec …': 'Private folder when empty; export with …',
     'Aucune optimisation: garde un désassemblage proche du source.': 'No optimization: keeps disassembly close to the source.',
     'Protections mémoire': 'Memory protections',
     'Avancé': 'Advanced',

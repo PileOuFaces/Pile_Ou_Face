@@ -16,6 +16,7 @@ const https = require('https');
 const readline = require('readline');
 const { detectPythonExecutable, buildRuntimeEnv, resolveDockerExecutable, logDebug, logWarning } = require('../shared/utils');
 const { checkHubCommand } = require('./hubCommandPolicy');
+const { createCompileHandlers } = require('./compileHandlers');
 const { ensurePrivateSubdir } = require('../shared/privateTempDir');
 const { readStoredSettings } = require('../shared/settingsSchema');
 const { decompilerEnvFromPaths } = require('../shared/decompilerLocalPaths');
@@ -1872,41 +1873,6 @@ function staticHandlers(config: LooseMessage) {
         maxTotalTokens: Number(config.get('maxTotalTokens', 100000)),
       });
     },
-    compilerBrowseSource: async (message: LooseMessage = {}) => {
-      const lang = String(message.lang || 'c');
-      const filters: Record<string, string[]> = {
-        c:    { 'C source': ['c', 'h'] },
-        cpp:  { 'C++ source': ['cpp', 'cc', 'cxx', 'h', 'hpp'] },
-        rust: { 'Rust source': ['rs'] },
-        go:   { 'Go source': ['go'] },
-      }[lang] || { 'Source': ['c', 'cpp', 'rs', 'go'] };
-      const picked = await vscode.window.showOpenDialog({
-        canSelectFiles: true, canSelectFolders: false, canSelectMany: false,
-        openLabel: 'Choose source file',
-        defaultUri: vscode.Uri.file(root),
-        filters,
-      });
-      panel.webview.postMessage({
-        type: 'compilerBrowseSourceResult',
-        path: picked?.[0]?.fsPath || null,
-      });
-    },
-    compilerBrowseOutput: async (message: LooseMessage = {}) => {
-      const target = String(message.target || 'elf-x64');
-      const ext = target.startsWith('pe-') ? 'exe' : target.startsWith('macho-') ? '' : 'elf';
-      const src = String(message.src || '');
-      const stem = src ? path.basename(src, path.extname(src)) : 'output';
-      const suggested = ext ? `${stem}.${ext}` : stem;
-      const saved = await vscode.window.showSaveDialog({
-        defaultUri: vscode.Uri.file(path.join(root, suggested)),
-        filters: ext ? { 'Binary': [ext] } : { 'Binary': ['*'] },
-        title: 'Output binary path',
-      });
-      panel.webview.postMessage({
-        type: 'compilerBrowseOutputResult',
-        path: saved?.fsPath || null,
-      });
-    },
     compilerListRequest: async () => {
       try {
         const { stdout } = await runPython(['backends/static/compile/compile.py', '--list'], { timeout: 30000 });
@@ -1916,23 +1882,8 @@ function staticHandlers(config: LooseMessage) {
         panel.webview.postMessage({ type: 'compilerListResult', compilers: [], error: String(err) });
       }
     },
-    compileRequest: async (message: LooseMessage = {}) => {
-      const { src, lang, target, output, flags } = message;
-      if (!src || !lang || !target) {
-        panel.webview.postMessage({ type: 'compileResult', error: 'src, lang et target sont requis.' });
-        return;
-      }
-      try {
-        const args: string[] = ['backends/static/compile/compile.py', '--src', src, '--lang', lang, '--target', target];
-        if (output) args.push('--output', output);
-        if (Array.isArray(flags) && flags.length) args.push('--flags', JSON.stringify(flags));
-        const { stdout } = await runPython(args, { timeout: 180000 });
-        const result = JSON.parse(stdout);
-        panel.webview.postMessage({ type: 'compileResult', ...result });
-      } catch (err) {
-        panel.webview.postMessage({ type: 'compileResult', error: String(err) });
-      }
-    },
+    // Compiler panel (#548): compilerBrowseSource, compilerBrowseOutput, compileRequest.
+    ...createCompileHandlers({ panel, root, runPython, logChannel }),
     hubExecuteCommand: async (message: LooseMessage = {}) => {
       // Le webview ne peut déclencher que les commandes de hubCommandPolicy (#535).
       // Type vérifié avant toute conversion : ni tableau ni objet ne deviennent un identifiant.

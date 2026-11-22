@@ -96,9 +96,9 @@ function ensurePrivateSubdir(name: string, deps: Deps = {}): string {
  * Writes `content` to `target` without following a symbolic link planted at `target`:
  * the data goes to a fresh file created exclusively next to it, then renamed over it.
  */
-function writeFileAtomic(target: string, content: string | Uint8Array, fsApi = fs): void {
+function writeFileAtomic(target: string, content: string | Uint8Array, fsApi = fs, mode = 0o600): void {
   const temp = `${target}.${crypto.randomBytes(6).toString('hex')}.tmp`;
-  fsApi.writeFileSync(temp, content, { flag: 'wx', mode: 0o600 });
+  fsApi.writeFileSync(temp, content, { flag: 'wx', mode });
   try {
     fsApi.renameSync(temp, target);
   } catch (err) {
