@@ -421,4 +421,3 @@ describe('bfsPath', () => {
     expect(({}).push).to.equal(undefined);
   });
 });
-

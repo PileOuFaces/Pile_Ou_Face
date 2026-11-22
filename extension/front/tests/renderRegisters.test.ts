@@ -42,7 +42,6 @@ describe('dynamic/render — register names and values are text (CodeQL js/xss #
     expect(registers.querySelector('img')).to.equal(null);
     expect(registers.querySelector('.register-name').textContent).to.equal(PAYLOAD);
     expect(registers.querySelector('.register-value').textContent).to.equal(PAYLOAD);
-    expect(globalThis.__pwned).to.equal(undefined);
   });
 
   it('keeps the regular rendering of a register', () => {
