@@ -81,9 +81,9 @@ let decompileUiState = {
   searchQuery: _loadStorage().decompileSearch || '',
   activeSearchHit: -1,
   forcedDecompiler: '',    // '' = auto mode, 'ghidra'|'retdec'|'angr' = user forced
-  pillStatuses: {},        // { [decompiler]: { status: 'running'|'done'|'error', score } }
+  pillStatuses: Object.create(null),        // { [decompiler]: { status: 'running'|'done'|'error', score } }
   bestDecompiler: '',      // decompiler name currently displayed as best
-  payloads: {},            // { [decompiler]: payload } — cached per-decompiler payloads
+  payloads: Object.create(null),            // { [decompiler]: payload } — cached per-decompiler payloads
 };
 let decompileHistoryState = {
   entries: [],

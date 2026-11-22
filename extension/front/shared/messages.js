@@ -383,7 +383,7 @@ window.addEventListener('message', (event) => {
   }
   if (msg.type === 'pluginStatusRefresh') {
     const prevPlugins = Array.isArray(pluginUiState.plugins) ? pluginUiState.plugins : [];
-    const prevStatusById = {};
+    const prevStatusById = Object.create(null);
     prevPlugins.forEach((p) => { if (p?.id) prevStatusById[p.id] = p.licenseStatus; });
     const newPayload = Array.isArray(msg.payload) ? msg.payload : [];
     pluginUiState = {
@@ -746,7 +746,8 @@ window.addEventListener('message', (event) => {
   if (msg.type === 'generatedFiles') {
     const data = msg.files;
     if (!data || typeof data !== 'object') return;
-    const fmt = (n) => n >= 1024 * 1024 ? `${(n / (1024 * 1024)).toFixed(1)} Mo` : n >= 1024 ? `${(n / 1024).toFixed(1)} Ko` : `${n} o`;
+    // Sizes are interpolated into HTML: coerce to a number first.
+    const fmt = (raw) => { const n = Number(raw) || 0; return n >= 1024 * 1024 ? `${(n / (1024 * 1024)).toFixed(1)} Mo` : n >= 1024 ? `${(n / 1024).toFixed(1)} Ko` : `${n} o`; };
     const artifactLabels = {
       disasm: { title: 'Désassemblage texte', short: 'ASM', note: 'Vue assembleur exportée pour la navigation.' },
       mapping: { title: 'Index de navigation', short: 'IDX', note: 'Associe les lignes du désassemblage aux adresses et offsets.' },
@@ -1474,7 +1475,7 @@ window.addEventListener('message', (event) => {
             ? `<div class="xref-function-name">${escapeHtml(r.function_name)}</div>${r.function_addr ? `<code class="xref-function-addr">${escapeHtml(r.function_addr)}</code>` : ''}`
             : '—';
           const instr = `<code>${escapeHtml((r.text || '').substring(0, 90))}</code>${renderStackHints(r.stack_hints)}${renderTypedStructHints(r.typed_struct_hints)}`;
-          return `<tr><td>${makeAddrLink(r.from_addr)}</td><td>${fnCell}</td><td><span class="xref-type xref-${r.type}">${escapeHtml(r.type)}</span></td><td>${instr}</td><td class="xrefs-action-cell">${makeJumpButton(r.from_addr, 'Aller au call')}</td></tr>`;
+          return `<tr><td>${makeAddrLink(r.from_addr)}</td><td>${fnCell}</td><td><span class="xref-type xref-${escapeHtml(String(r.type || '').replace(/[^a-z0-9_-]/gi, ''))}">${escapeHtml(r.type)}</span></td><td>${instr}</td><td class="xrefs-action-cell">${makeJumpButton(r.from_addr, 'Aller au call')}</td></tr>`;
         }).join('');
         target.innerHTML = `
           <div class="xrefs-summary">
@@ -1563,8 +1564,16 @@ window.addEventListener('message', (event) => {
     const disasmSectionSel = document.getElementById('disasmSection');
     if (disasmSectionSel) {
       const cur = disasmSectionSel.value;
-      disasmSectionSel.innerHTML = '<option value="">Toutes</option>' +
-        secs.map(s => `<option value="${escapeHtml(s.name)}">${escapeHtml(s.name)} (${s.type || ''})</option>`).join('');
+      // Built as DOM nodes: section names come from the analysed binary.
+      const allOption = document.createElement('option');
+      allOption.value = '';
+      allOption.textContent = 'Toutes';
+      disasmSectionSel.replaceChildren(allOption, ...secs.map((s) => {
+        const option = document.createElement('option');
+        option.value = String(s.name ?? '');
+        option.textContent = `${String(s.name ?? '')} (${String(s.type || '')})`;
+        return option;
+      }));
       if (cur && secs.some(s => s.name === cur)) disasmSectionSel.value = cur;
     }
     updateActiveContextBars(window._lastDisasmAddr);
@@ -1576,7 +1585,7 @@ window.addEventListener('message', (event) => {
     } else {
       const rows = secs.map(s => {
         const secName = escapeHtml(s.name);
-        return `<tr class="section-row" data-section="${escapeHtml(s.name)}"><td>${s.idx}</td><td><code>${secName}</code></td><td><code>${escapeHtml(s.size_hex || s.size)}</code></td><td><code>${escapeHtml(s.vma_hex || s.vma)}</code></td><td>${escapeHtml(s.type || '')}</td></tr>`;
+        return `<tr class="section-row" data-section="${escapeHtml(s.name)}"><td>${escapeHtml(String(s.idx ?? ''))}</td><td><code>${secName}</code></td><td><code>${escapeHtml(s.size_hex || s.size)}</code></td><td><code>${escapeHtml(s.vma_hex || s.vma)}</code></td><td>${escapeHtml(s.type || '')}</td></tr>`;
       }).join('');
       container.innerHTML = `<table class="data-table"><thead><tr><th>Idx</th><th>Nom</th><th>Taille</th><th>VMA</th><th>Type</th></tr></thead><tbody>${rows}</tbody></table><p class="hint">Clic sur une section → désassembler cette section (fichier séparé). Le désasm complet reste intact. ${secs.length} section(s).</p>`;
       container.querySelectorAll('.section-row').forEach((tr) => {
@@ -1709,7 +1718,7 @@ window.addEventListener('message', (event) => {
       hrow.appendChild(th);
     });
     const tbody = table.createTBody();
-    const rowEls = {};
+    const rowEls = Object.create(null);
     blocks.forEach(b => {
       const succs = (adj2[b.addr] || []).map(e => `${e.type}: ${e.to}`).join(', ') || '\u2014';
       const firstInstr = formatCfgLineDisplay((b.lines || [])[0], 82) || '';
@@ -2033,7 +2042,7 @@ window.addEventListener('message', (event) => {
       return;
     }
     // Build unique node list from edges, with is_external info
-    const nodeMap = {};
+    const nodeMap = Object.create(null);
     const extSet = new Set();
     cgNodes.forEach(n => {
       const annName = window._annotations?.[n.addr]?.name;
@@ -3170,8 +3179,9 @@ window.addEventListener('message', (event) => {
       u8: '#d8dee9', u16: '#d8dee9', u32: '#d8dee9', u64: '#d8dee9',
       f32: '#ebcb8b', f64: '#ebcb8b',
     };
-    const currentPage = page || 0;
-    const totalPages = Math.ceil((total_entries || entryList.length) / (page_size || 128));
+    // Interpolated into HTML below: integers only.
+    const currentPage = Math.max(0, Math.trunc(Number(page) || 0));
+    const totalPages = Math.ceil((Number(total_entries) || entryList.length) / (Number(page_size) || 128));
     const paginHtml = totalPages > 1
       ? '<div class="typed-data-pagination">' +
         '<button id="btnTypedPrev" class="btn btn-sm"' + (currentPage === 0 ? ' disabled' : '') + '>&#9664;</button>' +
@@ -3327,7 +3337,7 @@ window.addEventListener('message', (event) => {
       return;
     }
     // Group by type
-    const byType = {};
+    const byType = Object.create(null);
     for (const r of resources) {
       if (!byType[r.type]) byType[r.type] = [];
       byType[r.type].push(r);

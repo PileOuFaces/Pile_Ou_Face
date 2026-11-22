@@ -49,10 +49,14 @@ export function renderRegisters(registerItems, diagnostics = []) {
       row.title = `${diagnosticKindLabel(diagnostic.kind)}: ${diagnostic.message || ''}`.trim();
     }
 
-    row.innerHTML = `
-      <span class="register-name">${reg.name ?? '?'}</span>
-      <span class="register-value">${reg.value ?? '??'}</span>
-    `;
+    // Trace data (output.json can come from a workspace or a shared folder): text only.
+    const nameEl = document.createElement('span');
+    nameEl.className = 'register-name';
+    nameEl.textContent = String(reg.name ?? '?');
+    const valueEl = document.createElement('span');
+    valueEl.className = 'register-value';
+    valueEl.textContent = String(reg.value ?? '??');
+    row.replaceChildren(nameEl, valueEl);
 
     dom.registers.appendChild(row);
   });

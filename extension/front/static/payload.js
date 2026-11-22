@@ -614,9 +614,9 @@ function requestDecompileForCurrentSelection(options = {}) {
   if (!options.skipHistory) {
     pushDecompileHistoryEntry(buildDecompileHistoryEntry(bp, decompiler, quality, addr, funcName));
   }
-  decompileUiState.pillStatuses = {};
+  decompileUiState.pillStatuses = Object.create(null);
   decompileUiState.bestDecompiler = '';
-  decompileUiState.payloads = {};
+  decompileUiState.payloads = Object.create(null);
   if (!decompiler) decompileUiState.forcedDecompiler = '';
   _refreshDecompilePills();
   const useCacheChecked = document.getElementById('useCache')?.checked !== false;
