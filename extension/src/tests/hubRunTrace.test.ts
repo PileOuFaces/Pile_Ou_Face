@@ -148,6 +148,40 @@ describe('hub runTrace isolation', () => {
     expect(runCommand.called).to.equal(false);
   });
 
+  it('never hands a non-source file to gcc (#548: /etc/passwd as Run Trace source)', async () => {
+    const openHub = createHub({
+      context: {
+        extensionUri: {},
+        subscriptions: [],
+        workspaceState: { get: () => ({}), update: async () => {} },
+        globalState: { get: () => ({}), update: async () => {} }
+      },
+      logChannel: { appendLine: () => {}, append: () => {} },
+      getTempDir: () => '/tmp/pof',
+      ensureTempDir: () => '/tmp/pof',
+      runCommand,
+      detectPythonExecutable: () => '/usr/bin/python3',
+      ensureStaticAsm,
+      readTraceJson,
+      writeTraceJson,
+      setViewMode: () => {},
+      payloadToHex: () => '',
+      parseStdinExpression: () => '',
+      check32BitToolchain: () => ({ ok: true }),
+      openVisualizerWebview
+    });
+    openHub();
+
+    await onMessage({
+      type: 'runTrace',
+      config: { traceMode: 'dynamic', maxSteps: 800, useExistingBinary: false, sourcePath: '/etc/passwd' }
+    });
+    await flush();
+
+    expect(runCommand.getCalls().some((call) => call.args[0] === 'gcc')).to.equal(false);
+    expect(vscode.window.showErrorMessage.called).to.equal(true);
+  });
+
   it('ignores an older runTrace result when a newer run finishes first', async () => {
     const pendingRuns = [];
     runCommand.callsFake(async (_command, args) => {

@@ -12,6 +12,8 @@ const { readArchSupportFromMapping } = require('./archSupport');
 const { makeMappingStore } = require('../../shared/mappingStore');
 const { confirmOpenLargeTextFile } = require('../../shared/largeFileGuard');
 const { recordRuntimeEvent } = require('../../shared/runtimeAudit');
+const { ensurePrivateSubdir } = require('../../shared/privateTempDir');
+const { checkStaticCompileMessage, validateSourcePath, privateOutputName } = require('../compilePolicy');
 
 const functionAddrsStore = makeMappingStore();
 
@@ -947,8 +949,19 @@ function createActions({
     },
 
     hubCompileStaticBinary: async (message) => {
-      const sourcePath     = String(message.sourcePath || '').trim();
-      const binaryPath     = String(message.binaryPath || '').trim();
+      // #548 : options limitées aux valeurs du panneau, source vérifiée, sortie dans le
+      // dossier temporaire privé (jamais un chemin venu du webview).
+      const refusal = checkStaticCompileMessage(message, resolvePathFromWorkspace);
+      if (refusal) {
+        vscode.window.showErrorMessage(`Compilation refused: ${refusal}.`);
+        panel.webview.postMessage({ type: 'hubStaticCompileDone' });
+        return;
+      }
+      const sourcePath     = validateSourcePath(resolvePathFromWorkspace(String(message.sourcePath || '').trim()), 'c').value;
+      const binaryPath     = path.join(
+        fs.mkdtempSync(path.join(ensurePrivateSubdir('compile'), 'build-')),
+        privateOutputName(sourcePath, 'elf-x64'),
+      );
       const archBits       = String(message.archBits || '64');
       const pieChoice      = String(message.pieChoice || 'no');
       const useLegacyFlags = message.useLegacyFlags === true;

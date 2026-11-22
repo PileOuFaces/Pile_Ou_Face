@@ -805,14 +805,6 @@ const COMPILER_OPTIM_HINTS = {
   '-Os': 'Optimise la taille: utile pour comparer les artefacts compacts.',
 };
 
-function _splitCompilerExtraFlags(value) {
-  return String(value || '')
-    .split(/\s+/)
-    .map((flag) => flag.trim())
-    .filter(Boolean)
-    .filter((flag) => !/[\u0000\r\n]/.test(flag));
-}
-
 function _updateCompilerOptimHint() {
   const optim = document.getElementById('gccOptim')?.value || '-O0';
   const hint = document.getElementById('compilerOptimHint');
@@ -830,7 +822,6 @@ function _buildCompilerFlags() {
   const relro   = document.getElementById('gccRelro')?.value || 'off';
   const isStatic = document.getElementById('gccStatic')?.checked;
   const strip   = document.getElementById('gccStrip')?.checked;
-  const extra   = document.getElementById('gccExtraFlags')?.value?.trim() || '';
 
   const f = [];
   f.push(optim);
@@ -849,7 +840,6 @@ function _buildCompilerFlags() {
   }
   if (isStatic) f.push('-static');
   if (strip)    f.push('-s');
-  if (extra)    f.push(..._splitCompilerExtraFlags(extra));
   return f;
 }
 
@@ -885,7 +875,7 @@ function _buildGccCommand() {
 }
 
 [
-  'gccSourcePath', 'gccOutputPath', 'gccExtraFlags'
+  'gccSourcePath', 'gccOutputPath'
 ].forEach((id) => document.getElementById(id)?.addEventListener('input', _buildGccCommand));
 [
   'compilerLang', 'compilerTarget', 'gccOptim', 'gccDebug', 'gccPie', 'gccCanary', 'gccRelro'
