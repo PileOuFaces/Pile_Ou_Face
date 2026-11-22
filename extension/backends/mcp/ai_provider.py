@@ -1,6 +1,8 @@
 import json
 import os
+import re
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -604,12 +606,38 @@ def _http_error_message(exc: urllib.error.HTTPError) -> str:
 
 
 _REDACTED = "[REDACTED]"
+# Shorter fragments are too common to mask without hiding ordinary words;
+# a key prefix this long already identifies the key.
+_MIN_KEY_FRAGMENT = 8
+_TOKEN_RE = re.compile(r"[A-Za-z0-9_\-.~/+=%:]+")
 
 
-def _redact_provider_key(provider: str, message: str) -> str:
-    """Masks the provider's API key: some providers echo it in their error body (#544)."""
-    key = os.environ.get(_PROVIDER_ENV_KEYS.get(provider, ""), "")
-    return message.replace(key, _REDACTED) if key else message
+def _configured_keys() -> list[str]:
+    keys = (os.environ.get(env, "") for env in _PROVIDER_ENV_KEYS.values())
+    return [k.strip() for k in keys if len(k.strip()) >= _MIN_KEY_FRAGMENT]
+
+
+def _leaks_key(token: str, keys: list[str]) -> bool:
+    candidate = urllib.parse.unquote(token).strip(".")
+    if len(candidate) < _MIN_KEY_FRAGMENT:
+        return False
+    return any(candidate in key or key in candidate for key in keys)
+
+
+def redact_provider_keys(message: str) -> str:
+    """Masks configured AI keys, whole or partial, raw or URL-encoded (#544).
+
+    Providers echo the key (or a truncated prefix) in error bodies, and Python's
+    own header validation quotes the full header value in its exceptions.
+    """
+    keys = _configured_keys()
+    if not keys:
+        return message
+    for key in keys:
+        message = message.replace(key, _REDACTED)
+    return _TOKEN_RE.sub(
+        lambda m: _REDACTED if _leaks_key(m.group(0), keys) else m.group(0), message
+    )
 
 
 def call_provider_result(
@@ -637,12 +665,13 @@ def call_provider_result(
             "usage": result.get("usage", _normalize_usage()),
         }
     except urllib.error.HTTPError as exc:
-        message = _redact_provider_key(provider, _http_error_message(exc))
+        message = redact_provider_keys(_http_error_message(exc))
         # from None: the original HTTPError (and its body) is not chained into tracebacks.
         raise RuntimeError(f"HTTP {exc.code}: {message}") from None
-    except RuntimeError as exc:
-        # Streaming errors arrive after HTTP 200 (SSE "error" events) and may echo the key too.
-        message = _redact_provider_key(provider, str(exc))
+    except Exception as exc:
+        # Any other failure (SSE "error" events after HTTP 200, header validation,
+        # malformed usage fields) may quote the key: re-raise only a masked copy.
+        message = redact_provider_keys(str(exc))
         if message == str(exc):
             raise
         raise RuntimeError(message) from None
@@ -791,10 +820,11 @@ if __name__ == "__main__":
             else:
                 print(json.dumps({"ok": True, **result}))
         except Exception as exc:
+            error = redact_provider_keys(str(exc))
             if args.stream_output:
-                emit_event({"type": "error", "ok": False, "error": str(exc)})
+                emit_event({"type": "error", "ok": False, "error": error})
             else:
-                print(json.dumps({"ok": False, "error": str(exc)}))
+                print(json.dumps({"ok": False, "error": error}))
             sys.exit(1)
     elif args.cmd == "set-default":
         result = set_default_provider(args.provider)

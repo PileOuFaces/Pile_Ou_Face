@@ -3,6 +3,7 @@ import logging
 import os
 import subprocess
 import sys
+import urllib.parse
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -591,3 +592,68 @@ def test_streaming_error_echoing_the_api_key_is_redacted(
         )
     assert SECRET_KEY not in str(excinfo.value)
     assert "[REDACTED]" in str(excinfo.value)
+
+
+LONG_KEY = "sk-review-ABC/DEF+GHI=123456789"
+
+
+@pytest.mark.parametrize(
+    "echoed",
+    [
+        LONG_KEY[:16] + "…",  # truncated prefix, as several providers print it
+        urllib.parse.quote(LONG_KEY, safe=""),  # URL-encoded form
+    ],
+)
+def test_partial_or_encoded_key_in_provider_error_is_redacted(echoed, monkeypatch):
+    """#544: masking must not depend on the provider echoing the exact raw key."""
+    import io
+    import urllib.error
+
+    from backends.mcp.ai_provider import call_provider_result
+
+    monkeypatch.setenv("OPENAI_API_KEY", LONG_KEY)
+
+    def reject(request, *args, **kwargs):
+        body = json.dumps({"error": {"message": f"Invalid API key: {echoed}"}}).encode()
+        raise urllib.error.HTTPError(
+            request.full_url, 401, "Unauthorized", hdrs=None, fp=io.BytesIO(body)
+        )
+
+    monkeypatch.setattr("urllib.request.urlopen", reject)
+    with pytest.raises(RuntimeError) as excinfo:
+        call_provider_result("openai", "prompt", "", "model-x")
+    message = str(excinfo.value)
+    assert "[REDACTED]" in message
+    assert LONG_KEY[:12] not in message
+    assert "%2F" not in message
+
+
+def test_header_validation_error_does_not_quote_the_key(monkeypatch):
+    """#544: Python's header check quotes the whole "Bearer <key>" value in its ValueError."""
+    from backends.mcp.ai_provider import call_provider_result
+
+    monkeypatch.setenv("OPENAI_API_KEY", SECRET_KEY + "\n")
+    with pytest.raises(Exception) as excinfo:
+        call_provider_result("openai", "prompt", "", "model-x")
+    assert SECRET_KEY not in str(excinfo.value)
+    assert excinfo.value.__cause__ is None
+
+
+def test_cli_error_output_redacts_keys(monkeypatch, capsys):
+    """#544: the CLI's JSON error goes to the webview; end to end, it must not carry the key."""
+    import io
+    import runpy
+
+    monkeypatch.setenv("OPENAI_API_KEY", SECRET_KEY + "\n")
+    monkeypatch.setattr(
+        sys, "argv", ["ai_provider", "call", "--provider", "openai", "--model", "m"]
+    )
+    monkeypatch.setattr(sys, "stdin", io.StringIO("prompt"))
+    # Run the module as a script, as the extension does, without the already-imported copy.
+    monkeypatch.delitem(sys.modules, "backends.mcp.ai_provider", raising=False)
+    with pytest.raises(SystemExit):
+        runpy.run_module("backends.mcp.ai_provider", run_name="__main__")
+    out = capsys.readouterr().out
+    assert '"ok": false' in out
+    assert SECRET_KEY not in out
+    assert "[REDACTED]" in out
