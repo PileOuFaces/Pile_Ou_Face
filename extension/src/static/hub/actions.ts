@@ -996,6 +996,8 @@ function createActions({
       // Nom et contenu viennent du webview (non fiable) : simple nom de fichier dans scripts/.
       const saved = saveScript(path.join(storageDir, 'scripts'), message?.name || 'script.py', message?.content);
       if (saved.ok === false) {
+        // Visible même si l'éditeur n'affiche pas hubError (qui libère seulement la tâche en cours).
+        vscode.window.showErrorMessage(`Script not saved: ${saved.reason}.`);
         panel.webview.postMessage({ type: 'hubError', message: `Script not saved: ${saved.reason}.` });
         return;
       }
