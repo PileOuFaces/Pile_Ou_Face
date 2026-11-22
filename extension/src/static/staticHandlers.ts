@@ -15,6 +15,7 @@ const http = require('http');
 const https = require('https');
 const readline = require('readline');
 const { detectPythonExecutable, buildRuntimeEnv, resolveDockerExecutable, logDebug, logWarning } = require('../shared/utils');
+const { checkHubCommand } = require('./hubCommandPolicy');
 const { readStoredSettings } = require('../shared/settingsSchema');
 const { decompilerEnvFromPaths } = require('../shared/decompilerLocalPaths');
 const { emptyPluginUiState, summarizePluginRuntimeState } = require('./pluginState');
@@ -1921,19 +1922,24 @@ function staticHandlers(config: LooseMessage) {
       }
     },
     hubExecuteCommand: async (message: LooseMessage = {}) => {
-      // Permet au webview de déclencher une commande VS Code enregistrée
-      const commandId = String(message?.command || '').trim();
+      // Le webview ne peut déclencher que les commandes de hubCommandPolicy (#535).
+      // Type vérifié avant toute conversion : ni tableau ni objet ne deviennent un identifiant.
+      const commandId = typeof message?.command === 'string' ? message.command.trim() : '';
       const requestId = message?.requestId || null;
-      if (!commandId) return;
-      logChannel?.appendLine(`[hub] hubExecuteCommand START: ${commandId}`);
+      logChannel?.appendLine(`[hub] hubExecuteCommand START: ${commandId || '<empty>'}`);
 
       const _sendResult = (status, detail = '') => {
         logChannel?.appendLine(`[hub] hubCommandResult: ${commandId} → ${status}${detail ? ' | ' + detail : ''}`);
         panel.webview.postMessage({ type: 'hubCommandResult', requestId, command: commandId, status, detail });
       };
 
-      // Pour decompilerTest, on peut passer un ID pré-sélectionné depuis le webview
-      const args = message?.args ? (Array.isArray(message.args) ? message.args : [message.args]) : [];
+      const policy = checkHubCommand(commandId, message?.args);
+      if (policy.ok === false) {
+        logWarning(`[hub] hubExecuteCommand refused: ${policy.reason}`);
+        _sendResult('error', policy.reason);
+        return;
+      }
+      const { args } = policy;
 
       try {
         await vscode.commands.executeCommand(commandId, ...args);
