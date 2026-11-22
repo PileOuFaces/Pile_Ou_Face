@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### Security
+
+- Les dépendances Python du backend ne sont plus installées sans votre accord : une notification propose « Install » ou « Later ». L'installation se fait uniquement dans le venv de l'extension, avec des versions vérifiées par hash.
+- Les réglages envoyés par l'interface sont validés côté extension.
+- Le chemin de l'interpréteur Python et le dossier Ghidra local ne peuvent être choisis que dans le dialogue de VS Code.
+- L'interface ne peut plus déclencher que les commandes VS Code qu'elle utilise réellement.
+- Le fichier des clés API IA locales (`~/.pile-ou-face/.env`) est créé avec des droits restreints. Les clés n'apparaissent plus dans les erreurs ni dans les journaux.
+- Les fichiers temporaires vont dans un dossier privé par utilisateur.
+- Plusieurs valeurs affichées dans l'interface (registres d'une trace, noms de sections) sont désormais traitées comme du texte.
+
+### Changed
+
+- **Python 3.10 ou plus récent est requis** pour les fonctions Python.
+- **macOS Intel :** l'installation automatique des dépendances Python n'est pas proposée, car `cryptography` ne publie plus de paquet pour cette plateforme. Le reste de l'extension fonctionne, et vous pouvez installer les dépendances vous-même puis choisir l'interpréteur dans les réglages.
+- Le chemin Python choisi s'applique immédiatement, sans rouvrir le hub ni recharger l'extension.
+- Le cache des analyses statiques ne bloque plus l'éditeur.
+
+### Fixed
+
+- Les requêtes d'authentification ont des délais et peuvent être annulées. Une réponse tardive n'affecte plus une session déjà révoquée.
+- La vue de pile n'affiche plus de variables de l'appelant à l'entrée d'une fonction, notamment pour les binaires compilés avec CET (Ubuntu) et lors d'appels répétés.
+- Un script REPL qui dépasse son délai est réellement arrêté.
+- Les adresses `[::1]` sont reconnues comme locales pour le serveur d'authentification.
+
 ## [0.3.2] - 2026-11-02
 
 ### Security
