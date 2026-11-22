@@ -127,12 +127,18 @@ function checkStaticCompileMessage(message, resolveSource = (p: string) => p, fs
   return source.ok === false ? source.reason : null;
 }
 
-/** Output paths chosen by the user in the native save dialog during this session. */
+/**
+ * Output paths chosen by the user in the native save dialog during this session. Matching is exact
+ * (no normalisation: `a/link/../x` may resolve elsewhere through a symlink) and the write always uses
+ * the path kept by the host, never the string sent back by the webview.
+ */
 function createExportRegistry() {
   const chosen = new Set<string>();
   return {
-    remember(fsPath: string) { if (fsPath) chosen.add(path.resolve(fsPath)); },
-    allows(fsPath: unknown) { return typeof fsPath === 'string' && chosen.has(path.resolve(fsPath)); },
+    remember(fsPath: string) { if (fsPath) chosen.add(fsPath); },
+    attested(fsPath: unknown): string | null {
+      return typeof fsPath === 'string' && chosen.has(fsPath) ? fsPath : null;
+    },
   };
 }
 

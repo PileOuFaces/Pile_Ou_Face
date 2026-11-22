@@ -138,11 +138,26 @@ describe('compilePolicy (#548)', () => {
   describe('export to a chosen path', () => {
     it('only allows paths picked in the native save dialog', () => {
       const registry = createExportRegistry();
-      expect(registry.allows('/home/user/.bashrc')).to.equal(false);
+      expect(registry.attested('/home/user/.bashrc')).to.equal(null);
       registry.remember('/home/user/out/hello.elf');
-      expect(registry.allows('/home/user/out/hello.elf')).to.equal(true);
-      expect(registry.allows('/home/user/out/../out/hello.elf')).to.equal(true);
-      expect(registry.allows('/home/user/out/other.elf')).to.equal(false);
+      expect(registry.attested('/home/user/out/hello.elf')).to.equal('/home/user/out/hello.elf');
+      expect(registry.attested('/home/user/out/other.elf')).to.equal(null);
+      expect(registry.attested(['/home/user/out/hello.elf'])).to.equal(null);
+    });
+
+    it('never accepts a different spelling of the chosen path (symlinked parent + "..")', function () {
+      if (process.platform === 'win32') this.skip();
+      // /chosen/link -> /elsewhere : "/chosen/link/../out.elf" normalises to "/chosen/out.elf"
+      // but the OS resolves it to "/elsewhere/../out.elf".
+      const base = tmpDir();
+      const chosenDir = path.join(base, 'chosen');
+      const elsewhere = path.join(base, 'elsewhere', 'deep');
+      fs.mkdirSync(chosenDir);
+      fs.mkdirSync(elsewhere, { recursive: true });
+      fs.symlinkSync(elsewhere, path.join(chosenDir, 'link'));
+      const registry = createExportRegistry();
+      registry.remember(path.join(chosenDir, 'out.elf'));
+      expect(registry.attested(`${chosenDir}/link/../out.elf`)).to.equal(null);
     });
 
     it('replaces a symlink planted at the chosen path instead of writing through it', function () {

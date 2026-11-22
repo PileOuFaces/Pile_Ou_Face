@@ -41,11 +41,12 @@ function checkCompileRequest(message, exportRegistry) {
   if (!flags.ok) return flags;
   const source = validateSourcePath(message?.src, lang);
   if (!source.ok) return source;
-  const requested = typeof message?.output === 'string' ? message.output.trim() : '';
-  if (requested && !exportRegistry.allows(requested)) {
+  const requested = typeof message?.output === 'string' ? message.output : '';
+  const exportPath = requested ? exportRegistry.attested(requested) : null;
+  if (requested && !exportPath) {
     return { ok: false, reason: 'choose the output file with the … button (native dialog)' };
   }
-  return { ok: true, value: { lang, target, flags: flags.value, source: source.value, exportPath: requested || null } };
+  return { ok: true, value: { lang, target, flags: flags.value, source: source.value, exportPath } };
 }
 
 function createCompileHandlers({ panel, root, runPython, logChannel }) {
