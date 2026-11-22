@@ -329,7 +329,8 @@ describe("ensurePythonDependencies", () => {
       expect(pipCalls(execFile)).to.deep.equal([]);
       expect(execFile.getCalls().some((c) => c.args[1][1] === "venv")).to.equal(false);
       expect(warn.calledOnce).to.equal(true);
-      expect(warn.firstCall.args[0]).to.contain("3.10–3.13").and.to.contain("/opt/homebrew/bin/python3.15 (Python 3.15)");
+      expect(warn.firstCall.args[0]).to.contain("3.10–3.13").and.to.contain("/opt/homebrew/bin/python3.15 (Python 3.15)")
+        .and.to.contain("--require-hashes");
     });
 
     it("creates the venv with a compatible interpreter found before the default python3", async () => {

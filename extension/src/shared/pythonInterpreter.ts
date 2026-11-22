@@ -19,9 +19,11 @@ const SUPPORTED_RANGE_LABEL = `${SUPPORTED_MIN.major}.${SUPPORTED_MIN.minor}–$
 // (CP1252…), et execFile décode en UTF-8 ; un chemin accentué serait sinon corrompu.
 const PROBE_SCRIPT = 'import sys, platform; sys.stdout.buffer.write(("%d %d %s %s %s\\n" % (sys.version_info[0], '
   + 'sys.version_info[1], sys.platform, platform.machine(), sys.executable)).encode("utf-8", "surrogateescape"))';
-// Variables passées à la sonde : sortie UTF-8 ; aucun lanceur n'installe Python avant le consentement.
-const PROBE_ENV_OVERRIDES = { PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' };
-const PROBE_ENV_REMOVED = ['PYLAUNCHER_ALLOW_INSTALL', 'PYTHON_MANAGER_AUTOMATIC_INSTALL'];
+// Variables passées à la sonde : sortie UTF-8, et aucune installation de Python avant le
+// consentement. Le gestionnaire d'installation Python de Windows peut installer un runtime
+// manquant via les alias python/python3 (activé par défaut) : on le désactive explicitement.
+const PROBE_ENV_OVERRIDES = { PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8', PYTHON_MANAGER_AUTOMATIC_INSTALL: 'false' };
+const PROBE_ENV_REMOVED = ['PYLAUNCHER_ALLOW_INSTALL'];
 const PROBE_TIMEOUT_MS = 15000;
 
 type Exec = (file: string, args: string[], env?: Record<string, string | undefined>) => Promise<{ ok: boolean; stdout: string }>;

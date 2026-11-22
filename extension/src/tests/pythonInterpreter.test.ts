@@ -60,7 +60,7 @@ describe('pythonInterpreter (#549)', () => {
     const env = probeEnv({ PATH: '/usr/bin', PYLAUNCHER_ALLOW_INSTALL: '1', PYTHON_MANAGER_AUTOMATIC_INSTALL: 'true', PYTHONIOENCODING: 'cp1252' });
     expect(env.PATH).to.equal('/usr/bin');
     expect(env).to.not.have.property('PYLAUNCHER_ALLOW_INSTALL');
-    expect(env).to.not.have.property('PYTHON_MANAGER_AUTOMATIC_INSTALL');
+    expect(env.PYTHON_MANAGER_AUTOMATIC_INSTALL).to.equal('false');
     expect(env.PYTHONUTF8).to.equal('1');
     expect(env.PYTHONIOENCODING).to.equal('utf-8');
   });

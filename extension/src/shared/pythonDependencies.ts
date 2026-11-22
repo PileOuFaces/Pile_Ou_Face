@@ -227,7 +227,7 @@ function reportUnsupportedPlatform(log): DependencyStatus {
  * Interpréteur de base du venv : le venv existant s'il est dans la plage supportée, sinon le premier
  * interpréteur compatible trouvé. Refus avec diagnostic, avant pip, s'il n'y en a aucun.
  */
-async function selectBaseInterpreter(venvPath: string): Promise<{ ok: true; executable: string } | { ok: false; message: string }> {
+async function selectBaseInterpreter(venvPath: string, locks: LockFiles): Promise<{ ok: true; executable: string } | { ok: false; message: string }> {
   const venvPython = findVenvPython(venvPath);
   if (venvPython) {
     const probe = await probeInterpreter({ command: venvPython, args: [] });
@@ -246,7 +246,8 @@ async function selectBaseInterpreter(venvPath: string): Promise<{ ok: true; exec
     ok: false,
     message: `Pile ou Face: automatic installation of the Python dependencies needs CPython ${SUPPORTED_RANGE_LABEL}. `
       + `${detected} Install a supported version (python.org, Homebrew python@3.13, pyenv…) or select an `
-      + 'interpreter that already has the dependencies with the pythonPath setting.',
+      + 'interpreter that already has the dependencies with the pythonPath setting. Manual install with a '
+      + `supported interpreter: ${manualInstallCommand('<python 3.10–3.13>', locks)}.`,
   };
 }
 
@@ -289,7 +290,7 @@ async function ensurePythonDependencies(pythonExe: string, options: DependencyOp
     // Défaut de packaging, pas un choix utilisateur : toujours visible, même à l'activation.
     return reportUnavailable(`Hash-verified requirements file not found: ${missingLock}.`, false, log);
   }
-  const base = await selectBaseInterpreter(venvPath);
+  const base = await selectBaseInterpreter(venvPath, locks);
   if (base.ok === false) {
     log(`[pip] ${base.message} ${UNAVAILABLE_NOTE}`);
     // Limite de version, pas un choix utilisateur : toujours visible, même à l'activation.
