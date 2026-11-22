@@ -603,6 +603,15 @@ def _http_error_message(exc: urllib.error.HTTPError) -> str:
         return str(exc)
 
 
+_REDACTED = "[REDACTED]"
+
+
+def _redact_provider_key(provider: str, message: str) -> str:
+    """Masks the provider's API key: some providers echo it in their error body (#544)."""
+    key = os.environ.get(_PROVIDER_ENV_KEYS.get(provider, ""), "")
+    return message.replace(key, _REDACTED) if key else message
+
+
 def call_provider_result(
     provider: str,
     prompt: str,
@@ -628,7 +637,9 @@ def call_provider_result(
             "usage": result.get("usage", _normalize_usage()),
         }
     except urllib.error.HTTPError as exc:
-        raise RuntimeError(f"HTTP {exc.code}: {_http_error_message(exc)}") from exc
+        message = _redact_provider_key(provider, _http_error_message(exc))
+        # from None: the original HTTPError (and its body) is not chained into tracebacks.
+        raise RuntimeError(f"HTTP {exc.code}: {message}") from None
 
 
 def call_provider(provider: str, prompt: str, context: str, model: str | None) -> str:

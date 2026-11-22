@@ -536,3 +536,31 @@ def test_cli_set_failure_reports_the_reason_on_stderr_without_the_key(tmp_path):
     assert SECRET_KEY not in proc.stderr
     assert SECRET_KEY not in proc.stdout
     assert json.loads(proc.stdout)["ok"] is False
+
+
+@pytest.mark.parametrize("provider", ["openai", "anthropic", "gemini", "mistral"])
+def test_provider_error_echoing_the_api_key_is_redacted(provider, monkeypatch):
+    """#544: a provider answering 401 "Invalid API key: <key>" must not make us show the key."""
+    import io
+    import urllib.error
+
+    from backends.mcp.ai_provider import _PROVIDER_ENV_KEYS, call_provider_result
+
+    monkeypatch.setenv(_PROVIDER_ENV_KEYS[provider], SECRET_KEY)
+
+    def reject(request, *args, **kwargs):
+        body = json.dumps(
+            {"error": {"message": f"Invalid API key: {SECRET_KEY}"}}
+        ).encode()
+        raise urllib.error.HTTPError(
+            request.full_url, 401, "Unauthorized", hdrs=None, fp=io.BytesIO(body)
+        )
+
+    monkeypatch.setattr("urllib.request.urlopen", reject)
+    with pytest.raises(RuntimeError) as excinfo:
+        call_provider_result(provider, "prompt", "", "model-x")
+    message = str(excinfo.value)
+    assert message.startswith("HTTP 401:")
+    assert "[REDACTED]" in message
+    assert SECRET_KEY not in message
+    assert excinfo.value.__cause__ is None
