@@ -1564,8 +1564,16 @@ window.addEventListener('message', (event) => {
     const disasmSectionSel = document.getElementById('disasmSection');
     if (disasmSectionSel) {
       const cur = disasmSectionSel.value;
-      disasmSectionSel.innerHTML = '<option value="">Toutes</option>' +
-        secs.map(s => `<option value="${escapeHtml(s.name)}">${escapeHtml(s.name)} (${escapeHtml(s.type || '')})</option>`).join('');
+      // Built as DOM nodes: section names come from the analysed binary.
+      const allOption = document.createElement('option');
+      allOption.value = '';
+      allOption.textContent = 'Toutes';
+      disasmSectionSel.replaceChildren(allOption, ...secs.map((s) => {
+        const option = document.createElement('option');
+        option.value = String(s.name ?? '');
+        option.textContent = `${String(s.name ?? '')} (${String(s.type || '')})`;
+        return option;
+      }));
       if (cur && secs.some(s => s.name === cur)) disasmSectionSel.value = cur;
     }
     updateActiveContextBars(window._lastDisasmAddr);
