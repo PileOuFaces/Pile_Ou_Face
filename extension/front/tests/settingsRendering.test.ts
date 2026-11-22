@@ -210,5 +210,25 @@ describe('settings rendering and pythonPath ownership', () => {
     expect(save.settings.lang).to.equal('en');
     expect(save.settings).to.not.have.property('decompilerLocalPaths');
   });
+
+  it('shows the host-owned Ghidra folder as text and only asks the host to pick or clear it', () => {
+    fixture = mountSettings();
+    const { dom, messages } = fixture;
+    const { document } = dom.window;
+    const panel = document.getElementById('panel-options');
+    panel.insertAdjacentHTML('beforeend', `<input id="settingGhidraLocalPath" readonly>
+      <button data-select-decompiler-path="ghidra"></button><button data-clear-decompiler-path="ghidra"></button>`);
+    dom.window._applySettings({ interfaceMode: 'advanced', decompilerLocalPaths: { ghidra: HTML_PAYLOAD } }, 0);
+    expect(document.getElementById('settingGhidraLocalPath').value).to.equal(HTML_PAYLOAD);
+    expect(dom.window.__pwned).to.equal(undefined);
+    document.querySelector('[data-select-decompiler-path]').click();
+    document.querySelector('[data-clear-decompiler-path]').click();
+    expect(messages.slice(-2)).to.deep.equal([
+      { type: 'hubSelectDecompilerLocalPath', decompilerId: 'ghidra' },
+      { type: 'hubClearDecompilerLocalPath', decompilerId: 'ghidra' },
+    ]);
+    dom.window._decompilerLocalPathSelected({ decompilerId: 'ghidra', changed: true, path: '' });
+    expect(document.getElementById('settingGhidraLocalPath').value).to.equal('');
+  });
 });
 

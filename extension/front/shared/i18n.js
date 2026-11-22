@@ -123,6 +123,8 @@
     'Plugins actifs': 'Active plugins',
     'Outils externes': 'External tools',
     'Chemin Python': 'Python path',
+    'Dossier Ghidra local': 'Local Ghidra folder',
+    "Choisi dans le dialogue de VS Code. La structure du dossier est vérifiée, pas l'authenticité de Ghidra.": "Chosen in the VS Code dialog. The folder structure is checked, not Ghidra's authenticity.",
     'Utilisé pour exécuter les backends et scripts Python.': 'Used to run Python backends and scripts.',
     'Auto-détection': 'Auto-detect',
     'Parcourir': 'Browse',

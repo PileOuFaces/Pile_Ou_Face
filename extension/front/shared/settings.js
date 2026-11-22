@@ -34,14 +34,25 @@ function _pythonPathSelected(message) {
   _settingsPythonPathClearRequested = false;
 }
 
-/** Host answer to the native decompiler folder picker (#531). */
+const _DECOMPILER_PATH_INPUTS = { ghidra: 'settingGhidraLocalPath' };
+
+/** Shows the host-owned decompiler folders as text (read-only fields). */
+function _renderDecompilerLocalPaths(paths) {
+  for (const [id, inputId] of Object.entries(_DECOMPILER_PATH_INPUTS)) {
+    const input = document.getElementById(inputId);
+    if (input) input.value = String(paths?.[id] || '');
+  }
+}
+
+/** Host answer to the native decompiler folder picker or to a clear request (#531). */
 function _decompilerLocalPathSelected(message) {
   const id = typeof message?.decompilerId === 'string' ? message.decompilerId : '';
-  if (!id || message?.changed !== true || !_settingsCache) return;
-  const paths = { ...(_settingsCache.decompilerLocalPaths || {}) };
+  if (!id || message?.changed !== true) return;
+  const paths = { ...(_settingsCache?.decompilerLocalPaths || {}) };
   if (typeof message.path === 'string' && message.path) paths[id] = message.path;
   else delete paths[id];
-  _settingsCache = { ..._settingsCache, decompilerLocalPaths: paths };
+  if (_settingsCache) _settingsCache = { ..._settingsCache, decompilerLocalPaths: paths };
+  _renderDecompilerLocalPaths(paths);
 }
 
 function _resetSettings() {
@@ -145,6 +156,7 @@ function _applySettings(settings, requestId) {
   // Only the current request may replace the form, never a pending local save.
   if (_settingsSavePending || requestId !== _settingsRequestId) return false;
   _settingsCache = settings;
+  _renderDecompilerLocalPaths(settings.decompilerLocalPaths);
   if (typeof applyGlobalAiGenerationSettings === 'function') {
     applyGlobalAiGenerationSettings(settings);
   }
@@ -418,6 +430,17 @@ document.getElementById('panel-options')?.addEventListener('click', (event) => {
     // While a save is pending, keep its request id: its acknowledgement reloads the settings.
     const requestId = _settingsSavePending ? null : ++_settingsRequestId;
     vscode.postMessage({ type: 'hubSelectPythonPath', requestId });
+    return;
+  }
+  // Decompiler folders: the host opens its native dialog; the webview only names the decompiler.
+  const selectDecompilerPath = event.target.closest('[data-select-decompiler-path]');
+  if (selectDecompilerPath) {
+    vscode.postMessage({ type: 'hubSelectDecompilerLocalPath', decompilerId: selectDecompilerPath.dataset.selectDecompilerPath });
+    return;
+  }
+  const clearDecompilerPath = event.target.closest('[data-clear-decompiler-path]');
+  if (clearDecompilerPath) {
+    vscode.postMessage({ type: 'hubClearDecompilerLocalPath', decompilerId: clearDecompilerPath.dataset.clearDecompilerPath });
     return;
   }
   if (event.target.closest('[data-clear-python-path]')) {

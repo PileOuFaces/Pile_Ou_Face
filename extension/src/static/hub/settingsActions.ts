@@ -118,6 +118,30 @@ function createSettingsActions({
       if (message?.requestId != null) postSettings(message.requestId);
     },
 
+    // #531 : effacement explicite d'un dossier (retour à l'auto-détection) : entrée et attestation.
+    hubClearDecompilerLocalPath: (message) => serialized(async () => {
+      const decompilerId = message?.decompilerId;
+      if (!isSupportedDecompilerId(decompilerId)) {
+        panel.webview.postMessage({ type: 'hubDecompilerLocalPathSelected', decompilerId: null, changed: false, path: '' });
+        return;
+      }
+      let changed = false;
+      try {
+        const settings = readStoredSettings(store);
+        const paths = { ...(settings.decompilerLocalPaths || {}) };
+        delete paths[decompilerId];
+        await store.update(SETTINGS_STATE_KEY, { ...settings, decompilerLocalPaths: paths });
+        const attested = { ...(store.get(DECOMPILER_PATHS_ATTESTATION_KEY, {}) || {}) };
+        delete attested[decompilerId];
+        await store.update(DECOMPILER_PATHS_ATTESTATION_KEY, attested);
+        changed = true;
+      } catch (err) {
+        reportWriteFailure(`clearing the ${decompilerId} folder`, err);
+      }
+      const remaining = (readStoredSettings(store).decompilerLocalPaths || {})[decompilerId] || '';
+      panel.webview.postMessage({ type: 'hubDecompilerLocalPathSelected', decompilerId, changed, path: remaining });
+    }),
+
     // #531 : seul le dialogue natif du Host fixe un dossier de décompilateur local.
     hubSelectDecompilerLocalPath: async (message) => {
       const decompilerId = message?.decompilerId;

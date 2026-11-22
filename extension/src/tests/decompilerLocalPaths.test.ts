@@ -20,7 +20,10 @@ const { createSettingsActions } = require('../static/hub/settingsActions');
 const POSIX_FILES = ['support/analyzeHeadless', 'Ghidra/application.properties'];
 const WINDOWS_FILES = ['support/analyzeHeadless.bat', 'Ghidra/application.properties'];
 
-function makeGhidraFolder(files = POSIX_FILES) {
+// Real folders follow the host platform's layout (Windows: analyzeHeadless.bat).
+const HOST_FILES = process.platform === 'win32' ? WINDOWS_FILES : POSIX_FILES;
+
+function makeGhidraFolder(files = HOST_FILES) {
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'pof ghidra '));
   for (const relative of files) {
     const target = path.join(folder, ...relative.split('/'));
@@ -77,7 +80,9 @@ describe('decompiler local folders (#531)', () => {
   };
 
   describe('structural check (not a proof of authenticity)', () => {
-    it('accepts a folder with the Ghidra layout and returns its canonical path', () => {
+    it('accepts a folder with the Ghidra layout and returns its canonical path', function () {
+      // Creating a symbolic link needs extra privileges on Windows.
+      if (process.platform === 'win32') this.skip();
       const folder = ghidraFolder();
       const link = `${folder}-link`;
       fs.symlinkSync(folder, link);
@@ -86,8 +91,8 @@ describe('decompiler local folders (#531)', () => {
     });
 
     for (const [label, files] of [
-      ['without support/analyzeHeadless', ['Ghidra/application.properties']],
-      ['without Ghidra/application.properties', ['support/analyzeHeadless']],
+      ['without the analyzeHeadless launcher', ['Ghidra/application.properties']],
+      ['without Ghidra/application.properties', [HOST_FILES[0]]],
       ['empty', []],
     ]) {
       it(`refuses a folder ${label}`, () => {
@@ -100,7 +105,7 @@ describe('decompiler local folders (#531)', () => {
     it('refuses relative paths, files, missing folders and unsupported decompilers', () => {
       const folder = ghidraFolder();
       expect(checkInstallFolder('ghidra', 'opt/ghidra').ok).to.equal(false);
-      expect(checkInstallFolder('ghidra', path.join(folder, 'support', 'analyzeHeadless')).ok).to.equal(false);
+      expect(checkInstallFolder('ghidra', path.join(folder, ...HOST_FILES[0].split('/'))).ok).to.equal(false);
       expect(checkInstallFolder('ghidra', path.join(folder, 'missing')).ok).to.equal(false);
       expect(checkInstallFolder('retdec', folder).ok).to.equal(false);
       expect(checkInstallFolder('ghidra', `${folder}\0x`).ok).to.equal(false);
@@ -210,7 +215,7 @@ describe('decompiler local folders (#531)', () => {
 
     it('ignores, and logs, a folder whose layout changed since it was selected', () => {
       const folder = ghidraFolder();
-      fs.rmSync(path.join(folder, 'support'), { recursive: true });
+      fs.rmSync(path.join(folder, 'support'), { recursive: true }); // launcher gone
       const log = sinon.spy();
       expect(decompilerEnvFromPaths({ ghidra: folder }, { log })).to.deep.equal({});
       expect(log.calledOnce).to.equal(true);
@@ -281,6 +286,18 @@ describe('decompiler local folders (#531)', () => {
       expect(store.update.called).to.equal(false);
       expect(vscode.window.showErrorMessage.calledOnce).to.equal(true);
       expect(posted[0]).to.include({ changed: false, path: '/opt/ghidra' });
+    });
+
+    it('clears a folder on explicit request (entry and attestation), and only for supported ids', async () => {
+      const store = makeStore({ decompilerLocalPaths: { ghidra: '/opt/ghidra' } }, { ghidra: '/opt/ghidra' });
+      const { actions, posted } = makeActions(store, sinon.stub());
+      await actions.hubClearDecompilerLocalPath({ decompilerId: 'ghidra' });
+      expect(store.current().decompilerLocalPaths).to.deep.equal({});
+      expect(store.attested()).to.deep.equal({});
+      expect(posted[0]).to.deep.equal({ type: 'hubDecompilerLocalPathSelected', decompilerId: 'ghidra', changed: true, path: '' });
+      const untouched = makeStore({ decompilerLocalPaths: { ghidra: '/opt/ghidra' } }, { ghidra: '/opt/ghidra' });
+      await makeActions(untouched, sinon.stub()).actions.hubClearDecompilerLocalPath({ decompilerId: '__proto__' });
+      expect(untouched.update.called).to.equal(false);
     });
 
     it('reset also forgets the folder attestations', async () => {
