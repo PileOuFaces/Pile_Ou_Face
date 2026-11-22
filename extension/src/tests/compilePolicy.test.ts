@@ -171,9 +171,17 @@ describe('compilePolicy (#548)', () => {
       fs.symlinkSync(victim, chosen);
       exportCompiledBinary(built, chosen, writeFileAtomic);
       expect(fs.readFileSync(victim, 'utf8')).to.equal('keep me');
-      expect(fs.lstatSync(chosen).isSymbolicLink()).to.equal(false);
-      expect(fs.readFileSync(chosen, 'utf8')).to.equal('ELF');
-      expect(fs.statSync(chosen).mode & 0o777).to.equal(0o755);
+      // One descriptor, opened without following a symlink (ELOOP if `chosen` were still one):
+      // type, mode and content are all read from that same file.
+      const fd = fs.openSync(chosen, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      try {
+        const stat = fs.fstatSync(fd);
+        expect(stat.isFile()).to.equal(true);
+        expect(stat.mode & 0o777).to.equal(0o755);
+        expect(fs.readFileSync(fd, 'utf8')).to.equal('ELF');
+      } finally {
+        fs.closeSync(fd);
+      }
     });
   });
 
