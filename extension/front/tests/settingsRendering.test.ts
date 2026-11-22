@@ -229,6 +229,8 @@ describe('settings rendering and pythonPath ownership', () => {
     ]);
     dom.window._decompilerLocalPathSelected({ decompilerId: 'ghidra', changed: true, path: '' });
     expect(document.getElementById('settingGhidraLocalPath').value).to.equal('');
+    // After a partial write failure the host reports what it really stored: shown even if unchanged.
+    dom.window._decompilerLocalPathSelected({ decompilerId: 'ghidra', changed: false, path: '/opt/kept' });
+    expect(document.getElementById('settingGhidraLocalPath').value).to.equal('/opt/kept');
   });
 });
-

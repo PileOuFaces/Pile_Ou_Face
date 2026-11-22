@@ -44,10 +44,13 @@ function _renderDecompilerLocalPaths(paths) {
   }
 }
 
-/** Host answer to the native decompiler folder picker or to a clear request (#531). */
+/**
+ * Host answer to the native decompiler folder picker or to a clear request (#531). `path` is
+ * always the value the host has stored, even after a failed or partial write: show it as is.
+ */
 function _decompilerLocalPathSelected(message) {
   const id = typeof message?.decompilerId === 'string' ? message.decompilerId : '';
-  if (!id || message?.changed !== true) return;
+  if (!id) return;
   const paths = { ...(_settingsCache?.decompilerLocalPaths || {}) };
   if (typeof message.path === 'string' && message.path) paths[id] = message.path;
   else delete paths[id];

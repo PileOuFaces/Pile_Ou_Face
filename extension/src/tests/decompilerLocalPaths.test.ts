@@ -229,6 +229,21 @@ describe('decompiler local folders (#531)', () => {
   });
 
   describe('host selection (hubSelectDecompilerLocalPath)', () => {
+    it('reports the folder really stored when the last attestation write fails', async () => {
+      const store = makeStore({ decompilerLocalPaths: { ghidra: '/opt/old' } }, { ghidra: '/opt/old' });
+      const update = store.update;
+      let attestationWrites = 0;
+      store.update = sinon.spy(async (key, next) => {
+        if (key === DECOMPILER_PATHS_ATTESTATION_KEY && ++attestationWrites === 2) throw new Error('disk full');
+        return update(key, next);
+      });
+      const { actions, posted } = makeActions(store, sinon.stub().resolves({ ok: true, path: '/opt/new' }));
+      await actions.hubSelectDecompilerLocalPath({ decompilerId: 'ghidra' });
+      // The new folder is stored and still attested (transition); the answer says so.
+      expect(readStoredSettings(store).decompilerLocalPaths).to.deep.equal({ ghidra: '/opt/new' });
+      expect(posted[0]).to.include({ changed: false, path: '/opt/new' });
+    });
+
     it('stores and attests the folder picked in the native dialog', async () => {
       const store = makeStore({ lang: 'fr' });
       const select = sinon.stub().resolves({ ok: true, path: '/opt/ghidra' });
