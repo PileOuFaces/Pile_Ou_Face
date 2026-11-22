@@ -134,7 +134,10 @@ function verdict(report) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   fs.mkdirSync(args.out, { recursive: true });
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pof-recette-'));
+  // macOS limite les chemins de socket Unix à 104 caractères : le dossier
+  // temporaire par défaut (/var/folders/…) est trop long pour le socket de VS Code.
+  const tmpBase = process.platform === 'win32' ? os.tmpdir() : '/tmp';
+  const root = fs.mkdtempSync(path.join(tmpBase, 'pofr-'));
   const vscodeExecutable = await downloadAndUnzipVSCode('stable');
   const results = [];
   for (const scenario of args.scenarios) {
