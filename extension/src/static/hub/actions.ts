@@ -12,6 +12,7 @@ const { readArchSupportFromMapping } = require('./archSupport');
 const { makeMappingStore } = require('../../shared/mappingStore');
 const { confirmOpenLargeTextFile } = require('../../shared/largeFileGuard');
 const { recordRuntimeEvent } = require('../../shared/runtimeAudit');
+const { saveScript } = require('../scriptStorage');
 
 const functionAddrsStore = makeMappingStore();
 
@@ -992,12 +993,13 @@ function createActions({
     },
 
     hubSaveScript: async (message) => {
-      const scriptsDir = path.join(storageDir, 'scripts');
-      if (!fs.existsSync(scriptsDir)) fs.mkdirSync(scriptsDir, { recursive: true });
-      const name = message.name || 'script.py';
-      const filePath = path.join(scriptsDir, name);
-      fs.writeFileSync(filePath, message.content, 'utf8');
-      panel.webview.postMessage({ type: 'hubScriptSaved', path: filePath });
+      // Nom et contenu viennent du webview (non fiable) : simple nom de fichier dans scripts/.
+      const saved = saveScript(path.join(storageDir, 'scripts'), message?.name || 'script.py', message?.content);
+      if (saved.ok === false) {
+        panel.webview.postMessage({ type: 'hubError', message: `Script not saved: ${saved.reason}.` });
+        return;
+      }
+      panel.webview.postMessage({ type: 'hubScriptSaved', path: saved.value });
     },
 
     hubLoadScript: async (_message) => {

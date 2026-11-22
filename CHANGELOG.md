@@ -11,6 +11,7 @@
 - Le fichier des clés API IA locales (`~/.pile-ou-face/.env`) est créé avec des droits restreints. Un échec d'enregistrement d'une clé n'affiche plus que le nom de la variable concernée.
 - Le dossier temporaire de l'extension (caches, traces) et les fichiers du triage IA sont placés dans un dossier privé par utilisateur.
 - Plusieurs valeurs affichées dans l'interface (registres d'une trace, noms de sections) sont désormais traitées comme du texte.
+- L'enregistrement d'un script depuis l'éditeur du hub n'écrit plus que dans le dossier des scripts de l'extension, sous un simple nom de fichier `.py` (#553).
 
 ### Changed
 
