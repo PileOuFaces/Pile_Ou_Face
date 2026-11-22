@@ -1129,6 +1129,8 @@ async function run() {
         assert.ok(functionDecompileAttempts > attemptsBeforeRetry, 'the explicit retry must execute a new function run');
         assert.equal(functionDecompileSuccesses, 1, 'the explicit retry must produce exactly one successful function run');
 
+        // Augmentation is enabled once the function result is rendered (#542).
+        await hub.decompileAugmentButton().waitForEnabled(30000);
         await hub.decompileAugmentButton().clickDom();
         await hub.decompileAugmentReview().waitFor({ state: 'visible', timeout: 30000 });
         await hub.decompileAugmentSuggestions().waitForText('Proposition fonction prête', 30000);
@@ -1149,7 +1151,11 @@ async function run() {
         await hub.decompileOutput().waitForText(rawCode, 30000);
         assert.equal(await hub.decompileFunctionSelect().inputValue(), '', 'reopening the hub must restore global decompile mode');
 
+        // The reopened hub reloads its function list: selecting before the option exists leaves
+        // the <select> on '' and no decompile request is sent (#542).
+        await hub.decompileFunctionSelect().waitForText('main', 30000);
         await hub.decompileFunctionSelect().fill(functionAddr);
+        assert.equal(await hub.decompileFunctionSelect().inputValue(), functionAddr, 'the function must be selected after reopening');
         await hub.decompileOutput().waitForText('function validated by E2E', 30000);
         await hub.decompileAugmentStatus().waitForText('Version IA acceptée restaurée depuis le cache.', 30000);
         assert.equal(suggestCalls, 1, 'restoring the function cache must not call the provider again');
@@ -1157,6 +1163,7 @@ async function run() {
         await hub.decompileFunctionSelect().fill('');
         await hub.decompileOutput().waitForText(rawCode, 30000);
 
+        await hub.decompileAugmentButton().waitForEnabled(30000);
         await hub.decompileAugmentButton().clickDom();
         await hub.decompileAugmentReview().waitFor({ state: 'visible', timeout: 30000 });
         await hub.decompileAugmentSuggestions().waitForText('Proposition globale prête', 30000);
