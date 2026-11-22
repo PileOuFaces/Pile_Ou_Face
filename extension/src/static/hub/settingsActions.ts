@@ -2,7 +2,8 @@
 /**
  * @file hub/settingsActions.ts
  * @brief Handlers des réglages du hub : lecture, enregistrement validé par schéma,
- *        réinitialisation et sélection native de pythonPath (POF-P1-002).
+ *        réinitialisation et sélection native de pythonPath (POF-P1-002) et des dossiers
+ *        de décompilateurs locaux (#531).
  */
 
 const {
@@ -14,6 +15,8 @@ const {
   validateSettingsUpdate,
 } = require('../../shared/settingsSchema');
 const { selectPythonExecutable: defaultSelectPythonExecutable } = require('../../shared/pythonPathSelection');
+const { DECOMPILER_PATHS_ATTESTATION_KEY, isSupportedDecompilerId } = require('../../shared/decompilerPathsSchema');
+const { selectInstallFolder: defaultSelectInstallFolder } = require('../../shared/decompilerLocalPaths');
 
 function createSettingsActions({
   panel,
@@ -22,6 +25,7 @@ function createSettingsActions({
   root,
   logChannel,
   selectPythonExecutable = defaultSelectPythonExecutable,
+  selectInstallFolder = defaultSelectInstallFolder,
 }) {
   const store = context.globalState;
   // Read-modify-write of the stored settings, one at a time: an update must not be built from a
@@ -72,6 +76,7 @@ function createSettingsActions({
       try {
         await store.update(SETTINGS_STATE_KEY, cloneSettingsDefaults());
         await store.update(PYTHON_PATH_ATTESTATION_KEY, undefined);
+        await store.update(DECOMPILER_PATHS_ATTESTATION_KEY, undefined);
       } catch (err) {
         reportWriteFailure('resetting settings', err);
       } finally {
@@ -111,6 +116,72 @@ function createSettingsActions({
       // `changed` : seule une sélection enregistrée remplace une demande « Auto » encore en attente.
       panel.webview.postMessage({ type: 'hubPythonPathSelected', changed, pythonPath: readStoredSettings(store).pythonPath || '' });
       if (message?.requestId != null) postSettings(message.requestId);
+    },
+
+    // #531 : effacement explicite d'un dossier (retour à l'auto-détection) : entrée et attestation.
+    hubClearDecompilerLocalPath: (message) => serialized(async () => {
+      const decompilerId = message?.decompilerId;
+      if (!isSupportedDecompilerId(decompilerId)) {
+        panel.webview.postMessage({ type: 'hubDecompilerLocalPathSelected', decompilerId: null, changed: false, path: '' });
+        return;
+      }
+      let changed = false;
+      try {
+        const settings = readStoredSettings(store);
+        const paths = { ...(settings.decompilerLocalPaths || {}) };
+        delete paths[decompilerId];
+        await store.update(SETTINGS_STATE_KEY, { ...settings, decompilerLocalPaths: paths });
+        const attested = { ...(store.get(DECOMPILER_PATHS_ATTESTATION_KEY, {}) || {}) };
+        delete attested[decompilerId];
+        await store.update(DECOMPILER_PATHS_ATTESTATION_KEY, attested);
+        changed = true;
+      } catch (err) {
+        reportWriteFailure(`clearing the ${decompilerId} folder`, err);
+      }
+      const remaining = (readStoredSettings(store).decompilerLocalPaths || {})[decompilerId] || '';
+      panel.webview.postMessage({ type: 'hubDecompilerLocalPathSelected', decompilerId, changed, path: remaining });
+    }),
+
+    // #531 : seul le dialogue natif du Host fixe un dossier de décompilateur local.
+    hubSelectDecompilerLocalPath: async (message) => {
+      const decompilerId = message?.decompilerId;
+      if (!isSupportedDecompilerId(decompilerId)) {
+        logChannel?.appendLine?.(`[Settings] decompiler folder selection refused: unsupported ${String(decompilerId)}`);
+        panel.webview.postMessage({ type: 'hubDecompilerLocalPathSelected', decompilerId: null, changed: false, path: '' });
+        return;
+      }
+      const currentPaths = () => readStoredSettings(store).decompilerLocalPaths || {};
+      const selection = await selectInstallFolder(vscode, decompilerId, { defaultPath: currentPaths()[decompilerId] || '' });
+      let changed = false;
+      if (selection.ok) {
+        try {
+          await serialized(async () => {
+            // Même transition que pythonPath : le dossier en service reste attesté jusqu'à
+            // l'écriture du nouveau, puis seul le nouveau l'est.
+            const attested = store.get(DECOMPILER_PATHS_ATTESTATION_KEY, {}) || {};
+            const inUse = currentPaths()[decompilerId];
+            const transition = inUse && inUse !== selection.path ? [selection.path, inUse] : selection.path;
+            await store.update(DECOMPILER_PATHS_ATTESTATION_KEY, { ...attested, [decompilerId]: transition });
+            const settings = readStoredSettings(store);
+            const paths = { ...(settings.decompilerLocalPaths || {}), [decompilerId]: selection.path };
+            await store.update(SETTINGS_STATE_KEY, { ...settings, decompilerLocalPaths: paths });
+            await store.update(DECOMPILER_PATHS_ATTESTATION_KEY, { ...attested, [decompilerId]: selection.path });
+          });
+          changed = true;
+          logChannel?.appendLine?.(`[Settings] ${decompilerId} folder set to ${selection.path}`);
+        } catch (err) {
+          reportWriteFailure(`saving the ${decompilerId} folder`, err);
+        }
+      } else if (!selection.cancelled) {
+        logChannel?.appendLine?.(`[Settings] ${decompilerId} folder rejected: ${selection.error}`);
+        vscode.window.showErrorMessage(`Pile ou Face: ${selection.error}`);
+      }
+      panel.webview.postMessage({
+        type: 'hubDecompilerLocalPathSelected',
+        decompilerId,
+        changed,
+        path: currentPaths()[decompilerId] || '',
+      });
     },
   };
 }

@@ -2944,6 +2944,10 @@ window.addEventListener('message', (event) => {
     }
     return;
   }
+  if (msg.type === 'hubDecompilerLocalPathSelected') {
+    _decompilerLocalPathSelected(msg);
+    return;
+  }
   if (msg.type === 'hubPythonPathSelected') {
     _pythonPathSelected(msg);
     return;

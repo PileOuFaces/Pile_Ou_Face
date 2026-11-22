@@ -6,6 +6,7 @@
  */
 
 const path = require('path');
+const decompilerPaths = require('./decompilerPathsSchema');
 
 const SETTINGS_STATE_KEY = 'pof-settings';
 // Attestation Host du dernier pythonPath choisi par sélection native et vérifié.
@@ -40,7 +41,6 @@ const LIMITS = Object.freeze({
   maxModelLength: 256,
   maxPricingRules: 200,
   maxPricePerMillion: 1e6,
-  maxLocalPaths: 64,
   maxStaticFeatures: 256,
   aiTemperature: [0, 2],
   aiTopP: [0.01, 1],
@@ -56,7 +56,6 @@ const HOST_MANAGED_KEYS = new Set(['pythonPath']);
 
 // python, python3, python3.12, python.exe, python3.exe…
 const PYTHON_EXECUTABLE_NAME = /^python[0-9.]*(\.exe)?$/i;
-const IDENTIFIER = /^[\w.:@/-]+$/;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const PRICING_RULE_KEYS = new Set(['id', 'model', 'inputPerMillion', 'outputPerMillion', 'effectiveDate', 'currency']);
 
@@ -93,12 +92,6 @@ function boundedString(maxLength: number, { allowEmpty = true } = {}): Validator
   };
 }
 
-const identifier: Validator = (value) => (
-  typeof value === 'string' && value.length <= LIMITS.maxIdLength && IDENTIFIER.test(value)
-    ? ok(value)
-    : fail('expected an identifier')
-);
-
 const optionalIsoDate: Validator = (value) => (
   value === undefined || value === '' || (typeof value === 'string' && ISO_DATE.test(value))
     ? ok(value)
@@ -133,16 +126,11 @@ function arrayOf(itemValidator: Validator, maxItems: number): Validator {
   };
 }
 
+// Shape only: supported decompilers, absolute paths. Provenance (host attestation) is
+// checked by the migration and by validateSettingsUpdate (decompilerPathsSchema.ts).
 function validateLocalPaths(value: any): Check {
-  if (!isPlainObject(value)) return fail('expected an object');
-  const entries = Object.entries(value);
-  if (entries.length > LIMITS.maxLocalPaths) return fail(`expected at most ${LIMITS.maxLocalPaths} entries`);
-  for (const [key, localPath] of entries) {
-    if (!identifier(key).ok) return fail(`invalid decompiler id ${JSON.stringify(key)}`);
-    const result = boundedString(LIMITS.maxPathLength, { allowEmpty: false })(localPath);
-    if (!result.ok) return fail(`${key}: ${result.reason}`);
-  }
-  return ok(Object.fromEntries(entries));
+  const result = decompilerPaths.validateLocalPathsShape(value);
+  return result.ok ? ok(result.value) : fail(result.reason);
 }
 
 /** Nom de fichier plausible pour un interpréteur Python. */
@@ -203,7 +191,7 @@ function checkStoredValue(key: string, value: any, attestedPythonPaths: string[]
  */
 function migrateStoredSettings(
   raw: unknown,
-  { attestedPythonPath = '' as string | string[] } = {},
+  { attestedPythonPath = '' as string | string[], attestedDecompilerPaths = {} as unknown } = {},
 ): { settings: Settings; dropped: string[] } {
   const attested = normalizeAttested(attestedPythonPath);
   const settings: Settings = {};
@@ -212,8 +200,16 @@ function migrateStoredSettings(
   if (!isPlainObject(raw)) return { settings, dropped: ['<root>'] };
   for (const [key, value] of Object.entries(raw as Settings)) {
     const result = checkStoredValue(key, value, attested);
-    if (result.ok) settings[key] = result.value;
-    else dropped.push(key);
+    if (!result.ok) {
+      dropped.push(key);
+    } else if (key === 'decompilerLocalPaths') {
+      // Same provenance rule as pythonPath, per decompiler: only attested folders stay.
+      const kept = decompilerPaths.keepAttestedPaths(result.value, attestedDecompilerPaths);
+      settings[key] = kept.paths;
+      dropped.push(...kept.dropped);
+    } else {
+      settings[key] = result.value;
+    }
   }
   return { settings, dropped };
 }
@@ -233,6 +229,11 @@ function validateSettingsUpdate(incoming: unknown, current: Settings = {}): { ok
       errors.push(`${key}: unknown key`);
     } else if (HOST_MANAGED_KEYS.has(key) && value !== '' && value !== (current[key] ?? '')) {
       errors.push(`${key}: can only be set by the extension host`);
+    } else if (key === 'decompilerLocalPaths') {
+      // Per entry: '' clears it, the current value keeps it, anything else is refused.
+      const merged = decompilerPaths.mergeWebviewUpdate(value, current[key]);
+      if (merged.ok) accepted[key] = merged.value;
+      else errors.push(...merged.errors);
     } else {
       const result = SETTINGS_SCHEMA[key](value);
       if (result.ok) accepted[key] = result.value;
@@ -262,6 +263,7 @@ function readAttestedPythonPaths(store: SettingsStore): string[] {
 function migrateSettingsFromStore(store: SettingsStore): { settings: Settings; dropped: string[] } {
   return migrateStoredSettings(store?.get?.(SETTINGS_STATE_KEY, {}), {
     attestedPythonPath: readAttestedPythonPaths(store),
+    attestedDecompilerPaths: store?.get?.(decompilerPaths.DECOMPILER_PATHS_ATTESTATION_KEY, {}),
   });
 }
 
