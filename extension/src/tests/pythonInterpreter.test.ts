@@ -89,4 +89,3 @@ describe('pythonInterpreter (#549)', () => {
     expect(out.toString('utf8').trim().split(' ').slice(4).join(' ')).to.equal(link);
   });
 });
-
