@@ -1,0 +1,12 @@
+{
+  "name": "pof-recette-probe",
+  "displayName": "Pile ou Face — sonde de recette VSIX",
+  "description": "Extension de test, jamais publiée : inspecte l'extension installée depuis le VSIX.",
+  "version": "0.0.0",
+  "publisher": "pof-recette",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "engines": {
+    "vscode": "^1.120.0"
+  }
+}

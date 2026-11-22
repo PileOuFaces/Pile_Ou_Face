@@ -1,0 +1,124 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Sonde exécutée dans l'hôte d'extensions de VS Code par run-vsix-recette.js.
+// Elle observe l'extension réellement installée depuis le VSIX (et non les
+// sources) et écrit ses constats dans POF_RECETTE_OUT. Elle n'échoue jamais
+// silencieusement : toute exception est écrite dans le rapport.
+const fs = require('node:fs');
+const path = require('node:path');
+const { execFileSync } = require('node:child_process');
+const vscode = require('vscode');
+
+const EXTENSION_ID = 'PileOuFaces.stack-visualizer';
+const POLL_MS = 2000;
+// Sans consentement, aucune installation ne doit démarrer dans ce délai.
+const NO_CONSENT_OBSERVATION_MS = 20000;
+// Installation réelle depuis PyPI (wheels lief, unicorn…) sur un runner lent.
+const INSTALL_TIMEOUT_MS = 15 * 60 * 1000;
+const CORE_IMPORTS = 'import unicorn, capstone, lief';
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function venvPython(extensionPath) {
+  const venv = path.join(extensionPath, 'backends', '.venv');
+  const candidates = process.platform === 'win32'
+    ? [path.join(venv, 'Scripts', 'python.exe')]
+    : [path.join(venv, 'bin', 'python3'), path.join(venv, 'bin', 'python')];
+  return candidates.find((candidate) => fs.existsSync(candidate)) || null;
+}
+
+function importsOk(python) {
+  if (!python) return false;
+  try {
+    execFileSync(python, ['-c', CORE_IMPORTS], { stdio: 'ignore', timeout: 60000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Clique « Install » par la commande native des notifications de VS Code.
+async function acceptFirstNotification() {
+  await vscode.commands.executeCommand('notifications.focusToasts');
+  await vscode.commands.executeCommand('notification.acceptPrimaryAction');
+}
+
+async function waitFor(predicate, timeoutMs, onTick = async () => {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await onTick();
+    await sleep(POLL_MS);
+  }
+  return predicate();
+}
+
+async function common(report) {
+  const extension = vscode.extensions.getExtension(EXTENSION_ID);
+  report.installed = Boolean(extension);
+  if (!extension) throw new Error(`${EXTENSION_ID} absent de l'installation`);
+  report.version = extension.packageJSON.version;
+  report.extensionPath = extension.extensionPath;
+  report.fromVsixInstall = !extension.extensionPath.includes(`${path.sep}src${path.sep}`);
+  await extension.activate();
+  report.activated = extension.isActive;
+  const commands = await vscode.commands.getCommands(true);
+  report.openCommandRegistered = commands.includes('pileOuFace.open');
+  await vscode.commands.executeCommand('pileOuFace.open');
+  report.hubOpened = true;
+  report.workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || null;
+  return extension;
+}
+
+const SCENARIOS = {
+  async fresh(report, extension) {
+    await sleep(NO_CONSENT_OBSERVATION_MS);
+    report.venvCreatedWithoutConsent = fs.existsSync(path.join(extension.extensionPath, 'backends', '.venv'));
+  },
+  async consent(report, extension) {
+    let clicks = 0;
+    const done = await waitFor(
+      () => importsOk(venvPython(extension.extensionPath)),
+      INSTALL_TIMEOUT_MS,
+      async () => {
+        if (clicks < 3 && !venvPython(extension.extensionPath)) {
+          clicks += 1;
+          await acceptFirstNotification();
+        }
+      }
+    );
+    report.consentClicks = clicks;
+    report.venvPython = venvPython(extension.extensionPath);
+    report.dependenciesInstalled = done;
+  },
+  async offline(report, extension) {
+    await acceptFirstNotification();
+    // Le venv est créé localement ; l'échec réseau survient ensuite dans pip.
+    await waitFor(() => Boolean(venvPython(extension.extensionPath)), 120000);
+    await sleep(30000);
+    report.venvPython = venvPython(extension.extensionPath);
+    report.dependenciesInstalled = importsOk(report.venvPython);
+    await vscode.commands.executeCommand('pileOuFace.open');
+    report.hubStillOpensAfterFailure = true;
+  },
+  async update(report) {
+    const config = vscode.workspace.getConfiguration('pileOuFace');
+    report.preservedLogLevel = config.get('logLevel');
+  },
+};
+
+async function run() {
+  const scenario = process.env.POF_RECETTE_SCENARIO || 'fresh';
+  const report = { scenario, platform: process.platform, arch: process.arch, vscode: vscode.version };
+  try {
+    const extension = await common(report);
+    await SCENARIOS[scenario](report, extension);
+    report.ok = true;
+  } catch (error) {
+    report.ok = false;
+    report.error = String(error?.stack || error);
+  } finally {
+    fs.writeFileSync(process.env.POF_RECETTE_OUT, JSON.stringify(report, null, 2));
+  }
+}
+
+module.exports = { run };
