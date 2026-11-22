@@ -56,7 +56,7 @@ Le push du tag déclenche `publish.yml` en mode **artefact seulement** : VSIX pa
 
 ### 5. Publier (décision explicite)
 
-Actions → **Publish** → *Run workflow* sur le **tag** `vX.Y.Z` → `release_action = publish`. Le job `openvsx` republie le VSIX attesté, puis `publish-marketplace` publie ce même VSIX.
+Actions → **Publish** → *Run workflow* sur le **tag** `vX.Y.Z` → `release_action = publish`. Ce lancement reconstruit et atteste son propre VSIX depuis le tag (il ne réutilise pas l'artefact du push du tag) : le job `openvsx` le publie, puis `publish-marketplace` publie ce même VSIX.
 
 ### 6. Vérifier
 
