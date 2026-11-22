@@ -70,7 +70,16 @@ function extensionLogLines(userData) {
     else if (/Pile ou Face/.test(entry.name)) found.push(...fs.readFileSync(full, 'utf8').split(/\r?\n/));
   });
   walk(logs);
-  return found.filter((line) => /\[pip\]|\[venv\]|Python setup/.test(line));
+  // Une erreur pip s'étend sur plusieurs lignes (traceback) : garder la suite.
+  const ERROR_CONTEXT_LINES = 80;
+  const kept = [];
+  let context = 0;
+  for (const line of found) {
+    if (/\[pip\] Erreur/.test(line)) context = ERROR_CONTEXT_LINES;
+    if (context > 0 || /\[pip\]|\[venv\]|Python setup/.test(line)) kept.push(line);
+    if (context > 0) context -= 1;
+  }
+  return kept;
 }
 
 async function runScenario(vscodeExecutable, args, scenario, root) {
