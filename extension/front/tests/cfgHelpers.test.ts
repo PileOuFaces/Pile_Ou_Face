@@ -407,4 +407,18 @@ describe('bfsPath', () => {
     const adj = buildAdjacency(edges);
     expect(bfsPath(adj, 'A', 'C')).to.deep.equal(['A', 'B', 'C']);
   });
+
+  // CodeQL js/remote-property-injection #32/#33: keys named like Object.prototype members.
+  it('handles edge keys named like Object.prototype members without crashing or polluting', () => {
+    for (const key of ['__proto__', 'constructor', 'toString', 'hasOwnProperty']) {
+      const edges = [{ from: key, to: '0x2', type: 'call' }, { from: '0x2', to: key, type: 'jmp' }];
+      const adj = buildAdjacency(edges);
+      const radj = buildReverseAdj(edges);
+      expect(adj[key], key).to.deep.equal([{ to: '0x2', type: 'call' }]);
+      expect(radj[key], key).to.deep.equal(['0x2']);
+    }
+    expect(({}).to).to.equal(undefined);
+    expect(({}).push).to.equal(undefined);
+  });
 });
+

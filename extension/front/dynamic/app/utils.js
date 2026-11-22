@@ -9,7 +9,8 @@
  * @return Mapping {name: value}.
  */
 export function buildRegisterMap(registerItems) {
-  const map = {};
+  // No prototype: a register named like an Object.prototype member stays a plain key.
+  const map = Object.create(null);
   // Convert "rax: 0x..." into a name->number map for quick lookup.
   registerItems.forEach((reg) => {
     if (!reg || !reg.name) return;
