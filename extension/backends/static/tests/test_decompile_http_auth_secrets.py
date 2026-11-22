@@ -2,9 +2,10 @@
 """CodeQL py/clear-text-logging-sensitive-data #1/#2: the HTTP decompiler error printed by
 decompile/__main__.py names the missing environment variable, never a credential value."""
 
+import base64
+import io
 import json
 import urllib.error
-from unittest import mock
 
 import pytest
 
@@ -72,15 +73,43 @@ def test_transport_error_never_echoes_credentials(monkeypatch):
     assert PASSWORD not in serialized and USER not in serialized
 
 
-def test_http_error_body_is_not_a_channel_for_the_authorization_header(monkeypatch):
+@pytest.mark.parametrize(
+    ("auth", "env", "leaked"),
+    [
+        (BASIC, {"POF_TEST_USER": USER, "POF_TEST_PASSWORD": PASSWORD}, None),
+        (
+            {"type": "bearer", "token_env": "POF_TEST_TOKEN"},
+            {"POF_TEST_TOKEN": TOKEN},
+            TOKEN,
+        ),
+        (
+            {"type": "api_key", "token_env": "POF_TEST_TOKEN"},
+            {"POF_TEST_TOKEN": TOKEN},
+            TOKEN,
+        ),
+    ],
+)
+def test_http_error_body_echoing_the_credentials_is_redacted(
+    auth, env, leaked, monkeypatch
+):
+    """A service that echoes the request headers in its 401 body must not make us print them."""
+
+    is_basic = auth is BASIC
+
     def reject(request, *args, **kwargs):
+        echoed = " ".join(f"{name}: {value}" for name, value in request.header_items())
+        raw = f" and {USER}:{PASSWORD}" if is_basic else ""
+        body = io.BytesIO(f"unauthorized, you sent {echoed}{raw}".encode())
         raise urllib.error.HTTPError(
-            request.full_url, 401, "Unauthorized", hdrs=None, fp=None
+            request.full_url, 401, "Unauthorized", hdrs=None, fp=body
         )
 
     monkeypatch.setattr("urllib.request.urlopen", reject)
-    with mock.patch.dict("os.environ", {}, clear=False):
-        result = _call(
-            BASIC, monkeypatch, {"POF_TEST_USER": USER, "POF_TEST_PASSWORD": PASSWORD}
-        )
-    assert PASSWORD not in json.dumps(result)
+    result = _call(auth, monkeypatch, env)
+    serialized = json.dumps(result)
+    assert result["error"].startswith("HTTP 401:")
+    basic = base64.b64encode(f"{USER}:{PASSWORD}".encode()).decode()
+    forms = [basic, PASSWORD, USER] if is_basic else [leaked]
+    for form in forms:
+        assert form not in serialized, form
+    assert "[REDACTED]" in result["error"]
