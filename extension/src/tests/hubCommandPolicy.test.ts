@@ -127,6 +127,18 @@ describe('hubExecuteCommand handler (#535)', () => {
     expect(posted[0]).to.include({ status: 'error' });
   });
 
+  for (const [label, command] of [
+    ['an array holding an allowed id', ['pileOuFace.showLogs']],
+    ['an object whose toString is broken', { toString: null }],
+  ]) {
+    it(`refuses a command given as ${label}`, async () => {
+      const { handlers, executeCommand, posted } = makeHandlers();
+      await handlers.hubExecuteCommand({ command, requestId: 'r5' });
+      expect(executeCommand.called).to.equal(false);
+      expect(posted[0]).to.include({ type: 'hubCommandResult', requestId: 'r5', status: 'error' });
+    });
+  }
+
   it('answers an empty command with a logged refusal', async () => {
     const { handlers, executeCommand, posted } = makeHandlers();
     await handlers.hubExecuteCommand({ command: '  ', requestId: 'r4' });

@@ -1920,7 +1920,8 @@ function staticHandlers(config: LooseMessage) {
     },
     hubExecuteCommand: async (message: LooseMessage = {}) => {
       // Le webview ne peut déclencher que les commandes de hubCommandPolicy (#535).
-      const commandId = String(message?.command || '').trim();
+      // Type vérifié avant toute conversion : ni tableau ni objet ne deviennent un identifiant.
+      const commandId = typeof message?.command === 'string' ? message.command.trim() : '';
       const requestId = message?.requestId || null;
       logChannel?.appendLine(`[hub] hubExecuteCommand START: ${commandId || '<empty>'}`);
 
