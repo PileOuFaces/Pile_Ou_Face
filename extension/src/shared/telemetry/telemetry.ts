@@ -72,7 +72,7 @@ function createTelemetryService({
 
   function isProductTelemetryEnabled() {
     try {
-      return vscode?.workspace?.getConfiguration?.('pileOuFace')?.get?.('telemetry.enabled', true) === true;
+      return vscode?.workspace?.getConfiguration?.('pileOuFace')?.get?.('telemetry.enabled', false) === true;
     } catch (_) {
       return false;
     }

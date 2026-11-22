@@ -48,15 +48,42 @@ _POF_DIR = (
 _DOCKER_AVAILABLE_CACHE: dict[str, bool] = {}
 
 
+# Même liste blanche que l'extension (src/static/compilePolicy.ts, #548) : une option
+# libre (-wrapper, -fplugin=, -specs=, -B, @fichier, -Xclang…) exécuterait du code.
+_ALLOWED_FLAGS = frozenset(
+    {"-O0", "-Og", "-O1", "-O2", "-O3", "-Os", "-g", "-ggdb"}
+    | {"-fno-stack-protector", "-fstack-protector", "-fstack-protector-strong"}
+    | {"-fstack-protector-all", "-fno-pie", "-no-pie", "-fpie", "-pie"}
+    | {"-Wl,-z,relro", "-Wl,-z,relro,-z,now", "-static", "-s"}
+)
+_PAIRED_FLAGS = {"-z": "execstack"}
+
+
+class DisallowedFlag(ValueError):
+    """Option de compilation hors liste blanche."""
+
+
 def _normalize_flags(flags: list[str] | None) -> list[str]:
-    """Retourne une liste de flags sûre pour subprocess."""
+    """Retourne les flags s'ils sont tous dans la liste blanche, sinon lève DisallowedFlag."""
     if not flags:
         return []
     normalized: list[str] = []
-    for flag in flags:
-        text = str(flag).strip()
-        if text and "\x00" not in text and "\n" not in text and "\r" not in text:
-            normalized.append(text)
+    items = [str(flag) for flag in flags]
+    i = 0
+    while i < len(items):
+        flag = items[i]
+        if flag in _ALLOWED_FLAGS:
+            normalized.append(flag)
+        elif (
+            flag in _PAIRED_FLAGS
+            and i + 1 < len(items)
+            and items[i + 1] == _PAIRED_FLAGS[flag]
+        ):
+            normalized.extend([flag, items[i + 1]])
+            i += 1
+        else:
+            raise DisallowedFlag(f"Option de compilation refusée : {flag[:80]!r}")
+        i += 1
     return normalized
 
 
@@ -252,6 +279,10 @@ def compile_source(
     """
     if not Path(src).exists():
         return {"error": f"Source introuvable : {src}"}
+    try:
+        flags = _normalize_flags(flags)
+    except DisallowedFlag as exc:
+        return {"error": str(exc)}
 
     cfg = compilers if compilers is not None else _load_compilers(config_path)
 
