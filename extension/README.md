@@ -82,7 +82,10 @@ qu'une partie des dépendances (par exemple sans `lief`). S'ils manquent, elle
 - **Version de Python** : le venv est créé avec un CPython **3.10 à 3.13**, le seul
   intervalle où toutes les dépendances verrouillées publient des wheels (`yara-python`
   s'arrête à 3.13). L'extension cherche `python3.13` … `python3.10`, puis `python3` et
-  `python` (`py -3.13` … `py -3.10` sous Windows) et prend le premier de la plage.
+  `python`. Sous Windows, elle essaie les dossiers d'installation de python.org
+  (`%LOCALAPPDATA%\Programs\Python\Python313` … `Python310`, puis `%ProgramFiles%`),
+  puis `python` et `python3`, sans passer par le lanceur `py`, qui peut installer une
+  version manquante. Elle prend le premier interpréteur de la plage.
   Si aucun ne convient, elle **refuse avant pip** et liste les interpréteurs trouvés.
   Un `backends/.venv` créé avec une version hors plage n'est pas réutilisé : le
   message indique de supprimer ce dossier.
