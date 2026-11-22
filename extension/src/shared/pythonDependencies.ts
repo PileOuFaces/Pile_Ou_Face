@@ -9,7 +9,7 @@ const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
 const cp = require('child_process');
-const { SUPPORTED_RANGE_LABEL, probeInterpreter, isSupportedVersion, describeInterpreter, findCompatibleBase } = require('./pythonInterpreter');
+const { SUPPORTED_RANGE_LABEL, probeInterpreter, isSupportedVersion, isIntelMac, describeInterpreter, findCompatibleBase } = require('./pythonInterpreter');
 
 /** Fichier de versions figées avec hashes, généré depuis requirements.txt (voir README). */
 const LOCK_FILE_NAME = 'requirements.lock.txt';
@@ -227,7 +227,9 @@ function reportUnsupportedPlatform(log): DependencyStatus {
  * Interpréteur de base du venv : le venv existant s'il est dans la plage supportée, sinon le premier
  * interpréteur compatible trouvé. Refus avec diagnostic, avant pip, s'il n'y en a aucun.
  */
-async function selectBaseInterpreter(venvPath: string, locks: LockFiles): Promise<{ ok: true; executable: string } | { ok: false; message: string }> {
+async function selectBaseInterpreter(
+  venvPath: string, locks: LockFiles,
+): Promise<{ ok: true; executable: string } | { ok: false; message: string; intelMac?: boolean }> {
   const venvPython = findVenvPython(venvPath);
   if (venvPython) {
     const probe = await probeInterpreter({ command: venvPython, args: [] });
@@ -236,11 +238,14 @@ async function selectBaseInterpreter(venvPath: string, locks: LockFiles): Promis
       ok: false,
       message: `backends/.venv uses ${probe ? describeInterpreter(probe) : 'an interpreter that does not start'}, `
         + `outside the supported range ${SUPPORTED_RANGE_LABEL}. Delete the folder ${venvPath}, then reopen the `
-        + 'workspace: a compatible interpreter will be searched.',
+        + 'workspace: a compatible interpreter will be searched. Manual install with a supported interpreter: '
+        + `${manualInstallCommand('<python 3.10–3.13>', locks)}.`,
     };
   }
   const { found, seen } = await findCompatibleBase();
   if (found) return { ok: true, executable: found.executable };
+  // Seuls des Python macOS x86_64 de la bonne version : limite de plateforme (message macOS Intel).
+  if (seen.some((probe) => isSupportedVersion(probe) && isIntelMac(probe))) return { ok: false, message: '', intelMac: true };
   const detected = seen.length ? `Found: ${seen.map(describeInterpreter).join(', ')}.` : 'No Python interpreter was found.';
   return {
     ok: false,
@@ -291,6 +296,7 @@ async function ensurePythonDependencies(pythonExe: string, options: DependencyOp
     return reportUnavailable(`Hash-verified requirements file not found: ${missingLock}.`, false, log);
   }
   const base = await selectBaseInterpreter(venvPath, locks);
+  if (base.ok === false && base.intelMac) return reportUnsupportedPlatform(log);
   if (base.ok === false) {
     log(`[pip] ${base.message} ${UNAVAILABLE_NOTE}`);
     // Limite de version, pas un choix utilisateur : toujours visible, même à l'activation.

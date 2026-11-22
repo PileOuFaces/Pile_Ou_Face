@@ -46,6 +46,13 @@ describe('pythonInterpreter (#549)', () => {
     expect(seen.map((p) => p.executable)).to.deep.equal(['/usr/local/bin/python3.11']);
   });
 
+  it('keeps searching after an x86_64 Python under Rosetta on Apple Silicon', async () => {
+    const replies = { 'python3.13': '3 13 darwin x86_64 /usr/local/bin/python3.13', 'python3.12': '3 12 darwin arm64 /opt/homebrew/bin/python3.12' };
+    const exec = async (file) => (replies[file] ? { ok: true, stdout: replies[file] } : { ok: false, stdout: '' });
+    const { found } = await findCompatibleBase('darwin', exec);
+    expect(found.executable).to.equal('/opt/homebrew/bin/python3.12');
+  });
+
   it('ignores interpreters that do not answer the probe', async () => {
     expect(await probeInterpreter({ command: 'x', args: [] }, async () => ({ ok: true, stdout: 'garbage' }))).to.equal(null);
     expect(await probeInterpreter({ command: 'x', args: [] }, async () => ({ ok: false, stdout: '' }))).to.equal(null);
@@ -73,7 +80,8 @@ describe('pythonInterpreter (#549)', () => {
     } catch {
       this.skip();
     }
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pof-André-'));
+    // Real path: on macOS /var is a symlink to /private/var, and Python reports the resolved directory.
+    const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'pof-André-'));
     const link = path.join(dir, 'python3');
     fs.symlinkSync(python, link);
     // The probe script alone must not depend on the pipe encoding (cp1252 on many Windows setups).
@@ -81,4 +89,3 @@ describe('pythonInterpreter (#549)', () => {
     expect(out.toString('utf8').trim().split(' ').slice(4).join(' ')).to.equal(link);
   });
 });
-

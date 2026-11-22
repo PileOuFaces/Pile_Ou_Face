@@ -64,6 +64,16 @@ function isSupportedVersion(probe: Pick<InterpreterProbe, 'major' | 'minor'>): b
     && version <= SUPPORTED_MAX.major * 100 + SUPPORTED_MAX.minor;
 }
 
+/** macOS Intel (ou Python x86_64 sous Rosetta) : pas de wheel cryptography verrouillé pour cette plateforme. */
+function isIntelMac(probe: Pick<InterpreterProbe, 'platform' | 'machine'>): boolean {
+  return probe.platform === 'darwin' && probe.machine.toLowerCase() === 'x86_64';
+}
+
+/** Interpréteur utilisable pour le venv : version de la plage et plateforme qui a ses wheels. */
+function isUsableBase(probe: InterpreterProbe): boolean {
+  return isSupportedVersion(probe) && !isIntelMac(probe);
+}
+
 function supportedMinors(): number[] {
   const minors: number[] = [];
   for (let minor = SUPPORTED_MAX.minor; minor >= SUPPORTED_MIN.minor; minor -= 1) minors.push(minor);
@@ -108,7 +118,8 @@ async function findCompatibleBase(platform: string = process.platform, exec: Exe
     const probe = await probeInterpreter(candidate, exec);
     if (!probe) continue;
     if (!seen.some((other) => other.executable === probe.executable)) seen.push(probe);
-    if (isSupportedVersion(probe)) return { found: probe, seen };
+    // Un Python x86_64 sous Rosetta ne bloque pas la recherche : un arm64 peut suivre.
+    if (isUsableBase(probe)) return { found: probe, seen };
   }
   return { found: null, seen };
 }
@@ -119,6 +130,7 @@ module.exports = {
   probeEnv,
   probeInterpreter,
   isSupportedVersion,
+  isIntelMac,
   baseCandidates,
   describeInterpreter,
   findCompatibleBase,

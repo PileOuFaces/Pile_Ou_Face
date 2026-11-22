@@ -358,7 +358,8 @@ describe("ensurePythonDependencies", () => {
 
       expect(status).to.equal("unsupported");
       expect(pipCalls(execFile)).to.deep.equal([]);
-      expect(warn.firstCall.args[0]).to.contain("backends/.venv uses").and.to.contain("Delete the folder");
+      expect(warn.firstCall.args[0]).to.contain("backends/.venv uses").and.to.contain("Delete the folder")
+        .and.to.contain("--require-hashes");
     });
 
     it("never replaces an interpreter chosen by the user; only says its version is unsupported", async () => {
@@ -450,4 +451,3 @@ describe("pip helpers", () => {
   });
 
 });
-
