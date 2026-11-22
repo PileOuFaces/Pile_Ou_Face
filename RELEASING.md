@@ -4,18 +4,18 @@ Ce document décrit **comment publier une version de l'extension** (Marketplace 
 
 ## Principe en une phrase
 
-Rien ne se publie depuis `develops`. **La publication se déclenche uniquement quand un tag `vX.Y.Z` est poussé sur un commit présent sur `main`.**
+Rien ne se publie depuis `develops`. **La publication exige deux actions distinctes : pousser un tag `vX.Y.Z` sur un commit présent sur `main` (paquet + attestation, sans publication), puis lancer manuellement `Publish` sur ce tag avec `release_action = publish`.**
 
-Flux : `feature/*` → PR → `develops` → PR de promotion → `main` → tag `vX.Y.Z` → publication.
+Flux : `feature/*` → PR → `develops` → PR de promotion → `main` → tag `vX.Y.Z` (VSIX attesté) → *Run workflow* `publish` → Open VSX puis Marketplace.
 
 ## Les workflows
 
 | Workflow | Déclencheur | Rôle |
 |----------|-------------|------|
-| `ci.yml` | PR + push (`develops`/`main`) | Lint + tests. C'est le check requis avant merge. |
+| `ci.yml` | Toute PR vers `develops`/`main` ; push sur une autre branche seulement si `extension/**` ou un workflow CI/publication change (jamais sur `develops`/`main`) | Lint, tests, matrice OS, E2E, corpus. Produit `CI Success`, le check requis avant merge. Après une fusion, seuls CodeQL, Gitleaks, Semgrep/Bandit et Trivy tournent sur `develops`/`main`. |
 | `docker-decompilers.yml` | push `develops` / PR vers `develops` (chemins `docker/decompilers/**`, `extension/backends/static/decompile/**`) | Build + **push** des images décompilateur sur ghcr. Sur `develops` : tags `:<version>` (immuable, depuis `image_versions.json`) + `develops` + `sha-*`. Sur PR : build de validation, **sans** push. |
 | `vsix.yml` | push `main` | Package un `.vsix` en artefact (téléchargeable, **pas** publié). |
-| `publish.yml` | push d'un tag `v*.*.*` | **Publie** : job `publish-marketplace` (`vsce`) + job `openvsx` (`ovsx`). Chaque job vérifie que le tag est bien un ancêtre de `main`. Publie la version lue dans `extension/package.json`. |
+| `publish.yml` | push d'un tag `v*.*.*` ; *Run workflow* manuel (`release_action` = `verify` ou `publish`) | **Push du tag** : vérifie que le tag est un ancêtre de `main`, package le VSIX (profil SaaS officiel), génère le SBOM, **atteste** VSIX et SBOM, conserve le VSIX en artefact — **aucune publication**. **`release_action = publish`** (lancé sur le tag) : mêmes étapes, puis publication Open VSX, puis Marketplace à partir du même VSIX vérifié. **`verify`** : vérifie le token Open VSX sans publier. Ne crée pas de GitHub Release. |
 
 ## Prérequis (une seule fois)
 
@@ -24,7 +24,7 @@ Secrets du dépôt (Settings → Secrets → Actions) :
 - `VSCE_PAT` — Personal Access Token Azure DevOps pour le Marketplace VS Code.
 - `OPEN_VSX_TOKEN` — token [open-vsx.org](https://open-vsx.org).
 
-Vérifier le token Open VSX sans publier : Actions → **Publish** → *Run workflow* → `openvsx_mode = verify`.
+Vérifier le token Open VSX sans publier : Actions → **Publish** → *Run workflow* → `release_action = verify`.
 
 ## Procédure de release
 
@@ -52,17 +52,23 @@ git tag vX.Y.Z
 git push origin vX.Y.Z
 ```
 
-Le push du tag déclenche `publish.yml` → Marketplace + Open VSX.
+Le push du tag déclenche `publish.yml` en mode **artefact seulement** : VSIX packagé, SBOM, attestation. Rien n'est publié.
 
-### 5. Vérifier
+### 5. Publier (décision explicite)
 
-- Le run `Publish` est vert (2 jobs).
+Actions → **Publish** → *Run workflow* sur le **tag** `vX.Y.Z` → `release_action = publish`. Ce lancement reconstruit et atteste son propre VSIX depuis le tag (il ne réutilise pas l'artefact du push du tag) : le job `openvsx` le publie, puis `publish-marketplace` publie ce même VSIX.
+
+### 6. Vérifier
+
+- Les runs `Publish` du tag (artefact) et du lancement manuel (`publish`) sont verts.
+- Le VSIX publié correspond à son commit : `gh attestation verify <fichier.vsix> --repo PileOuFaces/Pile_Ou_Face`.
+- Une GitHub Release n'est **pas** créée automatiquement : la créer à la main sur le tag si elle est souhaitée.
 - Marketplace : la nouvelle version apparaît sur la page de l'extension.
 - Open VSX : `https://open-vsx.org/extension/PileOuFaces/stack-visualizer`.
 
 ## Pré-release (beta / rc)
 
-Tagger avec un suffixe `-pre`, `-beta` ou `-rc` (ex. `v0.3.0-rc1`) : les deux jobs publient alors en **`--pre-release`**. Utile pour tester une build sans la pousser au canal stable.
+Tagger avec un suffixe `-pre`, `-beta` ou `-rc` (ex. `v0.3.0-rc1`) : lors du lancement `publish`, les deux jobs publient alors en **`--pre-release`**. Utile pour tester une build sans la pousser au canal stable.
 
 ## Dépannage
 

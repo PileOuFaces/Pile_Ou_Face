@@ -56,7 +56,7 @@ Pile ou Face analyse des binaires ELF, PE et Mach-O (x86, x64, ARM64) directemen
 
 - **VS Code** 1.120+
 - **Node.js** 18+
-- **Python** 3.10+
+- **Python** 3.10 à 3.13 pour l'installation automatique des dépendances (voir ci-dessous)
 
 ### Backend Python
 
@@ -79,10 +79,21 @@ qu'une partie des dépendances (par exemple sans `lief`). S'ils manquent, elle
 
 - **Later** ou notification fermée : aucun `pip`, aucun venv créé ; les
   fonctions Python restent indisponibles, l'extension continue de fonctionner.
+- **Version de Python** : le venv est créé avec un CPython **3.10 à 3.13**, le seul
+  intervalle où toutes les dépendances verrouillées publient des wheels (`yara-python`
+  s'arrête à 3.13). L'extension cherche `python3.13` … `python3.10`, puis `python3` et
+  `python` (`py -3.13` … `py -3.10` sous Windows) et prend le premier de la plage.
+  Si aucun ne convient, elle **refuse avant pip** et liste les interpréteurs trouvés.
+  Un `backends/.venv` créé avec une version hors plage n'est pas réutilisé : le
+  message indique de supprimer ce dossier.
 - **Install** : création si besoin de `backends/.venv`, puis deux commandes pip
   dans ce venv :
-  1. `<venv>/python -m pip install --require-hashes -r backends/requirements-build.lock.txt` ;
-  2. `<venv>/python -m pip install --require-hashes --no-build-isolation -r backends/requirements.lock.txt`.
+  1. `<venv>/python -m pip install --require-hashes --only-binary=:all: --no-binary=hexdump,vivisect-vstruct-wb -r backends/requirements-build.lock.txt` ;
+  2. `<venv>/python -m pip install --require-hashes --only-binary=:all: --no-binary=hexdump,vivisect-vstruct-wb --no-build-isolation -r backends/requirements.lock.txt`.
+
+  Seuls des wheels sont installés, sauf pour les deux paquets publiés uniquement en
+  sources (Python pur). Sans wheel pour cette version de Python, cet OS ou cette
+  architecture, pip échoue sans rien compiler, et le message nomme le paquet en cause.
 
   L'installation se fait uniquement dans ce venv, sans `--break-system-packages`.
   Si la configuration pip (fichier `pip.conf`/`pip.ini` ou variable `PIP_*`)
@@ -92,7 +103,8 @@ qu'une partie des dépendances (par exemple sans `lief`). S'ils manquent, elle
   commande manuelle ; l'activation n'est pas bloquée et la proposition revient
   au prochain démarrage.
 - **Interpréteur configuré** (réglage `pythonPath` hors de `backends/.venv`) :
-  l'extension n'y installe rien et indique la commande à lancer soi-même.
+  l'extension ne le remplace jamais et n'y installe rien. Elle indique la commande
+  à lancer soi-même, et signale une version hors de la plage 3.10 à 3.13.
 
 #### Versions vérifiées : `backends/requirements.lock.txt` et `requirements-build.lock.txt`
 
@@ -131,7 +143,12 @@ done
 - Vérifier ensuite dans un venv propre, avec les deux commandes pip de **Install**
   ci-dessus (outils de construction, puis lock principal avec `--no-build-isolation`).
 - `hexdump` et `vivisect-vstruct-wb` n'existent qu'en sdist (Python pur) : pip les
-  construit avec les outils figés, sans compilateur.
+  construit avec les outils figés, sans compilateur. Cette liste
+  (`SOURCE_ONLY_PACKAGES` dans `src/shared/pythonDependencies.ts`) doit être
+  revue à chaque régénération : tout autre paquet doit publier des wheels.
+- Plage de Python de l'installation automatique (`SUPPORTED_MIN`/`SUPPORTED_MAX` dans
+  `src/shared/pythonInterpreter.ts`) : la revoir si les wheels d'une nouvelle
+  version deviennent disponibles pour tous les paquets compilés.
 - **Non pris en charge — installation automatique sur macOS Intel :** `cryptography`
   50.0.2 (version verrouillée) ne publie pas de wheel macOS x86_64 ; seul arm64 en a
   depuis la 49. L'extension ne compile rien implicitement depuis les sources et ne
