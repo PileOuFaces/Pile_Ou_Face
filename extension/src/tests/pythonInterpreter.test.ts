@@ -73,7 +73,8 @@ describe('pythonInterpreter (#549)', () => {
     } catch {
       this.skip();
     }
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pof-André-'));
+    // Real path: on macOS /var is a symlink to /private/var, and Python reports the resolved directory.
+    const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'pof-André-'));
     const link = path.join(dir, 'python3');
     fs.symlinkSync(python, link);
     // The probe script alone must not depend on the pipe encoding (cp1252 on many Windows setups).
