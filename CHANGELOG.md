@@ -14,7 +14,7 @@
 
 ### Changed
 
-- **Python 3.10 à 3.13** pour l'installation automatique des dépendances Python. L'extension cherche elle-même un interpréteur de cette plage (`python3.13` … `python3.10`, ou `py -3.x` sous Windows) avant de créer son venv. Si elle n'en trouve aucun, elle l'explique et liste les versions trouvées, sans lancer pip. Un interpréteur choisi dans les réglages n'est jamais remplacé.
+- **Python 3.10 à 3.13** pour l'installation automatique des dépendances Python. L'extension cherche elle-même un interpréteur de cette plage (`python3.13` … `python3.10`, ou les dossiers d'installation de python.org sous Windows) avant de créer son venv. Si elle n'en trouve aucun, elle l'explique et liste les versions trouvées, sans lancer pip. Un interpréteur choisi dans les réglages n'est jamais remplacé.
 - Les dépendances sont installées uniquement depuis des paquets précompilés (sauf deux paquets en Python pur). En l'absence de paquet pour la plateforme, le message nomme le paquet en cause, au lieu d'une erreur pip générique.
 - **macOS Intel :** l'installation automatique des dépendances Python n'est pas proposée, car `cryptography` ne publie plus de paquet pour cette plateforme. Le reste de l'extension fonctionne, et vous pouvez installer les dépendances vous-même puis choisir l'interpréteur dans les réglages.
 - Le chemin Python choisi s'applique immédiatement, sans rouvrir le hub ni recharger l'extension.

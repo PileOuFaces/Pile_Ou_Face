@@ -335,7 +335,11 @@ describe("ensurePythonDependencies", () => {
     it("creates the venv with a compatible interpreter found before the default python3", async () => {
       info.resolves(INSTALL_ACTION);
       const execFile = stubVersions(process.platform === "win32"
-        ? { "py -3.12": "3 12 win32 AMD64 C:\\Python312\\python.exe", python: "3 15 win32 AMD64 C:\\Python315\\python.exe" }
+        ? {
+          [path.win32.join(process.env.LOCALAPPDATA || "", "Programs", "Python", "Python312", "python.exe")]:
+            "3 12 win32 AMD64 C:\\Python312\\python.exe",
+          python: "3 15 win32 AMD64 C:\\Python315\\python.exe",
+        }
         : { "python3.12": "3 12 linux x86_64 /usr/bin/python3.12", python3: "3 15 linux x86_64 /usr/local/bin/python3.15" });
 
       const status = await utils.ensurePythonDependencies("python3", EXT_DIR_WITH_SPACES, { quiet: true });
