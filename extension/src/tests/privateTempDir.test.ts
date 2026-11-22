@@ -9,7 +9,6 @@ const {
   privateDirProblem,
   privateTempBase,
   ensurePrivateSubdir,
-  safeFileStem,
   writeFileAtomic,
   resetPrivateTempBaseForTests,
 } = require('../shared/privateTempDir');
@@ -102,14 +101,6 @@ describe('private temporary directory', () => {
     const dir = ensurePrivateSubdir('triage', deps());
     expect(path.dirname(dir)).to.equal(expectedBase());
     expect(fs.statSync(dir).mode & 0o777).to.equal(0o700);
-  });
-
-  it('turns an untrusted identifier into a plain file stem (no traversal)', () => {
-    for (const hostile of ['../../../home/user/.bashrc', 'a/b\\c', '..', '', '\0', 'x'.repeat(10000)]) {
-      const stem = safeFileStem(hostile);
-      expect(stem).to.match(/^[0-9a-f]{24}$/);
-    }
-    expect(safeFileStem('same')).to.equal(safeFileStem('same'));
   });
 
   (POSIX ? it : it.skip)('writes atomically: a symlink planted at the target is replaced, not followed', () => {

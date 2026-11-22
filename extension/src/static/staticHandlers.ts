@@ -16,7 +16,7 @@ const https = require('https');
 const readline = require('readline');
 const { detectPythonExecutable, buildRuntimeEnv, resolveDockerExecutable, logDebug, logWarning } = require('../shared/utils');
 const { checkHubCommand } = require('./hubCommandPolicy');
-const { ensurePrivateSubdir, safeFileStem } = require('../shared/privateTempDir');
+const { ensurePrivateSubdir } = require('../shared/privateTempDir');
 const { readStoredSettings } = require('../shared/settingsSchema');
 const { decompilerEnvFromPaths } = require('../shared/decompilerLocalPaths');
 const { emptyPluginUiState, summarizePluginRuntimeState } = require('./pluginState');
@@ -1703,9 +1703,13 @@ function staticHandlers(config: LooseMessage) {
       }
 
       // Private per-user directory, and a hashed name: requestId comes from the webview.
+      // One fresh directory per run (mkdtemp) inside the private base: requestId comes from the
+      // webview and never becomes part of a path.
+      let runDir;
       let cancelFlagPath;
       try {
-        cancelFlagPath = path.join(ensurePrivateSubdir('triage'), `cancel-${safeFileStem(requestId)}.flag`);
+        runDir = fs.mkdtempSync(path.join(ensurePrivateSubdir('triage'), 'run-'));
+        cancelFlagPath = path.join(runDir, 'cancel.flag');
       } catch (err) {
         fail(`Dossier temporaire privé indisponible : ${err.message || err}`);
         return;
@@ -1771,7 +1775,7 @@ function staticHandlers(config: LooseMessage) {
         resultSent = true;
         clearAiProcess(requestId);
         if (_activeTriageRuns.get(binaryPath) === requestId) _activeTriageRuns.delete(binaryPath);
-        try { fs.rmSync(cancelFlagPath, { force: true }); } catch (err) {
+        try { fs.rmSync(runDir, { recursive: true, force: true }); } catch (err) {
           logDebug(`[auto-triage] cleanup cancel flag failed: ${err.message || err}`);
         }
         const ok = code === 0;

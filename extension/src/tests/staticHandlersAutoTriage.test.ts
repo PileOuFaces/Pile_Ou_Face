@@ -176,8 +176,11 @@ describe('staticHandlers auto-triage', () => {
     try {
       await app.handlers.hubAutoTriageStart({ requestId: '../../../home/user/.bashrc', binaryPath: app.binaryPath });
       const flag = app.spawnArgs[app.spawnArgs.indexOf('--cancel-flag-path') + 1];
-      expect(path.dirname(flag)).to.equal(privateDir);
-      expect(path.basename(flag)).to.match(/^cancel-[0-9a-f]{24}\.flag$/);
+      // A fresh mkdtemp directory per run inside the private base; requestId is not in the path.
+      expect(path.dirname(path.dirname(flag))).to.equal(privateDir);
+      expect(path.basename(path.dirname(flag))).to.match(/^run-[A-Za-z0-9]{6}$/);
+      expect(path.basename(flag)).to.equal('cancel.flag');
+      expect(flag).to.not.contain('bashrc');
     } finally {
       app.cleanup();
       fs.rmSync(privateDir, { recursive: true, force: true });

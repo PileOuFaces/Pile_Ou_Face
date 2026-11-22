@@ -92,11 +92,6 @@ function ensurePrivateSubdir(name: string, deps: Deps = {}): string {
   return dir;
 }
 
-/** File name derived from an untrusted identifier: no separator, no traversal. */
-function safeFileStem(untrusted: unknown): string {
-  return crypto.createHash('sha256').update(String(untrusted ?? '')).digest('hex').slice(0, 24);
-}
-
 /**
  * Writes `content` to `target` without following a symbolic link planted at `target`:
  * the data goes to a fresh file created exclusively next to it, then renamed over it.
@@ -121,7 +116,6 @@ module.exports = {
   privateDirProblem,
   privateTempBase,
   ensurePrivateSubdir,
-  safeFileStem,
   writeFileAtomic,
   resetPrivateTempBaseForTests,
 };
