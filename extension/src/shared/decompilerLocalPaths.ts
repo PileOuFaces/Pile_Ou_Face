@@ -8,6 +8,13 @@
  * - STRUCTURE (expected files present) only catches a wrong folder. A folder holding a
  *   file named analyzeHeadless is not proven to be a genuine Ghidra: it is accepted
  *   because the user chose it, and it is re-checked before every use.
+ *
+ * What is guaranteed before each use: the attested folder still resolves to itself
+ * (no symbolic link now redirects it, or one of its parents, elsewhere) and still has the
+ * expected layout. What is NOT guaranteed: the integrity of its contents. Anyone able to
+ * write inside the chosen folder (or a link placed inside it, e.g. support/analyzeHeadless
+ * pointing elsewhere) decides what runs, as for any program installed there; replacing an
+ * executable in place is not detected.
  */
 
 const fs = require('fs');
@@ -95,8 +102,15 @@ function decompilerEnvFromPaths(paths: unknown, { log = (_message: string) => {}
   for (const [decompilerId, folder] of Object.entries(paths as Record<string, unknown>)) {
     if (!ENV_VARIABLE[decompilerId]) continue;
     const check = checkInstallFolder(decompilerId, folder, deps);
-    if (check.ok) env[ENV_VARIABLE[decompilerId]] = check.path;
-    else log(`[decompiler] ${decompilerId} folder ignored: ${check.error}`);
+    if (!check.ok) {
+      log(`[decompiler] ${decompilerId} folder ignored: ${check.error}`);
+    } else if (check.path !== folder) {
+      // The attested value is the canonical folder chosen by the user. If it now resolves
+      // elsewhere, a symbolic link replaced it (or a parent): that target was never chosen.
+      log(`[decompiler] ${decompilerId} folder ignored: ${String(folder)} now resolves to ${check.path}; select it again`);
+    } else {
+      env[ENV_VARIABLE[decompilerId]] = check.path;
+    }
   }
   return env;
 }
