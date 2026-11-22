@@ -91,9 +91,16 @@ const SCENARIOS = {
     report.dependenciesInstalled = done;
   },
   async offline(report, extension) {
-    await acceptFirstNotification();
     // Le venv est créé localement ; l'échec réseau survient ensuite dans pip.
-    await waitFor(() => Boolean(venvPython(extension.extensionPath)), 120000);
+    // La notification n'apparaît qu'après la recherche d'un interpréteur : cliquer jusqu'à ce qu'elle soit là.
+    let clicks = 0;
+    await waitFor(() => Boolean(venvPython(extension.extensionPath)), 120000, async () => {
+      if (clicks < 3) {
+        clicks += 1;
+        await acceptFirstNotification();
+      }
+    });
+    report.consentClicks = clicks;
     await sleep(30000);
     report.venvPython = venvPython(extension.extensionPath);
     report.dependenciesInstalled = importsOk(report.venvPython);
