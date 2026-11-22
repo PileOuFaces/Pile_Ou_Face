@@ -1922,8 +1922,7 @@ function staticHandlers(config: LooseMessage) {
       // Le webview ne peut déclencher que les commandes de hubCommandPolicy (#535).
       const commandId = String(message?.command || '').trim();
       const requestId = message?.requestId || null;
-      if (!commandId) return;
-      logChannel?.appendLine(`[hub] hubExecuteCommand START: ${commandId}`);
+      logChannel?.appendLine(`[hub] hubExecuteCommand START: ${commandId || '<empty>'}`);
 
       const _sendResult = (status, detail = '') => {
         logChannel?.appendLine(`[hub] hubCommandResult: ${commandId} → ${status}${detail ? ' | ' + detail : ''}`);

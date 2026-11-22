@@ -8,8 +8,19 @@
  * Only the commands the front really uses are allowed, with validated arguments.
  */
 
-// Same shape as decompilers.json keys (e.g. "ghidra", "retdec", "my-tool").
-const DECOMPILER_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
+// A decompilers.json key: created by the wizard ([a-z0-9_-], no length limit) or edited by
+// hand. It only preselects an entry of the user's configuration and is never executed, so
+// any key is accepted except control characters; the bound only stops oversized payloads.
+const MAX_DECOMPILER_ID_LENGTH = 4096;
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
+
+function isDecompilerId(value: unknown): value is string {
+  return typeof value === 'string'
+    && value.length > 0
+    && value.length <= MAX_DECOMPILER_ID_LENGTH
+    && !CONTROL_CHARACTERS.test(value);
+}
 
 type ArgsRule = 'none' | 'optionalDecompilerId';
 type PolicyResult = { ok: true; args: string[] } | { ok: false; reason: string };
@@ -39,10 +50,10 @@ function checkHubCommand(commandId: unknown, rawArgs: unknown): PolicyResult {
     return args.length === 0 ? { ok: true, args: [] } : { ok: false, reason: `${id} takes no arguments` };
   }
   if (args.length === 0) return { ok: true, args: [] };
-  if (args.length === 1 && typeof args[0] === 'string' && DECOMPILER_ID.test(args[0])) {
+  if (args.length === 1 && isDecompilerId(args[0])) {
     return { ok: true, args: [args[0]] };
   }
   return { ok: false, reason: `${id} accepts at most one decompiler identifier` };
 }
 
-module.exports = { ALLOWED_HUB_COMMANDS, checkHubCommand };
+module.exports = { ALLOWED_HUB_COMMANDS, MAX_DECOMPILER_ID_LENGTH, checkHubCommand };
