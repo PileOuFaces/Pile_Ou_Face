@@ -73,6 +73,7 @@ function createHarness(options = {}) {
     './pluginState': { emptyPluginUiState: () => ({}), summarizePluginRuntimeState: (value) => value },
     '../shared/authService': { AuthService: class {} },
     '../shared/authConfig': { resolveAuthServerUrl: () => 'http://localhost' },
+    ...(options.privateTempDir ? { '../shared/privateTempDir': options.privateTempDir } : {}),
   });
   const context = {
     extensionPath: root,
@@ -165,4 +166,51 @@ describe('staticHandlers auto-triage', () => {
       expect(fs.readFileSync(app.destination, 'utf8')).to.equal('# report');
     } finally { app.cleanup(); }
   });
+
+  it('keeps the cancel flag inside the private directory whatever requestId the webview sends', async () => {
+    const privateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pof-triage-private-'));
+    const real = require('../shared/privateTempDir');
+    const app = createHarness({
+      privateTempDir: { ...real, ensurePrivateSubdir: () => privateDir },
+    });
+    try {
+      await app.handlers.hubAutoTriageStart({ requestId: '../../../home/user/.bashrc', binaryPath: app.binaryPath });
+      const flag = app.spawnArgs[app.spawnArgs.indexOf('--cancel-flag-path') + 1];
+      // A fresh mkdtemp directory per run inside the private base; requestId is not in the path.
+      expect(path.dirname(path.dirname(flag))).to.equal(privateDir);
+      expect(path.basename(path.dirname(flag))).to.match(/^run-[A-Za-z0-9]{6}$/);
+      expect(path.basename(flag)).to.equal('cancel.flag');
+      expect(flag).to.not.contain('bashrc');
+    } finally {
+      app.cleanup();
+      fs.rmSync(privateDir, { recursive: true, force: true });
+    }
+  });
+
+  it('reports an unavailable private directory and does not stay locked', async () => {
+    const real = require('../shared/privateTempDir');
+    let broken = true;
+    const app = createHarness({
+      privateTempDir: {
+        ...real,
+        ensurePrivateSubdir: () => {
+          if (broken) throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+          return app.storageDir;
+        },
+      },
+    });
+    try {
+      await app.handlers.hubAutoTriageStart({ requestId: 'run-a', binaryPath: app.binaryPath });
+      const failed = app.posted.find((message) => message.type === 'hubAutoTriageDone');
+      expect(failed).to.include({ requestId: 'run-a', ok: false });
+      expect(failed.error).to.contain('EACCES');
+      expect(app.spawnArgs).to.equal(null);
+
+      broken = false;
+      await app.handlers.hubAutoTriageStart({ requestId: 'run-b', binaryPath: app.binaryPath });
+      expect(app.spawnArgs).to.not.equal(null);
+      expect(app.posted.some((m) => m.type === 'hubAutoTriageDone' && m.requestId === 'run-b' && /déjà en cours/.test(m.error || ''))).to.equal(false);
+    } finally { app.cleanup(); }
+  });
 });
+

@@ -31,7 +31,7 @@ function makeArchPayload(archKey = "x86_64", overrides = {}) {
 }
 
 function writeTmpMapping(obj) {
-  const dir = os.tmpdir();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pof-arch-'));
   const file = path.join(dir, `mapping-${Date.now()}.json`);
   fs.writeFileSync(file, JSON.stringify(obj), "utf8");
   return file;
@@ -74,7 +74,7 @@ describe("archSupport — readArchSupportFromMapping", () => {
     try {
       expect(archSupport.readArchSupportFromMapping(file, fs)).to.be.null;
     } finally {
-      fs.unlinkSync(file);
+      fs.rmSync(path.dirname(file), { recursive: true, force: true });
     }
   });
 
@@ -83,7 +83,7 @@ describe("archSupport — readArchSupportFromMapping", () => {
     try {
       expect(archSupport.readArchSupportFromMapping(file, fs)).to.be.null;
     } finally {
-      fs.unlinkSync(file);
+      fs.rmSync(path.dirname(file), { recursive: true, force: true });
     }
   });
 
@@ -94,18 +94,18 @@ describe("archSupport — readArchSupportFromMapping", () => {
       const result = archSupport.readArchSupportFromMapping(file, fs);
       expect(result).to.deep.equal(payload);
     } finally {
-      fs.unlinkSync(file);
+      fs.rmSync(path.dirname(file), { recursive: true, force: true });
     }
   });
 
   it("returns null for malformed JSON", () => {
-    const dir = os.tmpdir();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pof-arch-'));
     const file = path.join(dir, `bad-mapping-${Date.now()}.json`);
     fs.writeFileSync(file, "{ not json ]", "utf8");
     try {
       expect(archSupport.readArchSupportFromMapping(file, fs)).to.be.null;
     } finally {
-      fs.unlinkSync(file);
+      fs.rmSync(path.dirname(file), { recursive: true, force: true });
     }
   });
 });
