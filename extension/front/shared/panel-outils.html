@@ -254,8 +254,8 @@
                   <label>Binaire de sortie</label>
                   <div style="display:flex;gap:4px;align-items:center">
                     <div class="input-wrap" style="flex:1">
-                      <input id="gccOutputPath" type="text" class="input-inner"
-                             placeholder="Chemin de sortie (auto si vide)" spellcheck="false" />
+                      <input id="gccOutputPath" type="text" class="input-inner" readonly
+                             placeholder="Dossier privé si vide ; exporter avec …" spellcheck="false" />
                     </div>
                     <button id="btnBrowseCompilerOut" type="button" class="btn btn-secondary btn-sm"
                             title="Parcourir…" style="flex-shrink:0">…</button>
@@ -368,13 +368,6 @@
                     <span class="toggle-slider"></span>
                     <span>Strip symboles (-s)</span>
                   </label>
-                  <div class="form-field" style="flex:1">
-                    <label>Flags custom</label>
-                    <div class="input-wrap">
-                      <input id="gccExtraFlags" type="text" class="input-inner"
-                             placeholder="-Wall -Wextra" spellcheck="false" />
-                    </div>
-                  </div>
                 </div>
               </div>
 
