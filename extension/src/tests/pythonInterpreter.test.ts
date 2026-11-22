@@ -46,6 +46,13 @@ describe('pythonInterpreter (#549)', () => {
     expect(seen.map((p) => p.executable)).to.deep.equal(['/usr/local/bin/python3.11']);
   });
 
+  it('keeps searching after an x86_64 Python under Rosetta on Apple Silicon', async () => {
+    const replies = { 'python3.13': '3 13 darwin x86_64 /usr/local/bin/python3.13', 'python3.12': '3 12 darwin arm64 /opt/homebrew/bin/python3.12' };
+    const exec = async (file) => (replies[file] ? { ok: true, stdout: replies[file] } : { ok: false, stdout: '' });
+    const { found } = await findCompatibleBase('darwin', exec);
+    expect(found.executable).to.equal('/opt/homebrew/bin/python3.12');
+  });
+
   it('ignores interpreters that do not answer the probe', async () => {
     expect(await probeInterpreter({ command: 'x', args: [] }, async () => ({ ok: true, stdout: 'garbage' }))).to.equal(null);
     expect(await probeInterpreter({ command: 'x', args: [] }, async () => ({ ok: false, stdout: '' }))).to.equal(null);
