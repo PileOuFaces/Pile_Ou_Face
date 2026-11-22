@@ -34,6 +34,6 @@
   "config.autoTriage.maxSeconds": "Durée maximale en secondes d’un auto-triage, contrôlée entre deux fonctions.",
   "config.autoTriage.maxTokensPerRequest": "Nombre maximal de tokens générés par réponse IA pendant l’auto-triage.",
   "config.autoTriage.maxTotalTokens": "Budget maximal de tokens comptabilisés sur l’ensemble d’un auto-triage, résumé inclus.",
-  "config.telemetry.enabled": "Autorise les métriques d’usage agrégées lorsque la télémétrie VS Code est également activée. Aucun contenu analysé n’est envoyé.",
+  "config.telemetry.enabled": "Accepter l’envoi de métriques d’usage agrégées de Pile ou Face (désactivé par défaut). Rien n’est envoyé si la télémétrie de VS Code est désactivée. Aucun contenu analysé n’est envoyé. Ce choix peut être retiré à tout moment.",
   "config.runtimeUsageAudit": "Active l’audit runtime des commandes, messages webview et subprocess Python dans storageDir/audit-runtime-usage.jsonl. Désactivé par défaut."
 }
