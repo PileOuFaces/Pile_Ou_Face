@@ -99,22 +99,33 @@ describe('privacy telemetry transport', () => {
     expect(await pending).to.equal(false);
   });
 
-  it('releases the unread response body so no exchange outlives the call', async () => {
-    let signal = null;
-    let bodyCancelled = false;
+  it('closes a real HTTP exchange whose body the server keeps open', async () => {
+    const http = require('node:http');
+    let serverSocketClosed;
+    const closed = new Promise((resolve) => { serverSocketClosed = resolve; });
+    // Plain HTTP local server: headers sent, body never ended.
+    const server = http.createServer((request, response) => {
+      request.socket.on('close', () => serverSocketClosed(true));
+      response.writeHead(200, { 'content-type': 'text/plain' });
+      response.write('partial');
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address();
     const transport = createTelemetryTransport({
       endpoint: 'https://telemetry.example.test',
-      fetchImpl: async (_url, init) => {
-        signal = init.signal;
-        signal.addEventListener('abort', () => { bodyCancelled = true; });
-        // Headers received, body left open by the provider.
-        return { ok: true, status: 200, body: new ReadableStream({ start() {} }) };
-      },
+      // The transport only accepts HTTPS endpoints; route the request to the local server.
+      fetchImpl: (_url, init) => fetch(`http://127.0.0.1:${port}/v1/events`, init),
     });
-
-    expect(await transport.sendBody('{}')).to.equal(true);
-    expect(signal.aborted).to.equal(true);
-    expect(bodyCancelled).to.equal(true);
+    try {
+      expect(await transport.sendBody('{}')).to.equal(true);
+      const outcome = await Promise.race([
+        closed,
+        new Promise((resolve) => setTimeout(() => resolve(false), 1000)),
+      ]);
+      expect(outcome).to.equal(true);
+    } finally {
+      server.closeAllConnections?.();
+      await new Promise((resolve) => server.close(resolve));
+    }
   });
 });
-
