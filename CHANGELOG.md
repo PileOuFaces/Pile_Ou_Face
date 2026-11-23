@@ -12,6 +12,7 @@
 - Le dossier temporaire de l'extension (caches, traces) et les fichiers du triage IA sont placés dans un dossier privé par utilisateur.
 - Plusieurs valeurs affichées dans l'interface (registres d'une trace, noms de sections) sont désormais traitées comme du texte.
 - Compilation : seules les options proposées par le panneau sont acceptées, et le binaire est produit dans un dossier privé. Il n'est copié ailleurs que vers un chemin choisi dans le dialogue d'enregistrement de VS Code. La source doit être un fichier `.c`, `.cpp`, `.rs` ou `.go`.
+- L'enregistrement d'un script depuis l'éditeur du hub n'écrit plus que dans le dossier des scripts de l'extension, sous un simple nom de fichier `.py` (#553).
 
 ### Changed
 
