@@ -375,7 +375,7 @@
         },
         "pileOuFace.telemetry.enabled": {
           "type": "boolean",
-          "default": true,
+          "default": false,
           "scope": "machine",
           "tags": [
             "telemetry",

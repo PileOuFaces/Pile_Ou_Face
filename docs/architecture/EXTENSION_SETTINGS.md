@@ -32,7 +32,7 @@ Section `contributes.configuration` : `extension/package.json:298-392`, titre `P
 | `pileOuFace.autoTriage.maxSeconds` | `integer` | `600` | minimum `30`, maximum `7200` | `%config.autoTriage.maxSeconds%` | — | `extension/package.json:355-361` |
 | `pileOuFace.autoTriage.maxTokensPerRequest` | `integer` | `2048` | minimum `128`, maximum `32768` | `%config.autoTriage.maxTokensPerRequest%` | — | `extension/package.json:362-368` |
 | `pileOuFace.autoTriage.maxTotalTokens` | `integer` | `100000` | minimum `1024`, maximum `1000000` | `%config.autoTriage.maxTotalTokens%` | — | `extension/package.json:369-375` |
-| `pileOuFace.telemetry.enabled` | `boolean` | `true` | — | `%config.telemetry.enabled%` | `scope` : `machine` ; `tags` : `telemetry`, `usesOnlineServices` | `extension/package.json:376-385` |
+| `pileOuFace.telemetry.enabled` | `boolean` | `false` (opt-in) | — | `%config.telemetry.enabled%` | `scope` : `machine` ; `tags` : `telemetry`, `usesOnlineServices` | `extension/package.json:376-385` |
 | `pileOuFace.runtimeUsageAudit` | `boolean` | `false` | — | `%config.runtimeUsageAudit%` | — | `extension/package.json:386-390` |
 
 Autres usages déclaratifs de ces clés dans `package.json` :
@@ -146,7 +146,7 @@ Au point `1635-1637`, le contrôle `Number.isInteger(...) && > 0` porte sur `mes
 
 | Point de lecture | Vérification appliquée à la lecture |
 |---|---|
-| `extension/src/shared/telemetry/telemetry.ts:75` (`get('telemetry.enabled', true) === true`) | Comparaison stricte à `true`. Une valeur non booléenne donne `false`. Dans un `try` dont le `catch` retourne `false` (`extension/src/shared/telemetry/telemetry.ts:73-79`). |
+| `extension/src/shared/telemetry/telemetry.ts:75` (`get('telemetry.enabled', false) === true`) | Comparaison stricte à `true`. Une valeur non booléenne donne `false`. Dans un `try` dont le `catch` retourne `false` (`extension/src/shared/telemetry/telemetry.ts:73-79`). |
 | `extension/src/shared/telemetry/telemetry.ts:127-130` (`affectsConfiguration('pileOuFace.telemetry.enabled')`) | Pas de lecture directe : appelle `handleEnablementChange`. |
 
 `isProductTelemetryEnabled` est utilisé dans `isEnabled` (`extension/src/shared/telemetry/telemetry.ts:81-88`) avec d'autres conditions (`vscode.env.isTelemetryEnabled === true`, etc.). Cet état global de VS Code n'est pas un réglage `pileOuFace.*`.
