@@ -125,7 +125,8 @@ async function runScenario(vscodeExecutable, args, scenario, root) {
 function verdict(report) {
   const p = report.probe || {};
   const candidate = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'package.json'), 'utf8')).version;
-  const base = p.ok === true && p.activated === true && p.hubOpened === true
+  // Une erreur de l'hôte de tests invalide le scénario, même si la sonde a écrit un rapport.
+  const base = !report.runTestsError && p.ok === true && p.activated === true && p.hubOpened === true
     && report.listedExtensions.length === 1
     && report.listedExtensions[0].toLowerCase() === `${EXTENSION_ID}@${candidate}`.toLowerCase()
     && p.version === candidate;

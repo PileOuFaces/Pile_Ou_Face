@@ -15,6 +15,10 @@ const NO_CONSENT_OBSERVATION_MS = 20000;
 // Installation réelle depuis PyPI (wheels lief, unicorn…) sur un runner lent.
 const INSTALL_TIMEOUT_MS = 15 * 60 * 1000;
 const CORE_IMPORTS = 'import unicorn, capstone, lief';
+// La notification n'apparaît qu'après la recherche d'interpréteur (sondes jusqu'à 15 s chacune) :
+// cliquer à intervalle régulier pendant cette fenêtre, jusqu'au démarrage de l'installation.
+const CONSENT_WINDOW_MS = 120000;
+const CONSENT_RETRY_MS = 5000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -40,6 +44,23 @@ function importsOk(python) {
 async function acceptFirstNotification() {
   await vscode.commands.executeCommand('notifications.focusToasts');
   await vscode.commands.executeCommand('notification.acceptPrimaryAction');
+}
+
+/** Clique toutes les CONSENT_RETRY_MS jusqu'à ce que le venv existe (installation démarrée). */
+function consentClicker(extensionPath) {
+  const started = Date.now();
+  let lastClick = 0;
+  let clicks = 0;
+  return {
+    get clicks() { return clicks; },
+    async tick() {
+      const now = Date.now();
+      if (venvPython(extensionPath) || now - started > CONSENT_WINDOW_MS || now - lastClick < CONSENT_RETRY_MS) return;
+      lastClick = now;
+      clicks += 1;
+      await acceptFirstNotification();
+    },
+  };
 }
 
 async function waitFor(predicate, timeoutMs, onTick = async () => {}) {
@@ -75,32 +96,22 @@ const SCENARIOS = {
     report.venvCreatedWithoutConsent = fs.existsSync(path.join(extension.extensionPath, 'backends', '.venv'));
   },
   async consent(report, extension) {
-    let clicks = 0;
+    const clicker = consentClicker(extension.extensionPath);
     const done = await waitFor(
       () => importsOk(venvPython(extension.extensionPath)),
       INSTALL_TIMEOUT_MS,
-      async () => {
-        if (clicks < 3 && !venvPython(extension.extensionPath)) {
-          clicks += 1;
-          await acceptFirstNotification();
-        }
-      }
+      () => clicker.tick(),
     );
-    report.consentClicks = clicks;
+    report.consentClicks = clicker.clicks;
     report.venvPython = venvPython(extension.extensionPath);
     report.dependenciesInstalled = done;
   },
   async offline(report, extension) {
     // Le venv est créé localement ; l'échec réseau survient ensuite dans pip.
     // La notification n'apparaît qu'après la recherche d'un interpréteur : cliquer jusqu'à ce qu'elle soit là.
-    let clicks = 0;
-    await waitFor(() => Boolean(venvPython(extension.extensionPath)), 120000, async () => {
-      if (clicks < 3) {
-        clicks += 1;
-        await acceptFirstNotification();
-      }
-    });
-    report.consentClicks = clicks;
+    const clicker = consentClicker(extension.extensionPath);
+    await waitFor(() => Boolean(venvPython(extension.extensionPath)), CONSENT_WINDOW_MS + 30000, () => clicker.tick());
+    report.consentClicks = clicker.clicks;
     await sleep(30000);
     report.venvPython = venvPython(extension.extensionPath);
     report.dependenciesInstalled = importsOk(report.venvPython);
