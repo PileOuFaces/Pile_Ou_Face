@@ -20,6 +20,7 @@ const CORE_IMPORTS = 'import unicorn, capstone, lief, yara, flirt';
 // cliquer à intervalle régulier pendant cette fenêtre, jusqu'au démarrage de l'installation.
 const CONSENT_WINDOW_MS = 120000;
 const CONSENT_RETRY_MS = 5000;
+const INSTALL_LOG_TIMEOUT_MS = 120000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -64,6 +65,22 @@ function consentClicker(extensionPath) {
   };
 }
 
+// Journal « Pile ou Face » du profil de recette (user-data-dir transmis par le lanceur).
+function extensionLogText() {
+  const logs = path.join(process.env.POF_RECETTE_USER_DATA || '', 'logs');
+  if (!process.env.POF_RECETTE_USER_DATA || !fs.existsSync(logs)) return '';
+  let text = '';
+  const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).forEach((entry) => {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) walk(full);
+    else if (/Pile ou Face/.test(entry.name)) text += fs.readFileSync(full, 'utf8');
+  });
+  walk(logs);
+  return text;
+}
+
+const INSTALL_END_PATTERN = /\[pip\] (Installation terminée|Erreur)/;
+
 async function waitFor(predicate, timeoutMs, onTick = async () => {}) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -104,6 +121,9 @@ const SCENARIOS = {
       () => clicker.tick(),
     );
     report.consentClicks = clicker.clicks;
+    // Les imports peuvent réussir avant que l'extension ait fini (et journalisé) l'installation :
+    // attendre sa ligne de fin ou d'erreur avant de fermer VS Code.
+    report.installEndLogged = await waitFor(() => INSTALL_END_PATTERN.test(extensionLogText()), INSTALL_LOG_TIMEOUT_MS);
     report.venvPython = venvPython(extension.extensionPath);
     report.dependenciesInstalled = done;
   },

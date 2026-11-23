@@ -104,7 +104,7 @@ async function runScenario(vscodeExecutable, args, scenario, root) {
     .filter((line) => line.toLowerCase().startsWith(`${EXTENSION_ID.toLowerCase()}@`));
 
   const probeOut = path.join(root, `${scenario}-probe.json`);
-  const env = { POF_RECETTE_SCENARIO: scenario, POF_RECETTE_OUT: probeOut };
+  const env = { POF_RECETTE_SCENARIO: scenario, POF_RECETTE_OUT: probeOut, POF_RECETTE_USER_DATA: profile.userData };
   if (scenario === 'offline') env.PIP_INDEX_URL = UNREACHABLE_INDEX;
   try {
     await runTests({
