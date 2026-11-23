@@ -33,7 +33,12 @@ function parseArgs(argv) {
   if (!args.vsix || !args.out) throw new Error('usage: --vsix <file> --out <dir>');
   args.vsix = path.resolve(args.vsix);
   args.out = path.resolve(args.out);
-  args.scenarios = args.scenarios.split(',').filter((s) => ALL_SCENARIOS.includes(s));
+  args.scenarios = args.scenarios.split(',').map((s) => s.trim()).filter(Boolean);
+  const unknown = args.scenarios.filter((s) => !ALL_SCENARIOS.includes(s));
+  // Pas de succès sans scénario exécuté : nom inconnu ou sélection vide = erreur.
+  if (unknown.length || !args.scenarios.length) {
+    throw new Error(`unknown or empty --scenarios (${unknown.join(',') || 'none'}); allowed: ${ALL_SCENARIOS.join(',')}`);
+  }
   return args;
 }
 
@@ -158,7 +163,7 @@ async function main() {
   }
   const summary = { platform: process.platform, arch: process.arch, node: process.version, results };
   fs.writeFileSync(path.join(args.out, `recette-${process.platform}-${process.arch}.json`), JSON.stringify(summary, null, 2));
-  process.exitCode = results.every((r) => r.verdict === 'PASS') ? 0 : 1;
+  process.exitCode = results.length === args.scenarios.length && results.every((r) => r.verdict === 'PASS') ? 0 : 1;
 }
 
 main().catch((error) => {
