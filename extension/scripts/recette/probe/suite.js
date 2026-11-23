@@ -14,7 +14,8 @@ const POLL_MS = 2000;
 const NO_CONSENT_OBSERVATION_MS = 20000;
 // Installation réelle depuis PyPI (wheels lief, unicorn…) sur un runner lent.
 const INSTALL_TIMEOUT_MS = 15 * 60 * 1000;
-const CORE_IMPORTS = 'import unicorn, capstone, lief';
+// Paquets compilés du verrou, dont yara et flirt (#549) : une installation partielle ne passe pas.
+const CORE_IMPORTS = 'import unicorn, capstone, lief, yara, flirt';
 // La notification n'apparaît qu'après la recherche d'interpréteur (sondes jusqu'à 15 s chacune) :
 // cliquer à intervalle régulier pendant cette fenêtre, jusqu'au démarrage de l'installation.
 const CONSENT_WINDOW_MS = 120000;

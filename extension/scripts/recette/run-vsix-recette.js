@@ -137,7 +137,10 @@ function verdict(report) {
     && p.version === candidate;
   const checks = {
     fresh: () => p.venvCreatedWithoutConsent === false,
-    consent: () => p.dependenciesInstalled === true,
+    // Imports complets ET fin d'installation annoncée par l'extension (aucune erreur pip).
+    consent: () => p.dependenciesInstalled === true
+      && report.extensionLog.some((line) => line.includes('[pip] Installation terminée'))
+      && !report.extensionLog.some((line) => line.includes('[pip] Erreur')),
     offline: () => p.dependenciesInstalled === false && p.hubStillOpensAfterFailure === true
       && report.extensionLog.some((line) => line.includes('réseau indisponible')),
     update: () => p.preservedLogLevel === PRESERVED_SETTING['pileOuFace.logLevel']
