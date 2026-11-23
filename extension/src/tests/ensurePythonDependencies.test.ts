@@ -20,6 +20,13 @@ const OFFLINE_STDERR =
   "WARNING: Retrying (Retry(total=4)) after connection broken by 'NewConnectionError(\"Failed to establish a new connection\")'\n"
   + "ERROR: Could not find a version that satisfies the requirement unicorn==2.1.4";
 
+// Interpréteur de base que la recherche (#549) trouve, quel que soit le nom essayé.
+const BASE_PYTHON = path.join(path.sep, "usr", "bin", "python3.12");
+
+function isVersionProbe(args) {
+  return args.includes("-c") && args[args.indexOf("-c") + 1].includes("sys.executable");
+}
+
 function argsOf(call) {
   return { file: call.args[0], args: call.args[1] };
 }
@@ -29,9 +36,15 @@ function pipCalls(execFile) {
 }
 
 /** Imports manquants ; venv et pip répondent selon `pipError` ; `pipConfig` = sortie de `pip config list`. */
-function stubPython(existing, pipError = null, pipConfig = "", { installs = true, platform = "linux x86_64" } = {}) {
+function stubPython(existing, pipError = null, pipConfig = "", { installs = true, platform = "linux x86_64", version = "3 12" } = {}) {
   let installed = false;
-  return sinon.stub(cp, "execFile").callsFake((_file, args, cb) => {
+  // execFile(file, args[, options], cb) : la sonde de version (#549) passe un délai en options.
+  return sinon.stub(cp, "execFile").callsFake((...call) => {
+    const args = call[1];
+    const cb = call[call.length - 1];
+    if (args.includes("-c") && args[args.indexOf("-c") + 1].includes("sys.executable")) {
+      return cb(null, `${version} ${platform} ${BASE_PYTHON}\n`, "");
+    }
     if (args[0] === "-c" && args[1].includes("platform.machine()")) return cb(null, `${platform}\n`, "");
     if (args[0] === "-c") return installed ? cb(null, "", "") : cb(new Error("ModuleNotFoundError"), "", "");
     if (args[1] === "venv") {
@@ -105,7 +118,7 @@ describe("ensurePythonDependencies", () => {
 
     expect(status).to.equal("installed");
     expect(execStub.called).to.equal(false);
-    expect(execFile.getCalls().map(argsOf)).to.deep.include({ file: "python3", args: ["-m", "venv", VENV_PATH] });
+    expect(execFile.getCalls().map(argsOf)).to.deep.include({ file: BASE_PYTHON, args: ["-m", "venv", VENV_PATH] });
     const [buildPip, pip, ...extra] = pipCalls(execFile);
     expect(extra).to.deep.equal([]);
     // Build tools first, from their own lock: the main install then never fetches unpinned ones.
@@ -167,8 +180,9 @@ describe("ensurePythonDependencies", () => {
 
     expect(await utils.ensurePythonDependencies("python3", EXT_DIR_WITH_SPACES, { quiet: true })).to.equal("declined");
     expect(info.calledOnce).to.equal(true);
-    const probe = execFile.getCalls().find((c) => c.args[1][0] === "-c" && c.args[1][1].includes("platform.machine()"));
-    expect(probe.args[0]).to.equal("python3");
+    const probe = execFile.getCalls().find((c) => c.args[1][0] === "-c" && c.args[1][1].includes("platform.machine()")
+      && !c.args[1][1].includes("sys.executable"));
+    expect(probe.args[0]).to.equal(BASE_PYTHON);
   });
 
   it("reuses an existing extension venv without recreating it", async () => {
@@ -207,8 +221,12 @@ describe("ensurePythonDependencies", () => {
 
   it("reports venv creation errors with stderr and does not run pip", async () => {
     info.resolves(INSTALL_ACTION);
-    const execFile = sinon.stub(cp, "execFile").callsFake((_file, args, cb) =>
-      args[0] === "-c" ? cb(new Error("ModuleNotFoundError"), "", "") : cb(new Error("exit 1"), "", "venv boom"));
+    const execFile = sinon.stub(cp, "execFile").callsFake((...call) => {
+      const args = call[1];
+      const cb = call[call.length - 1];
+      if (isVersionProbe(args)) return cb(null, `3 12 linux x86_64 ${BASE_PYTHON}\n`, "");
+      return args[0] === "-c" ? cb(new Error("ModuleNotFoundError"), "", "") : cb(new Error("exit 1"), "", "venv boom");
+    });
 
     const status = await utils.ensurePythonDependencies("python3", EXT_DIR_WITH_SPACES);
 
@@ -256,7 +274,10 @@ describe("ensurePythonDependencies", () => {
 
   it("ignores a partial system Python and offers the full install when the extension venv is missing", async () => {
     // Python système avec unicorn et capstone, mais sans lief : il ne doit pas suffire.
-    const execFile = sinon.stub(cp, "execFile").callsFake((_file, _args, cb) => cb(null, "", ""));
+    const execFile = sinon.stub(cp, "execFile").callsFake((...call) => {
+      const cb = call[call.length - 1];
+      return cb(null, isVersionProbe(call[1]) ? `3 12 linux x86_64 ${BASE_PYTHON}\n` : "", "");
+    });
 
     const status = await utils.ensurePythonDependencies("python3", EXT_DIR_WITH_SPACES, { quiet: true });
 
@@ -275,6 +296,105 @@ describe("ensurePythonDependencies", () => {
     expect(status).to.equal("ok");
     expect(info.called).to.equal(false);
     expect(execFile.getCalls().map((c) => c.args[0])).to.deep.equal([VENV_PYTHON, VENV_PYTHON]);
+  });
+  describe("supported Python range 3.10–3.13 (#549)", () => {
+    /** Réponses de la sonde de version par commande ; les autres appels suivent stubPython. */
+    function stubVersions(byCommand, pipError = null) {
+      let installed = false;
+      return sinon.stub(cp, "execFile").callsFake((...call) => {
+        const [file, args] = call;
+        const cb = call[call.length - 1];
+        if (isVersionProbe(args)) {
+          const key = [file, ...args.slice(0, args.indexOf("-c"))].join(" ");
+          const reply = byCommand[key];
+          return reply ? cb(null, `${reply}\n`, "") : cb(new Error("ENOENT"), "", "");
+        }
+        if (args[0] === "-c" && args[1].includes("platform.machine()")) return cb(null, "linux x86_64\n", "");
+        if (args[0] === "-c") return installed ? cb(null, "", "") : cb(new Error("ModuleNotFoundError"), "", "");
+        if (args[1] === "venv") { existing.add(VENV_PYTHON); return cb(null, "", ""); }
+        if (args[2] === "config") return cb(null, "", "");
+        if (pipError) return cb(new Error("exit 1"), "", pipError);
+        if (args.includes("--no-build-isolation")) installed = true;
+        return cb(null, "", "");
+      });
+    }
+
+    it("refuses before pip, with the interpreters found, when only Python 3.15 is available", async () => {
+      const execFile = stubVersions({ python3: "3 15 linux x86_64 /opt/homebrew/bin/python3.15", python: "3 15 linux x86_64 /opt/homebrew/bin/python3.15" });
+
+      const status = await utils.ensurePythonDependencies("python3", EXT_DIR_WITH_SPACES, { quiet: true });
+
+      expect(status).to.equal("unsupported");
+      expect(info.called).to.equal(false);
+      expect(pipCalls(execFile)).to.deep.equal([]);
+      expect(execFile.getCalls().some((c) => c.args[1][1] === "venv")).to.equal(false);
+      expect(warn.calledOnce).to.equal(true);
+      expect(warn.firstCall.args[0]).to.contain("3.10–3.13").and.to.contain("/opt/homebrew/bin/python3.15 (Python 3.15)")
+        .and.to.contain("--require-hashes");
+    });
+
+    it("creates the venv with a compatible interpreter found before the default python3", async () => {
+      info.resolves(INSTALL_ACTION);
+      const execFile = stubVersions(process.platform === "win32"
+        ? {
+          [path.win32.join(process.env.LOCALAPPDATA || "", "Programs", "Python", "Python312", "python.exe")]:
+            "3 12 win32 AMD64 C:\\Python312\\python.exe",
+          python: "3 15 win32 AMD64 C:\\Python315\\python.exe",
+        }
+        : { "python3.12": "3 12 linux x86_64 /usr/bin/python3.12", python3: "3 15 linux x86_64 /usr/local/bin/python3.15" });
+
+      const status = await utils.ensurePythonDependencies("python3", EXT_DIR_WITH_SPACES, { quiet: true });
+
+      expect(status).to.equal("installed");
+      const venv = execFile.getCalls().map(argsOf).find((c) => c.args[1] === "venv");
+      expect(venv.file).to.equal(process.platform === "win32" ? "C:\\Python312\\python.exe" : "/usr/bin/python3.12");
+    });
+
+    it("does not reuse an extension venv built with an unsupported Python", async () => {
+      existing.add(VENV_PYTHON);
+      const execFile = stubVersions({ [VENV_PYTHON]: `3 15 linux x86_64 ${VENV_PYTHON}` });
+
+      const status = await utils.ensurePythonDependencies("python3", EXT_DIR_WITH_SPACES, { quiet: true });
+
+      expect(status).to.equal("unsupported");
+      expect(pipCalls(execFile)).to.deep.equal([]);
+      expect(warn.firstCall.args[0]).to.contain("backends/.venv uses").and.to.contain("Delete the folder")
+        .and.to.contain("--require-hashes");
+    });
+
+    it("never replaces an interpreter chosen by the user; only says its version is unsupported", async () => {
+      const execFile = stubVersions({ [PYTHON_WITH_SPACES]: `3 15 darwin arm64 ${PYTHON_WITH_SPACES}` });
+
+      const status = await utils.ensurePythonDependencies(PYTHON_WITH_SPACES, EXT_DIR_WITH_SPACES);
+
+      expect(status).to.equal("unavailable");
+      expect(info.called).to.equal(false);
+      expect(pipCalls(execFile)).to.deep.equal([]);
+      expect(execFile.getCalls().some((c) => c.args[1][1] === "venv")).to.equal(false);
+      expect(warn.firstCall.args[0]).to.contain(PYTHON_WITH_SPACES).and.to.contain("outside 3.10–3.13");
+    });
+
+    it("installs wheels only, except the pure-Python packages published as sources", async () => {
+      info.resolves(INSTALL_ACTION);
+      const execFile = stubPython(existing);
+
+      await utils.ensurePythonDependencies("python3", EXT_DIR_WITH_SPACES, { quiet: true });
+
+      for (const call of pipCalls(execFile)) {
+        expect(call.args).to.include("--only-binary=:all:");
+        expect(call.args).to.include("--no-binary=hexdump,vivisect-vstruct-wb");
+      }
+    });
+
+    it("explains a missing wheel instead of reporting a generic failure", async () => {
+      info.resolves(INSTALL_ACTION);
+      stubPython(existing, "ERROR: Could not find a version that satisfies the requirement yara-python==4.5.4 (from versions: none)");
+
+      const status = await utils.ensurePythonDependencies("python3", EXT_DIR_WITH_SPACES, { quiet: true });
+
+      expect(status).to.equal("failed");
+      expect(warn.firstCall.args[0]).to.contain("No prebuilt package").and.to.contain("yara-python==4.5.4");
+    });
   });
 });
 
@@ -329,4 +449,5 @@ describe("pip helpers", () => {
     expect(win.match(/& "C:\\ext\\.venv\\Scripts\\python.exe" -m pip install --require-hashes/g)).to.have.length(2);
     expect(manualInstallCommand("/v/bin/python3", locks, "linux")).to.not.contain("&");
   });
+
 });

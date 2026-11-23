@@ -9,6 +9,7 @@ const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
 const cp = require('child_process');
+const { SUPPORTED_RANGE_LABEL, probeInterpreter, isSupportedVersion, isIntelMac, describeInterpreter, findCompatibleBase } = require('./pythonInterpreter');
 
 /** Fichier de versions figées avec hashes, généré depuis requirements.txt (voir README). */
 const LOCK_FILE_NAME = 'requirements.lock.txt';
@@ -27,7 +28,16 @@ const REDIRECTING_PIP_OPTIONS = new Set(['target', 'prefix', 'root', 'user', 'py
 // Seul `user` est booléen ; pour les autres, toute valeur est un chemin (« off » compris).
 const BOOLEAN_PIP_OPTIONS = new Set(['user']);
 const DISABLED_VALUES = new Set(['', '0', 'false', 'no', 'off']);
-const PIP_INSTALL_ARGS = ['-m', 'pip', 'install', '--require-hashes', '--no-input', '--disable-pip-version-check', '--quiet'];
+/**
+ * Paquets publiés uniquement en sources (sdist) aux versions verrouillées : purement Python, ils se
+ * construisent avec les outils du verrou de build. Tous les autres doivent venir d'un wheel : sans wheel
+ * pour cette version de Python, cet OS ou cette architecture, pip échoue proprement au lieu de compiler
+ * (#549). À revoir à chaque régénération des verrous (voir README).
+ */
+const SOURCE_ONLY_PACKAGES = ['hexdump', 'vivisect-vstruct-wb'];
+const WHEELS_ONLY_ARGS = ['--only-binary=:all:', `--no-binary=${SOURCE_ONLY_PACKAGES.join(',')}`];
+const PIP_INSTALL_ARGS = ['-m', 'pip', 'install', '--require-hashes', ...WHEELS_ONLY_ARGS, '--no-input', '--disable-pip-version-check', '--quiet'];
+const NO_WHEEL_PATTERN = /Could not find a version that satisfies the requirement (\S+)|No matching distribution found for (\S+)/i;
 const VENV_DIR_NAME = '.venv';
 const CORE_IMPORTS = ['unicorn', 'capstone'];
 const DEFAULT_PYTHON_NAMES = ['python3', 'python'];
@@ -91,7 +101,7 @@ async function hasCoreImports(pythonExe: string): Promise<boolean> {
 /** Deux commandes distinctes : `&&` n'existe pas dans Windows PowerShell 5.1, et un chemin entre guillemets y exige `&`. */
 function manualInstallCommand(pythonExe: string, locks: LockFiles, platform: string = process.platform): string {
   const call = platform === 'win32' ? `& "${pythonExe}"` : `"${pythonExe}"`;
-  const pip = `${call} -m pip install --require-hashes`;
+  const pip = `${call} -m pip install --require-hashes ${WHEELS_ONLY_ARGS.join(' ')}`;
   return `(1) ${pip} -r "${locks.build}" (2) ${pip} --no-build-isolation -r "${locks.main}"`;
 }
 
@@ -131,10 +141,14 @@ async function ensureExtensionVenv(basePython: string, venvPath: string, log): P
 
 function reportInstallFailure(output: string, venvPython: string, locks: LockFiles, log): DependencyStatus {
   const offline = NETWORK_ERROR_PATTERN.test(output);
-  log(`[pip] Erreur${offline ? ' (réseau indisponible)' : ''}: ${output}`);
+  const noWheel = offline ? null : NO_WHEEL_PATTERN.exec(output);
+  log(`[pip] Erreur${offline ? ' (réseau indisponible)' : noWheel ? ' (aucun wheel compatible)' : ''}: ${output}`);
   const reason = offline
     ? 'PyPI is unreachable (offline?). Retry once connected'
-    : 'Installation failed (details in the "Pile ou Face" output channel)';
+    : noWheel
+      ? `No prebuilt package matches this Python, OS and architecture for ${noWheel[1] || noWheel[2]} `
+        + `(supported: CPython ${SUPPORTED_RANGE_LABEL} on Linux, Windows and Apple Silicon macOS)`
+      : 'Installation failed (details in the "Pile ou Face" output channel)';
   vscode.window.showWarningMessage(
     `${reason}. ${UNAVAILABLE_NOTE} Manual commands: ${manualInstallCommand(venvPython, locks)}`
   );
@@ -209,6 +223,39 @@ function reportUnsupportedPlatform(log): DependencyStatus {
   return 'unsupported';
 }
 
+/**
+ * Interpréteur de base du venv : le venv existant s'il est dans la plage supportée, sinon le premier
+ * interpréteur compatible trouvé. Refus avec diagnostic, avant pip, s'il n'y en a aucun.
+ */
+async function selectBaseInterpreter(
+  venvPath: string, locks: LockFiles,
+): Promise<{ ok: true; executable: string } | { ok: false; message: string; intelMac?: boolean }> {
+  const venvPython = findVenvPython(venvPath);
+  if (venvPython) {
+    const probe = await probeInterpreter({ command: venvPython, args: [] });
+    if (probe && isSupportedVersion(probe)) return { ok: true, executable: venvPython };
+    return {
+      ok: false,
+      message: `backends/.venv uses ${probe ? describeInterpreter(probe) : 'an interpreter that does not start'}, `
+        + `outside the supported range ${SUPPORTED_RANGE_LABEL}. Delete the folder ${venvPath}, then reopen the `
+        + 'workspace: a compatible interpreter will be searched. Manual install with a supported interpreter: '
+        + `${manualInstallCommand('<python 3.10–3.13>', locks)}.`,
+    };
+  }
+  const { found, seen } = await findCompatibleBase();
+  if (found) return { ok: true, executable: found.executable };
+  // Seuls des Python macOS x86_64 de la bonne version : limite de plateforme (message macOS Intel).
+  if (seen.some((probe) => isSupportedVersion(probe) && isIntelMac(probe))) return { ok: false, message: '', intelMac: true };
+  const detected = seen.length ? `Found: ${seen.map(describeInterpreter).join(', ')}.` : 'No Python interpreter was found.';
+  return {
+    ok: false,
+    message: `Pile ou Face: automatic installation of the Python dependencies needs CPython ${SUPPORTED_RANGE_LABEL}. `
+      + `${detected} Install a supported version (python.org, Homebrew python@3.13, pyenv…) or select an `
+      + 'interpreter that already has the dependencies with the pythonPath setting. Manual install with a '
+      + `supported interpreter: ${manualInstallCommand('<python 3.10–3.13>', locks)}.`,
+  };
+}
+
 function reportUnavailable(message: string, quiet: boolean, log): DependencyStatus {
   log(`[pip] ${message} ${UNAVAILABLE_NOTE}`);
   if (!quiet) vscode.window.showWarningMessage(`${message} ${UNAVAILABLE_NOTE}`);
@@ -232,8 +279,13 @@ async function ensurePythonDependencies(pythonExe: string, options: DependencyOp
     return 'ok';
   }
   if (!isDefaultPython(pythonExe) && !isExtensionVenvPython(pythonExe, venvPath)) {
+    // Interpréteur choisi par l'utilisateur : jamais remplacé, seulement diagnostiqué.
+    const probe = await probeInterpreter({ command: pythonExe, args: [] });
+    const versionNote = probe && !isSupportedVersion(probe)
+      ? ` Its version (${probe.major}.${probe.minor}) is outside ${SUPPORTED_RANGE_LABEL}: the locked dependencies may not install there.`
+      : '';
     return reportUnavailable(
-      `Python dependencies are missing for the configured interpreter ${pythonExe}. `
+      `Python dependencies are missing for the configured interpreter ${pythonExe}.${versionNote} `
         + `Install them yourself: ${manualInstallCommand(pythonExe, locks)}.`,
       quiet, log
     );
@@ -243,12 +295,21 @@ async function ensurePythonDependencies(pythonExe: string, options: DependencyOp
     // Défaut de packaging, pas un choix utilisateur : toujours visible, même à l'activation.
     return reportUnavailable(`Hash-verified requirements file not found: ${missingLock}.`, false, log);
   }
-  if (await isAutoInstallUnsupported(findVenvPython(venvPath) || pythonExe)) return reportUnsupportedPlatform(log);
+  const base = await selectBaseInterpreter(venvPath, locks);
+  if (base.ok === false && base.intelMac) return reportUnsupportedPlatform(log);
+  if (base.ok === false) {
+    log(`[pip] ${base.message} ${UNAVAILABLE_NOTE}`);
+    // Limite de version, pas un choix utilisateur : toujours visible, même à l'activation.
+    vscode.window.showWarningMessage(base.message);
+    return 'unsupported';
+  }
+  log(`[venv] Interpréteur de base : ${base.executable}`);
+  if (await isAutoInstallUnsupported(base.executable)) return reportUnsupportedPlatform(log);
   if (!(await askConsent())) {
     log(`[pip] Installation refusée par l'utilisateur. ${UNAVAILABLE_NOTE}`);
     return 'declined';
   }
-  return installInExtensionVenv(pythonExe, venvPath, locks, log);
+  return installInExtensionVenv(base.executable, venvPath, locks, log);
 }
 
 module.exports = {
