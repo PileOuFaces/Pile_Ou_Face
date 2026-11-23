@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.3] - Date à confirmer (non publiée)
+
 ### Security
 
 - Les dépendances Python du backend ne sont plus installées sans votre accord : une notification propose « Install » ou « Later ». L'installation se fait uniquement dans le venv de l'extension, avec des versions vérifiées par hash.
