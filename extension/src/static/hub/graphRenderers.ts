@@ -2,6 +2,7 @@
 
 const { logDebug, logWarning } = require('../../shared/utils');
 const { getFunctionInstrCounts } = require('../../shared/mappingStore');
+const { writeFileAtomic } = require('../../shared/privateTempDir');
 
 function createGraphRenderers({
   panel,
@@ -127,7 +128,7 @@ function createGraphRenderers({
         if (fs.existsSync(mappingPath)) {
           const mappingSig = getFileSignature(mappingPath);
           const cacheKey = funcAddr ? `cfg_${funcAddr}` : 'cfg';
-          const cachedCfg = allowCache ? readAnalysisCacheEntry(effectiveAbsPath, allowCache, cacheKey) : null;
+          const cachedCfg = allowCache ? await readAnalysisCacheEntry(effectiveAbsPath, allowCache, cacheKey) : null;
           if (cachedCfg && cachedCfg._cache_meta?.mapping_sig === mappingSig) {
             logChannel.appendLine(`[cache] CFG depuis cache (${funcAddr || 'full'})`);
             logDebug(`[CFG] response cache binary=${binaryPath} func=${funcAddr || '<full>'} blocks=${(cachedCfg.blocks || []).length} edges=${(cachedCfg.edges || []).length}`);
@@ -242,18 +243,19 @@ function createGraphRenderers({
             baseName,
           }) || resolvedDiscoveredPath;
           if (resolvedDiscoveredPath && fs.existsSync(resolvedDiscoveredPath)) {
-            fs.writeFileSync(resolvedSymbolsPath, fs.readFileSync(resolvedDiscoveredPath, 'utf8'), 'utf8');
+            writeFileAtomic(resolvedSymbolsPath, fs.readFileSync(resolvedDiscoveredPath, 'utf8'), fs);
           } else {
-            fs.writeFileSync(resolvedSymbolsPath, '[]', 'utf8');
+            writeFileAtomic(resolvedSymbolsPath, '[]', fs);
           }
         } else if (!fs.existsSync(resolvedSymbolsPath) && fs.existsSync(binForSymbols)) {
           const symbols = await loadBinarySymbols(binForSymbols);
-          fs.writeFileSync(resolvedSymbolsPath, JSON.stringify(symbols, null, 2), 'utf8');
+          // Atomic: the existence check above and this write are separated by an await.
+          writeFileAtomic(resolvedSymbolsPath, JSON.stringify(symbols, null, 2), fs);
         }
         if (fs.existsSync(mappingPath) && fs.existsSync(resolvedSymbolsPath)) {
           const mappingSig = getFileSignature(mappingPath);
           const symbolsSig = getFileSignature(resolvedSymbolsPath);
-          const cachedCallGraph = allowCache ? readAnalysisCacheEntry(effectiveAbsPath, allowCache, 'callgraph') : null;
+          const cachedCallGraph = allowCache ? await readAnalysisCacheEntry(effectiveAbsPath, allowCache, 'callgraph') : null;
           if (
             cachedCallGraph
             && cachedCallGraph._cache_meta?.mapping_sig === mappingSig

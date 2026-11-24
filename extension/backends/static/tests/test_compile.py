@@ -369,9 +369,14 @@ class TestListAvailableCompilersExtended(unittest.TestCase):
 
 
 class TestCompileSourceFlags(unittest.TestCase):
-    def test_normalize_flags_drops_empty_and_line_separated_values(self):
-        flags = _normalize_flags(["-O2", "", "  -g  ", "-DNAME=ok\n-bad", "\x00bad"])
-        self.assertEqual(flags, ["-O2", "-g"])
+    def test_normalize_flags_refuses_instead_of_dropping(self):
+        # #548 : une valeur hors liste blanche refuse la requête entière (plus d'abandon silencieux).
+        from backends.static.compile.compile import DisallowedFlag
+
+        self.assertEqual(_normalize_flags(["-O2", "-g"]), ["-O2", "-g"])
+        for bad in ("", "  -g  ", "-DNAME=ok\n-bad", "\x00bad"):
+            with self.subTest(bad=bad), self.assertRaises(DisallowedFlag):
+                _normalize_flags(["-O2", bad])
 
     def test_custom_flags_passed_to_native_compiler(self):
         with tempfile.NamedTemporaryFile(suffix=".c", delete=False) as f:
@@ -434,3 +439,48 @@ class TestCompileSourceFlags(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFlagAllowlist(unittest.TestCase):
+    """#548 : compile.py refuse toute option hors de la liste blanche de l'extension."""
+
+    def test_panel_flags_pass(self):
+        from backends.static.compile.compile import _normalize_flags
+
+        flags = ["-O2", "-g", "-z", "execstack", "-fno-pie", "-no-pie", "-s"]
+        self.assertEqual(_normalize_flags(flags), flags)
+
+    def test_code_execution_and_file_options_are_refused(self):
+        from backends.static.compile.compile import DisallowedFlag, _normalize_flags
+
+        for bypass in (
+            ["-wrapper", "/bin/sh,-c,id"],
+            ["-fplugin=/tmp/evil.so"],
+            ["-specs=/tmp/evil"],
+            ["-B/tmp/evil"],
+            ["@/tmp/response"],
+            ["-Xclang", "-load"],
+            ["-include", "/etc/shadow"],
+            ["-z", "now"],
+            ["-o", "/tmp/x"],
+        ):
+            with self.subTest(bypass=bypass), self.assertRaises(DisallowedFlag):
+                _normalize_flags(["-O0", *bypass])
+
+    def test_compile_source_reports_refused_flags_without_running(self):
+        from backends.static.compile.compile import compile_source
+
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "main.c"
+            src.write_text("int main(){return 0;}\n")
+            with mock.patch("subprocess.run") as run:
+                result = compile_source(
+                    str(src),
+                    "c",
+                    "elf-x64",
+                    str(Path(tmp) / "a.elf"),
+                    compilers={},
+                    flags=["-wrapper", "/bin/sh,-c,id"],
+                )
+            self.assertIn("error", result)
+            run.assert_not_called()

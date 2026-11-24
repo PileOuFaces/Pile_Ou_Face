@@ -8,10 +8,16 @@ est l’allowlist V1 faisant autorité.
 
 ## Activation et destination
 
+La télémétrie de Pile ou Face est **facultative et désactivée par défaut** (opt-in).
+Elle ne démarre que si l’utilisateur active lui-même
+`pileOuFace.telemetry.enabled`. Un réglage absent, non booléen ou illisible vaut
+« désactivé ». Le choix est révocable à tout moment.
+
 Un événement n’est envoyé que si toutes les conditions suivantes sont réunies :
 
-1. la télémétrie globale de VS Code est activée ;
-2. `pileOuFace.telemetry.enabled` vaut `true` ;
+1. la télémétrie globale de VS Code est activée (`telemetry.telemetryLevel`
+   vaut `all` : les niveaux `error`, `crash` et `off` bloquent l’usage) ;
+2. l’utilisateur a explicitement réglé `pileOuFace.telemetry.enabled` sur `true` ;
 3. le build contient une URL HTTPS de provider dans `telemetryProviderUrl`.
 
 Le dépôt open source laisse cette URL vide : un build effectué directement

@@ -50,6 +50,9 @@
   saveBtn?.addEventListener('click', () => {
     const name = prompt('Nom du script :', 'script.py');
     if (!name) return;
+    // Effacé avant l'envoi : un refus de l'extension ne laisse pas l'ancien « Sauvegardé ».
+    const status = document.getElementById('scriptStatus');
+    if (status) status.textContent = '';
     vscode.postMessage({ type: 'hubSaveScript', name, content: editor.value });
   });
 

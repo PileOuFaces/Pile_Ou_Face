@@ -379,4 +379,158 @@ describe("sharedHandlers", () => {
     expect(annotationsMessage.annotations).to.deep.equal(currentAnnotations);
     expect(annotationsMessage.functionAddrs).to.deep.equal(["0x80490a0"]);
   });
+
+  describe("replies that arrive after the hub was closed", () => {
+    function makeClosablePanel({ deliver = () => Promise.resolve(true) } = {}) {
+      const messages = [];
+      const disposeListeners = [];
+      let disposed = false;
+      const webview = {
+        postMessage: (message) => {
+          messages.push(message);
+          return deliver(message);
+        },
+      };
+      return {
+        messages,
+        close: () => {
+          disposed = true;
+          disposeListeners.forEach((listener) => listener());
+        },
+        panel: {
+          onDidDispose: (listener) => disposeListeners.push(listener),
+          get webview() {
+            if (disposed) throw new Error("Webview is disposed");
+            return webview;
+          },
+        },
+      };
+    }
+
+    function makeExecFileStub() {
+      const calls = [];
+      const execFile = (_file, args, _options, callback) => {
+        calls.push({ args, callback });
+        return { stdin: { write: sinon.stub(), end: sinon.stub() } };
+      };
+      return { calls, execFile };
+    }
+
+    function loadHandlers(stubs = {}) {
+      return proxyquire("../shared/sharedHandlers", {
+        vscode: vscodeStub,
+        "./fileManager": fileManagerStub,
+        ...stubs,
+      });
+    }
+
+    const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+    it("drops every AI provider update reply once the hub is closed, including a failed refresh", () => {
+      for (const scenario of ["set fails", "set rejected", "refresh fails"]) {
+        const hub = makeClosablePanel();
+        const proc = makeExecFileStub();
+        const handlers = loadHandlers({ child_process: { execFile: proc.execFile } })({
+          root: tempRoot,
+          panel: hub.panel,
+        });
+        handlers.hubAiProviderSet({ provider: "ollama", api_key: "", model: "m" });
+        hub.close();
+        expect(() => {
+          if (scenario === "set fails") proc.calls[0].callback(new Error("exit 1"), "");
+          if (scenario === "set rejected") proc.calls[0].callback(null, JSON.stringify({ ok: false, error: "bad" }));
+          if (scenario === "refresh fails") {
+            proc.calls[0].callback(null, JSON.stringify({ ok: true }));
+            proc.calls[1].callback(new Error("exit 1"), "not json");
+          }
+        }, scenario).to.not.throw();
+        expect(hub.messages, scenario).to.deep.equal([]);
+      }
+    });
+
+    it("still reports a failed refresh while the hub is open", () => {
+      const hub = makeClosablePanel();
+      const proc = makeExecFileStub();
+      const handlers = loadHandlers({ child_process: { execFile: proc.execFile } })({
+        root: tempRoot,
+        panel: hub.panel,
+      });
+      handlers.hubAiProviderSet({ provider: "ollama", api_key: "", model: "m" });
+      proc.calls[0].callback(null, JSON.stringify({ ok: true }));
+      proc.calls[1].callback(new Error("exit 1"), "not json");
+      expect(hub.messages).to.deep.equal([
+        { type: "hubAiProvidersResult", data: { error: "Update saved — refresh failed" } },
+      ]);
+    });
+
+    it("does not report annotations closed mid-load as a load failure", async () => {
+      const hub = makeClosablePanel();
+      let resolveLoad;
+      const annotationsBridge = {
+        loadAnnotations: sinon.stub().returns(new Promise((resolve) => { resolveLoad = resolve; })),
+      };
+      const handlers = loadHandlers()({ root: tempRoot, panel: hub.panel, annotationsBridge });
+      const pending = handlers.hubLoadAnnotations({ binaryPath: path.join(tempRoot, "a.bin") });
+      hub.close();
+      resolveLoad({ "0x10": { comment: "late" } });
+      await pending;
+      expect(vscodeStub.window.showErrorMessage.called).to.equal(false);
+      expect(hub.messages).to.deep.equal([]);
+    });
+
+    it("still shows a real annotation load error while the hub is open", async () => {
+      const hub = makeClosablePanel();
+      const annotationsBridge = { loadAnnotations: sinon.stub().rejects(new Error("database locked")) };
+      const handlers = loadHandlers()({ root: tempRoot, panel: hub.panel, annotationsBridge });
+      await handlers.hubLoadAnnotations({ binaryPath: path.join(tempRoot, "a.bin") });
+      expect(vscodeStub.window.showErrorMessage.calledOnceWithExactly("Unable to load annotations: database locked"))
+        .to.equal(true);
+    });
+
+    it("logs a rejected or thrown delivery to an open hub without an unhandled rejection", async () => {
+      const unhandled = [];
+      const onUnhandled = (reason) => unhandled.push(reason);
+      process.on("unhandledRejection", onUnhandled);
+      try {
+        const cases = {
+          rejected: () => Promise.reject(new Error("transport closed")),
+          thrown: () => { throw new Error("serialization failed"); },
+          unprintable: () => { throw { get message() { throw new Error("boom"); } }; },
+        };
+        for (const [name, deliver] of Object.entries(cases)) {
+          const logWarning = sinon.stub();
+          const hub = makeClosablePanel({ deliver });
+          const handlers = loadHandlers({ "./utils": { logWarning } })({ root: tempRoot, panel: hub.panel });
+          expect(() => handlers.getPlatform(), name).to.not.throw();
+          await flush();
+          expect(logWarning.calledOnce, name).to.equal(true);
+          expect(logWarning.firstCall.args[0], name).to.match(/^\[hub\] message platformInfo not delivered: /);
+        }
+        await flush();
+        expect(unhandled).to.deep.equal([]);
+      } finally {
+        process.removeListener("unhandledRejection", onUnhandled);
+      }
+    });
+
+    it("logs a delivery that fails after the hub closed only if the failure is not the closing", async () => {
+      const cases = [
+        ["serialization failed", true],
+        ["Transport failure: Webview is disposed", true],
+        ["Webview is disposed unexpectedly", true],
+        ["Webview is disposed", false],
+      ];
+      for (const [reason, logged] of cases) {
+        let rejectDelivery;
+        const logWarning = sinon.stub();
+        const hub = makeClosablePanel({ deliver: () => new Promise((_, reject) => { rejectDelivery = reject; }) });
+        const handlers = loadHandlers({ "./utils": { logWarning } })({ root: tempRoot, panel: hub.panel });
+        handlers.getPlatform();
+        hub.close();
+        rejectDelivery(new Error(reason));
+        await flush();
+        expect(logWarning.called, reason).to.equal(logged);
+      }
+    });
+  });
 });

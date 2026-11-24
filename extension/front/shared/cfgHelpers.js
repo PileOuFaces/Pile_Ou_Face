@@ -36,7 +36,8 @@
    * @returns {Object.<string, Array<{to: string, type: string}>>}
    */
   function buildAdjacency(edges) {
-    const adj = {};
+    // No prototype: an edge key such as "constructor" must not hit an inherited member.
+    const adj = Object.create(null);
     for (const e of edges) {
       if (!adj[e.from]) adj[e.from] = [];
       adj[e.from].push({ to: e.to, type: e.type || 'fallthrough' });
@@ -50,7 +51,7 @@
    * @returns {Object.<string, string[]>}
    */
   function buildReverseAdj(edges) {
-    const radj = {};
+    const radj = Object.create(null);
     for (const e of edges) {
       if (!radj[e.to]) radj[e.to] = [];
       radj[e.to].push(e.from);

@@ -78,8 +78,22 @@
                   </div>
                   <div class="settings-control">
                     <div class="settings-path-row">
-                      <input id="settingPythonPath" class="input-inner settings-input settings-mono" type="text" placeholder="Auto-détection" data-key="pythonPath" />
-                      <button type="button" class="btn btn-secondary btn-sm" data-browse="settingPythonPath">Parcourir</button>
+                      <input id="settingPythonPath" class="input-inner settings-input settings-mono" type="text" placeholder="Auto-détection" data-key="pythonPath" readonly />
+                      <button type="button" class="btn btn-secondary btn-sm" data-select-python-path>Parcourir</button>
+                      <button type="button" class="btn btn-secondary btn-sm" data-clear-python-path title="Revenir à l'auto-détection">Auto</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="settings-field">
+                  <div class="settings-field-copy">
+                    <label for="settingGhidraLocalPath">Dossier Ghidra local</label>
+                    <p class="settings-field-hint">Choisi dans le dialogue de VS Code. La structure du dossier est vérifiée, pas l'authenticité de Ghidra.</p>
+                  </div>
+                  <div class="settings-control">
+                    <div class="settings-path-row">
+                      <input id="settingGhidraLocalPath" class="input-inner settings-input settings-mono" type="text" placeholder="Auto-détection" readonly />
+                      <button type="button" class="btn btn-secondary btn-sm" data-select-decompiler-path="ghidra">Parcourir</button>
+                      <button type="button" class="btn btn-secondary btn-sm" data-clear-decompiler-path="ghidra" title="Revenir à l'auto-détection">Auto</button>
                     </div>
                   </div>
                 </div>

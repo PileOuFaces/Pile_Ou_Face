@@ -1,0 +1,6 @@
+# Outils de construction des dépendances livrées seulement en sdist (hexdump,
+# vivisect-vstruct-wb, yara-python selon la plateforme). L'extension installe
+# requirements-build.lock.txt avant requirements.lock.txt (--no-build-isolation) :
+# voir « Versions vérifiées » dans extension/README.md.
+setuptools
+wheel

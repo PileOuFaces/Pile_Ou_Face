@@ -1,6 +1,7 @@
 import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -603,6 +604,76 @@ def _http_error_message(exc: urllib.error.HTTPError) -> str:
         return str(exc)
 
 
+_REDACTED = "[REDACTED]"
+# Shorter fragments are too common to mask without hiding ordinary words;
+# a key fragment this long already identifies the key.
+_MIN_KEY_FRAGMENT = 8
+
+
+def _key_forms(key: str) -> set[str]:
+    """Forms under which a key shows up in messages: raw, trimmed, URL-encoded,
+    escaped as in a bytes/str repr, and each line of a key holding a newline."""
+    forms = {
+        key,
+        key.strip(),
+        urllib.parse.quote(key, safe=""),
+        urllib.parse.quote(key),
+        key.encode("unicode_escape").decode("ascii"),
+    }
+    forms.update(key.split())
+    return {f for f in forms if len(f) >= _MIN_KEY_FRAGMENT}
+
+
+def _configured_key_forms() -> list[str]:
+    forms: set[str] = set()
+    for env in _PROVIDER_ENV_KEYS.values():
+        key = os.environ.get(env, "")
+        if key.strip():
+            forms |= _key_forms(key)
+    return sorted(forms, key=len, reverse=True)
+
+
+def _fragment_end(message: str, start: int, forms: list[str]) -> int:
+    """End of the longest run starting at ``start`` found inside one key form."""
+    end = start
+    if start + _MIN_KEY_FRAGMENT > len(message):
+        return end
+    for form in forms:
+        length = _MIN_KEY_FRAGMENT
+        if message[start : start + length] not in form:
+            continue
+        while (
+            start + length < len(message)
+            and message[start : start + length + 1] in form
+        ):
+            length += 1
+        end = max(end, start + length)
+    return end
+
+
+def redact_provider_keys(message: str) -> str:
+    """Masks configured AI keys, whole or as fragments of >= 8 characters,
+    raw, URL-encoded or escaped, wherever they sit in the message (#544).
+
+    Providers echo the key (or a truncated prefix, glued to a label) in error
+    bodies, and Python's header validation quotes "Bearer <key>" in its repr.
+    """
+    forms = _configured_key_forms()
+    if not forms:
+        return message
+    out: list[str] = []
+    i = 0
+    while i < len(message):
+        end = _fragment_end(message, i, forms)
+        if end > i:
+            out.append(_REDACTED)
+            i = end
+        else:
+            out.append(message[i])
+            i += 1
+    return "".join(out)
+
+
 def call_provider_result(
     provider: str,
     prompt: str,
@@ -628,7 +699,16 @@ def call_provider_result(
             "usage": result.get("usage", _normalize_usage()),
         }
     except urllib.error.HTTPError as exc:
-        raise RuntimeError(f"HTTP {exc.code}: {_http_error_message(exc)}") from exc
+        message = redact_provider_keys(_http_error_message(exc))
+        # from None: the original HTTPError (and its body) is not chained into tracebacks.
+        raise RuntimeError(f"HTTP {exc.code}: {message}") from None
+    except Exception as exc:
+        # Any other failure (SSE "error" events after HTTP 200, header validation,
+        # malformed usage fields) may quote the key: re-raise only a masked copy.
+        message = redact_provider_keys(str(exc))
+        if message == str(exc):
+            raise
+        raise RuntimeError(message) from None
 
 
 def call_provider(provider: str, prompt: str, context: str, model: str | None) -> str:
@@ -654,14 +734,19 @@ def set_provider_configuration(
     known = set(_PROVIDER_ENV_KEYS) | {"ollama"}
     if provider not in known:
         return {"ok": False, "error": f"Unknown provider: {provider}"}
+    updates: list[tuple[str, str]] = []
     if provider in _PROVIDER_ENV_KEYS and api_key:
-        env_key = _PROVIDER_ENV_KEYS[provider]
-        _write_env_key(env_key, api_key)
-        os.environ[env_key] = api_key
+        updates.append((_PROVIDER_ENV_KEYS[provider], api_key))
     if model:
-        model_env = _provider_model_env(provider)
-        _write_env_key(model_env, model)
-        os.environ[model_env] = model
+        updates.append((_provider_model_env(provider), model))
+    for env_name, value in updates:
+        try:
+            _write_env_key(env_name, value)
+        except OSError as exc:
+            # Only the variable name and the OS reason: never the value.
+            reason = exc.strerror or type(exc).__name__
+            return {"ok": False, "error": f"Cannot save {env_name}: {reason}"}
+        os.environ[env_name] = value
     return {"ok": True, "provider": provider, "written_to": "~/.pile-ou-face/.env"}
 
 
@@ -722,6 +807,9 @@ if __name__ == "__main__":
         result = set_provider_configuration(args.provider, api_key, args.model)
         print(json.dumps(result))
         if not result.get("ok"):
+            # The extension host shows stderr when the command fails; the message is
+            # already sanitized (variable name and OS reason, never the key).
+            print(result.get("error", "Unknown error"), file=sys.stderr)
             sys.exit(1)
     elif args.cmd == "call":
         prompt = sys.stdin.read().strip()
@@ -766,10 +854,11 @@ if __name__ == "__main__":
             else:
                 print(json.dumps({"ok": True, **result}))
         except Exception as exc:
+            error = redact_provider_keys(str(exc))
             if args.stream_output:
-                emit_event({"type": "error", "ok": False, "error": str(exc)})
+                emit_event({"type": "error", "ok": False, "error": error})
             else:
-                print(json.dumps({"ok": False, "error": str(exc)}))
+                print(json.dumps({"ok": False, "error": error}))
             sys.exit(1)
     elif args.cmd == "set-default":
         result = set_default_provider(args.provider)

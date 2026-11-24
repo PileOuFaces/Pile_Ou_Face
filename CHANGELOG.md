@@ -2,6 +2,36 @@
 
 ## [Unreleased]
 
+## [0.3.3] - Date à confirmer (non publiée)
+
+### Security
+
+- Les dépendances Python du backend ne sont plus installées sans votre accord : une notification propose « Install » ou « Later ». L'installation se fait uniquement dans le venv de l'extension, avec des versions vérifiées par hash.
+- Les réglages envoyés par l'interface sont validés côté extension.
+- Le chemin de l'interpréteur Python et le dossier Ghidra local ne peuvent être choisis que dans le dialogue de VS Code.
+- L'interface ne peut plus déclencher que les commandes VS Code qu'elle utilise réellement.
+- Le fichier des clés API IA locales (`~/.pile-ou-face/.env`) est créé avec des droits restreints. Un échec d'enregistrement d'une clé n'affiche plus que le nom de la variable concernée.
+- Le dossier temporaire de l'extension (caches, traces) et les fichiers du triage IA sont placés dans un dossier privé par utilisateur.
+- Plusieurs valeurs affichées dans l'interface (registres d'une trace, noms de sections) sont désormais traitées comme du texte.
+- Compilation : seules les options proposées par le panneau sont acceptées, et le binaire est produit dans un dossier privé. Il n'est copié ailleurs que vers un chemin choisi dans le dialogue d'enregistrement de VS Code. La source doit être un fichier `.c`, `.cpp`, `.rs` ou `.go`.
+- L'enregistrement d'un script depuis l'éditeur du hub n'écrit plus que dans le dossier des scripts de l'extension, sous un simple nom de fichier `.py` (#553).
+
+### Changed
+
+- Le champ « Flags custom » du panneau de compilation est retiré : les options libres ne sont plus acceptées.
+- **Python 3.10 à 3.13** pour l'installation automatique des dépendances Python. L'extension cherche elle-même un interpréteur de cette plage (`python3.13` … `python3.10`, ou les dossiers d'installation de python.org sous Windows) avant de créer son venv. Si elle n'en trouve aucun, elle l'explique et liste les versions trouvées, sans lancer pip. Un interpréteur choisi dans les réglages n'est jamais remplacé.
+- Les dépendances sont installées uniquement depuis des paquets précompilés (sauf deux paquets en Python pur). En l'absence de paquet pour la plateforme, le message nomme le paquet en cause, au lieu d'une erreur pip générique.
+- **macOS Intel :** l'installation automatique des dépendances Python n'est pas proposée, car `cryptography` ne publie plus de paquet pour cette plateforme. Le reste de l'extension fonctionne, et vous pouvez installer les dépendances vous-même puis choisir l'interpréteur dans les réglages.
+- Le chemin Python choisi s'applique immédiatement, sans rouvrir le hub ni recharger l'extension.
+- Le cache des analyses statiques ne bloque plus l'éditeur.
+
+### Fixed
+
+- Les requêtes d'authentification ont des délais et peuvent être annulées. Une réponse tardive n'affecte plus une session déjà révoquée.
+- La vue de pile n'affiche plus de variables de l'appelant à l'entrée d'une fonction, notamment pour les binaires compilés avec CET (Ubuntu) et lors d'appels répétés.
+- Un script REPL qui dépasse son délai est réellement arrêté.
+- Les adresses `[::1]` sont reconnues comme locales pour le serveur d'authentification.
+
 ## [0.3.2] - 2026-11-02
 
 ### Security

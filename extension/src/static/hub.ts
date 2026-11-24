@@ -10,7 +10,9 @@ const path = require('path');
 const crypto = require('crypto');
 const cp = require('child_process');
 const { getHubContent } = require('../shared/webview');
-const { buildRuntimeEnv, resolveProjectRoot, getExtensionPath, logDebug } = require('../shared/utils');
+const {
+  buildRuntimeEnv, resolveProjectRoot, getExtensionPath, getConfiguredPythonPath, logDebug,
+} = require('../shared/utils');
 const { AuthService } = require('../shared/authService');
 const { resolveAuthServerUrl } = require('../shared/authConfig');
 const {
@@ -32,8 +34,10 @@ const {
   payloadTargetLabel,
   resolvePayloadTarget,
 } = require('../shared/dynamicInputTarget');
-const { readCache, writeCache } = require('../shared/staticCache');
+// Async variants: cache I/O must not block the Extension Host (POF-P1-010).
+const { readCacheAsync: readCache, writeCacheAsync: writeCache } = require('../shared/staticCache');
 const { createHandlers } = require('./handlers');
+const { OPTIMIZATION_FLAGS, DEBUG_FLAGS, privateOutputName, validateSourcePath } = require('./compilePolicy');
 const {
   getDisasmScript,
   getHeadersScript,
@@ -74,7 +78,9 @@ const { createGraphRenderers } = require('./hub/graphRenderers');
 const { createLoaders } = require('./hub/loaders');
 const { createTraceHistory } = require('./hub/traceHistory');
 const { createActions } = require('./hub/actions');
+const { createSettingsActions } = require('./hub/settingsActions');
 const { createRunTraceTelemetry } = require('../dynamic/runTraceTelemetry');
+const { writeFileAtomic } = require('../shared/privateTempDir');
 const archSupport = require('./hub/archSupport');
 const { getRuntimeAuditState, recordRuntimeEvent } = require('../shared/runtimeAudit');
 const { EVENT_NAMES } = require('../shared/telemetry/telemetryEvents');
@@ -148,25 +154,6 @@ function createHub(config) {
     setSidebarMode,
     telemetry,
   } = config;
-
-  const SETTINGS_DEFAULTS = {
-    pythonPath: '',
-    authServerUrl: '',
-    aiTemperature: 0.7,
-    aiTopP: 0.9,
-    aiMaxTokens: 4096,
-    aiPricingRules: [],
-    decompilerProvider: 'docker',
-    decompilerLocalPaths: {},
-    stringsEncoding: 'auto',
-    stringsMinLen: 4,
-    asmSyntax: 'intel',
-    lang: 'fr',
-    defaultPanel: 'dashboard',
-    codeFontSize: 13,
-    interfaceMode: 'advanced',
-    enabledStaticFeatures: [],
-  };
 
   // Same source of truth as telemetryEvents.ts (extensionVersion): drives the
   // plugin host min/max_version compatibility check in backends/plugins/registry.py.
@@ -285,7 +272,8 @@ function createHub(config) {
     const workspaceRoot = folders[0].uri.fsPath;
     const root = resolveProjectRoot(folders[0].uri.fsPath);
     const backendRoot = getExtensionPath() || root;
-    const pythonExe = detectPythonExecutable(root);
+    // Résolu à chaque lancement : un pythonPath enregistré hub ouvert s'applique immédiatement.
+    const getPythonExe = () => detectPythonExecutable(root, getConfiguredPythonPath(context.globalState));
     const pythonEnv = buildRuntimeEnv(
       root,
       storageDir,
@@ -343,7 +331,7 @@ function createHub(config) {
         ...runtimeArgs,
       ];
       const stdout = await new Promise((resolve, reject) => {
-        const proc = cp.spawn(pythonExe, args, {
+        const proc = cp.spawn(getPythonExe(), args, {
           cwd: root,
           env: pluginRuntime.env,
           stdio: ['pipe', 'pipe', 'pipe'],
@@ -484,7 +472,7 @@ function createHub(config) {
       try {
         const { stdout } = await new Promise<{ stdout: string }>((resolve, reject) => {
           cp.execFile(
-            pythonExe,
+            getPythonExe(),
             [path.join(backendRoot, 'backends/static/decompile/decompile.py'), '--list', '--provider', 'auto'],
             { encoding: 'utf8', cwd: root, maxBuffer: 2 * 1024 * 1024, timeout: 30000, env: pythonEnv },
             (err, stdout, stderr) => err ? reject(Object.assign(err, { stderr })) : resolve({ stdout }),
@@ -605,7 +593,7 @@ function createHub(config) {
     const runPythonJson = (scriptPath, args) => new Promise((resolve, reject) => {
       const startedAt = Date.now();
       const auditName = path.relative(root, scriptPath);
-      cp.execFile(pythonExe, [scriptPath, ...args], { encoding: 'utf8', cwd: root, maxBuffer: 32 * 1024 * 1024, timeout: 60000, env: pythonEnv }, (err, stdout) => {
+      cp.execFile(getPythonExe(), [scriptPath, ...args], { encoding: 'utf8', cwd: root, maxBuffer: 32 * 1024 * 1024, timeout: 60000, env: pythonEnv }, (err, stdout) => {
         recordRuntimeEvent('python', auditName, {
           source: 'hub.runPythonJson',
           argc: args.length,
@@ -620,7 +608,7 @@ function createHub(config) {
     const runPythonJsonViaFile = (scriptPath, args, tmpFile) => new Promise((resolve, reject) => {
       const startedAt = Date.now();
       const auditName = path.relative(root, scriptPath);
-      cp.execFile(pythonExe, [scriptPath, ...args, '--output', tmpFile], { cwd: root, timeout: 120000, env: pythonEnv }, (err) => {
+      cp.execFile(getPythonExe(), [scriptPath, ...args, '--output', tmpFile], { cwd: root, timeout: 120000, env: pythonEnv }, (err) => {
         recordRuntimeEvent('python', auditName, {
           source: 'hub.runPythonJsonViaFile',
           argc: args.length,
@@ -648,7 +636,7 @@ function createHub(config) {
       const auditName = args?.[0] || '';
       const auditArgc = Array.isArray(args) ? Math.max(0, args.length - 1) : 0;
       cp.execFile(
-        pythonExe,
+        getPythonExe(),
         args,
         { encoding: 'utf8', cwd: root, timeout, maxBuffer, env: pythonEnv },
         (err, stdout, stderr) => {
@@ -686,7 +674,7 @@ function createHub(config) {
       const auditName = args?.[0] || '';
       const auditArgc = Array.isArray(args) ? Math.max(0, args.length - 1) : 0;
       cp.execFile(
-        pythonExe,
+        getPythonExe(),
         args,
         { encoding: 'utf8', cwd: root, timeout, maxBuffer, env: pythonEnv },
         (err, stdout, stderr) => {
@@ -828,10 +816,15 @@ function createHub(config) {
     }) => {
       if (!sourcePath) throw new Error('Source C requise.');
       if (!binaryPath) throw new Error('Chemin binaire requis.');
-      const absoluteSourcePath = resolvePathFromWorkspace(sourcePath);
-      if (!fs.existsSync(absoluteSourcePath)) {
-        throw new Error(`Source introuvable: ${absoluteSourcePath}`);
-      }
+      // #548 : aucune option libre ; optimisation et débogage limités aux valeurs du panneau.
+      if (String(extraFlags || '').trim()) throw new Error('Free compiler options are not supported.');
+      if (optim !== null && !OPTIMIZATION_FLAGS.includes(optim)) throw new Error('Unknown optimization level.');
+      if (debug !== null && debug !== '' && !DEBUG_FLAGS.includes(debug)) throw new Error('Unknown debug option.');
+      // #548 : même contrôle que le panneau de compilation, pour tous les appelants
+      // (Run Trace compris) : fichier régulier .c, chemin réel compris.
+      const sourceCheck = validateSourcePath(resolvePathFromWorkspace(sourcePath), 'c');
+      if (sourceCheck.ok === false) throw new Error(`Source refusée : ${sourceCheck.reason}`);
+      const absoluteSourcePath = sourceCheck.value;
       const absoluteBinaryPath = resolvePathFromWorkspace(binaryPath);
       const outputDir = path.dirname(absoluteBinaryPath);
       if (!fs.existsSync(outputDir)) {
@@ -892,12 +885,6 @@ function createHub(config) {
       // Strip
       if (strip) gccArgs.push('-s');
 
-      // Flags custom
-      if (extraFlags) {
-        const parts = extraFlags.split(/\s+/).filter(Boolean);
-        gccArgs.push(...parts);
-      }
-
       gccArgs.push('-o', absoluteBinaryPath, absoluteSourcePath);
       await runCommand('gcc', gccArgs, root, logChannel);
       // macOS crée un bundle .dSYM à côté du binaire — on le supprime
@@ -912,7 +899,7 @@ function createHub(config) {
     };
     // ── Module instantiation ──────────────────────────────────────────────────
     const analysisCtx = createAnalysisContext({
-      root, storageDir, globalDir, pythonExe, logChannel, runCommand, runPythonJson, runPythonTextFile,
+      root, storageDir, globalDir, getPythonExe, logChannel, runCommand, runPythonJson, runPythonTextFile,
       resolvePathFromWorkspace, toWebviewPath, ensureTempDir, getRawProfile,
       vscode, fs, path, crypto,
       inspectBinaryInput, normalizeRawProfile, getRawArchDescriptor,
@@ -948,16 +935,17 @@ function createHub(config) {
       payloadToHex, buildCmpPayloadSuggestion,
       isSupportedBinary, inspectBinaryInput,
       getRulesManagerScript, getSearchScript, getPayloadScriptRunnerScript, getExampleCandidates,
-      SETTINGS_DEFAULTS,
       setSidebarMode, refreshSidebar,
       normalizePayloadTargetMode, payloadTargetLabel, resolvePayloadTarget,
       preferredMainSymbol, findSymbolByCandidates, mainSymbolCandidates,
     });
+    const settingsHandlers = createSettingsActions({ panel, context, vscode, root, logChannel });
     const hubDispatchMap = {
       ...navHandlers,
       ...graphHandlers,
       ...loadersHandlers,
       ...actionsHandlers,
+      ...settingsHandlers,
       requestDynamicTraceHistory: traceHistoryHandlers.requestDynamicTraceHistory,
       openDynamicTraceHistory: traceHistoryHandlers.openDynamicTraceHistory,
       deleteDynamicTraceHistory: traceHistoryHandlers.deleteDynamicTraceHistory,
@@ -1087,7 +1075,8 @@ function createHub(config) {
         const args = [discScript, '--mapping', mappingPath];
         if (binArg) args.push('--binary', binArg);
         const functions = await runPythonJson(discScript, args.slice(1));
-        fs.writeFileSync(discoveredPath, JSON.stringify(functions, null, 2), 'utf8');
+        // Atomic: a symlink planted at discoveredPath meanwhile is replaced, never followed.
+        writeFileAtomic(discoveredPath, JSON.stringify(functions, null, 2));
         return discoveredPath;
       };
       const loadLatestTrace = () => {
@@ -1335,7 +1324,7 @@ function createHub(config) {
             '--input', absoluteAsm,
             '--output', isolatedJsonPath
           ];
-          await runCommand(pythonExe, staticArgs, root, logChannel, { PYTHONPATH: getExtensionPath() || root });
+          await runCommand(getPythonExe(), staticArgs, root, logChannel, { PYTHONPATH: getExtensionPath() || root });
           if (!fs.existsSync(isolatedJsonPath)) {
             throw new Error(`Trace statique introuvable: ${path.basename(isolatedJsonPath)}`);
           }
@@ -1390,9 +1379,9 @@ function createHub(config) {
           } else {
             failureCategory = 'compilation_failed';
             const sourceBase = path.parse(sourcePath).name || 'binary';
-            const requestedName = binaryPath ? path.basename(binaryPath) : `${sourceBase}.elf`;
-            const outputName = requestedName || `${sourceBase}.elf`;
-            const outPath = path.resolve(tempDir, outputName);
+            // Nom seulement, assaini : la sortie reste dans le dossier temporaire privé (#548).
+            const outputName = privateOutputName(binaryPath || `${sourceBase}.elf`, 'elf-x64');
+            const outPath = path.join(tempDir, outputName);
             const compileResult = await compileCSource({
               sourcePath,
               binaryPath: outPath,
@@ -1479,7 +1468,7 @@ function createHub(config) {
           if (useInterp) pythonArgs.push('--start-interp');
 
           failureCategory = 'backend_failed';
-          await runCommand(pythonExe, pythonArgs, root, logChannel, { PYTHONPATH: getExtensionPath() || root });
+          await runCommand(getPythonExe(), pythonArgs, root, logChannel, { PYTHONPATH: getExtensionPath() || root });
           if (!fs.existsSync(isolatedJsonPath)) {
             throw new Error(`Trace dynamique introuvable: ${path.basename(isolatedJsonPath)}`);
           }

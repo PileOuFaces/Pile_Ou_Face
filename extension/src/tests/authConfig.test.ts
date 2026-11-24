@@ -2,6 +2,7 @@ const { expect } = require("chai");
 
 const {
   DEFAULT_LOCAL_AUTH_URL,
+  isLoopbackUrl,
   planLegacyAuthUrlMigration,
   requireSecureAuthUrl,
   resolveAuthServerUrl,
@@ -119,6 +120,29 @@ describe("auth config helpers", () => {
   it("rejects insecure non-loopback endpoints", () => {
     expect(() => requireSecureAuthUrl("http://auth.example.com")).to.throw("HTTPS");
     expect(requireSecureAuthUrl("http://127.0.0.1:8000")).to.equal("http://127.0.0.1:8000");
+  });
+
+  it("accepts the bracketed IPv6 loopback over HTTP", () => {
+    expect(requireSecureAuthUrl("http://[::1]:8000")).to.equal("http://[::1]:8000");
+    expect(requireSecureAuthUrl("http://[::1]:8000/")).to.equal("http://[::1]:8000");
+    expect(isLoopbackUrl("http://[::1]:8000")).to.equal(true);
+  });
+
+  it("keeps rejecting HTTP hosts that only look like loopback", () => {
+    for (const url of [
+      "http://[::2]",
+      "http://[::ffff:127.0.0.1]",
+      "http://localhost.example.com",
+      "http://127.0.0.1.nip.io",
+    ]) {
+      expect(isLoopbackUrl(url), url).to.equal(false);
+      expect(() => requireSecureAuthUrl(url), url).to.throw("HTTPS");
+    }
+  });
+
+  it("keeps accepting HTTPS endpoints unchanged", () => {
+    expect(requireSecureAuthUrl("https://auth.example.com/")).to.equal("https://auth.example.com");
+    expect(requireSecureAuthUrl("https://[::2]:8443")).to.equal("https://[::2]:8443");
   });
 
   it("migrates a legacy URL only into an unconfigured OSS profile", () => {

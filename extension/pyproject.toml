@@ -31,6 +31,7 @@ testpaths = [
     "backends/static/tests",
     "backends/plugins/tests",
     "backends/plugin_api/tests",
+    "backends/dynamic/tests",
 ]
 
 [tool.coverage.run]
@@ -38,13 +39,18 @@ branch = true
 source = [
     "backends/static",
     "backends/plugins",
+    "backends/dynamic",
+    "backends/mcp",
 ]
 omit = [
     "backends/static/tests/*",
     "backends/plugins/tests/*",
+    "backends/dynamic/tests/*",
+    "backends/mcp/tests/*",
 ]
 
 [tool.coverage.report]
+# Historical global gate: kept as is (docs/ci/COVERAGE_POLICY.md).
 fail_under = 62
 precision = 1
 show_missing = true
@@ -55,3 +61,30 @@ directory = "htmlcov"
 
 [tool.coverage.xml]
 output = "coverage.xml"
+
+# Per-component gates (scripts/check_coverage_gates.py, docs/ci/COVERAGE_POLICY.md).
+# Ratchet: a gate is raised when the measured rate exceeds it by 2 points or more; it is
+# never lowered without a written decision linked in the policy document.
+[tool.pof.coverage_gates."static+plugins"]
+jobs = ["full-test"]
+include = ["backends/static/*", "backends/plugins/*"]
+omit = ["backends/static/tests/*", "backends/plugins/tests/*"]
+fail_under = 69
+# macOS: 19 static tests need a gcc producing ELF and are skipped there by design
+# (backends/static/tests/util.py); measured 68.02 % on macOS (decision recorded in PR #532).
+fail_under_by_platform = { darwin = 68 }
+
+[tool.pof.coverage_gates.dynamic]
+# Measured in the "Dynamic Unicorn Regression" job, where unicorn is installed.
+jobs = ["dynamic-unicorn"]
+include = ["backends/dynamic/*"]
+omit = ["backends/dynamic/tests/*"]
+fail_under = 69
+
+
+[tool.pof.coverage_gates.mcp]
+# Measured from #524 on (backends/mcp added to the sources); its tests live in
+# backends/static/tests/test_mcp_*.py, run by full-test.
+jobs = ["full-test"]
+include = ["backends/mcp/*"]
+fail_under = 61

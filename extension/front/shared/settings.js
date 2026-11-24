@@ -3,6 +3,9 @@ let _settingsCache = null;
 let _settingsDebounce = null;
 let _settingsRequestId = 0;
 let _settingsSavePending = false;
+// pythonPath is owned by the extension host (native picker): the webview never sends
+// its value, it may only ask to clear it (back to auto-detection).
+let _settingsPythonPathClearRequested = false;
 
 function _requestSettings() {
   // A read while a local edit is waiting to be saved would fetch old values.
@@ -12,16 +15,55 @@ function _requestSettings() {
 }
 
 function _settingsSaved(message) {
-  if (!message.ok || message.requestId !== _settingsRequestId) return;
+  // A rejected save leaves the host values untouched: reload them into the form.
+  if (message.requestId !== _settingsRequestId) return;
   _settingsSavePending = false;
   document.documentElement.dataset.hubSettingsSavePending = 'false';
   _requestSettings();
+}
+
+/** Host answer to the native picker: shows the interpreter really in use, whatever the pending request. */
+function _pythonPathSelected(message) {
+  // A cancelled or failed selection changes nothing, not even a pending "Auto" request.
+  if (message?.changed !== true) return;
+  const value = typeof message?.pythonPath === 'string' ? message.pythonPath : '';
+  const input = document.getElementById('settingPythonPath');
+  if (input) input.value = value;
+  if (_settingsCache) _settingsCache = { ..._settingsCache, pythonPath: value };
+  // The native selection supersedes an earlier, not yet sent, request to clear it.
+  _settingsPythonPathClearRequested = false;
+}
+
+const _DECOMPILER_PATH_INPUTS = { ghidra: 'settingGhidraLocalPath' };
+
+/** Shows the host-owned decompiler folders as text (read-only fields). */
+function _renderDecompilerLocalPaths(paths) {
+  for (const [id, inputId] of Object.entries(_DECOMPILER_PATH_INPUTS)) {
+    const input = document.getElementById(inputId);
+    if (input) input.value = String(paths?.[id] || '');
+  }
+}
+
+/**
+ * Host answer to the native decompiler folder picker or to a clear request (#531). `path` is
+ * always the value the host has stored, even after a failed or partial write: show it as is.
+ */
+function _decompilerLocalPathSelected(message) {
+  const id = typeof message?.decompilerId === 'string' ? message.decompilerId : '';
+  if (!id) return;
+  const paths = { ...(_settingsCache?.decompilerLocalPaths || {}) };
+  if (typeof message.path === 'string' && message.path) paths[id] = message.path;
+  else delete paths[id];
+  if (_settingsCache) _settingsCache = { ..._settingsCache, decompilerLocalPaths: paths };
+  _renderDecompilerLocalPaths(paths);
 }
 
 function _resetSettings() {
   clearTimeout(_settingsDebounce);
   _settingsDebounce = null;
   _settingsSavePending = false;
+  // The cancelled save must not leave its clear request behind for a later save.
+  _settingsPythonPathClearRequested = false;
   document.documentElement.dataset.hubSettingsSavePending = 'false';
   document.documentElement.dataset.hubSettingsReady = 'false';
   vscode.postMessage({ type: 'hubResetSettings', requestId: ++_settingsRequestId });
@@ -95,11 +137,29 @@ function refreshStaticNavigationForSettings() {
   }
 }
 
+const _NUMERIC_SETTING_TYPES = new Set(['float', 'int']);
+
+/**
+ * Numeric selects list formatted options ("0.40") while the host stores numbers (0.4):
+ * pick the option with the same numeric value, otherwise the select would become empty.
+ */
+function _setSettingControlValue(el, value) {
+  if (el.tagName === 'SELECT' && _NUMERIC_SETTING_TYPES.has(el.dataset.type)) {
+    const match = Array.from(el.options).find((option) => Number(option.value) === Number(value));
+    if (match) {
+      el.value = match.value;
+      return;
+    }
+  }
+  el.value = String(value);
+}
+
 function _applySettings(settings, requestId) {
   // Opening Options can return a snapshot taken before the user's latest edit.
   // Only the current request may replace the form, never a pending local save.
   if (_settingsSavePending || requestId !== _settingsRequestId) return false;
   _settingsCache = settings;
+  _renderDecompilerLocalPaths(settings.decompilerLocalPaths);
   if (typeof applyGlobalAiGenerationSettings === 'function') {
     applyGlobalAiGenerationSettings(settings);
   }
@@ -111,7 +171,7 @@ function _applySettings(settings, requestId) {
     const key = el.dataset.key;
     if (!(key in settings)) return;
     if (el.type === 'checkbox') el.checked = settings[key] === true;
-    else el.value = String(settings[key]);
+    else _setSettingControlValue(el, settings[key]);
   });
   if (settings.lang && window.POFI18n?.setLocale) {
     window.POFI18n.setLocale(settings.lang);
@@ -141,9 +201,11 @@ function _collectSettings() {
     const key = el.dataset.key;
     const type = el.dataset.type;
     if (el.type === 'checkbox') settings[key] = el.checked;
-    else if (type === 'float') settings[key] = parseFloat(el.value);
-    else if (type === 'int') settings[key] = parseInt(el.value, 10);
-    else settings[key] = el.value;
+    else if (_NUMERIC_SETTING_TYPES.has(type)) {
+      const parsed = type === 'float' ? parseFloat(el.value) : parseInt(el.value, 10);
+      // An empty or invalid control keeps the known value: NaN would make the host reject the save.
+      if (Number.isFinite(parsed)) settings[key] = parsed;
+    } else settings[key] = el.value;
   });
   if (window.POFAiGenerationSettings) {
     const generation = window.POFAiGenerationSettings.fromGlobalSettings(settings);
@@ -152,12 +214,9 @@ function _collectSettings() {
     settings.aiMaxTokens = generation.max_tokens;
   }
   settings.aiPricingRules = collectAiPricingRules();
-  settings.decompilerLocalPaths = {};
-  document.querySelectorAll('#panel-options [data-decompiler-local-path]').forEach((el) => {
-    const id = String(el.dataset.decompilerLocalPath || '').trim();
-    const value = String(el.value || '').trim();
-    if (id && value) settings.decompilerLocalPaths[id] = value;
-  });
+  // Decompiler folders are owned by the extension host (native picker, #531): never sent
+  // from the form, so an attested folder is not erased by an unrelated save.
+  delete settings.decompilerLocalPaths;
   settings.interfaceMode = document.getElementById('settingInterfaceMode')?.value === 'simple' ? 'simple' : 'advanced';
   const selectedFeatures = settings.interfaceMode === 'simple'
     ? Array.from(STATIC_SIMPLE_FEATURES)
@@ -166,6 +225,8 @@ function _collectSettings() {
       .map((input) => input.dataset.staticFeature)
       .filter((tabId) => getStaticFeatureIds().includes(tabId));
   settings.enabledStaticFeatures = selectedFeatures.length ? selectedFeatures : ['disasm'];
+  delete settings.pythonPath;
+  if (_settingsPythonPathClearRequested) settings.pythonPath = '';
   return settings;
 }
 
@@ -300,7 +361,8 @@ function _scheduleSave() {
   _settingsDebounce = setTimeout(() => {
     _settingsDebounce = null;
     const settings = _collectSettings();
-    _settingsCache = settings;
+    _settingsPythonPathClearRequested = false;
+    _settingsCache = { ...(_settingsCache || {}), ...settings };
     syncStaticInterfaceModeControls(settings);
     refreshStaticNavigationForSettings();
     vscode.postMessage({ type: 'hubSaveSettings', settings, requestId });
@@ -366,6 +428,31 @@ document.getElementById('btnStaticFeaturesEssential')?.addEventListener('click',
 });
 
 document.getElementById('panel-options')?.addEventListener('click', (event) => {
+  // pythonPath comes only from the host's native picker, which checks the interpreter.
+  if (event.target.closest('[data-select-python-path]')) {
+    // While a save is pending, keep its request id: its acknowledgement reloads the settings.
+    const requestId = _settingsSavePending ? null : ++_settingsRequestId;
+    vscode.postMessage({ type: 'hubSelectPythonPath', requestId });
+    return;
+  }
+  // Decompiler folders: the host opens its native dialog; the webview only names the decompiler.
+  const selectDecompilerPath = event.target.closest('[data-select-decompiler-path]');
+  if (selectDecompilerPath) {
+    vscode.postMessage({ type: 'hubSelectDecompilerLocalPath', decompilerId: selectDecompilerPath.dataset.selectDecompilerPath });
+    return;
+  }
+  const clearDecompilerPath = event.target.closest('[data-clear-decompiler-path]');
+  if (clearDecompilerPath) {
+    vscode.postMessage({ type: 'hubClearDecompilerLocalPath', decompilerId: clearDecompilerPath.dataset.clearDecompilerPath });
+    return;
+  }
+  if (event.target.closest('[data-clear-python-path]')) {
+    const input = document.getElementById('settingPythonPath');
+    if (input) input.value = '';
+    _settingsPythonPathClearRequested = true;
+    _scheduleSave();
+    return;
+  }
   const btn = event.target.closest('[data-browse]');
   if (!btn) return;
   vscode.postMessage({ type: 'hubPickFile', target: btn.dataset.browse });
@@ -482,6 +569,29 @@ function _dockerRuntimeSummaryLabel() {
   return 'prêt';
 }
 
+function _buildDecompilerSummaryChip(label, value, accent = false) {
+  const chip = document.createElement('div');
+  chip.className = accent ? 'decompiler-summary-chip decompiler-summary-chip--accent' : 'decompiler-summary-chip';
+  const strong = document.createElement('strong');
+  strong.textContent = String(label);
+  chip.append(strong, document.createTextNode(` ${String(value ?? '')}`));
+  return chip;
+}
+
+/** Writes setting-derived card values as text (cards are rendered in `texts` order). */
+function _fillDecompilerCardTexts(container, texts) {
+  container.querySelectorAll('article.decompiler-card').forEach((card, index) => {
+    const values = texts[index];
+    if (!values) return;
+    const caption = card.querySelector('[data-decompiler-card-text="caption"]');
+    if (caption) caption.textContent = values.caption;
+    const localPath = card.querySelector('[data-decompiler-card-text="localPath"]');
+    if (localPath) localPath.textContent = values.localPath;
+    const input = card.querySelector('[data-decompiler-local-path]');
+    if (input) input.value = values.localPath;
+  });
+}
+
 /**
  * Construit et affiche la grille de statut des décompilateurs.
  * @param {object} available  — résultat de list_available_decompilers()
@@ -521,14 +631,17 @@ function _renderDecompilerStatusList(available) {
   const dockerConfiguredCount = allIds.filter((id) => !!dockerImages[id]).length;
 
   if (summary) {
-    summary.innerHTML = [
-      `<div class="decompiler-summary-chip decompiler-summary-chip--accent"><strong>Provider</strong> ${escapeHtml(activeProvider)}</div>`,
-      `<div class="decompiler-summary-chip"><strong>Docker</strong> ${escapeHtml(_dockerRuntimeSummaryLabel())}</div>`,
-      `<div class="decompiler-summary-chip"><strong>${availableCount}/${allIds.length}</strong> prêts maintenant</div>`,
-      `<div class="decompiler-summary-chip"><strong>${localReadyCount}</strong> prêts en local</div>`,
-      `<div class="decompiler-summary-chip"><strong>${dockerConfiguredCount}</strong> avec image Docker</div>`,
-    ].join('');
+    summary.replaceChildren(
+      _buildDecompilerSummaryChip('Provider', activeProvider, true),
+      _buildDecompilerSummaryChip('Docker', _dockerRuntimeSummaryLabel()),
+      _buildDecompilerSummaryChip(`${availableCount}/${allIds.length}`, 'prêts maintenant'),
+      _buildDecompilerSummaryChip(String(localReadyCount), 'prêts en local'),
+      _buildDecompilerSummaryChip(String(dockerConfiguredCount), 'avec image Docker'),
+    );
   }
+  // Values derived from settings (provider, local paths) are written as text after the
+  // markup is built, never interpolated into HTML (POF-P1-002).
+  const cardTexts = [];
 
   const cards = allIds.map(id => {
     const avail = !!available[id];
@@ -600,6 +713,10 @@ function _renderDecompilerStatusList(available) {
     if (!avail && reasons[id]) {
       captionBits.push(reasons[id]);
     }
+    cardTexts.push({
+      caption: captionBits.join(' • '),
+      localPath: localSpec ? localPathValue : '',
+    });
 
     const statusDot = avail
       ? '<span class="decompiler-status-dot decompiler-status-dot--ok" title="Disponible"></span>'
@@ -634,16 +751,16 @@ function _renderDecompilerStatusList(available) {
             <div class="decompiler-card-path-hint">${escapeHtml(localSpec.hint)}</div>
             <div class="decompiler-card-path-hint">${escapeHtml(localDetectionHint)}</div>
             <div class="decompiler-card-path-row">
-              <input id="${pathInputId}" class="input-inner settings-input settings-mono decompiler-card-path-input" type="text" value="${escapeHtml(localPathValue)}" placeholder="${escapeHtml(localSpec.placeholder)}" data-decompiler-local-path="${localSpec.id}" />
-              <button type="button" class="btn btn-secondary btn-sm" data-browse="${pathInputId}">Parcourir</button>
+              <input id="${escapeHtml(pathInputId)}" class="input-inner settings-input settings-mono decompiler-card-path-input" type="text" placeholder="${escapeHtml(localSpec.placeholder)}" data-decompiler-local-path="${escapeHtml(localSpec.id)}" />
+              <button type="button" class="btn btn-secondary btn-sm" data-browse="${escapeHtml(pathInputId)}">Parcourir</button>
             </div>
           </div>
         </div>`
       : '';
 
     // Boutons d'actions inline dans la card — tous les décompilateurs sont dans le JSON
-    const editBtn = `<button type="button" class="btn btn-secondary btn-xs decompiler-card-btn-edit" data-decompiler-edit="${id}" title="Modifier ${escapeHtml(label)}">✎ Modifier</button>`;
-    const hideOrDeleteBtn = `<button type="button" class="btn btn-xs btn-danger-soft decompiler-card-btn-remove" data-decompiler-remove="${id}" title="Supprimer ${escapeHtml(label)}">✕ Supprimer</button>`;
+    const editBtn = `<button type="button" class="btn btn-secondary btn-xs decompiler-card-btn-edit" data-decompiler-edit="${escapeHtml(id)}" title="Modifier ${escapeHtml(label)}">✎ Modifier</button>`;
+    const hideOrDeleteBtn = `<button type="button" class="btn btn-xs btn-danger-soft decompiler-card-btn-remove" data-decompiler-remove="${escapeHtml(id)}" title="Supprimer ${escapeHtml(label)}">✕ Supprimer</button>`;
     const pullMode = dockerOk ? 'update' : 'pull';
     const pullBtn = image && (!dockerOk || imageUpdateStatus === 'update-available')
       ? `<button type="button" class="btn btn-primary btn-xs decompiler-card-btn-pull" data-decompiler-pull="${escapeHtml(id)}" data-decompiler-image="${escapeHtml(image)}" data-decompiler-platform="${escapeHtml(platform)}" data-decompiler-pull-mode="${pullMode}" title="${dockerOk ? 'Mettre à jour' : 'Télécharger'} ${escapeHtml(image)}">${dockerOk ? '↻ Mettre à jour' : '⬇ Télécharger'}</button>`
@@ -652,7 +769,7 @@ function _renderDecompilerStatusList(available) {
       ? `<button type="button" class="btn btn-secondary btn-xs decompiler-card-btn-pull" data-decompiler-pull="${escapeHtml(id)}" data-decompiler-image="${escapeHtml(image)}" data-decompiler-platform="${escapeHtml(platform)}" data-decompiler-pull-mode="force" title="Repull ${escapeHtml(image)}">↻ Repull</button>`
       : '';
 
-    return `<article class="decompiler-card${isSelected ? ' decompiler-card--selected' : ''}${isActiveSource ? ' decompiler-card--active' : ''}${avail ? '' : ' decompiler-card--disabled'}" data-select-decompiler="${id}" role="button" tabindex="0" title="Sélectionner ${escapeHtml(label)}" aria-pressed="${isActiveSource ? 'true' : 'false'}">
+    return `<article class="decompiler-card${isSelected ? ' decompiler-card--selected' : ''}${isActiveSource ? ' decompiler-card--active' : ''}${avail ? '' : ' decompiler-card--disabled'}" data-select-decompiler="${escapeHtml(id)}" role="button" tabindex="0" title="Sélectionner ${escapeHtml(label)}" aria-pressed="${isActiveSource ? 'true' : 'false'}">
       <div class="decompiler-card-topline">
         <div class="decompiler-card-title-wrap">
           <div class="decompiler-card-head">
@@ -660,7 +777,7 @@ function _renderDecompilerStatusList(available) {
             <span class="decompiler-row-name">${escapeHtml(label)}${customTag}</span>
             <span class="decompiler-card-id">${escapeHtml(id)}</span>
           </div>
-          <p class="decompiler-card-caption">${escapeHtml(captionBits.join(' • '))}</p>
+          <p class="decompiler-card-caption" data-decompiler-card-text="caption"></p>
         </div>
         <div class="decompiler-card-topright">
           ${isActiveSource ? '<span class="decompiler-card-pin decompiler-card-pin--active">✓ actif</span>' : ''}
@@ -673,7 +790,7 @@ function _renderDecompilerStatusList(available) {
       <div class="decompiler-card-grid">
         <div class="decompiler-card-metric">
           <span class="decompiler-card-metric-label">Local</span>
-          <span class="decompiler-card-metric-value">${escapeHtml(localStatus)}${pathStatus ? `<br>${escapeHtml(pathStatus)}` : ''}${localSpec && localPathValue ? `<br>${escapeHtml(localPathValue)}` : ''}${localDetectionHint ? `<br>${escapeHtml(localDetectionHint)}` : ''}</span>
+          <span class="decompiler-card-metric-value">${escapeHtml(localStatus)}${pathStatus ? `<br>${escapeHtml(pathStatus)}` : ''}${localSpec && localPathValue ? '<br><span data-decompiler-card-text="localPath"></span>' : ''}${localDetectionHint ? `<br>${escapeHtml(localDetectionHint)}` : ''}</span>
         </div>
         <div class="decompiler-card-metric">
           <span class="decompiler-card-metric-label">Docker</span>
@@ -694,6 +811,7 @@ function _renderDecompilerStatusList(available) {
   });
 
   container.innerHTML = cards.join('');
+  _fillDecompilerCardTexts(container, cardTexts);
   container.querySelectorAll('[data-decompiler-local-toggle]').forEach((button) => {
     _applyDecompilerLocalPathVisibility(
       button.getAttribute('data-decompiler-local-toggle'),

@@ -12,13 +12,19 @@ ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backends.dynamic.engine.unicorn.config import (
+import pytest
+
+# Optional dependency (not in requirements-ci.txt): skip the module instead of
+# breaking the whole collection when unicorn is absent.
+pytest.importorskip("unicorn", reason="unicorn is not installed")
+
+from backends.dynamic.engine.unicorn.config import (  # noqa: E402
     DEFAULT_MAX_TRACE_BYTES,
     MAX_USER_TRACE_BYTES,
     MAX_USER_TRACE_STEPS,
 )
-from backends.dynamic.engine.unicorn.hooks import SnapshotCollector
-from backends.dynamic.pipeline.run_pipeline import _main
+from backends.dynamic.engine.unicorn.hooks import SnapshotCollector  # noqa: E402
+from backends.dynamic.pipeline.run_pipeline import _main  # noqa: E402
 
 
 class FakeUnicorn:

@@ -7,11 +7,14 @@
 const vscode = require('vscode');
 const fs = require('fs');
 const os = require('os');
+const { PRIVATE_DIR_MODE, privateTempBase } = require('./privateTempDir');
 const path = require('path');
 const cp = require('child_process');
 const crypto = require('crypto');
 const logger = require('./logger');
 const { recordRuntimeEvent } = require('./runtimeAudit');
+const pythonDependencies = require('./pythonDependencies');
+const { readStoredSettings } = require('./settingsSchema');
 
 const logChannel = vscode.window.createOutputChannel('Pile ou Face');
 
@@ -25,7 +28,6 @@ const logInfo = (message) => logAt('info', message);
 const logWarning = (message) => logAt('warning', message);
 const logError = (message) => logAt('error', message);
 
-const TEMP_DIR_NAME = 'pile-ou-face';
 
 // Singleton initialisé au démarrage avec context.extensionPath.
 // Sépare "où vivent les backends" (extensionPath) de "workspace utilisateur" (root).
@@ -74,16 +76,17 @@ function findGitRoot(dir) {
   return dir;
 }
 
+// Under the current user's private base (privateTempDir.ts), never a shared /tmp path.
 function getTempDir(root) {
   const projectRoot = path.resolve(findGitRoot(resolveProjectRoot(root)) || process.cwd());
   const key = crypto.createHash('sha256').update(projectRoot).digest('hex').slice(0, 16);
-  return path.join(os.tmpdir(), TEMP_DIR_NAME, key);
+  return path.join(privateTempBase({ warn: logWarning }), key);
 }
 
 function ensureTempDir(root) {
   const dir = getTempDir(root);
   if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(dir, { recursive: true, mode: PRIVATE_DIR_MODE });
     logChannel.appendLine(`[temp] Dossier créé: ${dir}`);
   }
   return dir;
@@ -109,76 +112,14 @@ function ensureStorageDir(context) {
   return dir;
 }
 
+/** Aucun pip sans consentement explicite : voir shared/pythonDependencies.ts. */
 async function ensurePythonDependencies(pythonExe, root, options: { quiet?: boolean } = {}) {
-  const { quiet = false } = options || {};
   const backendBase = _extensionPath || path.resolve(String(root || '').trim());
-  const requirementsPath = path.join(backendBase, 'backends', 'requirements.txt');
-  if (!fs.existsSync(requirementsPath)) {
-    logChannel.appendLine('[pip] requirements.txt introuvable.');
-    return;
-  }
-  if (pythonExe === 'python3' || pythonExe === 'python') {
-    const venvPath = path.join(backendBase, 'backends', '.venv');
-    if (!fs.existsSync(venvPath)) {
-      logChannel.appendLine('[venv] Création du venv…');
-      try {
-        await new Promise<void>((resolve, reject) => {
-          cp.exec(`${pythonExe} -m venv ${venvPath}`, (error, stdout, stderr) =>
-            error ? reject(new Error(stderr)) : resolve());
-        });
-        const candidates = [
-          path.join(venvPath, 'bin', 'python3'),
-          path.join(venvPath, 'Scripts', 'python.exe'),
-          path.join(venvPath, 'Scripts', 'python')
-        ];
-        for (const c of candidates) {
-          if (fs.existsSync(c)) {
-            pythonExe = c;
-            logChannel.appendLine(`[venv] Utilisation: ${pythonExe}`);
-            break;
-          }
-        }
-    } catch (venvErr) {
-      logChannel.appendLine(`[venv] Erreur: ${venvErr.message}`);
-      if (!quiet) {
-        vscode.window.showWarningMessage(`Impossible de créer backends/.venv: ${venvErr.message}`);
-      }
-      return;
-    }
-  }
-  }
-  const coreDeps = ['unicorn', 'capstone'];
-  let needInstall = false;
-  for (const dep of coreDeps) {
-    try {
-      await new Promise<void>((resolve, reject) => {
-        cp.exec(`${pythonExe} -c "import ${dep}"`, (error) => (error ? reject(error) : resolve()));
-      });
-    } catch {
-      needInstall = true;
-      break;
-    }
-  }
-  if (!needInstall) {
-    logChannel.appendLine('[pip] Dépendances OK.');
-    return;
-  }
-  logChannel.appendLine('[pip] Installation des dépendances…');
-  try {
-    await new Promise<void>((resolve, reject) => {
-      cp.execFile(pythonExe, ['-m', 'pip', 'install', '-r', requirementsPath, '--quiet', '--break-system-packages'], (error, stdout, stderr) =>
-        error ? reject(new Error(stderr || error.message)) : resolve());
-    });
-    logChannel.appendLine('[pip] Installation terminée.');
-  } catch (installErr) {
-    const msg = installErr.message || '';
-    logChannel.appendLine(`[pip] Erreur: ${msg}`);
-    if (!quiet) {
-      vscode.window.showWarningMessage(
-        `Dépendances manquantes. Exécutez: ${pythonExe} -m pip install -r requirements.txt`
-      );
-    }
-  }
+  return pythonDependencies.ensurePythonDependencies(pythonExe, {
+    backendBase,
+    quiet: options?.quiet === true,
+    log: (message) => logChannel.appendLine(logger.redact(message)),
+  });
 }
 
 function detectPythonExecutable(root, settingsPythonPath) {
@@ -193,6 +134,31 @@ function detectPythonExecutable(root, settingsPythonPath) {
     if (fs.existsSync(p)) return p;
   }
   return 'python3';
+}
+
+// Store des réglages persistés (context.globalState), enregistré à l'activation pour les
+// modules qui n'ont pas accès au contexte VS Code (ex. staticCache).
+type SettingsStore = { get: (key: string, fallback?: unknown) => any };
+let _settingsStore: SettingsStore | null = null;
+
+function setSettingsStore(store) {
+  _settingsStore = store && typeof store.get === 'function' ? store : null;
+}
+
+function getConfiguredPythonPath(store = _settingsStore) {
+  if (!store || typeof store.get !== 'function') return '';
+  try {
+    // Seul un pythonPath conforme au schéma (chemin absolu vers python*) est exécuté.
+    return readStoredSettings(store).pythonPath || '';
+  } catch (err) {
+    logWarning(`[Python] Lecture du réglage pythonPath impossible : ${err?.message || err}`);
+    return '';
+  }
+}
+
+/** Point unique de résolution de l'exécutable Python : réglage pythonPath, sinon détection. */
+function resolvePythonExecutable(root, store = _settingsStore) {
+  return detectPythonExecutable(root, getConfiguredPythonPath(store));
 }
 
 function resolveDockerExecutable() {
@@ -389,7 +355,6 @@ module.exports = {
   logInfo,
   logWarning,
   logError,
-  TEMP_DIR_NAME,
   getTempDir,
   ensureTempDir,
   getStorageDir,
@@ -397,6 +362,9 @@ module.exports = {
   ensureStorageDir,
   ensurePythonDependencies,
   detectPythonExecutable,
+  resolvePythonExecutable,
+  getConfiguredPythonPath,
+  setSettingsStore,
   resolveProjectRoot,
   resolveDockerExecutable,
   buildRuntimeEnv,

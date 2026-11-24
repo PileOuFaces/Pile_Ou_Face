@@ -15,6 +15,11 @@ const http = require('http');
 const https = require('https');
 const readline = require('readline');
 const { detectPythonExecutable, buildRuntimeEnv, resolveDockerExecutable, logDebug, logWarning } = require('../shared/utils');
+const { checkHubCommand } = require('./hubCommandPolicy');
+const { createCompileHandlers } = require('./compileHandlers');
+const { ensurePrivateSubdir } = require('../shared/privateTempDir');
+const { readStoredSettings } = require('../shared/settingsSchema');
+const { decompilerEnvFromPaths } = require('../shared/decompilerLocalPaths');
 const { emptyPluginUiState, summarizePluginRuntimeState } = require('./pluginState');
 const { AuthService } = require('../shared/authService');
 const { resolveAuthServerUrl } = require('../shared/authConfig');
@@ -471,7 +476,16 @@ function staticHandlers(config: LooseMessage) {
       return {};
     }
   };
-  const getPythonExecutable = () => getSavedSettings().pythonPath || detectPythonExecutable(root);
+  // Seul un pythonPath conforme au schéma et attesté par une sélection native est exécuté (POF-P1-002).
+  const getConfiguredPythonPath = () => {
+    try {
+      return readStoredSettings(context?.globalState).pythonPath || '';
+    } catch (err) {
+      logWarning(`[Python] Lecture du réglage pythonPath impossible : ${err?.message || err}`);
+      return '';
+    }
+  };
+  const getPythonExecutable = () => getConfiguredPythonPath() || detectPythonExecutable(root);
   const getAuthServerUrl = () => {
     const authConfig = vscode.workspace.getConfiguration('pileOuFace').inspect('authServerUrl');
     return resolveAuthServerUrl({
@@ -492,18 +506,20 @@ function staticHandlers(config: LooseMessage) {
     return base;
   };
   const buildPythonEnv = () => {
-    const settings = getSavedSettings();
-    const localPaths = settings.decompilerLocalPaths && typeof settings.decompilerLocalPaths === 'object'
-      ? settings.decompilerLocalPaths
-      : {};
     const env = buildRuntimeEnv(
       root,
       storageDir,
       globalDir ? { POF_GLOBAL_STORAGE_DIR: globalDir } : {},
     );
-    const ghidraPath = String(localPaths.ghidra || '').trim();
-    if (ghidraPath) env.GHIDRA_INSTALL_DIR = ghidraPath;
-    return env;
+    // #531 : seuls les dossiers attestés par le Host (réglages migrés), dont la structure est
+    // revérifiée à chaque usage, deviennent des variables d'exécution (GHIDRA_INSTALL_DIR).
+    let attestedPaths = {};
+    try {
+      attestedPaths = readStoredSettings(context?.globalState).decompilerLocalPaths || {};
+    } catch (err) {
+      logWarning(`[decompiler] Lecture des dossiers locaux impossible : ${err?.message || err}`);
+    }
+    return { ...env, ...decompilerEnvFromPaths(attestedPaths, { log: logWarning }) };
   };
   const resolveAutoTriageProviderModel = (message, pythonEnv) => {
     let provider = String(message.provider || pythonEnv.POF_DEFAULT_AI_PROVIDER || 'ollama').trim() || 'ollama';
@@ -1687,7 +1703,18 @@ function staticHandlers(config: LooseMessage) {
         }
       }
 
-      const cancelFlagPath = path.join(os.tmpdir(), `pof-triage-cancel-${requestId}.flag`);
+      // Private per-user directory, and a hashed name: requestId comes from the webview.
+      // One fresh directory per run (mkdtemp) inside the private base: requestId comes from the
+      // webview and never becomes part of a path.
+      let runDir;
+      let cancelFlagPath;
+      try {
+        runDir = fs.mkdtempSync(path.join(ensurePrivateSubdir('triage'), 'run-'));
+        cancelFlagPath = path.join(runDir, 'cancel.flag');
+      } catch (err) {
+        fail(`Dossier temporaire privé indisponible : ${err.message || err}`);
+        return;
+      }
       try { fs.rmSync(cancelFlagPath, { force: true }); } catch (err) {
         logDebug(`[auto-triage] cleanup cancel flag failed: ${err.message || err}`);
       }
@@ -1749,7 +1776,7 @@ function staticHandlers(config: LooseMessage) {
         resultSent = true;
         clearAiProcess(requestId);
         if (_activeTriageRuns.get(binaryPath) === requestId) _activeTriageRuns.delete(binaryPath);
-        try { fs.rmSync(cancelFlagPath, { force: true }); } catch (err) {
+        try { fs.rmSync(runDir, { recursive: true, force: true }); } catch (err) {
           logDebug(`[auto-triage] cleanup cancel flag failed: ${err.message || err}`);
         }
         const ok = code === 0;
@@ -1846,41 +1873,6 @@ function staticHandlers(config: LooseMessage) {
         maxTotalTokens: Number(config.get('maxTotalTokens', 100000)),
       });
     },
-    compilerBrowseSource: async (message: LooseMessage = {}) => {
-      const lang = String(message.lang || 'c');
-      const filters: Record<string, string[]> = {
-        c:    { 'C source': ['c', 'h'] },
-        cpp:  { 'C++ source': ['cpp', 'cc', 'cxx', 'h', 'hpp'] },
-        rust: { 'Rust source': ['rs'] },
-        go:   { 'Go source': ['go'] },
-      }[lang] || { 'Source': ['c', 'cpp', 'rs', 'go'] };
-      const picked = await vscode.window.showOpenDialog({
-        canSelectFiles: true, canSelectFolders: false, canSelectMany: false,
-        openLabel: 'Choose source file',
-        defaultUri: vscode.Uri.file(root),
-        filters,
-      });
-      panel.webview.postMessage({
-        type: 'compilerBrowseSourceResult',
-        path: picked?.[0]?.fsPath || null,
-      });
-    },
-    compilerBrowseOutput: async (message: LooseMessage = {}) => {
-      const target = String(message.target || 'elf-x64');
-      const ext = target.startsWith('pe-') ? 'exe' : target.startsWith('macho-') ? '' : 'elf';
-      const src = String(message.src || '');
-      const stem = src ? path.basename(src, path.extname(src)) : 'output';
-      const suggested = ext ? `${stem}.${ext}` : stem;
-      const saved = await vscode.window.showSaveDialog({
-        defaultUri: vscode.Uri.file(path.join(root, suggested)),
-        filters: ext ? { 'Binary': [ext] } : { 'Binary': ['*'] },
-        title: 'Output binary path',
-      });
-      panel.webview.postMessage({
-        type: 'compilerBrowseOutputResult',
-        path: saved?.fsPath || null,
-      });
-    },
     compilerListRequest: async () => {
       try {
         const { stdout } = await runPython(['backends/static/compile/compile.py', '--list'], { timeout: 30000 });
@@ -1890,37 +1882,27 @@ function staticHandlers(config: LooseMessage) {
         panel.webview.postMessage({ type: 'compilerListResult', compilers: [], error: String(err) });
       }
     },
-    compileRequest: async (message: LooseMessage = {}) => {
-      const { src, lang, target, output, flags } = message;
-      if (!src || !lang || !target) {
-        panel.webview.postMessage({ type: 'compileResult', error: 'src, lang et target sont requis.' });
-        return;
-      }
-      try {
-        const args: string[] = ['backends/static/compile/compile.py', '--src', src, '--lang', lang, '--target', target];
-        if (output) args.push('--output', output);
-        if (Array.isArray(flags) && flags.length) args.push('--flags', JSON.stringify(flags));
-        const { stdout } = await runPython(args, { timeout: 180000 });
-        const result = JSON.parse(stdout);
-        panel.webview.postMessage({ type: 'compileResult', ...result });
-      } catch (err) {
-        panel.webview.postMessage({ type: 'compileResult', error: String(err) });
-      }
-    },
+    // Compiler panel (#548): compilerBrowseSource, compilerBrowseOutput, compileRequest.
+    ...createCompileHandlers({ panel, root, runPython, logChannel }),
     hubExecuteCommand: async (message: LooseMessage = {}) => {
-      // Permet au webview de déclencher une commande VS Code enregistrée
-      const commandId = String(message?.command || '').trim();
+      // Le webview ne peut déclencher que les commandes de hubCommandPolicy (#535).
+      // Type vérifié avant toute conversion : ni tableau ni objet ne deviennent un identifiant.
+      const commandId = typeof message?.command === 'string' ? message.command.trim() : '';
       const requestId = message?.requestId || null;
-      if (!commandId) return;
-      logChannel?.appendLine(`[hub] hubExecuteCommand START: ${commandId}`);
+      logChannel?.appendLine(`[hub] hubExecuteCommand START: ${commandId || '<empty>'}`);
 
       const _sendResult = (status, detail = '') => {
         logChannel?.appendLine(`[hub] hubCommandResult: ${commandId} → ${status}${detail ? ' | ' + detail : ''}`);
         panel.webview.postMessage({ type: 'hubCommandResult', requestId, command: commandId, status, detail });
       };
 
-      // Pour decompilerTest, on peut passer un ID pré-sélectionné depuis le webview
-      const args = message?.args ? (Array.isArray(message.args) ? message.args : [message.args]) : [];
+      const policy = checkHubCommand(commandId, message?.args);
+      if (policy.ok === false) {
+        logWarning(`[hub] hubExecuteCommand refused: ${policy.reason}`);
+        _sendResult('error', policy.reason);
+        return;
+      }
+      const { args } = policy;
 
       try {
         await vscode.commands.executeCommand(commandId, ...args);

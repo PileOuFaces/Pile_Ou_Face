@@ -7,7 +7,12 @@ const { validateTelemetryEvent } = require('../shared/telemetry/telemetrySchema'
 const extensionPackage = require('../../package.json');
 const EXTENSION_ID = `${extensionPackage.publisher}.${extensionPackage.name}`;
 
-function createVscodeHarness({ telemetryLevel = 'all', senderEventName = (name) => `${EXTENSION_ID}/${name}` } = {}) {
+// productSetting 'unset' = the user never touched pileOuFace.telemetry.enabled (the getter returns its fallback).
+function createVscodeHarness({
+  telemetryLevel = 'all',
+  productSetting = true,
+  senderEventName = (name) => `${EXTENSION_ID}/${name}`,
+} = {}) {
   const telemetryEnabled = telemetryLevel !== 'off';
   const usageEnabled = telemetryLevel === 'all';
   const logUsage = sinon.spy();
@@ -31,9 +36,13 @@ function createVscodeHarness({ telemetryLevel = 'all', senderEventName = (name) 
     },
     workspace: {
       getConfiguration: (section) => ({
-        get: (key, fallback) => section === 'telemetry' && key === 'telemetryLevel'
-          ? telemetryLevel
-          : fallback,
+        get: (key, fallback) => {
+          if (section === 'telemetry' && key === 'telemetryLevel') return telemetryLevel;
+          if (section === 'pileOuFace' && key === 'telemetry.enabled' && productSetting !== 'unset') {
+            return productSetting;
+          }
+          return fallback;
+        },
       }),
     },
   };
@@ -206,5 +215,38 @@ describe('extension activation telemetry transport', () => {
     expect(requests).to.equal(0);
     expect(diagnostics).to.deep.equal(['disabled']);
     telemetry.dispose();
+  });
+
+  it('is opt-in: sends nothing while the user has not enabled pileOuFace.telemetry.enabled', () => {
+    let requests = 0;
+    const diagnostics = [];
+    const { logUsage, vscode } = createVscodeHarness({ telemetryLevel: 'all', productSetting: 'unset' });
+    const telemetry = initializeExtensionTelemetry({
+      vscode,
+      context: { extension: { id: EXTENSION_ID, packageJSON: { version: '0.2.0' } }, subscriptions: [] },
+      productConfig: {
+        deploymentProfile: 'OFFICIAL_SAAS',
+        telemetryProviderUrl: 'https://telemetry.example.test',
+      },
+      transport: require('../shared/telemetry/telemetryTransport').createTelemetryTransport({
+        endpoint: 'https://telemetry.example.test',
+        fetchImpl: async () => { requests += 1; return { ok: true, status: 204 }; },
+      }),
+      onDiagnostic: (status) => diagnostics.push(status),
+    });
+
+    expect(telemetry.isEnabled()).to.equal(false);
+    expect(logUsage.called).to.equal(false);
+    expect(requests).to.equal(0);
+    expect(diagnostics).to.deep.equal(['disabled']);
+    telemetry.dispose();
+  });
+
+  it('declares the product setting off by default in the manifest', () => {
+    const configuration = [].concat(extensionPackage.contributes.configuration);
+    const setting = configuration
+      .map((section) => section.properties?.['pileOuFace.telemetry.enabled'])
+      .find(Boolean);
+    expect(setting.default).to.equal(false);
   });
 });

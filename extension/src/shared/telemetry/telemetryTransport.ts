@@ -65,6 +65,9 @@ function createTelemetryTransport({
       return false;
     } finally {
       clearTimeout(timer);
+      // The response body is never read: aborting releases it, so no exchange
+      // outlives this call (and thus survives a revocation) once headers arrive.
+      controller.abort();
       controllers.delete(controller);
     }
   }

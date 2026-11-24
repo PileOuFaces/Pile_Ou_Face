@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 /**
  * @file hub/actions.ts
- * @brief Handlers UI/misc, disasm, export, scan, rules, compilation, trace init, settings.
+ * @brief Handlers UI/misc, disasm, export, scan, rules, compilation, trace init.
+ *        Les réglages sont traités par hub/settingsActions.ts.
  *        Extracted from onDidReceiveMessage in hub.ts.
  */
 
@@ -11,6 +12,9 @@ const { readArchSupportFromMapping } = require('./archSupport');
 const { makeMappingStore } = require('../../shared/mappingStore');
 const { confirmOpenLargeTextFile } = require('../../shared/largeFileGuard');
 const { recordRuntimeEvent } = require('../../shared/runtimeAudit');
+const { ensurePrivateSubdir } = require('../../shared/privateTempDir');
+const { checkStaticCompileMessage, validateSourcePath, privateOutputName } = require('../compilePolicy');
+const { saveScript } = require('../scriptStorage');
 
 const functionAddrsStore = makeMappingStore();
 
@@ -39,7 +43,6 @@ function createActions({
   getSearchScript,
   getPayloadScriptRunnerScript,
   getExampleCandidates,
-  SETTINGS_DEFAULTS,
   setSidebarMode,
   refreshSidebar,
   normalizePayloadTargetMode,
@@ -947,8 +950,19 @@ function createActions({
     },
 
     hubCompileStaticBinary: async (message) => {
-      const sourcePath     = String(message.sourcePath || '').trim();
-      const binaryPath     = String(message.binaryPath || '').trim();
+      // #548 : options limitées aux valeurs du panneau, source vérifiée, sortie dans le
+      // dossier temporaire privé (jamais un chemin venu du webview).
+      const refusal = checkStaticCompileMessage(message, resolvePathFromWorkspace);
+      if (refusal) {
+        vscode.window.showErrorMessage(`Compilation refused: ${refusal}.`);
+        panel.webview.postMessage({ type: 'hubStaticCompileDone' });
+        return;
+      }
+      const sourcePath     = validateSourcePath(resolvePathFromWorkspace(String(message.sourcePath || '').trim()), 'c').value;
+      const binaryPath     = path.join(
+        fs.mkdtempSync(path.join(ensurePrivateSubdir('compile'), 'build-')),
+        privateOutputName(sourcePath, 'elf-x64'),
+      );
       const archBits       = String(message.archBits || '64');
       const pieChoice      = String(message.pieChoice || 'no');
       const useLegacyFlags = message.useLegacyFlags === true;
@@ -992,12 +1006,15 @@ function createActions({
     },
 
     hubSaveScript: async (message) => {
-      const scriptsDir = path.join(storageDir, 'scripts');
-      if (!fs.existsSync(scriptsDir)) fs.mkdirSync(scriptsDir, { recursive: true });
-      const name = message.name || 'script.py';
-      const filePath = path.join(scriptsDir, name);
-      fs.writeFileSync(filePath, message.content, 'utf8');
-      panel.webview.postMessage({ type: 'hubScriptSaved', path: filePath });
+      // Nom et contenu viennent du webview (non fiable) : simple nom de fichier dans scripts/.
+      const saved = saveScript(path.join(storageDir, 'scripts'), message?.name || 'script.py', message?.content);
+      if (saved.ok === false) {
+        // Visible même si l'éditeur n'affiche pas hubError (qui libère seulement la tâche en cours).
+        vscode.window.showErrorMessage(`Script not saved: ${saved.reason}.`);
+        panel.webview.postMessage({ type: 'hubError', message: `Script not saved: ${saved.reason}.` });
+        return;
+      }
+      panel.webview.postMessage({ type: 'hubScriptSaved', path: saved.value });
     },
 
     hubLoadScript: async (_message) => {
@@ -1178,21 +1195,6 @@ function createActions({
       const initPayload = await buildRunTraceInit(pathForWebview, null, message.sourcePath || '', message.payloadTargetMode || 'auto');
       panel.webview.postMessage({ type: 'initRunTrace', ...initPayload });
       if (refreshSidebar) refreshSidebar(pathForWebview);
-    },
-
-    hubGetSettings: async (message) => {
-      const settings = context.globalState.get('pof-settings', SETTINGS_DEFAULTS);
-      panel.webview.postMessage({ type: 'hubSettings', settings: { ...SETTINGS_DEFAULTS, ...settings }, requestId: message.requestId });
-    },
-
-    hubSaveSettings: async (message) => {
-      await context.globalState.update('pof-settings', message.settings);
-      panel.webview.postMessage({ type: 'hubSettingsSaved', ok: true, requestId: message.requestId });
-    },
-
-    hubResetSettings: async (message) => {
-      await context.globalState.update('pof-settings', SETTINGS_DEFAULTS);
-      panel.webview.postMessage({ type: 'hubSettings', settings: { ...SETTINGS_DEFAULTS }, requestId: message.requestId });
     },
   };
 }

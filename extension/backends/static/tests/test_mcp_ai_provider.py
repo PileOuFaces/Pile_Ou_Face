@@ -1,5 +1,10 @@
 import json
+import logging
 import os
+import subprocess
+import sys
+import urllib.parse
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -10,6 +15,7 @@ from backends.mcp.ai_provider import (
     call_provider_result,
     list_providers,
     set_default_provider,
+    set_provider_configuration,
 )
 
 
@@ -401,6 +407,48 @@ def test_set_default_provider_persists_env(monkeypatch):
     write_env.assert_called_once_with("POF_DEFAULT_AI_PROVIDER", "groq")
 
 
+SECRET_KEY = "sk-test-secret-value"
+
+
+def _redirect_env_file(monkeypatch, env_file):
+    from backends.mcp import env_loader
+
+    original = env_loader._write_env_key
+    monkeypatch.setattr(
+        env_loader,
+        "_write_env_key",
+        lambda key, value: original(key, value, env_file),
+    )
+
+
+def test_set_provider_configuration_persists_reloadable_key(monkeypatch, tmp_path):
+    from backends.mcp.env_loader import _load_env_file
+
+    env_file = tmp_path / "pof" / ".env"
+    _redirect_env_file(monkeypatch, env_file)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    result = set_provider_configuration("anthropic", SECRET_KEY, None)
+    assert result["ok"] is True
+    assert SECRET_KEY not in json.dumps(result)
+    monkeypatch.delenv("ANTHROPIC_API_KEY")
+    _load_env_file(env_file)
+    assert os.environ["ANTHROPIC_API_KEY"] == SECRET_KEY
+
+
+def test_set_provider_configuration_error_hides_key(monkeypatch, tmp_path, caplog):
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("")
+    _redirect_env_file(monkeypatch, blocker / ".env")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    with caplog.at_level(logging.DEBUG):
+        result = set_provider_configuration("openai", SECRET_KEY, None)
+    assert result["ok"] is False
+    assert "OPENAI_API_KEY" in result["error"]
+    assert SECRET_KEY not in result["error"]
+    assert SECRET_KEY not in caplog.text
+    assert "OPENAI_API_KEY" not in os.environ
+
+
 def test_openai_model_list_excludes_non_chat_models(monkeypatch):
     import urllib.request
 
@@ -456,3 +504,181 @@ def test_gemini_model_list_uses_api_key_header(monkeypatch):
     assert request.full_url == "https://generativelanguage.googleapis.com/v1beta/models"
     assert "key=" not in request.full_url
     assert request.get_header("X-goog-api-key") == "test"
+
+
+def test_cli_set_failure_reports_the_reason_on_stderr_without_the_key(tmp_path):
+    """The extension host only shows stderr when the CLI fails (sharedHandlers)."""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".pile-ou-face").write_text("")  # a file where the config dir should be
+    env = {**os.environ, "HOME": str(home), "USERPROFILE": str(home)}
+    env.pop("OPENAI_API_KEY", None)
+    extension_root = Path(__file__).resolve().parents[3]
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "backends.mcp.ai_provider",
+            "set",
+            "--provider",
+            "openai",
+            "--api-key-stdin",
+        ],
+        input=f"{SECRET_KEY}\n",
+        capture_output=True,
+        text=True,
+        cwd=extension_root,
+        env=env,
+        timeout=60,
+        check=False,
+    )
+    assert proc.returncode == 1
+    assert "Cannot save OPENAI_API_KEY" in proc.stderr
+    assert SECRET_KEY not in proc.stderr
+    assert SECRET_KEY not in proc.stdout
+    assert json.loads(proc.stdout)["ok"] is False
+
+
+@pytest.mark.parametrize("provider", ["openai", "anthropic", "gemini", "mistral"])
+def test_provider_error_echoing_the_api_key_is_redacted(provider, monkeypatch):
+    """#544: a provider answering 401 "Invalid API key: <key>" must not make us show the key."""
+    import io
+    import urllib.error
+
+    from backends.mcp.ai_provider import _PROVIDER_ENV_KEYS, call_provider_result
+
+    monkeypatch.setenv(_PROVIDER_ENV_KEYS[provider], SECRET_KEY)
+
+    def reject(request, *args, **kwargs):
+        body = json.dumps(
+            {"error": {"message": f"Invalid API key: {SECRET_KEY}"}}
+        ).encode()
+        raise urllib.error.HTTPError(
+            request.full_url, 401, "Unauthorized", hdrs=None, fp=io.BytesIO(body)
+        )
+
+    monkeypatch.setattr("urllib.request.urlopen", reject)
+    with pytest.raises(RuntimeError) as excinfo:
+        call_provider_result(provider, "prompt", "", "model-x")
+    message = str(excinfo.value)
+    assert message.startswith("HTTP 401:")
+    assert "[REDACTED]" in message
+    assert SECRET_KEY not in message
+    assert excinfo.value.__cause__ is None
+
+
+@pytest.mark.parametrize(
+    ("provider", "error_event"),
+    [
+        ("openai", '{"error":{"message":"Invalid API key: %s"}}'),
+        ("anthropic", '{"type":"error","error":{"message":"Invalid API key: %s"}}'),
+        ("gemini", '{"error":{"message":"Invalid API key: %s"}}'),
+    ],
+)
+def test_streaming_error_echoing_the_api_key_is_redacted(
+    provider, error_event, monkeypatch
+):
+    """#544: an SSE error event sent after HTTP 200 must not carry the key to the user."""
+    from backends.mcp.ai_provider import _PROVIDER_ENV_KEYS, call_provider_result
+
+    monkeypatch.setenv(_PROVIDER_ENV_KEYS[provider], SECRET_KEY)
+    lines = [f"data: {error_event % SECRET_KEY}\n", "\n"]
+    monkeypatch.setattr(
+        "urllib.request.urlopen", lambda req, timeout=None: StreamingResponse(lines)
+    )
+    with pytest.raises(RuntimeError) as excinfo:
+        call_provider_result(
+            provider, "prompt", "", "model-x", on_token=lambda _t: None
+        )
+    assert SECRET_KEY not in str(excinfo.value)
+    assert "[REDACTED]" in str(excinfo.value)
+
+
+LONG_KEY = "sk-review-ABC/DEF+GHI=123456789"
+
+
+@pytest.mark.parametrize(
+    "echoed",
+    [
+        LONG_KEY[:16] + "…",  # truncated prefix, as several providers print it
+        urllib.parse.quote(LONG_KEY, safe=""),  # URL-encoded form
+        "key:" + LONG_KEY[:16] + "…",  # fragment glued to a label
+        "?key="
+        + urllib.parse.quote(LONG_KEY[:16], safe="")
+        + "…",  # encoded fragment in a URL
+    ],
+)
+def test_partial_or_encoded_key_in_provider_error_is_redacted(echoed, monkeypatch):
+    """#544: masking must not depend on the provider echoing the exact raw key."""
+    import io
+    import urllib.error
+
+    from backends.mcp.ai_provider import call_provider_result
+
+    monkeypatch.setenv("OPENAI_API_KEY", LONG_KEY)
+
+    def reject(request, *args, **kwargs):
+        body = json.dumps({"error": {"message": f"Invalid API key: {echoed}"}}).encode()
+        raise urllib.error.HTTPError(
+            request.full_url, 401, "Unauthorized", hdrs=None, fp=io.BytesIO(body)
+        )
+
+    monkeypatch.setattr("urllib.request.urlopen", reject)
+    with pytest.raises(RuntimeError) as excinfo:
+        call_provider_result("openai", "prompt", "", "model-x")
+    message = str(excinfo.value)
+    assert "[REDACTED]" in message
+    assert LONG_KEY[:12] not in message
+    assert "%2F" not in message
+
+
+def test_header_validation_error_does_not_quote_the_key(monkeypatch):
+    """#544: Python's header check quotes the whole "Bearer <key>" value in its ValueError."""
+    from backends.mcp.ai_provider import call_provider_result
+
+    monkeypatch.setenv("OPENAI_API_KEY", SECRET_KEY + "\n")
+    with pytest.raises(Exception) as excinfo:
+        call_provider_result("openai", "prompt", "", "model-x")
+    assert SECRET_KEY not in str(excinfo.value)
+    assert excinfo.value.__cause__ is None
+
+
+def test_cli_error_output_redacts_keys(monkeypatch, capsys):
+    """#544: the CLI's JSON error goes to the webview; end to end, it must not carry the key."""
+    import io
+    import runpy
+
+    monkeypatch.setenv("OPENAI_API_KEY", SECRET_KEY + "\n")
+    monkeypatch.setattr(
+        sys, "argv", ["ai_provider", "call", "--provider", "openai", "--model", "m"]
+    )
+    monkeypatch.setattr(sys, "stdin", io.StringIO("prompt"))
+    # Run the module as a script, as the extension does, without the already-imported copy.
+    monkeypatch.delitem(sys.modules, "backends.mcp.ai_provider", raising=False)
+    with pytest.raises(SystemExit):
+        runpy.run_module("backends.mcp.ai_provider", run_name="__main__")
+    out = capsys.readouterr().out
+    assert '"ok": false' in out
+    assert SECRET_KEY not in out
+    assert "[REDACTED]" in out
+
+
+def test_key_with_inner_newline_is_fully_redacted_in_header_error(monkeypatch):
+    """#544: repr() escapes an inner newline, so the key's tail must be masked too."""
+    from backends.mcp.ai_provider import call_provider_result
+
+    head, tail = "sk-review-ABCDEFGH", "IJKLMNOPQRSTUV"
+    monkeypatch.setenv("OPENAI_API_KEY", f"{head}\n{tail}")
+    with pytest.raises(Exception) as excinfo:
+        call_provider_result("openai", "prompt", "", "model-x")
+    message = str(excinfo.value)
+    assert head not in message
+    assert tail not in message
+
+
+def test_redaction_keeps_ordinary_messages_intact(monkeypatch):
+    from backends.mcp.ai_provider import redact_provider_keys
+
+    monkeypatch.setenv("OPENAI_API_KEY", LONG_KEY)
+    text = "HTTP 429: Rate limit reached for model gpt-x, retry in 20s"
+    assert redact_provider_keys(text) == text

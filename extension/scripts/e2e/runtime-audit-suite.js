@@ -161,6 +161,18 @@ function readCurrentAuditEvents(userDataDir) {
   return events;
 }
 
+const CONDITION_POLL_MS = 50;
+
+/** Polls a synchronous predicate until it holds; returns false on timeout so the next assertion reports it. */
+async function waitForCondition(predicate, timeoutMs, pollMs = CONDITION_POLL_MS) {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) return false;
+    await sleep(pollMs);
+  }
+  return true;
+}
+
 async function waitForAuditQuiet(userDataDir, { quietMs = 100, timeoutMs = 1000, pollMs = 50 } = {}) {
   const startedAt = Date.now();
   let lastCount = readCurrentAuditEvents(userDataDir).length;
@@ -759,6 +771,9 @@ async function run() {
         await hub.aiProviderModel('ollama').fill('qwen-e2e');
         await hub.aiProviderSaveButton('ollama').click();
         await hub.aiProviderModel('ollama').waitForValue('qwen-e2e', 30000);
+        // The field already holds the typed value: wait for the save itself to reach the
+        // backend (mocked process), otherwise the assertion races the click handler.
+        await waitForCondition(() => ollamaModel === 'qwen-e2e', 30000);
         assert.equal(ollamaModel, 'qwen-e2e', 'the Ollama model selected through the UI must be persisted');
 
         await hub.setAiDefaultProvider('openai');
@@ -1114,6 +1129,8 @@ async function run() {
         assert.ok(functionDecompileAttempts > attemptsBeforeRetry, 'the explicit retry must execute a new function run');
         assert.equal(functionDecompileSuccesses, 1, 'the explicit retry must produce exactly one successful function run');
 
+        // Augmentation is enabled once the function result is rendered (#542).
+        await hub.decompileAugmentButton().waitForEnabled(30000);
         await hub.decompileAugmentButton().clickDom();
         await hub.decompileAugmentReview().waitFor({ state: 'visible', timeout: 30000 });
         await hub.decompileAugmentSuggestions().waitForText('Proposition fonction prête', 30000);
@@ -1134,7 +1151,11 @@ async function run() {
         await hub.decompileOutput().waitForText(rawCode, 30000);
         assert.equal(await hub.decompileFunctionSelect().inputValue(), '', 'reopening the hub must restore global decompile mode');
 
+        // The reopened hub reloads its function list: selecting before the option exists leaves
+        // the <select> on '' and no decompile request is sent (#542).
+        await hub.decompileFunctionSelect().waitForText('main', 30000);
         await hub.decompileFunctionSelect().fill(functionAddr);
+        assert.equal(await hub.decompileFunctionSelect().inputValue(), functionAddr, 'the function must be selected after reopening');
         await hub.decompileOutput().waitForText('function validated by E2E', 30000);
         await hub.decompileAugmentStatus().waitForText('Version IA acceptée restaurée depuis le cache.', 30000);
         assert.equal(suggestCalls, 1, 'restoring the function cache must not call the provider again');
@@ -1142,6 +1163,7 @@ async function run() {
         await hub.decompileFunctionSelect().fill('');
         await hub.decompileOutput().waitForText(rawCode, 30000);
 
+        await hub.decompileAugmentButton().waitForEnabled(30000);
         await hub.decompileAugmentButton().clickDom();
         await hub.decompileAugmentReview().waitFor({ state: 'visible', timeout: 30000 });
         await hub.decompileAugmentSuggestions().waitForText('Proposition globale prête', 30000);

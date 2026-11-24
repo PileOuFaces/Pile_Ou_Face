@@ -801,6 +801,16 @@ def _parse_external_decompiler_output(
     return {"addr": addr, "code": stripped, "error": None, "decompiler": decompiler}
 
 
+_REDACTED = "[REDACTED]"
+
+
+def _redact_secrets(text: str, secrets: list[str]) -> str:
+    """Masks every credential value (longest first, so a value never leaks via a prefix)."""
+    for secret in sorted({s for s in secrets if s}, key=len, reverse=True):
+        text = text.replace(secret, _REDACTED)
+    return text
+
+
 def _run_http_decompiler(
     decompiler: str,
     binary_path: str,
@@ -821,6 +831,9 @@ def _run_http_decompiler(
 
     # Authentification — credentials depuis variables d'environnement uniquement
     auth_cfg = config.get("auth") or {}
+    # Every credential form sent to the service, masked in any error we relay (a service
+    # may echo the request headers back in an error body).
+    secret_values: list[str] = []
     if auth_cfg:
         auth_type = str(auth_cfg.get("type") or "").lower()
         if auth_type == "bearer":
@@ -836,6 +849,7 @@ def _run_http_decompiler(
                     "provider": "http",
                 }
             headers["Authorization"] = f"Bearer {token_val}"
+            secret_values.append(token_val)
         elif auth_type == "api_key":
             token_env = str(auth_cfg.get("token_env") or "")
             token_val = os.environ.get(token_env, "")
@@ -850,6 +864,7 @@ def _run_http_decompiler(
                 }
             header_name = str(auth_cfg.get("header") or "X-API-Key")
             headers[header_name] = token_val
+            secret_values.append(token_val)
         elif auth_type == "basic":
             user_env = str(auth_cfg.get("user_env") or "")
             password_env = str(auth_cfg.get("password_env") or "")
@@ -869,6 +884,7 @@ def _run_http_decompiler(
                 f"{user_val}:{password_val}".encode()
             ).decode()
             headers["Authorization"] = f"Basic {credentials}"
+            secret_values.extend([credentials, password_val, user_val])
 
     body_template = str(config.get("body_template") or "")
     timeout = int(config.get("timeout") or 60)
@@ -925,7 +941,9 @@ def _run_http_decompiler(
             "addr": addr,
             "code": "",
             "functions": [],
-            "error": f"HTTP {exc.code}: {body_err or exc.reason}",
+            "error": _redact_secrets(
+                f"HTTP {exc.code}: {body_err or exc.reason}", secret_values
+            ),
             "decompiler": decompiler,
             "provider": "http",
         }
@@ -934,7 +952,7 @@ def _run_http_decompiler(
             "addr": addr,
             "code": "",
             "functions": [],
-            "error": str(exc.reason),
+            "error": _redact_secrets(str(exc.reason), secret_values),
             "decompiler": decompiler,
             "provider": "http",
         }
@@ -943,7 +961,7 @@ def _run_http_decompiler(
             "addr": addr,
             "code": "",
             "functions": [],
-            "error": str(exc),
+            "error": _redact_secrets(str(exc), secret_values),
             "decompiler": decompiler,
             "provider": "http",
         }
